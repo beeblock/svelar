@@ -33,8 +33,11 @@ export const handle = createSvelarHooks({
     // 2. Global rate limiting (100 requests per minute per IP)
     new RateLimitMiddleware({ maxRequests: 100, windowMs: 60_000 }),
 
-    // 3. CSRF protection (exclude API paths that use Bearer tokens)
+    // 3. CSRF protection — only for /api/* routes.
+    //    SvelteKit form actions (/login, /register, etc.) are already
+    //    protected by OriginMiddleware + SvelteKit's built-in origin check.
     new CsrfMiddleware({
+      onlyPaths: ['/api/'],
       excludePaths: ['/api/webhooks'],
     }),
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { apiFetch } from '$lib/utils/fetch';
   import { Button, Badge, Card, CardHeader, CardTitle, CardDescription, CardContent, Alert } from '$lib/components/ui';
 
   let { data } = $props();
@@ -8,9 +9,9 @@
 
   async function updateUserRole(userId: number, newRole: string) {
     try {
-      const res = await fetch('/api/admin/users', {
+      const res = await apiFetch('/api/admin/users', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+
         body: JSON.stringify({ userId, role: newRole }),
       });
 
@@ -35,9 +36,9 @@
     }
 
     try {
-      const res = await fetch('/api/admin/users', {
+      const res = await apiFetch('/api/admin/users', {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+
         body: JSON.stringify({ userId }),
       });
 
@@ -57,7 +58,7 @@
   }
 
   async function refreshUsers() {
-    const res = await fetch('/api/admin/users');
+    const res = await apiFetch('/api/admin/users');
     if (res.ok) {
       const data = await res.json();
       users = data;

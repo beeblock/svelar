@@ -255,6 +255,7 @@ export class CsrfMiddleware extends Middleware {
   private headerName: string;
   private fieldName: string;
   private excludePaths: string[];
+  private onlyPaths: string[] | null;
 
   constructor(
     options: {
@@ -262,6 +263,8 @@ export class CsrfMiddleware extends Middleware {
       headerName?: string;
       fieldName?: string;
       excludePaths?: string[];
+      /** If set, CSRF validation only applies to requests matching these path prefixes */
+      onlyPaths?: string[];
     } = {}
   ) {
     super();
@@ -269,6 +272,7 @@ export class CsrfMiddleware extends Middleware {
     this.headerName = options.headerName ?? 'X-CSRF-Token';
     this.fieldName = options.fieldName ?? '_csrf';
     this.excludePaths = options.excludePaths ?? [];
+    this.onlyPaths = options.onlyPaths ?? null;
   }
 
   async handle(ctx: MiddlewareContext, next: NextFunction): Promise<Response | void> {
@@ -286,8 +290,13 @@ export class CsrfMiddleware extends Middleware {
       return next();
     }
 
-    // Excluded paths (e.g. webhooks)
+    // Only enforce CSRF on specific paths (if configured)
     const pathname = event.url.pathname;
+    if (this.onlyPaths && !this.onlyPaths.some((p) => pathname.startsWith(p))) {
+      return this.setTokenAndContinue(ctx, next);
+    }
+
+    // Excluded paths (e.g. webhooks)
     if (this.excludePaths.some((p) => pathname.startsWith(p))) {
       return next();
     }

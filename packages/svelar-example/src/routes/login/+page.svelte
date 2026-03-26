@@ -1,37 +1,17 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
+  import { superForm } from 'sveltekit-superforms';
   import { Button, Input, Label, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, Alert } from '$lib/components/ui';
 
-  let email = $state('');
-  let password = $state('');
-  let error = $state('');
-  let loading = $state(false);
+  let { data } = $props();
 
-  async function handleLogin(e: Event) {
-    e.preventDefault();
-    error = '';
-    loading = true;
-
-    try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-
-      const data = await res.json();
-
-      if (res.ok) {
-        await goto('/dashboard');
-      } else {
-        error = data.message || 'Login failed';
+  const { form, errors, message, enhance, delayed } = superForm(data.form, {
+    // Clear password on failed login
+    onResult: ({ result }) => {
+      if (result.type === 'failure') {
+        $form.password = '';
       }
-    } catch (err) {
-      error = 'Network error';
-    } finally {
-      loading = false;
-    }
-  }
+    },
+  });
 </script>
 
 <svelte:head>
@@ -46,39 +26,47 @@
     </CardHeader>
 
     <CardContent class="space-y-4">
-      {#if error}
+      {#if $message}
         <Alert variant="destructive">
-          <span class="text-sm">{error}</span>
+          <span class="text-sm">{$message}</span>
         </Alert>
       {/if}
 
-      <form onsubmit={handleLogin} class="space-y-4">
+      <form method="POST" use:enhance class="space-y-4">
         <div class="space-y-2">
           <Label for="email">Email</Label>
           <Input
             id="email"
+            name="email"
             type="email"
             placeholder="you@example.com"
-            bind:value={email}
-            required
-            disabled={loading}
+            bind:value={$form.email}
+            aria-invalid={$errors.email ? 'true' : undefined}
+            disabled={$delayed}
           />
+          {#if $errors.email}
+            <p class="text-sm text-red-600">{$errors.email[0]}</p>
+          {/if}
         </div>
 
         <div class="space-y-2">
           <Label for="password">Password</Label>
           <Input
             id="password"
+            name="password"
             type="password"
             placeholder="Your password"
-            bind:value={password}
-            required
-            disabled={loading}
+            bind:value={$form.password}
+            aria-invalid={$errors.password ? 'true' : undefined}
+            disabled={$delayed}
           />
+          {#if $errors.password}
+            <p class="text-sm text-red-600">{$errors.password[0]}</p>
+          {/if}
         </div>
 
-        <Button type="submit" class="w-full" disabled={loading}>
-          {loading ? 'Signing in...' : 'Sign In'}
+        <Button type="submit" class="w-full" disabled={$delayed}>
+          {$delayed ? 'Signing in...' : 'Sign In'}
         </Button>
       </form>
     </CardContent>

@@ -41,4 +41,7 @@ export default defineConfig({
       'svelar': resolve(svelarRoot, 'dist/index.js'),
     },
   },
+  optimizeDeps: {
+    exclude: ['sveltekit-superforms'],
+  },
 });
