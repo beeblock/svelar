@@ -34,7 +34,7 @@ export default defineConfig({
     'permissions/index': 'src/permissions/index.ts',
   },
   format: ['esm'],
-  dts: true,
+  dts: false,
   clean: true,
   sourcemap: true,
   target: 'node20',

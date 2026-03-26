@@ -3,6 +3,12 @@
   "compilerOptions": {
     "allowImportingTsExtensions": true,
     "strict": true,
-    "moduleResolution": "bundler"
+    "moduleResolution": "bundler",
+    "paths": {
+      "$lib": ["./src/lib"],
+      "$lib/*": ["./src/lib/*"],
+      "svelar": ["../svelar/src/index.ts"],
+      "svelar/*": ["../svelar/src/*/index.ts"]
+    }
   }
 }

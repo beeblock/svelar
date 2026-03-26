@@ -43,7 +43,7 @@ export interface ModelHooks {
 
 // ── Model Base Class ───────────────────────────────────────
 
-export abstract class Model {
+export class Model {
   // ── Static Configuration ──
 
   /** The database table name */

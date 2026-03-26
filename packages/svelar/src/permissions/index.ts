@@ -371,7 +371,22 @@ class PermissionManager {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Constructor = new (...args: any[]) => any;
 
-export function HasRoles<TBase extends Constructor>(Base: TBase) {
+export interface HasRolesInstance {
+  readonly _modelType: string;
+  readonly _modelId: number;
+  assignRole(roleName: string, guard?: string): Promise<void>;
+  removeRole(roleName: string, guard?: string): Promise<void>;
+  hasRole(roleName: string, guard?: string): Promise<boolean>;
+  givePermission(permissionName: string, guard?: string): Promise<void>;
+  revokePermission(permissionName: string, guard?: string): Promise<void>;
+  hasPermission(permissionName: string, guard?: string): Promise<boolean>;
+  can(permissionName: string, guard?: string): Promise<boolean>;
+  getRoles(): Promise<RoleRecord[]>;
+  getAllPermissions(): Promise<PermissionRecord[]>;
+  getDirectPermissions(): Promise<PermissionRecord[]>;
+}
+
+export function HasRoles<TBase extends Constructor>(Base: TBase): TBase & (new (...args: any[]) => HasRolesInstance) {
   class HasRolesMixin extends Base {
     get _modelType(): string {
       return (this.constructor as any).name || 'User';
@@ -500,7 +515,7 @@ export function HasRoles<TBase extends Constructor>(Base: TBase) {
       return Permissions.getModelDirectPermissions(this._modelType, this._modelId);
     }
   }
-  return HasRolesMixin;
+  return HasRolesMixin as unknown as TBase & (new (...args: any[]) => HasRolesInstance);
 }
 
 // ── Middleware ──────────────────────────────────────────────
