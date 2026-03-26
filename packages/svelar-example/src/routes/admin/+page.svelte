@@ -1,6 +1,7 @@
 <script lang="ts">
   import { apiFetch } from '$lib/utils/fetch';
   import { Button, Badge, Card, CardHeader, CardTitle, CardDescription, CardContent, Alert } from '$lib/components/ui';
+  import * as m from '$lib/paraglide/messages';
 
   let { data } = $props();
   let users = $state(data.users);
@@ -67,13 +68,13 @@
 </script>
 
 <svelte:head>
-  <title>Admin — Svelar</title>
+  <title>{m.admin_title()} — {m.app_name()}</title>
 </svelte:head>
 
 <div class="space-y-8">
   <div>
-    <h1 class="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
-    <p class="text-gray-600 mt-1">Manage users and view system statistics</p>
+    <h1 class="text-3xl font-bold text-gray-900">{m.admin_title()}</h1>
+    <p class="text-gray-600 mt-1">{m.admin_subtitle()}</p>
   </div>
 
   {#if message}
@@ -117,7 +118,7 @@
 
   <!-- Users Table -->
   <div class="space-y-4">
-    <h2 class="text-2xl font-bold">Users</h2>
+    <h2 class="text-2xl font-bold">{m.admin_users()}</h2>
 
     <Card>
       <CardContent class="pt-6">

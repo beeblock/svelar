@@ -2,6 +2,9 @@
   import '../app.css';
   import { Button } from '$lib/components/ui';
   import { Avatar, AvatarImage, AvatarFallback } from '$lib/components/ui';
+  import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
+  import * as m from '$lib/paraglide/messages';
+  import { localizeHref } from '$lib/paraglide/runtime';
 
   let { data, children } = $props();
 </script>
@@ -19,23 +22,24 @@
   <nav class="border-b border-gray-200 bg-white shadow-sm sticky top-0 z-50">
     <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
       <div class="flex items-center gap-8">
-        <a href="/" class="flex items-center gap-2">
+        <a href={localizeHref('/')} class="flex items-center gap-2">
           <div class="w-8 h-8 bg-[var(--color-brand)] rounded-md flex items-center justify-center">
             <span class="text-white font-bold text-sm">S</span>
           </div>
-          <span class="font-bold text-lg hidden sm:inline">Svelar</span>
+          <span class="font-bold text-lg hidden sm:inline">{m.app_name()}</span>
         </a>
         {#if data.user}
-          <a href="/dashboard" class="text-gray-600 hover:text-gray-900 text-sm font-medium"
-            >Dashboard</a
+          <a href={localizeHref('/dashboard')} class="text-gray-600 hover:text-gray-900 text-sm font-medium"
+            >{m.nav_dashboard()}</a
           >
           {#if data.user.role === 'admin'}
-            <a href="/admin" class="text-gray-600 hover:text-gray-900 text-sm font-medium">Admin</a>
+            <a href={localizeHref('/admin')} class="text-gray-600 hover:text-gray-900 text-sm font-medium">{m.nav_admin()}</a>
           {/if}
         {/if}
       </div>
 
       <div class="flex items-center gap-4">
+        <LanguageSwitcher />
         {#if data.user}
           <div class="flex items-center gap-3">
             <div class="text-right hidden sm:block">
@@ -48,14 +52,14 @@
             </Avatar>
           </div>
           <form method="POST" action="/logout">
-            <Button type="submit" variant="ghost" size="sm">Logout</Button>
+            <Button type="submit" variant="ghost" size="sm">{m.nav_logout()}</Button>
           </form>
         {:else}
-          <a href="/login">
-            <Button variant="outline" size="sm">Login</Button>
+          <a href={localizeHref('/login')}>
+            <Button variant="outline" size="sm">{m.nav_login()}</Button>
           </a>
-          <a href="/register">
-            <Button size="sm">Register</Button>
+          <a href={localizeHref('/register')}>
+            <Button size="sm">{m.nav_register()}</Button>
           </a>
         {/if}
       </div>
@@ -69,7 +73,7 @@
   </main>
 
   <footer class="border-t border-gray-200 bg-white py-8 text-center text-sm text-gray-500">
-    <p>&copy; 2024 Svelar. Laravel-inspired framework for SvelteKit.</p>
+    <p>&copy; 2024 {m.app_name()}. {m.footer_text()}</p>
   </footer>
 </div>
 

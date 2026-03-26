@@ -1,13 +1,23 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
+import { paraglideVitePlugin } from '@inlang/paraglide-js';
 import { resolve } from 'path';
 
 // Resolve the svelar package directly (avoids workspace symlink issues on Windows)
 const svelarRoot = resolve(__dirname, '../svelar');
 
 export default defineConfig({
-  plugins: [tailwindcss(), sveltekit()],
+  plugins: [
+    sveltekit(),
+    paraglideVitePlugin({
+      project: './project.inlang',
+      outdir: './src/lib/paraglide',
+      strategy: ['url', 'cookie', 'baseLocale'],
+      outputStructure: 'message-modules',
+    }),
+    tailwindcss(),
+  ],
   resolve: {
     alias: {
       'svelar/actions': resolve(svelarRoot, 'dist/actions/index.js'),

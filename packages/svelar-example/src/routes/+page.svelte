@@ -1,43 +1,44 @@
 <script lang="ts">
   import { Button } from '$lib/components/ui';
   import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '$lib/components/ui';
+  import * as m from '$lib/paraglide/messages';
+  import { localizeHref } from '$lib/paraglide/runtime';
 
   let { data } = $props();
 </script>
 
 <svelte:head>
-  <title>Svelar — Laravel-inspired Framework for SvelteKit</title>
+  <title>{m.app_name()} — {m.home_title()}</title>
 </svelte:head>
 
 <div class="space-y-12">
   <!-- Hero Section -->
   <div class="text-center space-y-6">
     <div class="inline-block px-4 py-2 bg-blue-100 rounded-full">
-      <span class="text-sm font-medium text-blue-700">Full-stack framework</span>
+      <span class="text-sm font-medium text-blue-700">{m.home_badge()}</span>
     </div>
 
     <h1 class="text-5xl sm:text-6xl font-bold tracking-tight">
-      <span class="text-gray-900">Build with</span>
+      <span class="text-gray-900">{m.home_build_with()}</span>
       <br />
-      <span class="text-[var(--color-brand)]">Laravel conventions</span>
+      <span class="text-[var(--color-brand)]">{m.home_laravel_conventions()}</span>
     </h1>
 
     <p class="text-xl text-gray-600 max-w-2xl mx-auto">
-      Svelar brings Laravel's powerful patterns and developer experience to SvelteKit. Build
-      full-stack applications with models, migrations, middleware, and more.
+      {m.home_subtitle()}
     </p>
 
     <div class="flex flex-wrap gap-4 justify-center pt-4">
       {#if data.user}
-        <a href="/dashboard">
-          <Button size="lg">Go to Dashboard</Button>
+        <a href={localizeHref('/dashboard')}>
+          <Button size="lg">{m.home_go_dashboard()}</Button>
         </a>
       {:else}
-        <a href="/register">
-          <Button size="lg">Get Started</Button>
+        <a href={localizeHref('/register')}>
+          <Button size="lg">{m.home_get_started()}</Button>
         </a>
-        <a href="/login">
-          <Button variant="outline" size="lg">Sign In</Button>
+        <a href={localizeHref('/login')}>
+          <Button variant="outline" size="lg">{m.nav_login()}</Button>
         </a>
       {/if}
     </div>
@@ -45,15 +46,15 @@
 
   <!-- Features Grid -->
   <div class="space-y-6">
-    <h2 class="text-3xl font-bold text-center">Powerful Features</h2>
+    <h2 class="text-3xl font-bold text-center">{m.home_features_title()}</h2>
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
       <Card>
         <CardHeader>
-          <CardTitle>ORM & Models</CardTitle>
-          <CardDescription>Eloquent-style database abstraction</CardDescription>
+          <CardTitle>{m.home_feature_orm()}</CardTitle>
+          <CardDescription>{m.home_feature_orm_desc()}</CardDescription>
         </CardHeader>
         <CardContent class="text-sm text-gray-600">
-          Fluent query builder, relationships, eager loading, and pagination built-in.
+          {m.home_feature_orm_body()}
           <div class="mt-3 bg-gray-100 p-2 rounded text-xs font-mono text-[var(--color-brand)]">
             User.where('active', true).with('posts').get()
           </div>
@@ -62,11 +63,11 @@
 
       <Card>
         <CardHeader>
-          <CardTitle>Auth & Sessions</CardTitle>
-          <CardDescription>Multiple authentication methods</CardDescription>
+          <CardTitle>{m.home_feature_auth()}</CardTitle>
+          <CardDescription>{m.home_feature_auth_desc()}</CardDescription>
         </CardHeader>
         <CardContent class="text-sm text-gray-600">
-          Session-based auth, JWT, API tokens. Register, login, logout out of the box.
+          {m.home_feature_auth_body()}
           <div class="mt-3 bg-gray-100 p-2 rounded text-xs font-mono text-[var(--color-brand)]">
             auth.attempt(credentials, session)
           </div>
@@ -75,11 +76,11 @@
 
       <Card>
         <CardHeader>
-          <CardTitle>Controllers & Routing</CardTitle>
-          <CardDescription>Framework patterns you know</CardDescription>
+          <CardTitle>{m.home_feature_routing()}</CardTitle>
+          <CardDescription>{m.home_feature_routing_desc()}</CardDescription>
         </CardHeader>
         <CardContent class="text-sm text-gray-600">
-          Laravel-style controllers with middleware, validation, and resource routing.
+          {m.home_feature_routing_body()}
           <div class="mt-3 bg-gray-100 p-2 rounded text-xs font-mono text-[var(--color-brand)]">
             export const GET = ctrl.handle('index')
           </div>
@@ -88,11 +89,11 @@
 
       <Card>
         <CardHeader>
-          <CardTitle>Validation & DTOs</CardTitle>
-          <CardDescription>Type-safe data transfer</CardDescription>
+          <CardTitle>{m.home_feature_validation()}</CardTitle>
+          <CardDescription>{m.home_feature_validation_desc()}</CardDescription>
         </CardHeader>
         <CardContent class="text-sm text-gray-600">
-          Zod-powered validation with FormRequest classes for confident data handling.
+          {m.home_feature_validation_body()}
           <div class="mt-3 bg-gray-100 p-2 rounded text-xs font-mono text-[var(--color-brand)]">
             await CreatePostRequest.validate(event)
           </div>
@@ -101,11 +102,11 @@
 
       <Card>
         <CardHeader>
-          <CardTitle>DDD Architecture</CardTitle>
-          <CardDescription>Clean code organization</CardDescription>
+          <CardTitle>{m.home_feature_ddd()}</CardTitle>
+          <CardDescription>{m.home_feature_ddd_desc()}</CardDescription>
         </CardHeader>
         <CardContent class="text-sm text-gray-600">
-          Services, Actions, Repositories for clean, testable business logic layers.
+          {m.home_feature_ddd_body()}
           <div class="mt-3 bg-gray-100 p-2 rounded text-xs font-mono text-[var(--color-brand)]">
             Controller → DTO → Service → Action → Repository
           </div>
@@ -114,11 +115,11 @@
 
       <Card>
         <CardHeader>
-          <CardTitle>Migrations & Seeders</CardTitle>
-          <CardDescription>Schema versioning built-in</CardDescription>
+          <CardTitle>{m.home_feature_migrations()}</CardTitle>
+          <CardDescription>{m.home_feature_migrations_desc()}</CardDescription>
         </CardHeader>
         <CardContent class="text-sm text-gray-600">
-          Database migrations with schema builder and seeders for demo data.
+          {m.home_feature_migrations_body()}
           <div class="mt-3 bg-gray-100 p-2 rounded text-xs font-mono text-[var(--color-brand)]">
             npx svelar migrate
           </div>
@@ -129,51 +130,33 @@
 
   <!-- Quick Start -->
   <div class="space-y-6">
-    <h2 class="text-3xl font-bold text-center">Quick Start</h2>
+    <h2 class="text-3xl font-bold text-center">{m.home_quickstart_title()}</h2>
     <div class="max-w-2xl mx-auto space-y-3">
       <div class="flex gap-4 items-start">
-        <div
-          class="flex-shrink-0 w-10 h-10 rounded-full bg-[var(--color-brand)] text-white flex items-center justify-center font-bold"
-        >
-          1
-        </div>
+        <div class="flex-shrink-0 w-10 h-10 rounded-full bg-[var(--color-brand)] text-white flex items-center justify-center font-bold">1</div>
         <div>
-          <h4 class="font-semibold">Create a project</h4>
-          <code class="text-sm bg-gray-100 px-2 py-1 rounded block mt-1">
-            npx create-svelar my-app
-          </code>
+          <h4 class="font-semibold">{m.home_step1()}</h4>
+          <code class="text-sm bg-gray-100 px-2 py-1 rounded block mt-1">npx create-svelar my-app</code>
         </div>
       </div>
       <div class="flex gap-4 items-start">
-        <div
-          class="flex-shrink-0 w-10 h-10 rounded-full bg-[var(--color-brand)] text-white flex items-center justify-center font-bold"
-        >
-          2
-        </div>
+        <div class="flex-shrink-0 w-10 h-10 rounded-full bg-[var(--color-brand)] text-white flex items-center justify-center font-bold">2</div>
         <div>
-          <h4 class="font-semibold">Run migrations</h4>
+          <h4 class="font-semibold">{m.home_step2()}</h4>
           <code class="text-sm bg-gray-100 px-2 py-1 rounded block mt-1">npx svelar migrate</code>
         </div>
       </div>
       <div class="flex gap-4 items-start">
-        <div
-          class="flex-shrink-0 w-10 h-10 rounded-full bg-[var(--color-brand)] text-white flex items-center justify-center font-bold"
-        >
-          3
-        </div>
+        <div class="flex-shrink-0 w-10 h-10 rounded-full bg-[var(--color-brand)] text-white flex items-center justify-center font-bold">3</div>
         <div>
-          <h4 class="font-semibold">Seed demo data</h4>
+          <h4 class="font-semibold">{m.home_step3()}</h4>
           <code class="text-sm bg-gray-100 px-2 py-1 rounded block mt-1">npx svelar db:seed</code>
         </div>
       </div>
       <div class="flex gap-4 items-start">
-        <div
-          class="flex-shrink-0 w-10 h-10 rounded-full bg-[var(--color-brand)] text-white flex items-center justify-center font-bold"
-        >
-          4
-        </div>
+        <div class="flex-shrink-0 w-10 h-10 rounded-full bg-[var(--color-brand)] text-white flex items-center justify-center font-bold">4</div>
         <div>
-          <h4 class="font-semibold">Start developing</h4>
+          <h4 class="font-semibold">{m.home_step4()}</h4>
           <code class="text-sm bg-gray-100 px-2 py-1 rounded block mt-1">npm run dev</code>
         </div>
       </div>
@@ -182,7 +165,7 @@
 
   <!-- API Section -->
   <div class="space-y-6">
-    <h2 class="text-3xl font-bold text-center">API Endpoints</h2>
+    <h2 class="text-3xl font-bold text-center">{m.home_api_title()}</h2>
     <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
       <Card>
         <CardHeader>

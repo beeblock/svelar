@@ -1,6 +1,7 @@
 <script lang="ts">
   import { superForm } from 'sveltekit-superforms';
   import { Button, Input, Label, Card, CardHeader, CardTitle, CardContent, Badge, Alert } from '$lib/components/ui';
+  import * as m from '$lib/paraglide/messages';
 
   let { data } = $props();
   let posts: any[] = $state(data.posts || []);
@@ -8,7 +9,6 @@
   const { form, errors, message, enhance, delayed, reset } = superForm(data.form, {
     onUpdated: ({ form: f }) => {
       if (f.valid && f.message) {
-        // Reload posts after successful creation
         posts = data.posts || [];
         reset();
       }
@@ -17,26 +17,26 @@
 </script>
 
 <svelte:head>
-  <title>Dashboard — Svelar</title>
+  <title>{m.dashboard_title()} — {m.app_name()}</title>
 </svelte:head>
 
 <div class="space-y-8">
   <div>
-    <h1 class="text-3xl font-bold text-gray-900 mb-2">Dashboard</h1>
-    <p class="text-gray-600">Welcome back, <span class="font-medium">{data.user.name}</span>!</p>
+    <h1 class="text-3xl font-bold text-gray-900 mb-2">{m.dashboard_title()}</h1>
+    <p class="text-gray-600">{m.dashboard_welcome({ name: data.user.name })}</p>
   </div>
 
   <!-- Posts Section -->
   <div class="space-y-4">
     <div class="flex items-center justify-between">
-      <h2 class="text-2xl font-bold">Your Posts</h2>
+      <h2 class="text-2xl font-bold">{m.dashboard_your_posts()}</h2>
       <Badge variant="secondary">{posts.length}</Badge>
     </div>
 
     {#if posts.length === 0}
       <Card>
         <CardContent class="pt-8 text-center">
-          <p class="text-gray-500 text-sm">No posts yet. Create your first one below!</p>
+          <p class="text-gray-500 text-sm">{m.dashboard_no_posts()}</p>
         </CardContent>
       </Card>
     {:else}
@@ -49,7 +49,7 @@
                   <div class="flex items-center gap-2 mb-2">
                     <h3 class="font-semibold text-gray-900">{post.title}</h3>
                     <Badge variant={post.published ? 'success' : 'secondary'}>
-                      {post.published ? 'Published' : 'Draft'}
+                      {post.published ? m.dashboard_published() : m.dashboard_draft()}
                     </Badge>
                   </div>
                   <p class="text-gray-600 text-sm">{post.body}</p>
@@ -60,13 +60,13 @@
                 <form method="POST" action="?/toggle">
                   <input type="hidden" name="postId" value={post.id} />
                   <Button size="sm" variant="outline" type="submit">
-                    {post.published ? 'Unpublish' : 'Publish'}
+                    {post.published ? m.dashboard_unpublish() : m.dashboard_publish()}
                   </Button>
                 </form>
-                <form method="POST" action="?/delete" onsubmit={(e) => { if (!confirm('Are you sure?')) e.preventDefault(); }}>
+                <form method="POST" action="?/delete" onsubmit={(e) => { if (!confirm(m.dashboard_confirm_delete())) e.preventDefault(); }}>
                   <input type="hidden" name="postId" value={post.id} />
                   <Button size="sm" variant="destructive" type="submit">
-                    Delete
+                    {m.dashboard_delete()}
                   </Button>
                 </form>
               </div>
@@ -79,7 +79,7 @@
 
   <!-- Create Post Section -->
   <div class="space-y-4">
-    <h2 class="text-2xl font-bold">Create Post</h2>
+    <h2 class="text-2xl font-bold">{m.dashboard_create_post()}</h2>
 
     {#if $message}
       <Alert variant={$message.includes('Error') || $message.includes('Failed') ? 'destructive' : 'success'}>
@@ -91,12 +91,12 @@
       <CardContent class="pt-6">
         <form method="POST" action="?/create" use:enhance class="space-y-4">
           <div class="space-y-2">
-            <Label for="title">Post Title</Label>
+            <Label for="title">{m.dashboard_post_title()}</Label>
             <Input
               id="title"
               name="title"
               type="text"
-              placeholder="Enter post title (minimum 3 characters)"
+              placeholder={m.dashboard_post_title_placeholder()}
               bind:value={$form.title}
               aria-invalid={$errors.title ? 'true' : undefined}
             />
@@ -106,11 +106,11 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="body">Post Content</Label>
+            <Label for="body">{m.dashboard_post_content()}</Label>
             <textarea
               id="body"
               name="body"
-              placeholder="Write your post content here (minimum 10 characters)"
+              placeholder={m.dashboard_post_content_placeholder()}
               bind:value={$form.body}
               rows="6"
               class="flex min-h-[120px] w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm ring-offset-white placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
@@ -124,7 +124,7 @@
           <input type="hidden" name="published" value="true" />
 
           <Button type="submit" class="w-full" disabled={$delayed}>
-            {$delayed ? 'Creating...' : 'Create Post'}
+            {$delayed ? m.dashboard_creating() : m.dashboard_create_submit()}
           </Button>
         </form>
       </CardContent>

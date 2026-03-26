@@ -10,6 +10,10 @@
  * 6. Auth throttle — stricter rate limiting on login/register (5 attempts/min)
  */
 
+import { sequence } from '@sveltejs/kit/hooks';
+import type { Handle } from '@sveltejs/kit';
+import { paraglideMiddleware } from '$lib/paraglide/server';
+import { getTextDirection } from '$lib/paraglide/runtime';
 import { createSvelarHooks } from 'svelar/hooks';
 import { SessionMiddleware, MemorySessionStore } from 'svelar/session';
 import { AuthenticateMiddleware } from 'svelar/auth';
@@ -19,13 +23,19 @@ import {
   OriginMiddleware,
   ThrottleMiddleware,
 } from 'svelar/middleware';
+import { ErrorHandler } from 'svelar/errors';
 
 // Import app.ts to trigger Connection + Hash + Auth configuration
 import { auth } from './app.js';
 
+const errorHandler = new ErrorHandler({
+  debug: process.env.NODE_ENV !== 'production',
+  // report: async (error) => { /* Send to Sentry, Datadog, etc. */ },
+});
+
 const sessionStore = new MemorySessionStore();
 
-export const handle = createSvelarHooks({
+const svelarHandle = createSvelarHooks({
   middleware: [
     // 1. Block cross-origin mutation requests
     new OriginMiddleware(),
@@ -59,6 +69,25 @@ export const handle = createSvelarHooks({
   },
 
   onError: (error, event) => {
-    console.error('[Svelar Error]', error);
+    return errorHandler.handle(error, event);
   },
 });
+
+/** Paraglide i18n handle — resolves locale from URL and sets lang/dir */
+const paraglideHandle: Handle = ({ event, resolve }) =>
+  paraglideMiddleware(event.request, ({ request: localizedRequest, locale }) => {
+    event.request = localizedRequest;
+    return resolve(event, {
+      transformPageChunk: ({ html }) => {
+        return html
+          .replace('%lang%', locale)
+          .replace('%dir%', getTextDirection(locale));
+      },
+    });
+  });
+
+/** Compose paraglide i18n + Svelar middleware pipeline */
+export const handle = sequence(paraglideHandle, svelarHandle);
+
+/** SvelteKit's handleError hook — catches unhandled errors in load/actions */
+export const handleError = errorHandler.handleSvelteKitError();
