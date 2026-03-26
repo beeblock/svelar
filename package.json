@@ -1,0 +1,21 @@
+{
+  "name": "svelar-monorepo",
+  "private": true,
+  "workspaces": [
+    "packages/svelar",
+    "packages/create-svelar",
+    "packages/svelar-example"
+  ],
+  "scripts": {
+    "build": "npm run build -w packages/svelar -w packages/create-svelar",
+    "dev": "npm run dev -w packages/svelar",
+    "test": "npm run test -w packages/svelar",
+    "lint": "npm run lint --workspaces --if-present"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

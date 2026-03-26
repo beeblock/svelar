@@ -1,0 +1,41 @@
+{
+  "name": "create-svelar",
+  "version": "0.1.0",
+  "description": "Scaffold a new Svelar project — Laravel-inspired SvelteKit",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "create-svelar": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "dev": "tsup src/index.ts --format esm --watch",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "prompts": "^2.4.2"
+  },
+  "devDependencies": {
+    "@types/prompts": "^2.4.9",
+    "@types/node": "^22.0.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.7.0"
+  },
+  "keywords": ["create", "svelar", "sveltekit", "laravel", "scaffold"],
+  "license": "MIT",
+  "author": "Raoni <alephtus@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alephtus/svelar.git",
+    "directory": "packages/create-svelar"
+  },
+  "homepage": "https://github.com/alephtus/svelar#readme",
+  "bugs": {
+    "url": "https://github.com/alephtus/svelar/issues"
+  }
+}
