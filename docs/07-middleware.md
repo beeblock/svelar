@@ -70,9 +70,44 @@ ctx.event.url          // URL object
 ctx.event.getClientAddress() // Client IP
 ```
 
-## Global Middleware
+## Quick Setup with createSvelarApp
 
-Register middleware globally in `src/hooks.server.ts`:
+The simplest way to set up the middleware pipeline is `createSvelarApp`. It auto-wires origin validation, rate limiting, CSRF, sessions, auth, error handling, and optionally i18n — all with sensible defaults:
+
+```typescript
+// src/hooks.server.ts
+import { createSvelarApp } from 'svelar/hooks';
+import { paraglideMiddleware } from '$lib/paraglide/server';
+import { getTextDirection } from '$lib/paraglide/runtime';
+import { auth } from './app.js';
+
+export const { handle, handleError } = createSvelarApp({
+  auth,
+  i18n: { paraglideMiddleware, getTextDirection },
+});
+```
+
+You can customize every default:
+
+```typescript
+export const { handle, handleError } = createSvelarApp({
+  auth,
+  secret: process.env.APP_KEY,
+  sessionLifetime: 60 * 60 * 24 * 7, // 7 days
+  rateLimit: 200,
+  rateLimitWindow: 120_000,           // 2 minutes
+  csrfPaths: ['/api/'],
+  csrfExcludePaths: ['/api/webhooks'],
+  authThrottleAttempts: 10,
+  authThrottleDecay: 5,
+  debug: true,
+  i18n: { paraglideMiddleware, getTextDirection },
+});
+```
+
+## Global Middleware (Manual Setup)
+
+For full control, use `createSvelarHooks` to compose the pipeline manually:
 
 ```typescript
 import { createSvelarHooks } from 'svelar/hooks';
@@ -365,38 +400,23 @@ export class AdminOnlyMiddleware extends Middleware {
 
 ## Complete Middleware Pipeline Example
 
-Here's a complete setup from the svelar-example app:
+Here's the complete setup from the svelar-example app using `createSvelarApp`:
 
 ```typescript
 // src/hooks.server.ts
-import { createSvelarHooks } from 'svelar/hooks';
-import { SessionMiddleware, MemorySessionStore } from 'svelar/session';
-import { AuthenticateMiddleware } from 'svelar/auth';
-import { RateLimitMiddleware } from 'svelar/middleware';
+import { createSvelarApp } from 'svelar/hooks';
+import { paraglideMiddleware } from '$lib/paraglide/server';
+import { getTextDirection } from '$lib/paraglide/runtime';
 import { auth } from './app.js';
 
-const sessionStore = new MemorySessionStore();
-
-export const handle = createSvelarHooks({
-  middleware: [
-    // Session management (reads/writes cookies, attaches event.locals.session)
-    new SessionMiddleware({
-      store: sessionStore,
-      secret: process.env.APP_KEY || 'svelar-example-secret-change-me',
-      lifetime: 60 * 60 * 24, // 24 hours
-    }),
-
-    // Auth resolution (reads session, attaches event.locals.user)
-    new AuthenticateMiddleware(auth),
-
-    // Rate limiting (100 requests per minute per IP)
-    new RateLimitMiddleware({ maxRequests: 100, windowMs: 60_000 }),
-  ],
-  onError: (error, event) => {
-    console.error('[Svelar Error]', error);
-  },
+export const { handle, handleError } = createSvelarApp({
+  auth,
+  secret: process.env.APP_KEY || 'svelar-example-secret-change-me',
+  i18n: { paraglideMiddleware, getTextDirection },
 });
 ```
+
+This single call sets up: origin validation, rate limiting (100 req/min), CSRF protection on `/api/*`, sessions (24h lifetime), auth resolution, auth throttling (5 attempts/min on login), error handling, and i18n locale detection from URLs.
 
 ## Best Practices
 

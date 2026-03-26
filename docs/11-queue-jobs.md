@@ -19,11 +19,7 @@ Jobs are classes that define work to be done.
 
 ### Creating a Job
 
-```bash
-npx svelar make:job SendWelcomeEmail
-```
-
-This creates `src/lib/jobs/SendWelcomeEmail.ts`:
+Create `src/lib/jobs/SendWelcomeEmail.ts`:
 
 ```typescript
 import { Job } from 'svelar/queue';
@@ -252,36 +248,27 @@ Queue.dispatch(new SendWelcomeEmail(user.id, user.email));
 
 ## Running the Worker
 
-Process queued jobs with the worker:
+> **Note**: The `queue:work` CLI command is not yet implemented. For now, you can process queued jobs programmatically from a custom script or Node process.
 
-```bash
-npx svelar queue:work
+### Programmatic Usage
+
+```typescript
+import { Queue } from 'svelar/queue';
+
+const queue = new Queue();
+
+// Process the next job
+await queue.processNext();
+
+// Run a worker loop
+await queue.work({
+  queues: ['default', 'urgent'],
+  maxJobs: 100,
+  sleepMs: 1000,
+});
 ```
 
-The worker:
-- Pulls jobs from the queue
-- Executes the `handle()` method
-- Retries failed jobs up to `maxAttempts`
-- Calls `failed()` if all attempts fail
-
-### Worker Options
-
-```bash
-# Process specific queue
-npx svelar queue:work default
-
-# Process multiple queues (in priority order)
-npx svelar queue:work default urgent
-
-# Stop after processing N jobs
-npx svelar queue:work --max-jobs=100
-
-# Stop after N seconds
-npx svelar queue:work --max-time=3600
-
-# Sleep N milliseconds between jobs
-npx svelar queue:work --sleep=1000
-```
+The worker pulls jobs from the queue, executes the `handle()` method, retries failed jobs up to `maxAttempts`, and calls `failed()` if all attempts fail.
 
 ## Job Examples
 
@@ -499,8 +486,8 @@ Queue.dispatch(new SendWelcomeEmail(user.id, user.email));
 In production, use a process manager to keep the worker running:
 
 ```bash
-# Using PM2
-pm2 start "npx svelar queue:work" --name queue-worker --watch
+# Using PM2 with a custom worker script
+pm2 start scripts/queue-worker.js --name queue-worker --watch
 
 # Restart on reboot
 pm2 startup

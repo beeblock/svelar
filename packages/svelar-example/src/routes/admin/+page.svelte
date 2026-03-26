@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { apiFetch } from '$lib/utils/fetch';
-  import { Button, Badge, Card, CardHeader, CardTitle, CardDescription, CardContent, Alert } from '$lib/components/ui';
+  import { apiFetch } from 'svelar/http';
+  import { Button, Badge, Card, CardHeader, CardTitle, CardDescription, CardContent, Alert } from 'svelar/ui';
   import * as m from '$lib/paraglide/messages';
 
   let { data } = $props();

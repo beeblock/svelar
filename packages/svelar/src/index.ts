@@ -86,3 +86,19 @@ export type { Notifiable, NotificationChannel } from './notifications/index.js';
 
 // Broadcasting
 export { Broadcast } from './broadcasting/index.js';
+
+// HTTP (client-side utilities)
+export { apiFetch, getCsrfToken, buildUrl } from './http/index.js';
+export type { ApiFetchOptions } from './http/index.js';
+
+// i18n
+export { createI18nHandle, createReroute } from './i18n/index.js';
+export type { I18nHandleConfig, RerouteConfig } from './i18n/index.js';
+
+// Forms
+export { createFormAction, loadForm, validateForm } from './forms/index.js';
+export type { FormActionOptions } from './forms/index.js';
+
+// App (simplified hooks setup)
+export { createSvelarApp } from './hooks/index.js';
+export type { SvelarAppConfig } from './hooks/index.js';

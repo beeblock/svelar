@@ -183,7 +183,7 @@ export abstract class Controller {
       data = await event.request.json();
     } else if (contentType.includes('multipart/form-data') || contentType.includes('application/x-www-form-urlencoded')) {
       const formData = await event.request.formData();
-      data = Object.fromEntries(formData);
+      data = Object.fromEntries(formData as any);
     } else {
       // Try query params
       data = Object.fromEntries(event.url.searchParams);

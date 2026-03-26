@@ -1,6 +1,6 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { Button, Card, CardContent } from '$lib/components/ui';
+  import { Button, Card, CardContent } from 'svelar/ui';
   import * as m from '$lib/paraglide/messages';
   import { localizeHref } from '$lib/paraglide/runtime';
 

@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { apiFetch } from '$lib/utils/fetch';
-  import { Button, Input, Label, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, Alert } from '$lib/components/ui';
+  import { apiFetch } from 'svelar/http';
+  import { Button, Input, Label, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, Alert } from 'svelar/ui';
 
   let email = $state('');
   let error = $state('');

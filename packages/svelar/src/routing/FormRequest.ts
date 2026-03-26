@@ -109,7 +109,7 @@ export abstract class FormRequest {
       contentType.includes('application/x-www-form-urlencoded')
     ) {
       const formData = await event.request.formData();
-      return Object.fromEntries(formData);
+      return Object.fromEntries(formData as any);
     }
 
     // Fall back to query params

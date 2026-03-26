@@ -20,11 +20,7 @@ Plugins go through these lifecycle stages:
 
 ## Creating a Plugin
 
-```bash
-npx svelar make:plugin AnalyticsPlugin
-```
-
-This creates `src/lib/plugins/AnalyticsPlugin.ts`:
+Create `src/lib/plugins/AnalyticsPlugin.ts`:
 
 ```typescript
 import { Plugin } from 'svelar/plugins';

@@ -86,33 +86,35 @@ export { Connection, Hash };
 
 ### Middleware Setup
 
-Create `src/hooks.server.ts` to set up the middleware pipeline:
+Create `src/hooks.server.ts` to set up the middleware pipeline. The simplest setup uses `createSvelarApp`, which auto-wires origin validation, rate limiting, CSRF, sessions, auth, and error handling:
 
 ```typescript
 // src/hooks.server.ts
-import { createSvelarHooks } from 'svelar/hooks';
-import { SessionMiddleware, MemorySessionStore } from 'svelar/session';
-import { AuthenticateMiddleware } from 'svelar/auth';
-import { RateLimitMiddleware } from 'svelar/middleware';
+import { createSvelarApp } from 'svelar/hooks';
 import { auth } from './app.js';
 
-const sessionStore = new MemorySessionStore();
-
-export const handle = createSvelarHooks({
-  middleware: [
-    new SessionMiddleware({
-      store: sessionStore,
-      secret: process.env.APP_KEY || 'dev-secret',
-      lifetime: 60 * 60 * 24,
-    }),
-    new AuthenticateMiddleware(auth),
-    new RateLimitMiddleware({ maxRequests: 100, windowMs: 60_000 }),
-  ],
-  onError: (error, event) => {
-    console.error('[Svelar]', error);
-  },
+export const { handle, handleError } = createSvelarApp({
+  auth,
+  secret: process.env.APP_KEY || 'dev-secret',
 });
 ```
+
+To add i18n, pass the paraglide middleware:
+
+```typescript
+// src/hooks.server.ts
+import { createSvelarApp } from 'svelar/hooks';
+import { paraglideMiddleware } from '$lib/paraglide/server';
+import { getTextDirection } from '$lib/paraglide/runtime';
+import { auth } from './app.js';
+
+export const { handle, handleError } = createSvelarApp({
+  auth,
+  i18n: { paraglideMiddleware, getTextDirection },
+});
+```
+
+For full manual control, see [Middleware](./07-middleware.md).
 
 ### Create Your First Model
 
@@ -259,7 +261,7 @@ Test that everything is working:
 npx svelar migrate
 
 # Seed demo data (if you have a DatabaseSeeder)
-npx svelar db:seed
+npx svelar seed:run
 
 # Start dev server
 npm run dev
@@ -301,24 +303,37 @@ my-app/
 After installation, you have access to Svelar CLI commands:
 
 ```bash
-# Database
-npx svelar migrate              # Run pending migrations
-npx svelar migrate:rollback     # Rollback last migration batch
-npx svelar db:seed              # Run seeders
-npx svelar make:migration name  # Create new migration
-npx svelar make:seeder name     # Create new seeder
+# Migrations
+npx svelar migrate                # Run pending migrations
+npx svelar migrate --rollback     # Rollback last migration batch
+npx svelar migrate --reset        # Rollback ALL migrations
+npx svelar migrate --refresh      # Reset + re-run all migrations
+npx svelar migrate --fresh        # Drop all tables + re-run all migrations
+npx svelar migrate --status       # Show migration status table
+npx svelar migrate --seed         # Run seeders after migrating
+npx svelar migrate --fresh --force # Force destructive command in production
+
+# Seeding
+npx svelar seed:run               # Run database seeders
 
 # Code Generation
-npx svelar make:model name      # Create new model
-npx svelar make:controller name # Create new controller
-npx svelar make:action name     # Create new action
-npx svelar make:service name    # Create new service
+npx svelar make:model name        # Create new model
+npx svelar make:migration name    # Create new migration
+npx svelar make:controller name   # Create new controller
+npx svelar make:middleware name   # Create new middleware
+npx svelar make:seeder name       # Create new seeder
+npx svelar make:provider name     # Create new service provider
 
-# Server
-npm run dev                      # Start dev server
-npm run build                    # Build for production
-npm run preview                  # Preview production build
+# Utilities
+npx svelar tinker                 # Interactive REPL for your app
+
+# Dev Server (SvelteKit)
+npm run dev                        # Start dev server
+npm run build                      # Build for production
+npm run preview                    # Preview production build
 ```
+
+> **Production safety**: Destructive migration commands (`--reset`, `--refresh`, `--fresh`) are blocked in production unless you pass `--force`. Svelar checks `NODE_ENV` and `APP_ENV` environment variables to detect the production environment.
 
 ## Troubleshooting
 

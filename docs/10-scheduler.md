@@ -12,11 +12,7 @@ Scheduled tasks are classes that define when and what to run.
 
 ### Creating a Scheduled Task
 
-```bash
-npx svelar make:task CleanupExpiredSessions
-```
-
-This creates `src/lib/scheduler/CleanupExpiredSessions.ts`:
+Create `src/lib/scheduler/CleanupExpiredSessions.ts`:
 
 ```typescript
 import { ScheduledTask } from 'svelar/scheduler';
@@ -173,30 +169,28 @@ export function createScheduler(): Scheduler {
 
 ## Running the Scheduler
 
-### Development
+> **Note**: The scheduler CLI commands (`schedule:run`, `schedule:work`) are not yet implemented. For now, you can invoke the scheduler programmatically from your app code or a custom script.
 
-Run the scheduler in development:
+### Programmatic Usage
 
-```bash
-npx svelar schedule:run
+```typescript
+import { Scheduler } from 'svelar/scheduler';
+import { CleanupExpiredSessions } from './lib/scheduler/CleanupExpiredSessions.js';
+
+const scheduler = new Scheduler();
+scheduler.register(new CleanupExpiredSessions());
+
+// Run all due tasks
+await scheduler.runDueTasks();
 ```
 
-This runs tasks as they're scheduled. It blocks until interrupted.
+### Production (via cron)
 
-### Production
-
-In production, run the scheduler as a background process:
+Create a script that calls `scheduler.runDueTasks()` and schedule it with cron:
 
 ```bash
-# Run with a process manager like PM2
-pm2 start "npx svelar schedule:run" --name svelar-scheduler
-```
-
-Or use a cron job to trigger:
-
-```bash
-# Run scheduler every minute
-* * * * * cd /app && npx svelar schedule:work
+# Run every minute
+* * * * * cd /app && node scripts/run-scheduler.js
 ```
 
 ## Task Examples

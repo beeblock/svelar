@@ -80,15 +80,31 @@ npx svelar migrate
 
 This runs migrations in chronological order and logs completed ones to the `migrations` table.
 
-### Rolling Back Migrations
+### Migration Commands
 
-Rollback the last batch of migrations:
+All migration operations use the `migrate` command with flags:
 
 ```bash
-npx svelar migrate:rollback
+npx svelar migrate                # Run pending migrations
+npx svelar migrate --rollback     # Rollback the last batch
+npx svelar migrate --reset        # Rollback ALL migrations (runs every down())
+npx svelar migrate --refresh      # Reset + re-run all migrations
+npx svelar migrate --fresh        # Drop ALL tables + re-run migrations (ignores down())
+npx svelar migrate --status       # Show which migrations have run
+npx svelar migrate --seed         # Run seeders after migrating
 ```
 
-This runs the `down()` method of the last batch, undoing those schema changes.
+> **Production safety**: `--reset`, `--refresh`, and `--fresh` are blocked in production unless you also pass `--force`. Svelar checks `NODE_ENV` and `APP_ENV` to detect production.
+
+```bash
+# This fails in production:
+npx svelar migrate --fresh
+
+# This works in production:
+npx svelar migrate --fresh --force
+```
+
+**fresh vs refresh**: `--refresh` calls every migration's `down()` method in reverse order, then runs all `up()` methods again. `--fresh` ignores migration files entirely — it drops every table in the database, then runs all `up()` methods. Use `--fresh` when your `down()` methods are broken or incomplete.
 
 ## Schema Builder
 
@@ -105,28 +121,31 @@ await this.schema.createTable('posts', (table) => {
   table.boolean('published').default(false); // BOOLEAN with default
   table.integer('user_id');                  // INTEGER
   table.timestamps();                        // created_at, updated_at timestamps
-  table.softDeletes();                       // deleted_at timestamp (soft deletes)
-  table.timestamps('custom_at');             // Custom named timestamps
 
   // Indexes
   table.index(['slug']);
-  table.unique(['email']);
+  table.uniqueIndex(['email']);
   table.primary(['id']);
 
   // Foreign keys
   table.integer('user_id').references('id', 'users');
-  table.integer('category_id').references('id', 'categories').onDelete('cascade');
+  table.integer('category_id').references('id', 'categories').onDelete('CASCADE');
 });
 ```
 
-### Modifying Tables
+### Adding Columns
 
 ```typescript
-await this.schema.table('users', (table) => {
-  table.string('phone').after('email');      // Add column after another column
-  table.dropColumn('nickname');               // Remove a column
-  table.renameColumn('old_name', 'new_name'); // Rename column
+await this.schema.addColumn('users', (table) => {
+  table.string('phone');
+  table.string('avatar_url').nullable();
 });
+```
+
+### Dropping Columns
+
+```typescript
+await this.schema.dropColumn('users', 'nickname');
 ```
 
 ### Dropping Tables
@@ -140,33 +159,30 @@ await this.schema.dropTableIfExists('users'); // Safe drop
 
 ```typescript
 // Numeric
-table.increments('id');          // Auto-incrementing integer
-table.integer('count');          // 32-bit integer
-table.bigInteger('votes');       // 64-bit integer
-table.smallInteger('age');       // Small integer
+table.increments('id');           // Auto-incrementing INTEGER primary key
+table.bigIncrements('id');        // Auto-incrementing BIGINT primary key
+table.integer('count');           // INTEGER
+table.bigInteger('votes');        // BIGINT
 table.decimal('price', 8, 2);    // DECIMAL(8, 2)
-table.float('rating', 5, 2);     // FLOAT
+table.float('rating');            // FLOAT
 
 // String
-table.string('name', 100);       // VARCHAR(100)
-table.text('bio');               // TEXT
-table.longText('description');   // LONGTEXT
-table.char('code', 10);          // CHAR(10)
-table.json('meta');              // JSON
+table.string('name', 100);       // VARCHAR(100), default 255
+table.text('bio');                // TEXT
+table.json('meta');               // JSON
 
 // Boolean
-table.boolean('active');         // BOOLEAN
+table.boolean('active');          // BOOLEAN
 
 // Dates & Times
-table.date('birthday');          // DATE
-table.time('started_at');        // TIME
-table.dateTime('created_at');    // DATETIME
-table.timestamp('logged_at');    // TIMESTAMP
-table.timestamps();              // created_at, updated_at
+table.date('birthday');           // DATE
+table.datetime('created_at');     // DATETIME
+table.timestamp('logged_at');     // TIMESTAMP
+table.timestamps();               // created_at + updated_at
 
 // Other
-table.uuid('id');                // UUID primary key
-table.binary('data');            // BLOB
+table.uuid('id');                 // UUID (CHAR(36))
+table.blob('data');               // BLOB / binary data
 table.enum('status', ['active', 'inactive']); // ENUM
 ```
 
@@ -174,20 +190,22 @@ table.enum('status', ['active', 'inactive']); // ENUM
 
 ```typescript
 table.string('email')
-  .unique()                       // Unique constraint
+  .unique()                       // UNIQUE constraint
   .nullable()                     // Allow NULL
-  .default('none')               // Default value
-  .after('name')                 // Column ordering
-  .comment('User email address'); // Column comment
+  .notNullable()                  // NOT NULL (default)
+  .default('none')                // DEFAULT value
+  .primary()                      // PRIMARY KEY
+  .unsigned();                    // UNSIGNED (numeric columns)
 ```
 
 ### Indexes
 
 ```typescript
-table.index(['slug']);                      // Simple index
-table.unique(['email']);                    // Unique index
-table.primary(['id']);                      // Primary key
-table.unique(['email', 'account_id']);      // Composite unique
+table.index('slug');                        // Simple index on one column
+table.index(['slug', 'status']);            // Composite index
+table.uniqueIndex('email');                // Unique index
+table.uniqueIndex(['email', 'account_id']); // Composite unique index
+table.primary(['id']);                      // Composite primary key
 ```
 
 ### Foreign Keys
@@ -196,8 +214,8 @@ table.unique(['email', 'account_id']);      // Composite unique
 table.integer('user_id').references('id', 'users');
 table.integer('category_id')
   .references('id', 'categories')
-  .onDelete('cascade')   // Cascade delete
-  .onUpdate('cascade');  // Cascade update
+  .onDelete('CASCADE')    // CASCADE, SET NULL, RESTRICT, NO ACTION
+  .onUpdate('CASCADE');   // CASCADE, SET NULL, RESTRICT, NO ACTION
 ```
 
 ## Seeders
@@ -248,7 +266,7 @@ export class DatabaseSeeder extends Seeder {
 ### Running Seeders
 
 ```bash
-npx svelar db:seed
+npx svelar seed:run
 ```
 
 This runs the `run()` method of the seeder, populating your database.
@@ -278,11 +296,8 @@ await Connection.raw(
 // Delete
 await Connection.raw('DELETE FROM users WHERE id = ?', [1]);
 
-// Transactions
-await Connection.transaction(async (trx) => {
-  await trx.raw('INSERT INTO accounts (name) VALUES (?)', ['Account']);
-  await trx.raw('INSERT INTO users (account_id) VALUES (?)', [1]);
-});
+// Use a specific named connection
+const rows = await Connection.raw('SELECT * FROM logs', [], 'analytics');
 ```
 
 ## Practical Example: Blog Database
@@ -409,34 +424,33 @@ export class DatabaseSeeder extends Seeder {
 ```
 
 ```bash
-npx svelar db:seed
+npx svelar seed:run
 ```
 
 ## Working with the Connection
 
-The `Connection` class provides utility methods for database operations:
+The `Connection` class manages database drivers and provides raw SQL access:
 
 ```typescript
 import { Connection } from 'svelar/database';
 
-// Get connection instance
-const connection = Connection.connection();
+// Run raw queries with parameterized bindings (safe from SQL injection)
+const results = await Connection.raw('SELECT * FROM users WHERE active = ?', [true]);
 
-// Run raw queries
-const results = await Connection.raw('SELECT * FROM users');
+// Use a named connection
+const logs = await Connection.raw('SELECT * FROM logs', [], 'analytics');
 
-// Run transactions
-await Connection.transaction(async (trx) => {
-  // All queries in this callback use the transaction
-  await trx.raw('INSERT INTO accounts (name) VALUES (?)', ['New Account']);
-});
+// Check the current driver
+const driver = Connection.getDriver();         // 'sqlite' | 'postgres' | 'mysql'
+const config = Connection.getConfig();          // full connection config object
+const connected = Connection.isConnected();     // boolean
 
-// Get table info
-const tables = await connection.getTables();
-const columns = await connection.getTableColumns('users');
+// Get the raw driver client (for advanced usage)
+const client = await Connection.rawClient();
 
-// Close connection
-await Connection.close();
+// Close connections when shutting down
+await Connection.disconnect();                  // close default
+await Connection.disconnect('analytics');       // close named connection
 ```
 
 ## Best Practices

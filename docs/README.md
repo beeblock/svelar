@@ -6,10 +6,14 @@ Svelar is a Laravel-inspired framework built on top of SvelteKit 2. It brings en
 
 ### Key Features
 
+- **UI Components**: Minimal, composable Svelte 5 component library (Button, Card, Input, Alert, Badge, Avatar, etc.) themed via CSS custom properties
 - **ORM with Relationships**: Eloquent-like query builder with eager loading, relationships (hasOne, hasMany, belongsTo, belongsToMany)
 - **Database Migrations & Seeders**: Version-controlled schema management and seed data
 - **Authentication**: Session-based auth, JWT support, and API tokens
 - **Middleware Pipeline**: Global and controller-level middleware with built-in CSRF, rate limiting, logging, and CORS
+- **i18n**: Paraglide-js 2.x integration with server middleware, reroute hooks, and LanguageSwitcher component
+- **Forms**: Superforms + Zod bridge with `createFormAction` and `loadForm` helpers
+- **HTTP Utilities**: CSRF-aware fetch wrapper for client-side API calls
 - **Form Validation**: Zod-based validation with FormRequest classes (DTOs)
 - **Service Layer & Actions**: Clean separation of concerns with services, repositories, and single-use actions
 - **Plugin System**: Extensible plugin architecture with lifecycle hooks
@@ -35,6 +39,10 @@ Svelar is a Laravel-inspired framework built on top of SvelteKit 2. It brings en
 10. [Scheduler](./10-scheduler.md) - Schedule periodic tasks
 11. [Job Queue](./11-queue-jobs.md) - Background job processing
 12. [Additional Features](./12-additional-features.md) - Events, logging, mail, notifications, broadcasting, storage, and more
+13. [UI Components](./13-ui-components.md) - Component library with theming and extension guide
+14. [HTTP Utilities](./14-http.md) - CSRF-aware fetch wrapper
+15. [Internationalization](./15-i18n.md) - Paraglide-js integration for multi-language apps
+16. [Forms](./16-forms.md) - Superforms + Zod bridge for validated form actions
 
 ## Quick Start
 
@@ -52,7 +60,7 @@ npm install
 npx svelar migrate
 
 # Seed demo data
-npx svelar db:seed
+npx svelar seed:run
 
 # Start the development server
 npm run dev
@@ -66,73 +74,46 @@ Your app is now running at `http://localhost:5173`
 my-app/
 ├── src/
 │   ├── app.ts                    # Bootstrap (database, hash, auth config)
+│   ├── app.css                   # Global styles + CSS custom properties
+│   ├── app.html                  # HTML template (with %lang% / %dir% for i18n)
 │   ├── app.d.ts                  # TypeScript declarations
-│   ├── hooks.server.ts           # Middleware pipeline
+│   ├── hooks.server.ts           # Middleware pipeline (createSvelarApp)
+│   ├── hooks.ts                  # Client reroute hook (i18n)
 │   ├── lib/
+│   │   ├── paraglide/            # Generated i18n runtime (auto-generated)
+│   │   ├── components/           # App-specific components (extend svelar/ui)
+│   │   │   ├── PostCard.svelte
+│   │   │   ├── FormField.svelte
+│   │   │   └── ...
+│   │   ├── schemas/              # Zod validation schemas
+│   │   │   ├── post.ts
+│   │   │   └── ...
 │   │   ├── actions/              # Single-responsibility use cases
-│   │   │   ├── CreatePostAction.ts
-│   │   │   ├── RegisterUserAction.ts
-│   │   │   └── ...
 │   │   ├── controllers/          # Request handlers
-│   │   │   ├── AuthController.ts
-│   │   │   ├── PostController.ts
-│   │   │   └── ...
 │   │   ├── database/
 │   │   │   ├── migrations/       # Database schema changes
-│   │   │   │   ├── 20260325000001_create_users_table.ts
-│   │   │   │   └── ...
 │   │   │   └── seeders/          # Demo/test data
-│   │   │       ├── DatabaseSeeder.ts
-│   │   │       └── ...
 │   │   ├── dtos/                 # FormRequest validation classes
-│   │   │   ├── LoginRequest.ts
-│   │   │   ├── RegisterRequest.ts
-│   │   │   ├── CreatePostRequest.ts
-│   │   │   └── ...
-│   │   ├── jobs/                 # Background queue jobs
-│   │   │   ├── SendWelcomeEmail.ts
-│   │   │   └── ...
-│   │   ├── middleware/           # Custom middleware
-│   │   │   ├── AuthMiddleware.ts
-│   │   │   └── ...
-│   │   ├── models/               # ORM models
-│   │   │   ├── User.ts
-│   │   │   ├── Post.ts
-│   │   │   └── ...
-│   │   ├── plugins/              # Custom plugins
-│   │   │   ├── AnalyticsPlugin.ts
-│   │   │   └── ...
+│   │   ├── models/               # ORM models (User, Post, etc.)
+│   │   ├── services/             # Business logic layer
 │   │   ├── repositories/         # Data access layer
-│   │   │   ├── UserRepository.ts
-│   │   │   ├── PostRepository.ts
-│   │   │   └── ...
-│   │   ├── scheduler/            # Scheduled tasks
-│   │   │   └── tasks.ts
-│   │   └── services/             # Business logic layer
-│   │       ├── AuthService.ts
-│   │       ├── PostService.ts
-│   │       └── ...
+│   │   ├── middleware/           # Custom middleware
+│   │   ├── jobs/                 # Background queue jobs
+│   │   ├── plugins/              # Custom plugins
+│   │   └── scheduler/            # Scheduled tasks
 │   └── routes/                   # SvelteKit routes
-│       ├── +layout.svelte        # App layout
+│       ├── +layout.svelte        # App layout (uses svelar/ui, svelar/i18n)
 │       ├── +page.svelte          # Home page
+│       ├── +error.svelte         # Error page
 │       ├── api/                  # API endpoints
-│       │   ├── auth/
-│       │   │   ├── register/+server.ts
-│       │   │   ├── login/+server.ts
-│       │   │   ├── logout/+server.ts
-│       │   │   └── me/+server.ts
-│       │   ├── posts/
-│       │   │   ├── +server.ts    # GET /api/posts, POST /api/posts
-│       │   │   ├── [id]/+server.ts
-│       │   │   └── ...
-│       │   └── ...
 │       ├── dashboard/            # Protected pages
-│       │   └── +page.svelte
 │       ├── login/                # Auth pages
-│       │   └── +page.svelte
 │       ├── register/
-│       │   └── +page.svelte
-│       └── ...
+│       └── admin/
+├── messages/                     # i18n translation files
+│   ├── en.json
+│   └── pt.json
+├── project.inlang/               # Paraglide i18n config
 ├── package.json
 ├── svelte.config.js
 └── vite.config.ts
@@ -212,26 +193,41 @@ export { Connection, Hash };
 
 ## Middleware Pipeline
 
-Middleware runs before route handlers in `src/hooks.server.ts`:
+The simplest way to set up the middleware pipeline is `createSvelarApp`, which auto-wires origin validation, rate limiting, CSRF, sessions, auth, error handling, and optionally i18n:
+
+```typescript
+// src/hooks.server.ts
+import { createSvelarApp } from 'svelar/hooks';
+import { paraglideMiddleware } from '$lib/paraglide/server';
+import { getTextDirection } from '$lib/paraglide/runtime';
+import { auth } from './app.js';
+
+export const { handle, handleError } = createSvelarApp({
+  auth,
+  i18n: { paraglideMiddleware, getTextDirection },
+});
+```
+
+For full control, use `createSvelarHooks` to compose the pipeline manually:
 
 ```typescript
 import { createSvelarHooks } from 'svelar/hooks';
 import { SessionMiddleware, MemorySessionStore } from 'svelar/session';
 import { AuthenticateMiddleware } from 'svelar/auth';
-import { RateLimitMiddleware } from 'svelar/middleware';
+import { RateLimitMiddleware, CsrfMiddleware, OriginMiddleware } from 'svelar/middleware';
 import { auth } from './app.js';
-
-const sessionStore = new MemorySessionStore();
 
 export const handle = createSvelarHooks({
   middleware: [
+    new OriginMiddleware(),
+    new RateLimitMiddleware({ maxRequests: 100, windowMs: 60_000 }),
+    new CsrfMiddleware({ onlyPaths: ['/api/'] }),
     new SessionMiddleware({
-      store: sessionStore,
+      store: new MemorySessionStore(),
       secret: process.env.APP_KEY || 'change-me',
       lifetime: 60 * 60 * 24,
     }),
     new AuthenticateMiddleware(auth),
-    new RateLimitMiddleware({ maxRequests: 100, windowMs: 60_000 }),
   ],
   onError: (error, event) => {
     console.error('[Svelar Error]', error);

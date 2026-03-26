@@ -26,11 +26,7 @@ Repositories abstract data access and provide a clean interface to query models.
 
 ### Creating a Repository
 
-```bash
-npx svelar make:repository UserRepository
-```
-
-This creates `src/lib/repositories/UserRepository.ts`:
+Create `src/lib/repositories/UserRepository.ts`:
 
 ```typescript
 import { Repository } from 'svelar/repositories';
@@ -166,11 +162,7 @@ Services orchestrate multiple operations, coordinate repositories, emit events, 
 
 ### Creating a Service
 
-```bash
-npx svelar make:service AuthService
-```
-
-This creates `src/lib/services/AuthService.ts`:
+Create `src/lib/services/AuthService.ts`:
 
 ```typescript
 import { Service } from 'svelar/services';
@@ -330,11 +322,7 @@ Actions encapsulate single, well-defined use cases. Each action does one thing w
 
 ### Creating an Action
 
-```bash
-npx svelar make:action RegisterUserAction
-```
-
-This creates `src/lib/actions/RegisterUserAction.ts`:
+Create `src/lib/actions/RegisterUserAction.ts`:
 
 ```typescript
 import { Action } from 'svelar/actions';

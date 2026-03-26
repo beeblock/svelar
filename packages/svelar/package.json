@@ -10,9 +10,12 @@
   },
   "files": [
     "dist",
+    "src/ui",
+    "src/i18n",
     "LICENSE",
     "README.md"
   ],
+  "svelte": "./src/ui/index.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -129,6 +132,30 @@
     "./permissions": {
       "types": "./dist/permissions/index.d.ts",
       "import": "./dist/permissions/index.js"
+    },
+    "./ui": {
+      "types": "./src/ui/index.ts",
+      "svelte": "./src/ui/index.ts",
+      "import": "./src/ui/index.ts"
+    },
+    "./ui/*": {
+      "svelte": "./src/ui/*"
+    },
+    "./http": {
+      "types": "./dist/http/index.d.ts",
+      "import": "./dist/http/index.js"
+    },
+    "./i18n": {
+      "types": "./src/i18n/index.ts",
+      "svelte": "./src/i18n/index.ts",
+      "import": "./dist/i18n/index.js"
+    },
+    "./i18n/LanguageSwitcher.svelte": {
+      "svelte": "./src/i18n/LanguageSwitcher.svelte"
+    },
+    "./forms": {
+      "types": "./dist/forms/index.d.ts",
+      "import": "./dist/forms/index.js"
     }
   },
   "scripts": {
@@ -169,8 +196,5 @@
     "type": "git",
     "url": "https://github.com/alephtus/svelar.git"
   },
-  "homepage": "https://github.com/alephtus/svelar#readme",
-  "bugs": {
-    "url": "https://github.com/alephtus/svelar/issues"
-  }
+  "homepage": "https://github.com/alephtus/svelar#readme"
 }

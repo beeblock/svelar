@@ -14,13 +14,30 @@ export class MigrateCommand extends Command {
     { name: 'rollback', description: 'Rollback the last batch of migrations', type: 'boolean' as const },
     { name: 'reset', description: 'Reset all migrations', type: 'boolean' as const },
     { name: 'refresh', description: 'Reset and re-run all migrations', type: 'boolean' as const },
+    { name: 'fresh', description: 'Drop all tables and re-run all migrations', type: 'boolean' as const },
     { name: 'status', description: 'Show migration status', type: 'boolean' as const },
     { name: 'seed', description: 'Run seeders after migrating', type: 'boolean' as const },
+    { name: 'force', description: 'Force destructive operations in production', type: 'boolean' as const },
   ];
+
+  /** Destructive flags that require --force in production */
+  private destructiveFlags = ['reset', 'refresh', 'fresh'];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
     // Bootstrap the app (loads Connection.configure, Hash, etc.)
     await this.bootstrap();
+
+    // Check production safety for destructive operations
+    const activeDestructive = this.destructiveFlags.find((f) => flags[f]);
+    if (activeDestructive && this.isProduction() && !flags.force) {
+      this.error(
+        `The --${activeDestructive} flag is destructive and cannot be run in production.`
+      );
+      this.error(
+        `Use --force to run this command in production: npx svelar migrate --${activeDestructive} --force`
+      );
+      process.exit(1);
+    }
 
     // Dynamically import to avoid loading DB deps at CLI parse time
     const { Migrator } = await import('../../database/Migration.js');
@@ -56,6 +73,7 @@ export class MigrateCommand extends Command {
     }
 
     if (flags.reset) {
+      this.warnDestructive('reset');
       this.info('Resetting all migrations...');
       const reset = await migrator.reset(migrations);
       if (reset.length === 0) {
@@ -69,11 +87,29 @@ export class MigrateCommand extends Command {
     }
 
     if (flags.refresh) {
+      this.warnDestructive('refresh');
       this.info('Refreshing migrations...');
       const result = await migrator.refresh(migrations);
       for (const name of result.reset) {
         this.success(`Rolled back: ${name}`);
       }
+      for (const name of result.migrated) {
+        this.success(`Migrated: ${name}`);
+      }
+      return;
+    }
+
+    if (flags.fresh) {
+      this.warnDestructive('fresh');
+      this.info('Dropping all tables...');
+      const result = await migrator.fresh(migrations);
+      if (result.dropped.length > 0) {
+        for (const name of result.dropped) {
+          this.success(`Dropped table: ${name}`);
+        }
+      }
+      this.newLine();
+      this.info('Re-running all migrations...');
       for (const name of result.migrated) {
         this.success(`Migrated: ${name}`);
       }
@@ -90,6 +126,24 @@ export class MigrateCommand extends Command {
       for (const name of migrated) {
         this.success(`Migrated: ${name}`);
       }
+    }
+  }
+
+  /**
+   * Check if the current environment is production.
+   * Checks NODE_ENV and APP_ENV (Laravel convention).
+   */
+  private isProduction(): boolean {
+    const env = process.env.NODE_ENV || process.env.APP_ENV || 'development';
+    return env === 'production';
+  }
+
+  /**
+   * Print a warning when running a destructive command (even outside production).
+   */
+  private warnDestructive(flag: string): void {
+    if (this.isProduction()) {
+      this.warn(`Running --${flag} in PRODUCTION with --force.`);
     }
   }
 

@@ -8,11 +8,7 @@ FormRequest classes encapsulate validation logic and authorization checks. They'
 
 ### Creating a FormRequest
 
-```bash
-npx svelar make:request CreatePostRequest
-```
-
-This creates `src/lib/dtos/CreatePostRequest.ts`:
+Create `src/lib/dtos/CreatePostRequest.ts` manually:
 
 ```typescript
 import { FormRequest } from 'svelar/routing';
@@ -349,30 +345,72 @@ z.object({
 
 ## Inline Validation in Controllers
 
-For simple cases, you can validate directly in the controller:
+For simple cases, you can validate directly in the controller using the `validate` helper:
 
 ```typescript
-import { validate } from 'svelar/validation';
-import { z } from 'svelar/validation';
+import { validate, z } from 'svelar/validation';
 
 export class PostController extends Controller {
   async store(event: any) {
     const body = await event.request.json();
 
-    // Inline validation
-    try {
-      const data = await validate(body, z.object({
-        title: z.string().min(3),
-        body: z.string().min(10),
-      }));
+    const schema = z.object({
+      title: z.string().min(3),
+      body: z.string().min(10),
+    });
 
-      return this.created(await Post.create(data));
-    } catch (error: any) {
-      return this.json(error.errors, 422);
+    const result = validate(schema, body);
+
+    if (!result.success) {
+      return this.json({ errors: result.errors }, 422);
     }
+
+    return this.created(await Post.create(result.data));
   }
 }
 ```
+
+> **Note**: `validate(schema, data)` is synchronous and returns `{ success: true, data }` or `{ success: false, errors }`. The `errors` object has field names as keys and arrays of error messages as values.
+
+## Laravel-like Validation Rules
+
+Svelar provides a `rules` helper with named validators that map to common Laravel validation rules. These are convenience wrappers around Zod:
+
+```typescript
+import { rules, z } from 'svelar/validation';
+
+const schema = z.object({
+  name:     rules.required(),                     // z.string().min(1)
+  email:    rules.email(),                        // z.string().email()
+  age:      rules.integer(),                      // z.number().int()
+  bio:      rules.string(10, 500),                // z.string().min(10).max(500)
+  score:    rules.number(0, 100),                 // z.number().min(0).max(100)
+  price:    rules.between(1, 999),                // z.number().min(1).max(999)
+  active:   rules.boolean(),                      // z.boolean()
+  birthday: rules.date(),                         // z.coerce.date()
+  website:  rules.url(),                          // z.string().url()
+  token:    rules.uuid(),                         // z.string().uuid()
+  role:     rules.enum(['admin', 'user']),         // z.enum(['admin', 'user'])
+  tags:     rules.array(z.string()),              // z.array(z.string())
+  phone:    rules.nullable(z.string()),           // z.string().nullable()
+  nickname: rules.optional(z.string()),           // z.string().optional()
+  slug:     rules.regex(/^[a-z0-9-]+$/),          // z.string().regex(...)
+  ip:       rules.ip(),                           // IPv4 validation
+  config:   rules.json(),                         // valid JSON string
+  min_age:  rules.min(18),                        // z.number().min(18)
+  max_size: rules.max(1024),                      // z.number().max(1024)
+});
+```
+
+### Password Confirmation
+
+```typescript
+// Validates that password and password_confirmation match
+const passwordSchema = rules.confirmed('password');
+// Equivalent to z.object({ password, password_confirmation }).refine(match)
+```
+
+The `rules` helper is entirely optional — you can always use Zod directly. It's provided for developers familiar with Laravel's named validation rules.
 
 ## Validation Error Responses
 

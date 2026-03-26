@@ -1,10 +1,10 @@
 <script lang="ts">
   import '../app.css';
-  import { Button } from '$lib/components/ui';
-  import { Avatar, AvatarImage, AvatarFallback } from '$lib/components/ui';
-  import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
+  import { Button, Avatar, AvatarImage, AvatarFallback } from 'svelar/ui';
+  import LanguageSwitcher from 'svelar/i18n/LanguageSwitcher.svelte';
+  import { page } from '$app/state';
   import * as m from '$lib/paraglide/messages';
-  import { localizeHref } from '$lib/paraglide/runtime';
+  import { locales, getLocale, localizeHref } from '$lib/paraglide/runtime';
 
   let { data, children } = $props();
 </script>
@@ -39,7 +39,7 @@
       </div>
 
       <div class="flex items-center gap-4">
-        <LanguageSwitcher />
+        <LanguageSwitcher {locales} {getLocale} {localizeHref} pathname={page.url.pathname} labels={{ en: 'EN', pt: 'PT' }} />
         {#if data.user}
           <div class="flex items-center gap-3">
             <div class="text-right hidden sm:block">

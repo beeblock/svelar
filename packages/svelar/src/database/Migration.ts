@@ -144,6 +144,74 @@ export class Migrator {
   }
 
   /**
+   * Fresh: drop ALL tables then re-run all migrations.
+   * Unlike refresh (which calls each migration's down() method),
+   * fresh simply drops every table in the database and starts clean.
+   */
+  async fresh(migrations: MigrationFile[]): Promise<{ dropped: string[]; migrated: string[] }> {
+    const dropped = await this.dropAllTables();
+    const migrated = await this.run(migrations);
+    return { dropped, migrated };
+  }
+
+  /**
+   * Drop all tables in the database.
+   * Returns the list of dropped table names.
+   */
+  async dropAllTables(): Promise<string[]> {
+    const driver = Connection.getDriver(this.connectionName);
+    let tables: string[] = [];
+
+    switch (driver) {
+      case 'sqlite': {
+        const rows = await Connection.raw(
+          `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`,
+          [],
+          this.connectionName
+        );
+        tables = rows.map((r: any) => r.name);
+        // Disable foreign key checks for clean drop
+        await Connection.raw('PRAGMA foreign_keys = OFF', [], this.connectionName);
+        for (const table of tables) {
+          await Connection.raw(`DROP TABLE IF EXISTS "${table}"`, [], this.connectionName);
+        }
+        await Connection.raw('PRAGMA foreign_keys = ON', [], this.connectionName);
+        break;
+      }
+      case 'mysql': {
+        const rows = await Connection.raw(
+          `SHOW TABLES`,
+          [],
+          this.connectionName
+        );
+        tables = rows.map((r: any) => Object.values(r)[0] as string);
+        await Connection.raw('SET FOREIGN_KEY_CHECKS = 0', [], this.connectionName);
+        for (const table of tables) {
+          await Connection.raw(`DROP TABLE IF EXISTS \`${table}\``, [], this.connectionName);
+        }
+        await Connection.raw('SET FOREIGN_KEY_CHECKS = 1', [], this.connectionName);
+        break;
+      }
+      case 'postgres': {
+        const rows = await Connection.raw(
+          `SELECT tablename FROM pg_tables WHERE schemaname = 'public'`,
+          [],
+          this.connectionName
+        );
+        tables = rows.map((r: any) => r.tablename);
+        for (const table of tables) {
+          await Connection.raw(`DROP TABLE IF EXISTS "${table}" CASCADE`, [], this.connectionName);
+        }
+        break;
+      }
+      default:
+        throw new Error(`Unsupported driver for fresh: ${driver}`);
+    }
+
+    return tables;
+  }
+
+  /**
    * Get list of already-ran migration names
    */
   async getRanMigrations(): Promise<string[]> {
