@@ -327,15 +327,14 @@ export class CsrfMiddleware extends Middleware {
     const response = await next();
     if (!(response instanceof Response)) return response;
 
-    // Only set token if no cookie exists yet
+    // Always (re-)set the cookie without HttpOnly so client JS can read it.
+    // This also repairs cookies previously set with the invalid `HttpOnly=false` attribute.
     const existing = this.getCookieToken(ctx.event);
-    if (!existing) {
-      const token = this.generateToken();
-      response.headers.append(
-        'Set-Cookie',
-        `${this.cookieName}=${token}; Path=/; SameSite=Lax; HttpOnly=false`
-      );
-    }
+    const token = existing || this.generateToken();
+    response.headers.append(
+      'Set-Cookie',
+      `${this.cookieName}=${token}; Path=/; SameSite=Lax`
+    );
     return response;
   }
 
