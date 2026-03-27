@@ -105,6 +105,10 @@
       "types": "./dist/broadcasting/index.d.ts",
       "import": "./dist/broadcasting/index.js"
     },
+    "./broadcasting/client": {
+      "types": "./dist/broadcasting/client.d.ts",
+      "import": "./dist/broadcasting/client.js"
+    },
     "./config": {
       "types": "./dist/config/index.d.ts",
       "import": "./dist/config/index.js"
@@ -133,6 +137,10 @@
       "types": "./dist/permissions/index.d.ts",
       "import": "./dist/permissions/index.js"
     },
+    "./support": {
+      "types": "./dist/support/index.d.ts",
+      "import": "./dist/support/index.js"
+    },
     "./ui": {
       "types": "./src/ui/index.ts",
       "svelte": "./src/ui/index.ts",
@@ -156,6 +164,14 @@
     "./forms": {
       "types": "./dist/forms/index.d.ts",
       "import": "./dist/forms/index.js"
+    },
+    "./pdf": {
+      "types": "./dist/pdf/index.d.ts",
+      "import": "./dist/pdf/index.js"
+    },
+    "./pdf/GeneratePdfJob": {
+      "types": "./dist/pdf/GeneratePdfJob.d.ts",
+      "import": "./dist/pdf/GeneratePdfJob.js"
     }
   },
   "scripts": {
@@ -181,13 +197,17 @@
   "peerDependencies": {
     "@sveltejs/kit": "^2.0.0",
     "better-sqlite3": "*",
+    "bullmq": ">=5.0.0",
     "mysql2": "*",
-    "postgres": "*"
+    "postgres": "*",
+    "pusher-js": ">=8.0.0"
   },
   "peerDependenciesMeta": {
     "better-sqlite3": { "optional": true },
+    "bullmq": { "optional": true },
     "mysql2": { "optional": true },
-    "postgres": { "optional": true }
+    "postgres": { "optional": true },
+    "pusher-js": { "optional": true }
   },
   "keywords": ["svelte", "sveltekit", "laravel", "orm", "framework", "drizzle", "middleware", "auth", "session", "cache", "queue", "mail"],
   "license": "MIT",

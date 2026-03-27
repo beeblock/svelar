@@ -192,6 +192,14 @@ export class TableBuilder {
     return this.addColumn(name, 'UUID');
   }
 
+  ulid(name: string = 'id'): ColumnBuilder {
+    return this.addColumn(name, 'ULID');
+  }
+
+  jsonb(name: string): ColumnBuilder {
+    return this.addColumn(name, 'JSONB');
+  }
+
   // ── Constraints ──
 
   primary(columns: string[]): void {
@@ -307,9 +315,9 @@ export class TableBuilder {
 
   private mapSQLiteType(type: string, col: ColumnDefinition): string {
     if (type === 'BOOLEAN') return 'INTEGER';
-    if (type === 'UUID') return 'TEXT';
+    if (type === 'UUID' || type === 'ULID') return 'TEXT';
     if (type.startsWith('ENUM')) return 'TEXT';
-    if (type === 'JSON') return 'TEXT';
+    if (type === 'JSON' || type === 'JSONB') return 'TEXT';
     if (type === 'BIGINT' && col.autoIncrement) return 'INTEGER';
     return type;
   }
@@ -321,13 +329,17 @@ export class TableBuilder {
     if (type === 'BLOB') return 'BYTEA';
     if (type.startsWith('ENUM')) return 'TEXT'; // Use CHECK constraint or create custom type
     if (type === 'UUID') return 'UUID';
+    if (type === 'ULID') return 'VARCHAR(26)';
     if (type === 'JSON') return 'JSONB';
+    if (type === 'JSONB') return 'JSONB';
     return type;
   }
 
   private mapMySQLType(type: string, col: ColumnDefinition): string {
     if (type === 'BOOLEAN') return 'TINYINT(1)';
     if (type === 'UUID') return 'CHAR(36)';
+    if (type === 'ULID') return 'CHAR(26)';
+    if (type === 'JSONB') return 'JSON'; // MySQL has no JSONB, uses JSON
     if (type === 'TIMESTAMP') return 'DATETIME';
     if (col.unsigned && !type.startsWith('DECIMAL')) return `${type} UNSIGNED`;
     return type;

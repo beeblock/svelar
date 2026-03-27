@@ -8,10 +8,12 @@ A queue allows you to defer time-consuming tasks to be processed later. Instead 
 
 Use cases:
 - Sending emails
+- Generating PDFs
 - Processing images
 - Generating reports
 - Expensive computations
 - API calls to external services
+- Webhook delivery
 
 ## Jobs
 
@@ -19,7 +21,11 @@ Jobs are classes that define work to be done.
 
 ### Creating a Job
 
-Create `src/lib/jobs/SendWelcomeEmail.ts`:
+```bash
+npx svelar make:job SendWelcomeEmail
+```
+
+This creates `src/lib/jobs/SendWelcomeEmail.ts`:
 
 ```typescript
 import { Job } from 'svelar/queue';
@@ -48,22 +54,22 @@ export class SendWelcomeEmail extends Job {
 }
 ```
 
-## Job Methods
+## Job Properties & Methods
 
 ### handle()
 
-The main method that executes the job:
+The main method that executes the job. This is where your logic goes:
 
 ```typescript
 async handle(): Promise<void> {
-  // Do work here
-  console.log(`Processing job: ${this.userId}`);
+  const user = await User.findOrFail(this.userId);
+  await Mailer.send({ to: user.email, template: 'welcome' });
 }
 ```
 
-### failed()
+### failed(error)
 
-Called when the job fails after all retry attempts:
+Called when the job fails permanently (after all retry attempts exhausted):
 
 ```typescript
 failed(error: Error): void {
@@ -72,17 +78,23 @@ failed(error: Error): void {
 }
 ```
 
+### retrying(attempt)
+
+Called before each retry attempt:
+
+```typescript
+retrying(attempt: number): void {
+  console.log(`Retrying, attempt ${attempt} of ${this.maxAttempts}`);
+}
+```
+
 ### maxAttempts
 
-Maximum number of retry attempts (default: 1):
+Maximum number of retry attempts (default: 3):
 
 ```typescript
 export class ProcessImage extends Job {
   maxAttempts = 5;  // Retry up to 5 times
-
-  async handle(): Promise<void> {
-    // Process image
-  }
 }
 ```
 
@@ -94,18 +106,53 @@ Delay in seconds between retry attempts (default: 60):
 export class ProcessImage extends Job {
   maxAttempts = 3;
   retryDelay = 120;  // Wait 2 minutes between retries
+}
+```
 
-  async handle(): Promise<void> {
-    // Process image
+### queue
+
+Which named queue this job should be dispatched to (default: `'default'`):
+
+```typescript
+export class SendUrgentAlert extends Job {
+  queue = 'urgent';  // Will be processed by workers listening on the 'urgent' queue
+}
+```
+
+### serialize() / restore()
+
+Override these for custom serialization when your job carries complex data:
+
+```typescript
+export class ProcessOrder extends Job {
+  private items: OrderItem[];
+  private metadata: Map<string, any>;
+
+  constructor(items: OrderItem[], metadata: Map<string, any>) {
+    super();
+    this.items = items;
+    this.metadata = metadata;
+  }
+
+  serialize(): string {
+    return JSON.stringify({
+      items: this.items,
+      metadata: Object.fromEntries(this.metadata),
+    });
+  }
+
+  restore(data: Record<string, any>): void {
+    this.items = data.items;
+    this.metadata = new Map(Object.entries(data.metadata));
   }
 }
 ```
 
 ## Dispatching Jobs
 
-### To the Queue
+You can dispatch jobs from **anywhere** in your application — controllers, services, model hooks, middleware, other jobs, CLI commands, or scheduled tasks.
 
-Dispatch a job to the queue:
+### Basic Dispatch
 
 ```typescript
 import { Queue } from 'svelar/queue';
@@ -116,30 +163,165 @@ export class AuthController extends Controller {
   async register(event: any) {
     const user = await User.create(data);
 
-    // Dispatch job to queue
-    Queue.dispatch(new SendWelcomeEmail(user.id, user.email));
+    // Dispatch to queue — returns immediately
+    await Queue.dispatch(new SendWelcomeEmail(user.id, user.email));
 
     return this.created({ user });
   }
 }
 ```
 
+### Dispatch from a Service
+
+```typescript
+import { Queue } from 'svelar/queue';
+import { GenerateInvoicePdf } from '../jobs/GenerateInvoicePdf.js';
+
+export class OrderService extends Service {
+  async completeOrder(orderId: number) {
+    const order = await Order.findOrFail(orderId);
+    order.status = 'completed';
+    await order.save();
+
+    // Dispatch PDF generation in the background
+    await Queue.dispatch(new GenerateInvoicePdf(order.id));
+  }
+}
+```
+
+### Dispatch from Model Hooks
+
+```typescript
+import { Model } from 'svelar/orm';
+import { Queue } from 'svelar/queue';
+import { SendWelcomeEmail } from '../jobs/SendWelcomeEmail.js';
+
+export class User extends Model {
+  static boot() {
+    this.created(async (user) => {
+      // Automatically send welcome email when a user is created
+      await Queue.dispatch(new SendWelcomeEmail(user.id, user.email));
+    });
+  }
+}
+```
+
+### Dispatch from Other Jobs
+
+```typescript
+export class ProcessOrder extends Job {
+  async handle(): Promise<void> {
+    const order = await Order.findOrFail(this.orderId);
+
+    await this.chargePayment(order);
+
+    // Dispatch follow-up jobs
+    await Queue.dispatch(new SendReceipt(order.id, order.email));
+    await Queue.dispatch(new UpdateInventory(order.id));
+    await Queue.dispatch(new NotifyWarehouse(order.id));
+  }
+}
+```
+
+### Dispatch from Scheduled Tasks
+
+```typescript
+import { ScheduledTask } from 'svelar/scheduler';
+import { Queue } from 'svelar/queue';
+import { GenerateMonthlyReport } from '../jobs/GenerateMonthlyReport.js';
+
+export class MonthlyReportTask extends ScheduledTask {
+  schedule() {
+    return this.cron('0 0 1 * *'); // First day of each month
+  }
+
+  async handle(): Promise<void> {
+    const month = new Date().toISOString().slice(0, 7);
+    await Queue.dispatch(new GenerateMonthlyReport(month));
+  }
+}
+```
+
 ### Delayed Dispatch
 
-Delay job execution:
+Delay job execution by a number of seconds:
 
 ```typescript
 // Dispatch in 5 minutes
-Queue.dispatch(new SendWelcomeEmail(user.id, user.email), {
-  delay: 5 * 60,  // seconds
+await Queue.dispatch(new SendWelcomeEmail(user.id, user.email), {
+  delay: 5 * 60,
 });
 
-// Dispatch at specific time
+// Dispatch at a specific time
 const tomorrow = new Date();
 tomorrow.setDate(tomorrow.getDate() + 1);
-Queue.dispatch(new SendWelcomeEmail(user.id, user.email), {
+await Queue.dispatch(new SendWelcomeEmail(user.id, user.email), {
   delay: Math.floor((tomorrow.getTime() - Date.now()) / 1000),
 });
+```
+
+### Dispatch Options
+
+```typescript
+await Queue.dispatch(new SendWelcomeEmail(user.id, user.email), {
+  queue: 'emails',      // Send to a specific named queue
+  delay: 60,            // Wait 60 seconds before processing
+  maxAttempts: 5,       // Override job's maxAttempts
+});
+```
+
+## Synchronous Dispatch
+
+Use `dispatchSync()` to run a job immediately in the current process, **bypassing the configured queue driver entirely**. The method returns a promise that resolves when the job completes.
+
+```typescript
+// Runs immediately, blocks until done
+await Queue.dispatchSync(new GenerateInvoicePdf(order.id));
+
+// Useful when you need the result before responding
+export class OrderController extends Controller {
+  async invoice(event: any) {
+    const order = await Order.findOrFail(event.params.id);
+
+    // Must complete before we send the response
+    await Queue.dispatchSync(new GenerateInvoicePdf(order.id));
+
+    return this.ok({ message: 'Invoice generated' });
+  }
+}
+```
+
+This is also useful for testing — you can run jobs synchronously without needing a worker:
+
+```typescript
+// In tests
+await Queue.dispatchSync(new SendWelcomeEmail(user.id, user.email));
+// Job has already completed at this point
+```
+
+The sync driver still respects `maxAttempts` — if the job throws, it retries up to `maxAttempts` times before calling `failed()`.
+
+## Job Chaining
+
+Chain multiple jobs to run in sequence. If any job in the chain fails (after exhausting its own retries), the chain stops and remaining jobs are skipped:
+
+```typescript
+await Queue.chain([
+  new ProcessPayment(orderId),
+  new SendReceipt(orderId),
+  new UpdateInventory(orderId),
+  new NotifyWarehouse(orderId),
+]);
+```
+
+Each job runs with its own `maxAttempts` and `retryDelay`. The chain only moves to the next job after the current one succeeds.
+
+```typescript
+// Chain with dispatch options
+await Queue.chain([
+  new ProcessPayment(orderId),
+  new SendReceipt(orderId),
+], { queue: 'orders' });
 ```
 
 ## Queue Configuration
@@ -157,20 +339,64 @@ Queue.configure({
     },
     database: {
       driver: 'database',
-      table: 'jobs',
+      table: 'svelar_jobs',
     },
     sync: {
-      driver: 'sync',  // Run immediately (no queueing)
+      driver: 'sync',
     },
   },
 });
 ```
 
+### Registering Jobs
+
+When using the **database driver**, you must register your job classes so the worker can reconstruct them from their serialized payloads:
+
+```typescript
+import { Queue } from 'svelar/queue';
+import { SendWelcomeEmail } from './lib/jobs/SendWelcomeEmail.js';
+import { ProcessImage } from './lib/jobs/ProcessImage.js';
+import { GenerateReport } from './lib/jobs/GenerateReport.js';
+
+// Register all job classes
+Queue.registerAll([
+  SendWelcomeEmail,
+  ProcessImage,
+  GenerateReport,
+]);
+
+// Or register one at a time
+Queue.register(SendWelcomeEmail);
+```
+
+This step is **not needed** for the `sync` or `memory` drivers (they keep the original job instance in-process), but it's recommended to always register your jobs so you can switch drivers without code changes.
+
 ### Queue Drivers
+
+#### Sync Driver
+
+Jobs run immediately when dispatched — no background processing. This is the **default** driver and is useful for development and testing:
+
+```typescript
+Queue.configure({
+  default: 'sync',
+  connections: {
+    sync: {
+      driver: 'sync',
+    },
+  },
+});
+
+// Jobs execute immediately when dispatched
+await Queue.dispatch(new SendWelcomeEmail(user.id, user.email));
+// By this line, the email has already been sent
+```
+
+> **Note**: `dispatchSync()` always runs the job synchronously regardless of the configured driver. The sync *driver* makes `dispatch()` also run synchronously.
 
 #### Memory Driver (Development)
 
-Jobs are stored in memory and lost on restart:
+Jobs are stored in-process and processed by a worker. Jobs are lost if the process restarts:
 
 ```typescript
 Queue.configure({
@@ -185,7 +411,7 @@ Queue.configure({
 
 #### Database Driver (Production)
 
-Jobs are persisted to the database:
+Jobs are persisted to a database table and survive process restarts. This is the recommended driver for production:
 
 ```typescript
 Queue.configure({
@@ -193,82 +419,150 @@ Queue.configure({
   connections: {
     database: {
       driver: 'database',
-      table: 'jobs',  // Table to store jobs
+      table: 'svelar_jobs',  // Default table name
     },
   },
 });
 ```
 
-Create the jobs table:
+Create the jobs table migration:
 
 ```typescript
 import { Migration } from 'svelar/database';
 
-export default class CreateJobsTable extends Migration {
+export default class CreateSvelarJobsTable extends Migration {
   async up() {
-    await this.schema.createTable('jobs', (table) => {
-      table.increments('id');
+    await this.schema.createTable('svelar_jobs', (table) => {
+      table.string('id', 36).primary();
       table.string('queue').default('default');
       table.text('payload');
       table.integer('attempts').default(0);
       table.integer('max_attempts').default(3);
-      table.integer('delay').default(0);
-      table.dateTime('available_at');
-      table.dateTime('reserved_at').nullable();
-      table.dateTime('failed_at').nullable();
-      table.text('exception').nullable();
-      table.timestamps();
+      table.integer('available_at');
+      table.integer('reserved_at').nullable();
+      table.integer('created_at');
     });
+
+    await this.schema.createTable('svelar_jobs', (t) => {});
   }
 
   async down() {
-    await this.schema.dropTable('jobs');
+    await this.schema.dropTable('svelar_jobs');
   }
 }
 ```
 
-#### Sync Driver
+> **Important**: Remember to call `Queue.registerAll([...])` with all your job classes when using the database driver. Without this, the worker can't reconstruct jobs from the database.
 
-Run jobs immediately synchronously:
+#### Redis Driver (Production — BullMQ)
+
+The Redis driver uses [BullMQ](https://docs.bullmq.io/) for production-grade queues with priorities, rate limiting, automatic retries, delays, and dashboard support. This is the recommended driver for production when you need high throughput and reliability.
+
+```bash
+npm install bullmq
+```
 
 ```typescript
 Queue.configure({
-  default: 'sync',
+  default: 'redis',
   connections: {
-    sync: {
-      driver: 'sync',
+    redis: {
+      driver: 'redis',
+      host: process.env.REDIS_HOST ?? 'localhost',
+      port: Number(process.env.REDIS_PORT ?? 6379),
+      password: process.env.REDIS_PASSWORD ?? '',
+      db: 0,
+      prefix: 'svelar',
+      defaultJobOptions: {
+        removeOnComplete: 100,  // Keep last 100 completed jobs
+        removeOnFail: 500,      // Keep last 500 failed jobs
+      },
     },
   },
 });
-
-// Jobs execute immediately
-Queue.dispatch(new SendWelcomeEmail(user.id, user.email));
-// Blocks until complete
 ```
+
+You can also connect using a Redis URL:
+
+```typescript
+redis: {
+  driver: 'redis',
+  url: process.env.REDIS_URL ?? 'redis://localhost:6379',
+  prefix: 'svelar',
+}
+```
+
+The Redis driver differs from other drivers in one key way: when you call `Queue.work()`, it starts a native BullMQ Worker instead of polling. BullMQ Workers are event-driven and handle concurrency, retries, and backoff natively — no sleep interval needed.
+
+```typescript
+// Start a worker with concurrency
+await Queue.work({
+  queue: 'default',
+  concurrency: 5,  // Process 5 jobs in parallel
+});
+```
+
+The worker blocks until `Queue.stop()` is called. In Docker, PM2 manages the lifecycle automatically (see `npx svelar make:docker`).
+
+> **Docker Compose**: Redis is included by default when you run `npx svelar make:docker`. The app service gets `QUEUE_DRIVER=redis` and `REDIS_HOST=redis` automatically.
+
+> **Important**: Like the database driver, you must register job classes with `Queue.registerAll([...])` so the worker can reconstruct jobs from Redis payloads.
 
 ## Running the Worker
 
-> **Note**: The `queue:work` CLI command is not yet implemented. For now, you can process queued jobs programmatically from a custom script or Node process.
+Process queued jobs with the worker:
+
+```bash
+npx svelar queue:work
+```
+
+The worker pulls jobs from the queue, executes `handle()`, retries on failure up to `maxAttempts`, deletes completed jobs, and calls `failed()` when all retries are exhausted.
+
+### Worker Options
+
+```bash
+# Process a specific queue
+npx svelar queue:work --queue=urgent
+
+# Stop after processing 100 jobs
+npx svelar queue:work --max-jobs=100
+
+# Stop after 1 hour
+npx svelar queue:work --max-time=3600
+
+# Adjust polling interval (ms)
+npx svelar queue:work --sleep=2000
+
+# Process a single job and exit
+npx svelar queue:work --once
+```
 
 ### Programmatic Usage
+
+You can also run the worker from code:
 
 ```typescript
 import { Queue } from 'svelar/queue';
 
-const queue = new Queue();
-
-// Process the next job
-await queue.processNext();
-
-// Run a worker loop
-await queue.work({
-  queues: ['default', 'urgent'],
+// Process up to 100 jobs from the 'emails' queue
+const processed = await Queue.work({
+  queue: 'emails',
   maxJobs: 100,
-  sleepMs: 1000,
 });
+
+console.log(`Processed ${processed} jobs`);
 ```
 
-The worker pulls jobs from the queue, executes the `handle()` method, retries failed jobs up to `maxAttempts`, and calls `failed()` if all attempts fail.
+### Queue Size and Cleanup
+
+```typescript
+// Check how many jobs are pending
+const pending = await Queue.size('default');
+console.log(`${pending} jobs waiting`);
+
+// Clear all jobs from a queue
+await Queue.clear('default');
+```
 
 ## Job Examples
 
@@ -296,7 +590,37 @@ export class SendWelcomeEmail extends Job {
 
   failed(error: Error): void {
     console.error(`Failed to send welcome email to ${this.email}:`, error);
-    // Send alert to admin
+  }
+}
+```
+
+### Generate PDF Job
+
+```typescript
+import { Job } from 'svelar/queue';
+
+export class GenerateInvoicePdf extends Job {
+  maxAttempts = 2;
+  retryDelay = 30;
+
+  constructor(private orderId: number) {
+    super();
+  }
+
+  async handle(): Promise<void> {
+    const order = await Order.with('items', 'user').findOrFail(this.orderId);
+
+    // Generate PDF using your preferred library
+    const pdf = await generatePdf({
+      template: 'invoice',
+      data: { order, items: order.items, user: order.user },
+    });
+
+    await Storage.disk('local').put(`invoices/${order.id}.pdf`, pdf);
+  }
+
+  failed(error: Error): void {
+    console.error(`Failed to generate invoice for order #${this.orderId}:`, error);
   }
 }
 ```
@@ -318,18 +642,14 @@ export class ProcessImageJob extends Job {
 
   async handle(): Promise<void> {
     const storage = Storage.disk('local');
-    const imagePath = this.imagePath;
+    const imageBuffer = await storage.get(this.imagePath);
 
-    // Generate thumbnail
-    const imageBuffer = await storage.get(imagePath);
     const thumbnail = await sharp(imageBuffer)
       .resize(200, 200, { fit: 'cover' })
       .toBuffer();
 
-    const thumbnailPath = imagePath.replace(/\.(jpg|png)$/, '_thumb.$1');
+    const thumbnailPath = this.imagePath.replace(/\.(jpg|png)$/, '_thumb.$1');
     await storage.put(thumbnailPath, thumbnail);
-
-    console.log(`Generated thumbnail: ${thumbnailPath}`);
   }
 
   failed(error: Error): void {
@@ -338,50 +658,7 @@ export class ProcessImageJob extends Job {
 }
 ```
 
-### Generate Report Job
-
-```typescript
-import { Job } from 'svelar/queue';
-import { User } from '../models/User.js';
-import { Post } from '../models/Post.js';
-import { Mailer } from 'svelar/mail';
-
-export class GenerateMonthlyReportJob extends Job {
-  maxAttempts = 1;
-
-  constructor(private month: string, private adminEmail: string) {
-    super();
-  }
-
-  async handle(): Promise<void> {
-    const userCount = await User.count();
-    const postCount = await Post.count();
-
-    const [year, monthNum] = this.month.split('-');
-    const date = new Date(parseInt(year), parseInt(monthNum) - 1);
-
-    const report = `
-      <h2>Monthly Report - ${date.toLocaleString('default', { month: 'long', year: 'numeric' })}</h2>
-      <ul>
-        <li>Total Users: ${userCount}</li>
-        <li>Total Posts: ${postCount}</li>
-      </ul>
-    `;
-
-    await Mailer.send({
-      to: this.adminEmail,
-      subject: `Monthly Report - ${this.month}`,
-      html: report,
-    });
-  }
-
-  failed(error: Error): void {
-    console.error(`Failed to generate report for ${this.month}:`, error);
-  }
-}
-```
-
-### Webhook Job
+### Webhook Delivery Job
 
 ```typescript
 import { Job } from 'svelar/queue';
@@ -420,94 +697,76 @@ export class TriggerWebhookJob extends Job {
 }
 ```
 
-## From svelar-example
+## Complete Setup Example
 
-Here's the SendWelcomeEmail job from the example app:
-
-```typescript
-// src/lib/jobs/SendWelcomeEmail.ts
-import { Job } from 'svelar/queue';
-
-/**
- * Example queued job — sends a welcome email after registration.
- * Demonstrates the job/queue system.
- */
-export class SendWelcomeEmail extends Job {
-  maxAttempts = 3;
-  retryDelay = 30;
-
-  constructor(private userId: number, private email: string) {
-    super();
-  }
-
-  async handle(): Promise<void> {
-    console.log(`[Job] Sending welcome email to ${this.email} (user #${this.userId})`);
-    // In production:
-    // const { Mailer } = await import('svelar/mail');
-    // await Mailer.send({
-    //   to: this.email,
-    //   subject: 'Welcome to Svelar!',
-    //   html: '<h1>Welcome!</h1><p>Thanks for signing up.</p>',
-    // });
-  }
-
-  failed(error: Error): void {
-    console.error(`[Job] Failed to send welcome email to ${this.email}:`, error.message);
-  }
-}
-```
-
-Usage:
+Here's a full production setup in `src/app.ts`:
 
 ```typescript
 import { Queue } from 'svelar/queue';
-import { SendWelcomeEmail } from '../jobs/SendWelcomeEmail.js';
+import { SendWelcomeEmail } from './lib/jobs/SendWelcomeEmail.js';
+import { ProcessImageJob } from './lib/jobs/ProcessImageJob.js';
+import { GenerateInvoicePdf } from './lib/jobs/GenerateInvoicePdf.js';
+import { TriggerWebhookJob } from './lib/jobs/TriggerWebhookJob.js';
 
-// In AuthService
-const user = await userRepo.create(data);
-Queue.dispatch(new SendWelcomeEmail(user.id, user.email));
+// Configure the queue driver
+Queue.configure({
+  default: process.env.QUEUE_DRIVER ?? 'sync',
+  connections: {
+    sync: { driver: 'sync' },
+    memory: { driver: 'memory' },
+    database: {
+      driver: 'database',
+      table: 'svelar_jobs',
+    },
+    redis: {
+      driver: 'redis',
+      host: process.env.REDIS_HOST ?? 'localhost',
+      port: Number(process.env.REDIS_PORT ?? 6379),
+      password: process.env.REDIS_PASSWORD ?? '',
+      prefix: 'svelar',
+    },
+  },
+});
+
+// Register all jobs (required for database driver)
+Queue.registerAll([
+  SendWelcomeEmail,
+  ProcessImageJob,
+  GenerateInvoicePdf,
+  TriggerWebhookJob,
+]);
 ```
 
 ## Best Practices
 
-1. **Use jobs for slow operations** - Email, API calls, file processing
-2. **Set reasonable retry limits** - Usually 3-5 retries
-3. **Handle failures gracefully** - Implement the `failed()` method
-4. **Use database driver in production** - Memory queue is lost on restart
-5. **Monitor your queue** - Check failed jobs regularly
-6. **Keep jobs simple** - Complex logic belongs in services
-7. **Pass only needed data** - Don't pass entire models, pass IDs
-8. **Test jobs** - Unit test job logic independently
-9. **Log job execution** - Track which jobs ran and when
-10. **Clean up old jobs** - Archive or delete completed jobs regularly
+1. **Use jobs for slow operations** - Email, PDF generation, API calls, file processing
+2. **Set reasonable retry limits** - Usually 3-5 retries for network operations
+3. **Handle failures gracefully** - Always implement `failed()` to log or alert
+4. **Use redis or database driver in production** - Memory queue is lost on restart. Redis (BullMQ) is recommended for high-throughput apps
+5. **Register all job classes** - Even if not using database driver yet (makes switching easy)
+6. **Monitor your queue** - Check failed jobs and queue size regularly
+7. **Keep jobs focused** - One job, one responsibility. Complex logic belongs in services
+8. **Pass IDs, not objects** - Don't serialize entire models, pass IDs and fetch fresh data in `handle()`
+9. **Use `dispatchSync()` in tests** - No worker needed, jobs complete immediately
+10. **Chain related jobs** - Use `Queue.chain()` instead of dispatching from inside `handle()`
 
 ## Production Setup
 
-In production, use a process manager to keep the worker running:
+In production, use a process manager to keep the worker running. [PM2](https://pm2.keymetrics.io/) is a Node.js process manager that keeps your services alive, auto-restarts on crash, and handles log rotation:
 
 ```bash
-# Using PM2 with a custom worker script
-pm2 start scripts/queue-worker.js --name queue-worker --watch
+# Install PM2 globally
+npm install -g pm2
 
-# Restart on reboot
+# Start the queue worker as a managed background process
+pm2 start "npx svelar queue:work" --name queue-worker
+
+# Run multiple workers for higher throughput
+pm2 start "npx svelar queue:work --queue=urgent" --name queue-urgent -i 2
+
+# Persist across server reboots
 pm2 startup
 pm2 save
-```
-
-Or use a dedicated queue service like Bull, RabbitMQ, or Redis for scaling:
-
-```typescript
-Queue.configure({
-  default: 'redis',
-  connections: {
-    redis: {
-      driver: 'redis',
-      host: process.env.REDIS_HOST || 'localhost',
-      port: parseInt(process.env.REDIS_PORT || '6379'),
-      db: 0,
-    },
-  },
-});
 ```
 
 ## Next Steps

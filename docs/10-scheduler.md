@@ -12,7 +12,11 @@ Scheduled tasks are classes that define when and what to run.
 
 ### Creating a Scheduled Task
 
-Create `src/lib/scheduler/CleanupExpiredSessions.ts`:
+```bash
+npx svelar make:task CleanupExpiredSessions
+```
+
+This creates `src/lib/scheduler/CleanupExpiredSessions.ts`:
 
 ```typescript
 import { ScheduledTask } from 'svelar/scheduler';
@@ -169,22 +173,44 @@ export function createScheduler(): Scheduler {
 
 ## Running the Scheduler
 
-> **Note**: The scheduler CLI commands (`schedule:run`, `schedule:work`) are not yet implemented. For now, you can invoke the scheduler programmatically from your app code or a custom script.
+### Development
 
-### Programmatic Usage
+Run the scheduler in development:
 
-```typescript
-import { Scheduler } from 'svelar/scheduler';
-import { CleanupExpiredSessions } from './lib/scheduler/CleanupExpiredSessions.js';
-
-const scheduler = new Scheduler();
-scheduler.register(new CleanupExpiredSessions());
-
-// Run all due tasks
-await scheduler.runDueTasks();
+```bash
+npx svelar schedule:run
 ```
 
-### Production (via cron)
+This auto-discovers task files from `src/lib/scheduler/`, checks which tasks are due every 60 seconds, and runs them.
+
+To run due tasks once and exit (useful for cron):
+
+```bash
+npx svelar schedule:run --once
+```
+
+### Production
+
+In production, run the scheduler as a background process. [PM2](https://pm2.keymetrics.io/) is a Node.js process manager that keeps your services alive, auto-restarts on crash, and handles log rotation:
+
+```bash
+# Install PM2 globally
+npm install -g pm2
+
+# Start the scheduler as a managed background process
+pm2 start "npx svelar schedule:run" --name svelar-scheduler
+
+# Persist across server reboots
+pm2 startup
+pm2 save
+```
+
+Or trigger it from a system cron job:
+
+```bash
+# Run due tasks every minute via cron
+* * * * * cd /app && npx svelar schedule:run --once
+```
 
 Create a script that calls `scheduler.runDueTasks()` and schedule it with cron:
 

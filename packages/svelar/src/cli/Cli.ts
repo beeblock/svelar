@@ -83,7 +83,17 @@ export class Cli {
       const arg = argv[i];
 
       if (arg.startsWith('--')) {
-        const key = arg.slice(2);
+        const raw = arg.slice(2);
+
+        // Support --key=value syntax
+        const eqIdx = raw.indexOf('=');
+        if (eqIdx !== -1) {
+          const key = raw.slice(0, eqIdx);
+          flags[key] = raw.slice(eqIdx + 1);
+          continue;
+        }
+
+        const key = raw;
         const flagDef = command.flags.find((f) => f.name === key);
 
         if (flagDef?.type === 'boolean') {

@@ -169,7 +169,8 @@ table.float('rating');            // FLOAT
 // String
 table.string('name', 100);       // VARCHAR(100), default 255
 table.text('bio');                // TEXT
-table.json('meta');               // JSON
+table.json('meta');               // JSON (→ JSONB on PostgreSQL automatically)
+table.jsonb('settings');          // Explicit JSONB (PostgreSQL), JSON on MySQL, TEXT on SQLite
 
 // Boolean
 table.boolean('active');          // BOOLEAN
@@ -180,8 +181,11 @@ table.datetime('created_at');     // DATETIME
 table.timestamp('logged_at');     // TIMESTAMP
 table.timestamps();               // created_at + updated_at
 
+// Identifiers
+table.uuid('id');                 // UUID — UUID on Postgres, CHAR(36) on MySQL, TEXT on SQLite
+table.ulid('id');                 // ULID — VARCHAR(26) on Postgres, CHAR(26) on MySQL, TEXT on SQLite
+
 // Other
-table.uuid('id');                 // UUID (CHAR(36))
 table.blob('data');               // BLOB / binary data
 table.enum('status', ['active', 'inactive']); // ENUM
 ```

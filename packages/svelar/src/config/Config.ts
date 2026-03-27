@@ -1,7 +1,8 @@
 /**
  * Svelar Config
  *
- * Environment-aware configuration management.
+ * Environment-aware configuration management with optional
+ * directory-based config loading (like Laravel's config/ folder).
  */
 
 // ── Environment Helper ─────────────────────────────────────
@@ -9,6 +10,11 @@
 /**
  * Get an environment variable with an optional default.
  * Similar to Laravel's env() helper.
+ *
+ * @example
+ * env('DB_HOST', 'localhost')       // string
+ * env<number>('DB_PORT', 5432)      // number
+ * env<boolean>('APP_DEBUG', false)  // boolean
  */
 export function env<T extends string | number | boolean = string>(
   key: string,
@@ -49,6 +55,58 @@ class ConfigManager {
     for (const [key, value] of Object.entries(config)) {
       this.set(key, value);
     }
+  }
+
+  /**
+   * Load all config files from a directory.
+   * Each file becomes a top-level config key based on its filename.
+   *
+   * Files must export a default object (or a named `config` export).
+   *
+   * @example
+   * // config/app.ts → config.get('app.name')
+   * // config/database.ts → config.get('database.default')
+   * // config/mail.ts → config.get('mail.driver')
+   *
+   * await config.loadFromDirectory('./config');
+   *
+   * @param dirPath - Path to the config directory (relative to cwd or absolute)
+   */
+  async loadFromDirectory(dirPath: string): Promise<string[]> {
+    const { resolve, basename, extname } = await import('node:path');
+    const { existsSync, readdirSync } = await import('node:fs');
+    const { pathToFileURL } = await import('node:url');
+
+    const fullPath = resolve(dirPath);
+    if (!existsSync(fullPath)) return [];
+
+    const files = readdirSync(fullPath).filter(
+      (f) => (f.endsWith('.ts') || f.endsWith('.js')) && !f.startsWith('.')
+    );
+
+    const loaded: string[] = [];
+
+    for (const file of files) {
+      const key = basename(file, extname(file)); // 'database.ts' → 'database'
+      const filePath = resolve(fullPath, file);
+
+      try {
+        const fileUrl = pathToFileURL(filePath).href;
+        const mod = await import(fileUrl);
+
+        // Support: export default { ... } or export const config = { ... }
+        const configObj = mod.default ?? mod.config ?? mod;
+
+        if (configObj && typeof configObj === 'object' && !Array.isArray(configObj)) {
+          this.set(key, configObj);
+          loaded.push(key);
+        }
+      } catch {
+        // Skip files that fail to import
+      }
+    }
+
+    return loaded;
   }
 
   /**

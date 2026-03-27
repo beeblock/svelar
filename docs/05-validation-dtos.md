@@ -8,7 +8,11 @@ FormRequest classes encapsulate validation logic and authorization checks. They'
 
 ### Creating a FormRequest
 
-Create `src/lib/dtos/CreatePostRequest.ts` manually:
+```bash
+npx svelar make:request CreatePostRequest
+```
+
+This creates `src/lib/dtos/CreatePostRequest.ts`:
 
 ```typescript
 import { FormRequest } from 'svelar/routing';

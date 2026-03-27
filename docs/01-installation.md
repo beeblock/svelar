@@ -273,6 +273,12 @@ Visit `http://localhost:5173` in your browser. You should see the SvelteKit welc
 
 ```
 my-app/
+├── config/                      # Configuration files
+│   ├── app.ts
+│   ├── database.ts
+│   ├── auth.ts
+│   ├── mail.ts
+│   └── queue.ts
 ├── src/
 │   ├── app.ts                    # Bootstrap configuration
 │   ├── hooks.server.ts           # Middleware pipeline
@@ -284,10 +290,14 @@ my-app/
 │   │   ├── dtos/                 # Validation classes
 │   │   ├── actions/              # Single-use cases
 │   │   ├── middleware/           # Custom middleware
+│   │   ├── channels/            # Broadcast channel authorization
+│   │   ├── commands/            # Custom CLI commands
+│   │   ├── plugins/             # Custom plugins
+│   │   ├── scheduler/           # Scheduled tasks
 │   │   ├── database/
 │   │   │   ├── migrations/
 │   │   │   └── seeders/
-│   │   └── jobs/
+│   │   └── jobs/                # Queue jobs
 │   └── routes/                   # SvelteKit routes
 │       ├── +layout.svelte
 │       ├── +page.svelte
@@ -317,12 +327,34 @@ npx svelar migrate --fresh --force # Force destructive command in production
 npx svelar seed:run               # Run database seeders
 
 # Code Generation
-npx svelar make:model name        # Create new model
-npx svelar make:migration name    # Create new migration
-npx svelar make:controller name   # Create new controller
-npx svelar make:middleware name   # Create new middleware
-npx svelar make:seeder name       # Create new seeder
-npx svelar make:provider name     # Create new service provider
+npx svelar make:model Name        # Create new model
+npx svelar make:migration Name    # Create new migration
+npx svelar make:controller Name   # Create new controller
+npx svelar make:middleware Name   # Create new middleware
+npx svelar make:seeder Name       # Create new seeder
+npx svelar make:provider Name     # Create new service provider
+npx svelar make:service Name      # Create new service (--crud for CrudService)
+npx svelar make:repository Name   # Create new repository (--model=ModelName)
+npx svelar make:action Name       # Create new action
+npx svelar make:request Name      # Create new FormRequest DTO
+npx svelar make:plugin Name       # Create new plugin
+npx svelar make:task Name         # Create new scheduled task
+npx svelar make:job Name          # Create new queue job
+npx svelar make:command Name      # Create new custom CLI command
+npx svelar make:config Name       # Create new config file (presets: app, database, auth, mail, etc.)
+npx svelar make:channel Name      # Create new broadcast channel authorization (-p for presence)
+npx svelar make:broadcasting      # Scaffold broadcasting routes, client init, and config
+npx svelar make:docker            # Scaffold Docker deployment files (Dockerfile, compose, PM2)
+
+# Scheduler & Queue
+npx svelar schedule:run           # Run the scheduler (checks every 60s)
+npx svelar schedule:run --once    # Run due tasks once and exit (for cron)
+npx svelar queue:work             # Process queued jobs
+npx svelar queue:work --queue=urgent   # Process a specific queue
+npx svelar queue:work --max-jobs=100   # Stop after N jobs
+npx svelar queue:work --max-time=3600  # Stop after N seconds
+npx svelar queue:work --sleep=2000     # Polling interval in ms
+npx svelar queue:work --once           # Process one job and exit
 
 # Utilities
 npx svelar tinker                 # Interactive REPL for your app
@@ -334,6 +366,98 @@ npm run preview                    # Preview production build
 ```
 
 > **Production safety**: Destructive migration commands (`--reset`, `--refresh`, `--fresh`) are blocked in production unless you pass `--force`. Svelar checks `NODE_ENV` and `APP_ENV` environment variables to detect the production environment.
+
+## Docker Deployment
+
+Svelar includes built-in Docker support for production deployments. Generate all the necessary files with a single command:
+
+```bash
+npx svelar make:docker
+```
+
+By default this includes Soketi (WebSocket) and Gotenberg (PDF generation). This creates four files:
+
+- **Dockerfile** — Multi-stage build (Node 20 Alpine). Stage 1 installs deps and builds the SvelteKit app; stage 2 copies the production build and runs it with PM2.
+- **docker-compose.yml** — Orchestrates the app, PostgreSQL (default), Soketi (WebSocket server), and Gotenberg (PDF engine). All services include health checks and named volumes.
+- **ecosystem.config.cjs** — PM2 process config that runs three processes: the SvelteKit web server (clustered across all CPU cores), queue workers, and the scheduler.
+- **.dockerignore** — Excludes `node_modules`, `.env`, build artifacts, and database files from the Docker context.
+
+### Flags
+
+```bash
+npx svelar make:docker --db=mysql      # Use MySQL instead of PostgreSQL
+npx svelar make:docker --db=sqlite     # SQLite (no external DB service)
+npx svelar make:docker --redis         # Add Redis service
+npx svelar make:docker --no-soketi     # Skip Soketi WebSocket server
+npx svelar make:docker --no-gotenberg  # Skip Gotenberg PDF service
+npx svelar make:docker --force         # Overwrite existing files
+```
+
+### Quick Start
+
+```bash
+# Generate Docker files
+npx svelar make:docker
+
+# Build and start all services
+docker compose up -d --build
+
+# Run migrations
+docker compose exec app npx svelar migrate
+
+# Seed demo data
+docker compose exec app npx svelar seed:run
+
+# View logs
+docker compose logs -f app
+
+# Stop everything
+docker compose down
+```
+
+### PM2 Process Management
+
+The `ecosystem.config.cjs` runs three processes inside the container:
+
+| Process   | Description                        | Instances     |
+|-----------|-------------------------------------|---------------|
+| web       | SvelteKit production server         | All CPU cores |
+| worker    | Queue job processor                 | 2             |
+| scheduler | Scheduled task runner               | 1 (always)    |
+
+The web process uses PM2's cluster mode for zero-downtime restarts and automatic load balancing. Workers auto-restart after `--max-time=3600` (1 hour) to prevent memory leaks. The scheduler always runs as a single instance to prevent duplicate task execution.
+
+### Soketi (WebSocket Server)
+
+The generated `docker-compose.yml` includes Soketi — a self-hosted, Pusher-compatible WebSocket server. It connects automatically to your Svelar app via the `PUSHER_HOST=soketi` environment variable. Configure your broadcasting to use the Pusher driver and point it at Soketi:
+
+```typescript
+// config/broadcasting.ts
+export default {
+  default: 'pusher',
+  drivers: {
+    pusher: {
+      key: process.env.PUSHER_KEY,
+      secret: process.env.PUSHER_SECRET,
+      appId: process.env.PUSHER_APP_ID,
+      host: process.env.PUSHER_HOST,   // 'soketi' in Docker
+      port: Number(process.env.PUSHER_PORT ?? 6001),
+      useTLS: false,
+    },
+  },
+};
+```
+
+### Production Checklist
+
+Before deploying to production:
+
+1. Set strong values for `APP_KEY`, `JWT_SECRET`, `DB_PASSWORD`, and Pusher credentials in `.env`
+2. Set `NODE_ENV=production` and `APP_ENV=production`
+3. Use named Docker volumes for database persistence (`pgdata`, `mysqldata`)
+4. Configure log rotation for PM2 logs in `storage/logs/`
+5. Set up a reverse proxy (Nginx, Traefik, Caddy) in front of the app for TLS termination
+6. Run `docker compose exec app npx svelar migrate` after every deployment
 
 ## Troubleshooting
 
