@@ -9,6 +9,7 @@ export async function load(event: ServerLoadEvent) {
           id: user.id,
           name: user.name,
           email: user.email,
+          role: user.role ?? 'user',
         }
       : null,
   };

@@ -1,19 +1,9 @@
 <script lang="ts">
-  import { superForm } from 'sveltekit-superforms';
-  import { Button, Input, Label, Card, CardHeader, CardTitle, CardContent, Badge, Alert } from 'svelar/ui';
+  import { Button, Badge, Card, CardHeader, CardTitle, CardDescription, CardContent } from 'svelar/ui';
   import * as m from '$lib/paraglide/messages';
+  import { localizeHref } from '$lib/paraglide/runtime';
 
   let { data } = $props();
-  let posts: any[] = $state(data.posts || []);
-
-  const { form, errors, message, enhance, delayed, reset } = superForm(data.form, {
-    onUpdated: ({ form: f }) => {
-      if (f.valid && f.message) {
-        posts = data.posts || [];
-        reset();
-      }
-    },
-  });
 </script>
 
 <svelte:head>
@@ -26,108 +16,140 @@
     <p class="text-gray-600">{m.dashboard_welcome({ name: data.user.name })}</p>
   </div>
 
-  <!-- Posts Section -->
-  <div class="space-y-4">
-    <div class="flex items-center justify-between">
-      <h2 class="text-2xl font-bold">{m.dashboard_your_posts()}</h2>
-      <Badge variant="secondary">{posts.length}</Badge>
-    </div>
-
-    {#if posts.length === 0}
-      <Card>
-        <CardContent class="pt-8 text-center">
-          <p class="text-gray-500 text-sm">{m.dashboard_no_posts()}</p>
-        </CardContent>
-      </Card>
-    {:else}
-      <div class="space-y-3">
-        {#each posts as post (post.id)}
-          <Card class="hover:shadow-md transition-shadow">
-            <CardContent class="pt-6">
-              <div class="flex items-start justify-between gap-4">
-                <div class="flex-1">
-                  <div class="flex items-center gap-2 mb-2">
-                    <h3 class="font-semibold text-gray-900">{post.title}</h3>
-                    <Badge variant={post.published ? 'success' : 'secondary'}>
-                      {post.published ? m.dashboard_published() : m.dashboard_draft()}
-                    </Badge>
-                  </div>
-                  <p class="text-gray-600 text-sm">{post.body}</p>
-                </div>
-              </div>
-
-              <div class="flex gap-2 mt-4">
-                <form method="POST" action="?/toggle">
-                  <input type="hidden" name="postId" value={post.id} />
-                  <Button size="sm" variant="outline" type="submit">
-                    {post.published ? m.dashboard_unpublish() : m.dashboard_publish()}
-                  </Button>
-                </form>
-                <form method="POST" action="?/delete" onsubmit={(e) => { if (!confirm(m.dashboard_confirm_delete())) e.preventDefault(); }}>
-                  <input type="hidden" name="postId" value={post.id} />
-                  <Button size="sm" variant="destructive" type="submit">
-                    {m.dashboard_delete()}
-                  </Button>
-                </form>
-              </div>
-            </CardContent>
-          </Card>
-        {/each}
-      </div>
-    {/if}
-  </div>
-
-  <!-- Create Post Section -->
-  <div class="space-y-4">
-    <h2 class="text-2xl font-bold">{m.dashboard_create_post()}</h2>
-
-    {#if $message}
-      <Alert variant={$message.includes('Error') || $message.includes('Failed') ? 'destructive' : 'success'}>
-        <span class="text-sm">{$message}</span>
-      </Alert>
-    {/if}
+  <!-- Quick Stats -->
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <Card>
+      <CardContent class="pt-6">
+        <div>
+          <p class="text-sm text-gray-600">API Keys</p>
+          <p class="text-3xl font-bold text-[var(--color-brand)] mt-2">{data.stats.apiKeyCount}</p>
+          <a href={localizeHref('/dashboard/api-keys')} class="text-sm text-[var(--color-brand)] hover:underline mt-2 inline-block">Manage keys</a>
+        </div>
+      </CardContent>
+    </Card>
 
     <Card>
       <CardContent class="pt-6">
-        <form method="POST" action="?/create" use:enhance class="space-y-4">
-          <div class="space-y-2">
-            <Label for="title">{m.dashboard_post_title()}</Label>
-            <Input
-              id="title"
-              name="title"
-              type="text"
-              placeholder={m.dashboard_post_title_placeholder()}
-              bind:value={$form.title}
-              aria-invalid={$errors.title ? 'true' : undefined}
-            />
-            {#if $errors.title}
-              <p class="text-sm text-red-600">{$errors.title[0]}</p>
-            {/if}
-          </div>
+        <div>
+          <p class="text-sm text-gray-600">Team Members</p>
+          <p class="text-3xl font-bold text-[var(--color-brand)] mt-2">{data.stats.teamMemberCount}</p>
+          <a href={localizeHref('/dashboard/team')} class="text-sm text-[var(--color-brand)] hover:underline mt-2 inline-block">Manage team</a>
+        </div>
+      </CardContent>
+    </Card>
 
-          <div class="space-y-2">
-            <Label for="body">{m.dashboard_post_content()}</Label>
-            <textarea
-              id="body"
-              name="body"
-              placeholder={m.dashboard_post_content_placeholder()}
-              bind:value={$form.body}
-              rows="6"
-              class="flex min-h-[120px] w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm ring-offset-white placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-              class:border-red-500={$errors.body}
-            ></textarea>
-            {#if $errors.body}
-              <p class="text-sm text-red-600">{$errors.body[0]}</p>
-            {/if}
-          </div>
-
-          <input type="hidden" name="published" value="true" />
-
-          <Button type="submit" class="w-full" disabled={$delayed}>
-            {$delayed ? m.dashboard_creating() : m.dashboard_create_submit()}
-          </Button>
-        </form>
+    <Card>
+      <CardContent class="pt-6">
+        <div>
+          <p class="text-sm text-gray-600">Account</p>
+          <Badge variant="default" class="mt-2">{data.user.role}</Badge>
+          <a href={localizeHref('/dashboard/billing')} class="text-sm text-[var(--color-brand)] hover:underline mt-2 inline-block block">View billing</a>
+        </div>
       </CardContent>
     </Card>
   </div>
+
+  <!-- Quick Actions -->
+  <Card>
+    <CardHeader>
+      <CardTitle>Quick Actions</CardTitle>
+    </CardHeader>
+    <CardContent class="flex flex-wrap gap-3">
+      <a href={localizeHref('/dashboard/api-keys')}>
+        <Button variant="outline">Create API Key</Button>
+      </a>
+      <a href={localizeHref('/dashboard/team')}>
+        <Button variant="outline">Invite Team Member</Button>
+      </a>
+      <a href={localizeHref('/dashboard/billing')}>
+        <Button variant="outline">Manage Billing</Button>
+      </a>
+      {#if data.user.role === 'admin'}
+        <a href={localizeHref('/admin')}>
+          <Button variant="outline">Admin Dashboard</Button>
+        </a>
+      {/if}
+    </CardContent>
+  </Card>
+
+  <!-- Recent Activity -->
+  <Card>
+    <CardHeader>
+      <CardTitle>Recent Activity</CardTitle>
+      <CardDescription>Your latest actions and events</CardDescription>
+    </CardHeader>
+    <CardContent>
+      {#if data.recentActivity.length > 0}
+        <div class="space-y-3">
+          {#each data.recentActivity as entry, i (i)}
+            <div class="flex items-start gap-3 py-2 {i < data.recentActivity.length - 1 ? 'border-b border-gray-100' : ''}">
+              <div class="w-2 h-2 mt-2 rounded-full bg-[var(--color-brand)]"></div>
+              <div class="flex-1">
+                <p class="text-sm text-gray-900">{entry.description}</p>
+                {#if entry.timestamp}
+                  <p class="text-xs text-gray-500 mt-0.5">{new Date(entry.timestamp).toLocaleString()}</p>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+      {:else}
+        <p class="text-sm text-gray-500 py-4 text-center">
+          No recent activity. Start using API keys, team management, or other features to see activity here.
+        </p>
+      {/if}
+    </CardContent>
+  </Card>
+
+  <!-- Getting Started -->
+  <Card>
+    <CardHeader>
+      <CardTitle>Getting Started</CardTitle>
+      <CardDescription>Set up your SaaS application</CardDescription>
+    </CardHeader>
+    <CardContent>
+      <div class="space-y-4">
+        <div class="flex items-center gap-4 p-3 rounded-lg border border-gray-200">
+          <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold {data.stats.apiKeyCount > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}">
+            {data.stats.apiKeyCount > 0 ? '✓' : '1'}
+          </div>
+          <div class="flex-1">
+            <p class="font-medium text-gray-900">Create an API key</p>
+            <p class="text-sm text-gray-600">Generate keys for programmatic access to your application</p>
+          </div>
+          {#if data.stats.apiKeyCount === 0}
+            <a href={localizeHref('/dashboard/api-keys')}>
+              <Button size="sm">Create</Button>
+            </a>
+          {/if}
+        </div>
+
+        <div class="flex items-center gap-4 p-3 rounded-lg border border-gray-200">
+          <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold {data.stats.teamMemberCount > 1 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}">
+            {data.stats.teamMemberCount > 1 ? '✓' : '2'}
+          </div>
+          <div class="flex-1">
+            <p class="font-medium text-gray-900">Invite your team</p>
+            <p class="text-sm text-gray-600">Collaborate with team members by sending invitations</p>
+          </div>
+          {#if data.stats.teamMemberCount <= 1}
+            <a href={localizeHref('/dashboard/team')}>
+              <Button size="sm">Invite</Button>
+            </a>
+          {/if}
+        </div>
+
+        <div class="flex items-center gap-4 p-3 rounded-lg border border-gray-200">
+          <div class="w-8 h-8 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center text-sm font-bold">3</div>
+          <div class="flex-1">
+            <p class="font-medium text-gray-900">Configure billing</p>
+            <p class="text-sm text-gray-600">Set up Stripe or Polar for subscription billing</p>
+          </div>
+          <a href={localizeHref('/dashboard/billing')}>
+            <Button size="sm" variant="outline">Configure</Button>
+          </a>
+        </div>
+      </div>
+    </CardContent>
+  </Card>
 </div>

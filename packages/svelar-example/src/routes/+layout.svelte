@@ -24,8 +24,28 @@
     { href: '/admin?tab=logs', label: 'Logs', icon: 'file-text' },
   ];
 
+  /**
+   * Check if a path segment is in the current URL (locale-aware).
+   * Strips any locale prefix like /pt/ before matching.
+   */
+  function getBarePath(): string {
+    const path = page.url.pathname;
+    // Strip locale prefix (e.g. /pt/dashboard → /dashboard)
+    const localePattern = /^\/[a-z]{2}(?=\/|$)/;
+    return path.replace(localePattern, '') || '/';
+  }
+
   function isActive(href: string): boolean {
-    return page.url.pathname === href || page.url.pathname.startsWith(href);
+    const bare = getBarePath();
+    return bare === href || bare.startsWith(href + '/');
+  }
+
+  function isOnDashboard(): boolean {
+    return getBarePath().startsWith('/dashboard');
+  }
+
+  function isOnAdmin(): boolean {
+    return getBarePath().startsWith('/admin');
   }
 
   function getIcon(icon: string): string {
@@ -102,10 +122,10 @@
 
   <div class="flex flex-1">
     <!-- Sidebar -->
-    {#if data.user && (page.url.pathname.startsWith('/dashboard') || page.url.pathname.startsWith('/admin'))}
+    {#if data.user && (isOnDashboard() || isOnAdmin())}
       <aside class="hidden md:block w-64 border-r border-gray-200 bg-white">
         <div class="sticky top-20 p-6 space-y-8">
-          {#if page.url.pathname.startsWith('/dashboard')}
+          {#if isOnDashboard()}
             <div>
               <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Dashboard</h3>
               <nav class="space-y-1">
@@ -124,18 +144,18 @@
             </div>
           {/if}
 
-          {#if data.user.role === 'admin' && page.url.pathname.startsWith('/admin')}
+          {#if data.user.role === 'admin' && isOnAdmin()}
             <div>
               <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Administration</h3>
               <nav class="space-y-1">
                 {#each adminLinks as link}
+                  {@const tabParam = new URL(link.href, 'http://x').searchParams.get('tab')}
+                  {@const currentTab = page.url.searchParams.get('tab') ?? 'overview'}
                   <a
                     href={localizeHref(link.href)}
-                    class="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors {page.url.pathname === '/admin' && link.href === '/admin?tab=overview'
+                    class="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors {tabParam === currentTab
                       ? 'bg-[var(--color-brand)] text-white'
-                      : isActive('/admin')
-                        ? 'bg-[var(--color-brand)] text-white'
-                        : 'text-gray-700 hover:bg-gray-100'}"
+                      : 'text-gray-700 hover:bg-gray-100'}"
                   >
                     <span>{getIcon(link.icon)}</span>
                     {link.label}
