@@ -345,6 +345,12 @@ npx svelar make:config Name       # Create new config file (presets: app, databa
 npx svelar make:channel Name      # Create new broadcast channel authorization (-p for presence)
 npx svelar make:broadcasting      # Scaffold broadcasting routes, client init, and config
 npx svelar make:docker            # Scaffold Docker deployment files (Dockerfile, compose, PM2)
+npx svelar make:dashboard         # Scaffold admin dashboard routes and pages
+
+# Plugins
+npx svelar plugin:list            # List installed and available plugins
+npx svelar plugin:publish <name>  # Publish a plugin's config and migrations
+npx svelar plugin:install <pkg>   # Install a plugin from npm
 
 # Scheduler & Queue
 npx svelar schedule:run           # Run the scheduler (checks every 60s)
@@ -375,10 +381,10 @@ Svelar includes built-in Docker support for production deployments. Generate all
 npx svelar make:docker
 ```
 
-By default this includes Soketi (WebSocket) and Gotenberg (PDF generation). This creates four files:
+By default this includes Redis (BullMQ queues), Soketi (WebSocket), Gotenberg (PDF generation), and RustFS (S3-compatible object storage). This creates four files:
 
 - **Dockerfile** — Multi-stage build (Node 20 Alpine). Stage 1 installs deps and builds the SvelteKit app; stage 2 copies the production build and runs it with PM2.
-- **docker-compose.yml** — Orchestrates the app, PostgreSQL (default), Soketi (WebSocket server), and Gotenberg (PDF engine). All services include health checks and named volumes.
+- **docker-compose.yml** — Orchestrates the app, PostgreSQL (default), Redis, Soketi (WebSocket server), Gotenberg (PDF engine), and RustFS (S3 object storage). All services include health checks and named volumes.
 - **ecosystem.config.cjs** — PM2 process config that runs three processes: the SvelteKit web server (clustered across all CPU cores), queue workers, and the scheduler.
 - **.dockerignore** — Excludes `node_modules`, `.env`, build artifacts, and database files from the Docker context.
 
@@ -387,9 +393,10 @@ By default this includes Soketi (WebSocket) and Gotenberg (PDF generation). This
 ```bash
 npx svelar make:docker --db=mysql      # Use MySQL instead of PostgreSQL
 npx svelar make:docker --db=sqlite     # SQLite (no external DB service)
-npx svelar make:docker --redis         # Add Redis service
+npx svelar make:docker --no-redis      # Skip Redis service
 npx svelar make:docker --no-soketi     # Skip Soketi WebSocket server
 npx svelar make:docker --no-gotenberg  # Skip Gotenberg PDF service
+npx svelar make:docker --no-rustfs     # Skip RustFS object storage
 npx svelar make:docker --force         # Overwrite existing files
 ```
 

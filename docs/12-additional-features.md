@@ -665,7 +665,7 @@ VITE_PUSHER_PORT=6001
 
 ## Storage
 
-Manage file storage across different disks.
+Manage file storage across local filesystem and S3-compatible object storage (RustFS, MinIO, AWS S3).
 
 ### Configuration
 
@@ -677,14 +677,16 @@ Storage.configure({
   disks: {
     local: {
       driver: 'local',
-      path: './storage/uploads',
+      root: './storage/uploads',
     },
     s3: {
       driver: 's3',
-      bucket: process.env.AWS_BUCKET,
-      key: process.env.AWS_KEY,
-      secret: process.env.AWS_SECRET,
-      region: process.env.AWS_REGION,
+      bucket: process.env.S3_BUCKET ?? 'svelar',
+      region: process.env.S3_REGION ?? 'us-east-1',
+      endpoint: process.env.S3_ENDPOINT ?? 'http://localhost:9000',
+      accessKeyId: process.env.S3_ACCESS_KEY ?? 'svelar',
+      secretAccessKey: process.env.S3_SECRET_KEY ?? 'svelarsecret',
+      forcePathStyle: true,  // Required for RustFS/MinIO
     },
   },
 });
@@ -715,6 +717,35 @@ const files = await disk.files('avatars/');
 // Get public URL
 const url = disk.url('avatars/user1.jpg');
 ```
+
+### S3 / RustFS Object Storage
+
+Svelar includes a full S3-compatible storage driver that works with [RustFS](https://github.com/rustfs/rustfs), MinIO, AWS S3, and any S3-compatible service. RustFS is included by default in `docker-compose` when you run `npx svelar make:docker`.
+
+```bash
+# Install the S3 SDK (peer dependency)
+npm install @aws-sdk/client-s3
+
+# Optional: for pre-signed temporary URLs
+npm install @aws-sdk/s3-request-presigner
+```
+
+S3 disks support all the same methods as local disks, plus additional features:
+
+```typescript
+// Ensure bucket exists (auto-creates if missing — great for RustFS/MinIO)
+await Storage.s3Disk('s3').ensureBucket();
+
+// Generate a pre-signed temporary URL (expires in 1 hour)
+const tempUrl = await Storage.s3Disk('s3').temporaryUrl('invoices/001.pdf', 3600);
+
+// Switch default disk to S3 for cloud-first deployments
+Storage.configure({ default: 's3', disks: { ... } });
+```
+
+In Docker, RustFS runs on port 9000 (S3 API) and 9001 (web console). The app service gets `S3_ENDPOINT=http://rustfs:9000` and `STORAGE_DISK=s3` automatically.
+
+> **RustFS Web Console**: Access at `http://localhost:9001` to browse buckets, upload files, and manage storage visually.
 
 ## Configuration Management
 
@@ -1474,11 +1505,214 @@ const health = await PDF.health();
 // { status: 'up', details: { chromium: { status: 'up' }, libreoffice: { status: 'up' } } }
 ```
 
+## Admin Dashboard
+
+Scaffold a production-ready admin dashboard with system monitoring:
+
+```bash
+npx svelar make:dashboard
+```
+
+This creates API routes (`/api/admin/*`) and a dashboard page with:
+- **System Health**: CPU, memory, uptime
+- **Queue Monitoring**: Job counts, error rates, retry queue
+- **Scheduler Viewer**: View scheduled tasks, trigger manually
+- **Log Viewer**: Filter and search application logs
+
+Access the dashboard at `/admin/dashboard` after setup.
+
+## Plugin System
+
+Plugins extend Svelar with new capabilities. Install plugins from npm:
+
+```typescript
+import { PluginManager } from 'svelar/plugins';
+
+const plugins = new PluginManager(app);
+plugins.use(new StripePlugin());
+plugins.use(new PostmarkPlugin());
+await plugins.boot();
+```
+
+**Creating Plugins**: Extend the `Plugin` base class and override:
+- `register()` — Register services and config
+- `boot()` — Initialize after all plugins load
+- `migrations()` — Return migration file names
+- `config()` — Define default config
+
+**Publishing Plugins**: Use `plugin:publish <name>` to export config and migrations to your app.
+
+## Audit Logging
+
+Track user actions and system changes:
+
+```typescript
+import { Audit } from 'svelar/audit';
+
+// Log an action
+await Audit.log('user:created', {
+  userId: user.id,
+  email: user.email,
+  ipAddress: event.getClientAddress(),
+});
+
+// Query audit entries
+const entries = await Audit.query()
+  .where('action', 'user:created')
+  .limit(10)
+  .get();
+```
+
+Use the `@auditable()` decorator on models to track all changes automatically.
+
+## API Key Management
+
+Secure token-based authentication:
+
+```typescript
+import { ApiKey } from 'svelar/api-keys';
+
+// Create a key
+const key = await ApiKey.create('My Integration', ['users:read', 'posts:write']);
+
+// Validate requests
+const middleware = ApiKeyMiddleware;
+// Key sent as: Authorization: Bearer sk_live_xxx
+```
+
+Keys are hashed and can be revoked at any time.
+
+## Outgoing Webhooks
+
+Send events to external services:
+
+```typescript
+import { Webhook } from 'svelar/webhooks';
+
+// Register an endpoint
+await Webhook.register('https://example.com/events', {
+  events: ['user:created', 'order:shipped'],
+});
+
+// Dispatch an event
+await Webhook.dispatch('user:created', { id: user.id, email: user.email });
+```
+
+Events are signed with HMAC and retried automatically.
+
+## Teams & Workspaces
+
+Multi-tenant team management:
+
+```typescript
+import { Team } from 'svelar/teams';
+
+// Create a team
+const team = await Team.create({
+  name: 'Acme Corp',
+  ownerId: user.id,
+});
+
+// Invite members
+await team.invite('member@example.com', 'editor');
+
+// Check permissions
+if (user.can('edit', team)) {
+  // Allow action
+}
+```
+
+Supports role-based access control (owner, admin, member, viewer).
+
+## Email Templates
+
+Manage and render email templates:
+
+```typescript
+import { EmailTemplate } from 'svelar/email-templates';
+
+// Register a template
+await EmailTemplate.register('welcome', {
+  subject: 'Welcome to {{ appName }}',
+  body: `<p>Hello {{ userName }},</p>...`,
+});
+
+// Render and send
+const html = await EmailTemplate.render('welcome', {
+  appName: 'My App',
+  userName: user.name,
+});
+```
+
+Built-in templates for password reset, invitations, and notifications.
+
+## File Uploads
+
+Track and serve user-uploaded files:
+
+```typescript
+import { Upload } from 'svelar/uploads';
+
+// Store a file
+const upload = await Upload.store(formFile, {
+  disk: 'local',
+  path: `users/${user.id}`,
+  visibility: 'private',
+});
+
+// Generate download URL
+const url = await upload.url({ expiresIn: 3600 });
+```
+
+Metadata is tracked automatically (size, mime type, hash).
+
+## Billing with Stripe
+
+Add subscription billing via the `svelar-stripe` plugin:
+
+```bash
+npm install svelar-stripe
+npx svelar plugin:publish svelar-stripe
+```
+
+Then configure:
+
+```typescript
+import { Stripe } from 'svelar/stripe';
+
+const subscription = await Stripe.createSubscription(user, {
+  plan: 'pro',
+  paymentMethod: pmId,
+});
+```
+
+Handles subscriptions, invoices, refunds, and webhook events.
+
+## Email Providers
+
+Switch between email providers (Postmark, Resend, SMTP):
+
+```bash
+npm install svelar-postmark
+# or
+npm install svelar-resend
+```
+
+Then configure in `.env`:
+
+```bash
+MAIL_DRIVER=postmark
+POSTMARK_TOKEN=your_token
+```
+
+All Mail operations use the configured driver automatically.
+
 ## Next Steps
 
 - Explore the [svelar-example](../packages/svelar-example) app for real-world usage
 - Read the [Architecture](./README.md) guide for design patterns
 - Review the [API Reference](./README.md) for detailed documentation
+- Build SaaS features with [SaaS Guide](./17-saas-guide.md)
 
 ---
 

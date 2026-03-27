@@ -7,6 +7,40 @@
   import { locales, getLocale, localizeHref } from '$lib/paraglide/runtime';
 
   let { data, children } = $props();
+  let sidebarOpen = $state(false);
+
+  const dashboardLinks = [
+    { href: '/dashboard', label: 'Overview', icon: 'grid' },
+    { href: '/dashboard/billing', label: 'Billing', icon: 'credit-card' },
+    { href: '/dashboard/api-keys', label: 'API Keys', icon: 'key' },
+    { href: '/dashboard/team', label: 'Team', icon: 'users' },
+  ];
+
+  const adminLinks = [
+    { href: '/admin?tab=overview', label: 'System Health', icon: 'activity' },
+    { href: '/admin?tab=users', label: 'Users', icon: 'users' },
+    { href: '/admin?tab=queue', label: 'Queue Monitor', icon: 'briefcase' },
+    { href: '/admin?tab=scheduler', label: 'Scheduler', icon: 'clock' },
+    { href: '/admin?tab=logs', label: 'Logs', icon: 'file-text' },
+  ];
+
+  function isActive(href: string): boolean {
+    return page.url.pathname === href || page.url.pathname.startsWith(href);
+  }
+
+  function getIcon(icon: string): string {
+    const icons: Record<string, string> = {
+      'grid': '▦',
+      'credit-card': '💳',
+      'key': '🔑',
+      'users': '👥',
+      'activity': '📊',
+      'briefcase': '💼',
+      'clock': '⏰',
+      'file-text': '📄',
+    };
+    return icons[icon] || '•';
+  }
 </script>
 
 <svelte:head>
@@ -20,7 +54,7 @@
 
 <div class="flex flex-col min-h-screen">
   <nav class="border-b border-gray-200 bg-white shadow-sm sticky top-0 z-50">
-    <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+    <div class="px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
       <div class="flex items-center gap-8">
         <a href={localizeHref('/')} class="flex items-center gap-2">
           <div class="w-8 h-8 bg-[var(--color-brand)] rounded-md flex items-center justify-center">
@@ -66,11 +100,61 @@
     </div>
   </nav>
 
-  <main class="flex-1">
-    <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {@render children()}
-    </div>
-  </main>
+  <div class="flex flex-1">
+    <!-- Sidebar -->
+    {#if data.user && (page.url.pathname.startsWith('/dashboard') || page.url.pathname.startsWith('/admin'))}
+      <aside class="hidden md:block w-64 border-r border-gray-200 bg-white">
+        <div class="sticky top-20 p-6 space-y-8">
+          {#if page.url.pathname.startsWith('/dashboard')}
+            <div>
+              <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Dashboard</h3>
+              <nav class="space-y-1">
+                {#each dashboardLinks as link}
+                  <a
+                    href={localizeHref(link.href)}
+                    class="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors {isActive(link.href)
+                      ? 'bg-[var(--color-brand)] text-white'
+                      : 'text-gray-700 hover:bg-gray-100'}"
+                  >
+                    <span>{getIcon(link.icon)}</span>
+                    {link.label}
+                  </a>
+                {/each}
+              </nav>
+            </div>
+          {/if}
+
+          {#if data.user.role === 'admin' && page.url.pathname.startsWith('/admin')}
+            <div>
+              <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Administration</h3>
+              <nav class="space-y-1">
+                {#each adminLinks as link}
+                  <a
+                    href={localizeHref(link.href)}
+                    class="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors {page.url.pathname === '/admin' && link.href === '/admin?tab=overview'
+                      ? 'bg-[var(--color-brand)] text-white'
+                      : isActive('/admin')
+                        ? 'bg-[var(--color-brand)] text-white'
+                        : 'text-gray-700 hover:bg-gray-100'}"
+                  >
+                    <span>{getIcon(link.icon)}</span>
+                    {link.label}
+                  </a>
+                {/each}
+              </nav>
+            </div>
+          {/if}
+        </div>
+      </aside>
+    {/if}
+
+    <!-- Main Content -->
+    <main class="flex-1">
+      <div class="px-4 sm:px-6 lg:px-8 py-8">
+        {@render children()}
+      </div>
+    </main>
+  </div>
 
   <footer class="border-t border-gray-200 bg-white py-8 text-center text-sm text-gray-500">
     <p>&copy; 2024 {m.app_name()}. {m.footer_text()}</p>

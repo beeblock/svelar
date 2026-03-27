@@ -156,6 +156,17 @@ export abstract class Plugin {
   listeners(): Array<{ event: string; handler: (...args: any[]) => void | Promise<void> }> {
     return [];
   }
+
+  /**
+   * Return publishable files (configs, migrations, assets)
+   * Map of type -> array of { source, dest, type }
+   */
+  publishables?(): Record<
+    string,
+    Array<{ source: string; dest: string; type: 'config' | 'migration' | 'asset' }>
+  > {
+    return {};
+  }
 }
 
 // ── Plugin Manager ─────────────────────────────────────────

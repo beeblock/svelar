@@ -169,7 +169,17 @@ export default {
     public: {
       driver: 'local' as const,
       root: 'storage/public',
-      url: '/storage',
+      urlPrefix: '/storage',
+    },
+
+    s3: {
+      driver: 's3' as const,
+      bucket: env('S3_BUCKET', 'svelar'),
+      region: env('S3_REGION', 'us-east-1'),
+      endpoint: env('S3_ENDPOINT', 'http://localhost:9000'),
+      accessKeyId: env('S3_ACCESS_KEY', 'svelar'),
+      secretAccessKey: env('S3_SECRET_KEY', 'svelarsecret'),
+      forcePathStyle: true, // Required for RustFS/MinIO
     },
   },
 };

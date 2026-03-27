@@ -17,6 +17,7 @@ export class MakeDockerCommand extends Command {
     { name: 'soketi', alias: 's', description: 'Include Soketi WebSocket server', type: 'boolean' as const },
     { name: 'redis', alias: 'r', description: 'Include Redis service', type: 'boolean' as const },
     { name: 'gotenberg', alias: 'g', description: 'Include Gotenberg PDF service (default: true)', type: 'boolean' as const },
+    { name: 'rustfs', description: 'Include RustFS S3-compatible object storage (default: true)', type: 'boolean' as const },
     { name: 'force', alias: 'f', description: 'Overwrite existing files', type: 'boolean' as const },
   ];
 
@@ -26,6 +27,7 @@ export class MakeDockerCommand extends Command {
     const includeSoketi = flags.soketi ?? true; // default: include Soketi
     const includeRedis = flags.redis ?? true; // default: include Redis (BullMQ queues)
     const includeGotenberg = flags.gotenberg ?? true; // default: include Gotenberg
+    const includeRustFS = flags.rustfs ?? true; // default: include RustFS object storage
     const force = flags.force ?? false;
 
     const validDbs = ['postgres', 'mysql', 'sqlite'];
@@ -42,7 +44,7 @@ export class MakeDockerCommand extends Command {
       },
       {
         path: join(cwd, 'docker-compose.yml'),
-        content: this.composeTemplate(db, includeSoketi, includeRedis, includeGotenberg),
+        content: this.composeTemplate(db, includeSoketi, includeRedis, includeGotenberg, includeRustFS),
         label: 'docker-compose.yml',
       },
       {
@@ -160,7 +162,7 @@ CMD ["pm2-runtime", "ecosystem.config.cjs"]
 `;
   }
 
-  private composeTemplate(db: string, soketi: boolean, redis: boolean, gotenberg: boolean): string {
+  private composeTemplate(db: string, soketi: boolean, redis: boolean, gotenberg: boolean, rustfs: boolean = true): string {
     const lines: string[] = [];
 
     lines.push('# ── Svelar Docker Compose ─────────────────────────────────');
@@ -207,6 +209,15 @@ CMD ["pm2-runtime", "ecosystem.config.cjs"]
       lines.push('      - GOTENBERG_URL=http://gotenberg:3000');
     }
 
+    if (rustfs) {
+      lines.push('      - S3_ENDPOINT=http://rustfs:9000');
+      lines.push('      - S3_ACCESS_KEY=${RUSTFS_ROOT_USER:-svelar}');
+      lines.push('      - S3_SECRET_KEY=${RUSTFS_ROOT_PASSWORD:-svelarsecret}');
+      lines.push('      - S3_BUCKET=${S3_BUCKET:-svelar}');
+      lines.push('      - S3_REGION=us-east-1');
+      lines.push('      - STORAGE_DISK=s3');
+    }
+
     // depends_on with health checks
     const deps: string[] = [];
     if (db === 'postgres') deps.push('postgres');
@@ -214,6 +225,7 @@ CMD ["pm2-runtime", "ecosystem.config.cjs"]
     if (redis) deps.push('redis');
     if (soketi) deps.push('soketi');
     if (gotenberg) deps.push('gotenberg');
+    if (rustfs) deps.push('rustfs');
 
     if (deps.length > 0) {
       lines.push('    depends_on:');
@@ -330,6 +342,28 @@ CMD ["pm2-runtime", "ecosystem.config.cjs"]
       lines.push('      retries: 5');
     }
 
+    // ── RustFS (S3-compatible object storage) ──
+    if (rustfs) {
+      lines.push('');
+      lines.push('  rustfs:');
+      lines.push('    image: rustfs/rustfs:latest');
+      lines.push('    restart: unless-stopped');
+      lines.push('    ports:');
+      lines.push('      - "${RUSTFS_API_PORT:-9000}:9000"   # S3 API');
+      lines.push('      - "${RUSTFS_CONSOLE_PORT:-9001}:9001"   # Web Console');
+      lines.push('    environment:');
+      lines.push('      RUSTFS_ROOT_USER: ${RUSTFS_ROOT_USER:-svelar}');
+      lines.push('      RUSTFS_ROOT_PASSWORD: ${RUSTFS_ROOT_PASSWORD:-svelarsecret}');
+      lines.push('    command: server /data --console-address ":9001"');
+      lines.push('    volumes:');
+      lines.push('      - rustfs_data:/data');
+      lines.push('    healthcheck:');
+      lines.push('      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]');
+      lines.push('      interval: 10s');
+      lines.push('      timeout: 5s');
+      lines.push('      retries: 5');
+    }
+
     // ── Volumes ──
     lines.push('');
     lines.push('volumes:');
@@ -337,6 +371,7 @@ CMD ["pm2-runtime", "ecosystem.config.cjs"]
     if (db === 'postgres') lines.push('  pgdata:');
     if (db === 'mysql') lines.push('  mysqldata:');
     if (redis) lines.push('  redisdata:');
+    if (rustfs) lines.push('  rustfs_data:');
 
     lines.push('');
     return lines.join('\n');

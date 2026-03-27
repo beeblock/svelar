@@ -129,6 +129,18 @@
       "types": "./dist/plugins/index.d.ts",
       "import": "./dist/plugins/index.js"
     },
+    "./plugins/PluginRegistry": {
+      "types": "./dist/plugins/PluginRegistry.d.ts",
+      "import": "./dist/plugins/PluginRegistry.js"
+    },
+    "./plugins/PluginPublisher": {
+      "types": "./dist/plugins/PluginPublisher.d.ts",
+      "import": "./dist/plugins/PluginPublisher.js"
+    },
+    "./plugins/PluginInstaller": {
+      "types": "./dist/plugins/PluginInstaller.d.ts",
+      "import": "./dist/plugins/PluginInstaller.js"
+    },
     "./scheduler": {
       "types": "./dist/scheduler/index.d.ts",
       "import": "./dist/scheduler/index.js"
@@ -172,6 +184,46 @@
     "./pdf/GeneratePdfJob": {
       "types": "./dist/pdf/GeneratePdfJob.d.ts",
       "import": "./dist/pdf/GeneratePdfJob.js"
+    },
+    "./dashboard": {
+      "types": "./dist/dashboard/index.d.ts",
+      "import": "./dist/dashboard/index.js"
+    },
+    "./queue/JobMonitor": {
+      "types": "./dist/queue/JobMonitor.d.ts",
+      "import": "./dist/queue/JobMonitor.js"
+    },
+    "./scheduler/ScheduleMonitor": {
+      "types": "./dist/scheduler/ScheduleMonitor.d.ts",
+      "import": "./dist/scheduler/ScheduleMonitor.js"
+    },
+    "./logging/LogViewer": {
+      "types": "./dist/logging/LogViewer.d.ts",
+      "import": "./dist/logging/LogViewer.js"
+    },
+    "./audit": {
+      "types": "./dist/audit/index.d.ts",
+      "import": "./dist/audit/index.js"
+    },
+    "./api-keys": {
+      "types": "./dist/api-keys/index.d.ts",
+      "import": "./dist/api-keys/index.js"
+    },
+    "./webhooks": {
+      "types": "./dist/webhooks/index.d.ts",
+      "import": "./dist/webhooks/index.js"
+    },
+    "./teams": {
+      "types": "./dist/teams/index.d.ts",
+      "import": "./dist/teams/index.js"
+    },
+    "./email-templates": {
+      "types": "./dist/email-templates/index.d.ts",
+      "import": "./dist/email-templates/index.js"
+    },
+    "./uploads": {
+      "types": "./dist/uploads/index.d.ts",
+      "import": "./dist/uploads/index.js"
     }
   },
   "scripts": {
@@ -195,6 +247,8 @@
     "vitest": "^2.1.0"
   },
   "peerDependencies": {
+    "@aws-sdk/client-s3": ">=3.0.0",
+    "@aws-sdk/s3-request-presigner": ">=3.0.0",
     "@sveltejs/kit": "^2.0.0",
     "better-sqlite3": "*",
     "bullmq": ">=5.0.0",
@@ -203,6 +257,8 @@
     "pusher-js": ">=8.0.0"
   },
   "peerDependenciesMeta": {
+    "@aws-sdk/client-s3": { "optional": true },
+    "@aws-sdk/s3-request-presigner": { "optional": true },
     "better-sqlite3": { "optional": true },
     "bullmq": { "optional": true },
     "mysql2": { "optional": true },

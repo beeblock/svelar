@@ -25,6 +25,7 @@ import { MakeConfigCommand } from './commands/MakeConfigCommand.js';
 import { MakeChannelCommand } from './commands/MakeChannelCommand.js';
 import { MakeDockerCommand } from './commands/MakeDockerCommand.js';
 import { MakeBroadcastingCommand } from './commands/MakeBroadcastingCommand.js';
+import { MakeDashboardCommand } from './commands/MakeDashboardCommand.js';
 
 // Database
 import { MigrateCommand } from './commands/MigrateCommand.js';
@@ -36,6 +37,11 @@ import { QueueWorkCommand } from './commands/QueueWorkCommand.js';
 
 // Utilities
 import { TinkerCommand } from './commands/TinkerCommand.js';
+
+// Plugins
+import { PluginListCommand } from './commands/PluginListCommand.js';
+import { PluginPublishCommand } from './commands/PluginPublishCommand.js';
+import { PluginInstallCommand } from './commands/PluginInstallCommand.js';
 
 const cli = new Cli('0.1.0');
 
@@ -58,11 +64,15 @@ cli.register(MakeConfigCommand);
 cli.register(MakeChannelCommand);
 cli.register(MakeDockerCommand);
 cli.register(MakeBroadcastingCommand);
+cli.register(MakeDashboardCommand);
 cli.register(MigrateCommand);
 cli.register(SeedCommand);
 cli.register(ScheduleRunCommand);
 cli.register(QueueWorkCommand);
 cli.register(TinkerCommand);
+cli.register(PluginListCommand);
+cli.register(PluginPublishCommand);
+cli.register(PluginInstallCommand);
 
 // ── Auto-discover user commands ─────────────────────────────
 // Scans src/lib/commands/ in the user's project for custom Command classes.
