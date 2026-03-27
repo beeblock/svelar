@@ -1,4 +1,3 @@
-import { redirect } from '@sveltejs/kit';
 import type { ServerLoadEvent } from '@sveltejs/kit';
 import { User } from '$lib/models/User.js';
 import { JobMonitor } from 'svelar/queue/JobMonitor';
@@ -7,11 +6,6 @@ import { LogViewer } from 'svelar/logging/LogViewer';
 
 export async function load(event: ServerLoadEvent) {
   const user = event.locals.user;
-
-  // Check if user is admin
-  if (!user || user.role !== 'admin') {
-    throw redirect(302, '/dashboard');
-  }
 
   // Fetch all users
   const users = await User.query().get();

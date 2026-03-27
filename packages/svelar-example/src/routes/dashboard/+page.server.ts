@@ -1,12 +1,9 @@
 import type { PageServerLoad } from './$types';
-import { redirect } from '@sveltejs/kit';
 import { ApiKeys } from 'svelar/api-keys';
 import { Teams } from 'svelar/teams';
 import { Audit } from 'svelar/audit';
 
 export const load: PageServerLoad = async ({ locals }) => {
-  if (!locals.user) throw redirect(302, '/login');
-
   const user = locals.user as any;
 
   let apiKeyCount = 0;

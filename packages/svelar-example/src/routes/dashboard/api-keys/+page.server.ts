@@ -1,10 +1,8 @@
 import type { Actions, PageServerLoad } from './$types';
-import { fail, redirect } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 import { ApiKeys } from 'svelar/api-keys';
 
 export const load: PageServerLoad = async ({ locals }) => {
-  if (!locals.user) throw redirect(302, '/login');
-
   const user = locals.user as any;
   let keys: any[] = [];
 
@@ -27,7 +25,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 export const actions: Actions = {
   create: async ({ request, locals }) => {
-    if (!locals.user) throw redirect(302, '/login');
+    if (!locals.user) return fail(401, { error: 'Unauthenticated' });
 
     const data = await request.formData();
     const name = data.get('name') as string;
@@ -51,7 +49,7 @@ export const actions: Actions = {
   },
 
   revoke: async ({ request, locals }) => {
-    if (!locals.user) throw redirect(302, '/login');
+    if (!locals.user) return fail(401, { error: 'Unauthenticated' });
 
     const data = await request.formData();
     const keyId = data.get('keyId') as string;

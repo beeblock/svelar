@@ -1,6 +1,6 @@
 <script lang="ts">
   import '../app.css';
-  import { Button, Avatar, AvatarImage, AvatarFallback } from 'svelar/ui';
+  import { Button, Avatar, AvatarImage, AvatarFallback, Toaster } from 'svelar/ui';
   import LanguageSwitcher from 'svelar/i18n/LanguageSwitcher.svelte';
   import { page } from '$app/state';
   import * as m from '$lib/paraglide/messages';
@@ -181,6 +181,8 @@
     <p>&copy; 2024 {m.app_name()}. {m.footer_text()}</p>
   </footer>
 </div>
+
+<Toaster position="bottom-right" />
 
 <style lang="postcss" global>
   :global(body) {

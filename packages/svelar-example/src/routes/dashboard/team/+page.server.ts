@@ -1,10 +1,8 @@
 import type { Actions, PageServerLoad } from './$types';
-import { fail, redirect } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 import { Teams } from 'svelar/teams';
 
 export const load: PageServerLoad = async ({ locals }) => {
-  if (!locals.user) throw redirect(302, '/login');
-
   const user = locals.user as any;
 
   // Get user's teams (create a personal team if none exists)
@@ -63,7 +61,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 export const actions: Actions = {
   invite: async ({ request, locals }) => {
-    if (!locals.user) throw redirect(302, '/login');
+    if (!locals.user) return fail(401, { error: 'Unauthenticated' });
 
     const data = await request.formData();
     const email = data.get('email') as string;
@@ -83,7 +81,7 @@ export const actions: Actions = {
   },
 
   updateRole: async ({ request, locals }) => {
-    if (!locals.user) throw redirect(302, '/login');
+    if (!locals.user) return fail(401, { error: 'Unauthenticated' });
 
     const data = await request.formData();
     const teamId = data.get('teamId') as string;
@@ -99,7 +97,7 @@ export const actions: Actions = {
   },
 
   removeMember: async ({ request, locals }) => {
-    if (!locals.user) throw redirect(302, '/login');
+    if (!locals.user) return fail(401, { error: 'Unauthenticated' });
 
     const data = await request.formData();
     const teamId = data.get('teamId') as string;
@@ -114,7 +112,7 @@ export const actions: Actions = {
   },
 
   cancelInvitation: async ({ request, locals }) => {
-    if (!locals.user) throw redirect(302, '/login');
+    if (!locals.user) return fail(401, { error: 'Unauthenticated' });
 
     const data = await request.formData();
     const invitationId = data.get('invitationId') as string;
@@ -128,7 +126,7 @@ export const actions: Actions = {
   },
 
   updateTeam: async ({ request, locals }) => {
-    if (!locals.user) throw redirect(302, '/login');
+    if (!locals.user) return fail(401, { error: 'Unauthenticated' });
 
     const data = await request.formData();
     const teamId = data.get('teamId') as string;

@@ -22,3 +22,5 @@ export { default as Separator } from './Separator.svelte';
 export { default as Avatar } from './Avatar.svelte';
 export { default as AvatarImage } from './AvatarImage.svelte';
 export { default as AvatarFallback } from './AvatarFallback.svelte';
+export { default as Toaster } from './Toaster.svelte';
+export { toast, type ToastItem, type ToastVariant, type ToastOptions, type ToastState } from './toast.svelte.js';

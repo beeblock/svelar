@@ -382,7 +382,8 @@ export class AuthenticateMiddleware extends Middleware {
 }
 
 /**
- * Middleware that requires authentication — returns 401 if not authenticated.
+ * Middleware that requires authentication — returns 401 JSON if not authenticated.
+ * Best for API routes.
  */
 export class RequireAuthMiddleware extends Middleware {
   async handle(ctx: MiddlewareContext, next: NextFunction): Promise<Response | void> {
@@ -394,4 +395,72 @@ export class RequireAuthMiddleware extends Middleware {
     }
     return next();
   }
+}
+
+/**
+ * Middleware that redirects unauthenticated users to a login page.
+ * Best for page routes (dashboard, admin, etc.).
+ *
+ * @example
+ * ```ts
+ * // In +layout.server.ts to protect an entire route group:
+ * import { guardAuth } from 'svelar/auth';
+ *
+ * export const load = guardAuth();
+ * // or with a custom redirect:
+ * export const load = guardAuth('/signin');
+ * ```
+ */
+export class RedirectIfNotAuthenticated extends Middleware {
+  constructor(private redirectTo: string = '/login') {
+    super();
+  }
+
+  async handle(ctx: MiddlewareContext, next: NextFunction): Promise<Response | void> {
+    if (!ctx.event.locals.user) {
+      const url = new URL(this.redirectTo, ctx.event.url.origin);
+      return new Response(null, {
+        status: 302,
+        headers: { Location: url.pathname },
+      });
+    }
+    return next();
+  }
+}
+
+/**
+ * Convenience helper to create a SvelteKit load function that guards a route.
+ * Use in `+layout.server.ts` to protect all pages under a route group.
+ *
+ * @example
+ * ```ts
+ * // src/routes/dashboard/+layout.server.ts
+ * import { guardAuth } from 'svelar/auth';
+ * export const load = guardAuth();
+ *
+ * // src/routes/admin/+layout.server.ts — custom redirect
+ * import { guardAuth } from 'svelar/auth';
+ * export const load = guardAuth('/login');
+ *
+ * // With role check
+ * import { guardAuth } from 'svelar/auth';
+ * export const load = guardAuth('/dashboard', { role: 'admin' });
+ * ```
+ */
+export function guardAuth(
+  redirectTo = '/login',
+  options?: { role?: string },
+) {
+  return async (event: { locals: Record<string, any> }) => {
+    const user = event.locals.user;
+    if (!user) {
+      const { redirect } = await import('@sveltejs/kit');
+      throw redirect(302, redirectTo);
+    }
+    if (options?.role && user.role !== options.role) {
+      const { redirect } = await import('@sveltejs/kit');
+      throw redirect(302, redirectTo);
+    }
+    return {};
+  };
 }

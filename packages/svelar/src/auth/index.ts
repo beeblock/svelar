@@ -2,6 +2,8 @@ export {
   AuthManager,
   AuthenticateMiddleware,
   RequireAuthMiddleware,
+  RedirectIfNotAuthenticated,
+  guardAuth,
   signJwt,
   verifyJwt,
   type AuthConfig,
