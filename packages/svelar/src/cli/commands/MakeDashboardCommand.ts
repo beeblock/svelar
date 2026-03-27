@@ -174,7 +174,7 @@ import type { RequestHandler } from '@sveltejs/kit';
  *
  * Query params:
  * - status: 'completed' | 'failed' | 'delayed' | 'active' | 'waiting'
- * - queue: queue name (default: all)
+ * - queue: queue name (default: 'default')
  * - limit: number of jobs (default: 50)
  * - offset: pagination offset (default: 0)
  */
@@ -188,16 +188,16 @@ export const GET: RequestHandler = async (event) => {
   const offset = parseInt(searchParams.get('offset') || '0');
 
   try {
-    // Import JobMonitor to list jobs
     const { JobMonitor } = await import('svelar/queue/JobMonitor');
 
-    const jobs = await JobMonitor.listJobs(queueName, {
-      status: status === 'all' ? undefined : status,
+    const jobs = await JobMonitor.listJobs({
+      queue: queueName,
+      status: status === 'all' ? undefined : status as any,
       limit,
       offset,
     });
 
-    const counts = await JobMonitor.getJobCounts(queueName);
+    const counts = await JobMonitor.getCounts(queueName);
 
     return json({
       jobs,
@@ -261,7 +261,7 @@ export const DELETE: RequestHandler = async (event) => {
 
   try {
     const { JobMonitor } = await import('svelar/queue/JobMonitor');
-    await JobMonitor.removeJob(id);
+    await JobMonitor.deleteJob(id);
 
     return json({ success: true, message: 'Job removed' });
   } catch (error: any) {
@@ -290,12 +290,12 @@ export const GET: RequestHandler = async (event) => {
   try {
     const { ScheduleMonitor } = await import('svelar/scheduler/ScheduleMonitor');
 
-    const tasks = await ScheduleMonitor.listTasks();
-    const stats = await ScheduleMonitor.getStats();
+    const tasks = ScheduleMonitor.listTasks();
+    const health = ScheduleMonitor.getHealth();
 
     return json({
       tasks,
-      stats,
+      health,
     });
   } catch (error: any) {
     return json(
@@ -356,7 +356,11 @@ export const POST: RequestHandler = async (event) => {
 
   try {
     const { ScheduleMonitor } = await import('svelar/scheduler/ScheduleMonitor');
-    await ScheduleMonitor.toggleTask(name, enabled);
+    if (enabled) {
+      ScheduleMonitor.enableTask(name);
+    } else {
+      ScheduleMonitor.disableTask(name);
+    }
 
     return json({ success: true, message: \`Task '\${name}' \${enabled ? 'enabled' : 'disabled'}\` });
   } catch (error: any) {
@@ -399,23 +403,19 @@ export const GET: RequestHandler = async (event) => {
   try {
     const { LogViewer } = await import('svelar/logging/LogViewer');
 
-    const logs = await LogViewer.getLogs({
-      level,
-      channel,
-      search,
+    const logs = LogViewer.query({
+      level: level as any,
+      channel: channel ?? undefined,
+      search: search ?? undefined,
       limit,
       offset,
     });
 
-    const total = await LogViewer.countLogs({
-      level,
-      channel,
-      search,
-    });
+    const stats = LogViewer.getStats();
 
     return json({
       logs,
-      total,
+      total: stats.totalEntries,
       limit,
       offset,
     });
@@ -452,24 +452,27 @@ export const GET: RequestHandler = async (event) => {
     Connection: 'keep-alive',
   };
 
-  try {
-    // Create a readable stream of logs
-    const stream = await LogViewer.streamLogs();
+  // Create a readable stream using the tail() subscription
+  const stream = new ReadableStream({
+    start(controller) {
+      const encoder = new TextEncoder();
+      const unsubscribe = LogViewer.tail((entry) => {
+        try {
+          controller.enqueue(encoder.encode(\`data: \${JSON.stringify(entry)}\n\n\`));
+        } catch {
+          unsubscribe();
+        }
+      });
 
-    return new Response(stream, { headers });
-  } catch (error: any) {
-    // If streaming not available, return error as SSE
-    const errorStream = new ReadableStream({
-      start(controller) {
-        controller.enqueue(
-          new TextEncoder().encode(\`data: \${JSON.stringify({ error: error.message })}\n\n\`)
-        );
+      // Clean up when the client disconnects
+      event.request.signal.addEventListener('abort', () => {
+        unsubscribe();
         controller.close();
-      },
-    });
+      });
+    },
+  });
 
-    return new Response(errorStream, { headers });
-  }
+  return new Response(stream, { headers });
 };
 `;
   }
@@ -490,15 +493,18 @@ export const GET: RequestHandler = async (event) => {
     const { ScheduleMonitor } = await import('svelar/scheduler/ScheduleMonitor');
     const { LogViewer } = await import('svelar/logging/LogViewer');
 
-    const [queueStats, taskStats, recentErrors] = await Promise.all([
-      JobMonitor.getStats(),
-      ScheduleMonitor.getStats(),
-      LogViewer.getRecentErrors(10),
+    const [queueHealth, recentErrors] = await Promise.all([
+      JobMonitor.getHealth(),
+      Promise.resolve(LogViewer.getRecentErrors(10)),
     ]);
 
+    const schedulerHealth = ScheduleMonitor.getHealth();
+    const logStats = LogViewer.getStats();
+
     return json({
-      queue: queueStats,
-      scheduler: taskStats,
+      queue: queueHealth,
+      scheduler: schedulerHealth,
+      logs: logStats,
       recentErrors,
       timestamp: new Date().toISOString(),
     });

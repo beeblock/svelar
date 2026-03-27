@@ -1513,13 +1513,113 @@ Scaffold a production-ready admin dashboard with system monitoring:
 npx svelar make:dashboard
 ```
 
-This creates API routes (`/api/admin/*`) and a dashboard page with:
-- **System Health**: CPU, memory, uptime
-- **Queue Monitoring**: Job counts, error rates, retry queue
-- **Scheduler Viewer**: View scheduled tasks, trigger manually
-- **Log Viewer**: Filter and search application logs
+This creates API routes (`/api/admin/*`) and a dashboard page with system health, queue monitoring, scheduler management, and log viewing.
 
-Access the dashboard at `/admin/dashboard` after setup.
+### Dashboard Configuration
+
+Configure the dashboard in your `app.ts`:
+
+```typescript
+import { configureDashboard } from 'svelar/dashboard';
+import { JobMonitor } from 'svelar/queue/JobMonitor';
+import { ScheduleMonitor } from 'svelar/scheduler/ScheduleMonitor';
+import { LogViewer } from 'svelar/logging/LogViewer';
+
+// Configure JobMonitor with your queue connection
+JobMonitor.configure({
+  driver: process.env.QUEUE_DRIVER ?? 'sync',
+  default: process.env.QUEUE_DRIVER ?? 'sync',
+  connections: {
+    sync: { driver: 'sync' },
+    redis: {
+      driver: 'redis',
+      host: process.env.REDIS_HOST ?? 'localhost',
+      port: Number(process.env.REDIS_PORT ?? 6379),
+    },
+  },
+});
+
+// ScheduleMonitor is configured automatically when you use the Scheduler
+// LogViewer collects entries automatically from the logging system
+
+configureDashboard({ enabled: true, prefix: '/admin' });
+```
+
+### Dashboard API Endpoints
+
+The `make:dashboard` command scaffolds these SvelteKit API routes:
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/admin/health` | System health (uptime, memory, node version) |
+| GET | `/api/admin/queue` | List jobs with filtering (`?status=failed&limit=50`) |
+| GET | `/api/admin/queue/[id]` | Get a single job's details |
+| POST | `/api/admin/queue/[id]/retry` | Retry a failed job |
+| DELETE | `/api/admin/queue/[id]` | Remove a job |
+| GET | `/api/admin/scheduler` | List all scheduled tasks |
+| POST | `/api/admin/scheduler/[name]/run` | Manually trigger a task |
+| POST | `/api/admin/scheduler/[name]/toggle` | Enable/disable a task |
+| GET | `/api/admin/logs` | Query logs with filtering (`?level=error&search=timeout`) |
+| GET | `/api/admin/logs/tail` | SSE stream of live logs |
+| GET | `/api/admin/stats` | Combined dashboard stats |
+
+### Using the Monitors Directly
+
+You can use the monitor singletons from anywhere in your server code:
+
+```typescript
+import { JobMonitor } from 'svelar/queue/JobMonitor';
+import { ScheduleMonitor } from 'svelar/scheduler/ScheduleMonitor';
+import { LogViewer } from 'svelar/logging/LogViewer';
+
+// Queue job counts
+const counts = await JobMonitor.getCounts('default');
+// { waiting: 5, active: 2, completed: 100, failed: 3, delayed: 0, total: 110 }
+
+// List failed jobs
+const failedJobs = await JobMonitor.listJobs({ status: 'failed', limit: 10 });
+
+// Retry a job
+await JobMonitor.retryJob('job-id-123');
+
+// Queue health metrics
+const health = await JobMonitor.getHealth();
+// { driver: 'redis', queues: {...}, failureRate: 2.5, throughput: 150 }
+
+// Scheduler tasks
+const tasks = ScheduleMonitor.listTasks();
+// [{ name: 'CleanupTokens', expression: '0 0 * * *', humanReadable: 'Daily at midnight', ... }]
+
+// Run a task manually
+await ScheduleMonitor.runTask('CleanupTokens');
+
+// Log stats
+const stats = LogViewer.getStats();
+// { totalEntries: 1500, byLevel: { info: 1200, warn: 250, error: 50 }, byChannel: {...} }
+
+// Query logs
+const errors = LogViewer.query({ level: 'error', limit: 20 });
+
+// Live tail (for SSE endpoints)
+const unsubscribe = LogViewer.tail((entry) => {
+  console.log(`${entry.level}: ${entry.message}`);
+});
+```
+
+### Protecting Dashboard Routes
+
+Each scaffolded route includes a `// TODO: Add admin middleware check` placeholder. Replace it with your auth logic:
+
+```typescript
+export const GET: RequestHandler = async (event) => {
+  if (!event.locals.user || event.locals.user.role !== 'admin') {
+    return json({ error: 'Forbidden' }, { status: 403 });
+  }
+  // ... rest of handler
+};
+```
+
+Access the dashboard at `/admin` (or `/admin/dashboard` if using the scaffolded page).
 
 ## Plugin System
 

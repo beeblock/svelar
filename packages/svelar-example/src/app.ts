@@ -17,6 +17,8 @@ import { Teams } from 'svelar/teams';
 import { EmailTemplates } from 'svelar/email-templates';
 import { Uploads } from 'svelar/uploads';
 import { configureDashboard } from 'svelar/dashboard';
+import { JobMonitor } from 'svelar/queue/JobMonitor';
+import { LogViewer } from 'svelar/logging/LogViewer';
 import { User } from './lib/models/User.js';
 import './lib/auth/gates.js';
 
@@ -73,6 +75,20 @@ Uploads.configure({ driver: 'memory', maxFileSize: 10 * 1024 * 1024 });
 // ── Email Templates ──────────────────────────────────────
 EmailTemplates.configure({ driver: 'memory' });
 EmailTemplates.registerDefaults();
+
+// ── Job Monitor ──────────────────────────────────────────
+JobMonitor.configure({
+  driver: process.env.QUEUE_DRIVER ?? 'sync',
+  default: process.env.QUEUE_DRIVER ?? 'sync',
+  connections: {
+    sync: { driver: 'sync' },
+    redis: {
+      driver: 'redis',
+      host: process.env.REDIS_HOST ?? 'localhost',
+      port: Number(process.env.REDIS_PORT ?? 6379),
+    },
+  },
+});
 
 // ── Dashboard ─────────────────────────────────────────────
 configureDashboard({ enabled: true, prefix: '/admin' });

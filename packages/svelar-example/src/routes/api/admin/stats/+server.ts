@@ -2,17 +2,19 @@ import { json } from '@sveltejs/kit';
 import type { RequestEvent } from '@sveltejs/kit';
 import { User } from '$lib/models/User.js';
 import { Post } from '$lib/models/Post.js';
+import { JobMonitor } from 'svelar/queue/JobMonitor';
+import { ScheduleMonitor } from 'svelar/scheduler/ScheduleMonitor';
+import { LogViewer } from 'svelar/logging/LogViewer';
 
 export async function GET(event: RequestEvent) {
   try {
     const user = event.locals.user;
 
-    // Check authorization
     if (!user || user.role !== 'admin') {
       return json({ message: 'Unauthorized' }, { status: 403 });
     }
 
-    // Get stats
+    // App stats
     const users = await User.query().get();
     const posts = await Post.query().get();
 
@@ -23,12 +25,26 @@ export async function GET(event: RequestEvent) {
 
     const publishedPosts = posts.filter((p: any) => p.published).length;
 
+    // System stats from monitors
+    const [queueHealth] = await Promise.all([
+      JobMonitor.getHealth(),
+    ]);
+
+    const schedulerHealth = ScheduleMonitor.getHealth();
+    const logStats = LogViewer.getStats();
+    const recentErrors = LogViewer.getRecentErrors(10);
+
     return json({
       userCount: users.length,
       postCount: posts.length,
       publishedPosts,
       draftPosts: posts.length - publishedPosts,
       roleDistribution,
+      queue: queueHealth,
+      scheduler: schedulerHealth,
+      logs: logStats,
+      recentErrors,
+      timestamp: new Date().toISOString(),
     });
   } catch (err: any) {
     console.error('Error fetching stats:', err);

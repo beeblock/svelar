@@ -9,62 +9,30 @@
   let message = $state('');
   let messageType = $state<'success' | 'error'>('success');
 
-  // Queue and scheduler state
-  let queueStats = $state({
-    pending: 12,
-    processing: 2,
-    failed: 1,
-    completed: 145,
-  });
+  // Real data from server
+  let queueCounts = $state(data.queueCounts);
+  let scheduledTasks = $state(data.scheduledTasks);
+  let recentLogs = $state(data.recentLogs);
+  let logStats = $state(data.logStats);
+  let health = $state(data.health);
 
-  let scheduledTasks = $state([
-    {
-      id: 'cleanup-expired-tokens',
-      name: 'Cleanup Expired Tokens',
-      schedule: 'Daily at 00:00',
-      status: 'enabled',
-      lastRun: new Date(Date.now() - 2 * 60 * 60 * 1000),
-      nextRun: new Date(Date.now() + 22 * 60 * 60 * 1000),
-    },
-    {
-      id: 'daily-digest-email',
-      name: 'Daily Digest Email',
-      schedule: 'Daily at 09:00',
-      status: 'enabled',
-      lastRun: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),
-      nextRun: new Date(Date.now() + 7 * 60 * 60 * 1000),
-    },
-    {
-      id: 'prune-audit-logs',
-      name: 'Prune Audit Logs',
-      schedule: 'Weekly on Sunday at 02:00',
-      status: 'enabled',
-      lastRun: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
-      nextRun: new Date(Date.now() + 4 * 24 * 60 * 60 * 1000),
-    },
-    {
-      id: 'queue-health-check',
-      name: 'Queue Health Check',
-      schedule: 'Every 5 minutes',
-      status: 'enabled',
-      lastRun: new Date(Date.now() - 3 * 60 * 1000),
-      nextRun: new Date(Date.now() + 2 * 60 * 1000),
-    },
-  ]);
-
-  let recentLogs = $state([
-    { id: 1, level: 'info', message: 'User registered', timestamp: new Date(Date.now() - 10 * 60 * 1000) },
-    { id: 2, level: 'warning', message: 'Failed login attempt for admin@example.com', timestamp: new Date(Date.now() - 30 * 60 * 1000) },
-    { id: 3, level: 'error', message: 'Database connection timeout', timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000) },
-    { id: 4, level: 'info', message: 'Job completed: SendWelcomeEmail', timestamp: new Date(Date.now() - 3 * 60 * 60 * 1000) },
-    { id: 5, level: 'info', message: 'Audit log entry created', timestamp: new Date(Date.now() - 4 * 60 * 60 * 1000) },
-  ]);
-
-  let logFilter = $state<'all' | 'info' | 'warning' | 'error'>('all');
+  let logFilter = $state<'all' | 'info' | 'warn' | 'error'>('all');
 
   const filteredLogs = $derived(
-    logFilter === 'all' ? recentLogs : recentLogs.filter((log) => log.level === logFilter)
+    logFilter === 'all' ? recentLogs : recentLogs.filter((log: any) => log.level === logFilter)
   );
+
+  async function refreshDashboard() {
+    try {
+      const res = await apiFetch('/api/admin/stats');
+      if (res.ok) {
+        const stats = await res.json();
+        if (stats.queue) {
+          queueCounts = stats.queue.queues?.default ?? queueCounts;
+        }
+      }
+    } catch { /* ignore refresh errors */ }
+  }
 
   async function updateUserRole(userId: number, newRole: string) {
     try {
@@ -122,12 +90,80 @@
     }
   }
 
-  function formatDate(date: Date): string {
-    return date.toLocaleString();
+  async function retryJob(jobId: string) {
+    try {
+      const res = await apiFetch(`/api/admin/queue/${jobId}/retry`, { method: 'POST' });
+      if (res.ok) {
+        message = 'Job queued for retry';
+        messageType = 'success';
+        await refreshQueue();
+      }
+    } catch {
+      message = 'Failed to retry job';
+      messageType = 'error';
+    }
+  }
+
+  async function refreshQueue() {
+    try {
+      const res = await apiFetch('/api/admin/queue');
+      if (res.ok) {
+        const data = await res.json();
+        queueCounts = data.counts;
+      }
+    } catch { /* ignore */ }
+  }
+
+  async function runTask(taskName: string) {
+    try {
+      const res = await apiFetch(`/api/admin/scheduler/${taskName}/run`, { method: 'POST' });
+      if (res.ok) {
+        message = `Task '${taskName}' triggered`;
+        messageType = 'success';
+      } else {
+        const err = await res.json();
+        message = err.error || 'Failed to run task';
+        messageType = 'error';
+      }
+    } catch {
+      message = 'Failed to run task';
+      messageType = 'error';
+    }
+  }
+
+  async function toggleTask(taskName: string, enabled: boolean) {
+    try {
+      const res = await apiFetch(`/api/admin/scheduler/${taskName}/toggle`, {
+        method: 'POST',
+        body: JSON.stringify({ enabled }),
+      });
+      if (res.ok) {
+        // Update local state
+        scheduledTasks = scheduledTasks.map((t: any) =>
+          t.name === taskName ? { ...t, enabled } : t
+        );
+        message = `Task '${taskName}' ${enabled ? 'enabled' : 'disabled'}`;
+        messageType = 'success';
+      }
+    } catch {
+      message = 'Failed to toggle task';
+      messageType = 'error';
+    }
+  }
+
+  function formatDate(date: string | null): string {
+    if (!date) return 'Never';
+    return new Date(date).toLocaleString();
+  }
+
+  function formatUptime(seconds: number): string {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
   }
 
   function getLogBadgeVariant(level: string): 'default' | 'secondary' | 'destructive' {
-    return level === 'error' ? 'destructive' : level === 'warning' ? 'secondary' : 'default';
+    return level === 'error' || level === 'fatal' ? 'destructive' : level === 'warn' ? 'secondary' : 'default';
   }
 </script>
 
@@ -136,9 +172,12 @@
 </svelte:head>
 
 <div class="space-y-8">
-  <div>
-    <h1 class="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
-    <p class="text-gray-600 mt-1">System health, queue monitoring, and task management</p>
+  <div class="flex justify-between items-center">
+    <div>
+      <h1 class="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
+      <p class="text-gray-600 mt-1">System health, queue monitoring, and task management</p>
+    </div>
+    <Button variant="outline" onclick={refreshDashboard}>Refresh</Button>
   </div>
 
   {#if message}
@@ -181,7 +220,7 @@
           <CardContent class="pt-6">
             <div>
               <p class="text-sm text-gray-600">Queue Pending</p>
-              <p class="text-3xl font-bold text-yellow-600 mt-2">{queueStats.pending}</p>
+              <p class="text-3xl font-bold text-yellow-600 mt-2">{queueCounts.waiting}</p>
             </div>
           </CardContent>
         </Card>
@@ -190,7 +229,7 @@
           <CardContent class="pt-6">
             <div>
               <p class="text-sm text-gray-600">Failed Jobs</p>
-              <p class="text-3xl font-bold text-red-600 mt-2">{queueStats.failed}</p>
+              <p class="text-3xl font-bold text-red-600 mt-2">{queueCounts.failed}</p>
             </div>
           </CardContent>
         </Card>
@@ -203,31 +242,47 @@
         <CardContent class="space-y-4">
           <div class="space-y-2">
             <div class="flex justify-between text-sm">
-              <span>Database Connection</span>
-              <Badge variant="default">Online</Badge>
-            </div>
-            <div class="h-2 bg-gray-200 rounded-full overflow-hidden">
-              <div class="h-full bg-green-500" style="width: 100%"></div>
+              <span>Status</span>
+              <Badge variant="default">{health.status}</Badge>
             </div>
           </div>
 
           <div class="space-y-2">
             <div class="flex justify-between text-sm">
-              <span>Queue System</span>
-              <Badge variant="default">Active</Badge>
-            </div>
-            <div class="h-2 bg-gray-200 rounded-full overflow-hidden">
-              <div class="h-full bg-green-500" style="width: 95%"></div>
+              <span>Uptime</span>
+              <span class="font-medium">{formatUptime(health.uptime)}</span>
             </div>
           </div>
 
           <div class="space-y-2">
             <div class="flex justify-between text-sm">
               <span>Memory Usage</span>
-              <Badge variant="secondary">45%</Badge>
+              <Badge variant={health.memoryPercent > 90 ? 'destructive' : health.memoryPercent > 70 ? 'secondary' : 'default'}>
+                {health.memoryUsedMB} MB / {health.memoryTotalMB} MB ({health.memoryPercent}%)
+              </Badge>
             </div>
             <div class="h-2 bg-gray-200 rounded-full overflow-hidden">
-              <div class="h-full bg-yellow-500" style="width: 45%"></div>
+              <div
+                class="h-full transition-all"
+                class:bg-green-500={health.memoryPercent <= 70}
+                class:bg-yellow-500={health.memoryPercent > 70 && health.memoryPercent <= 90}
+                class:bg-red-500={health.memoryPercent > 90}
+                style="width: {health.memoryPercent}%"
+              ></div>
+            </div>
+          </div>
+
+          <div class="space-y-2">
+            <div class="flex justify-between text-sm">
+              <span>Queue Throughput</span>
+              <span class="font-medium">{queueCounts.total} total jobs</span>
+            </div>
+          </div>
+
+          <div class="space-y-2">
+            <div class="flex justify-between text-sm">
+              <span>Log Entries</span>
+              <span class="font-medium">{logStats.totalEntries} entries ({logStats.byLevel?.error ?? 0} errors)</span>
             </div>
           </div>
         </CardContent>
@@ -239,7 +294,7 @@
       <Card>
         <CardHeader>
           <CardTitle>User Management</CardTitle>
-          <CardDescription>Manage user roles and permissions</CardDescription>
+          <CardDescription>Manage user roles and permissions ({data.stats.userCount} users)</CardDescription>
         </CardHeader>
         <CardContent>
           <div class="overflow-x-auto">
@@ -308,12 +363,12 @@
 
     <!-- Queue Tab -->
     <TabsContent value="queue" class="space-y-6 mt-6">
-      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
         <Card>
           <CardContent class="pt-6">
             <div>
-              <p class="text-sm text-gray-600">Pending</p>
-              <p class="text-3xl font-bold text-yellow-600 mt-2">{queueStats.pending}</p>
+              <p class="text-sm text-gray-600">Waiting</p>
+              <p class="text-3xl font-bold text-yellow-600 mt-2">{queueCounts.waiting}</p>
             </div>
           </CardContent>
         </Card>
@@ -321,8 +376,8 @@
         <Card>
           <CardContent class="pt-6">
             <div>
-              <p class="text-sm text-gray-600">Processing</p>
-              <p class="text-3xl font-bold text-blue-600 mt-2">{queueStats.processing}</p>
+              <p class="text-sm text-gray-600">Active</p>
+              <p class="text-3xl font-bold text-blue-600 mt-2">{queueCounts.active}</p>
             </div>
           </CardContent>
         </Card>
@@ -331,7 +386,7 @@
           <CardContent class="pt-6">
             <div>
               <p class="text-sm text-gray-600">Failed</p>
-              <p class="text-3xl font-bold text-red-600 mt-2">{queueStats.failed}</p>
+              <p class="text-3xl font-bold text-red-600 mt-2">{queueCounts.failed}</p>
             </div>
           </CardContent>
         </Card>
@@ -340,7 +395,16 @@
           <CardContent class="pt-6">
             <div>
               <p class="text-sm text-gray-600">Completed</p>
-              <p class="text-3xl font-bold text-green-600 mt-2">{queueStats.completed}</p>
+              <p class="text-3xl font-bold text-green-600 mt-2">{queueCounts.completed}</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent class="pt-6">
+            <div>
+              <p class="text-sm text-gray-600">Delayed</p>
+              <p class="text-3xl font-bold text-gray-600 mt-2">{queueCounts.delayed}</p>
             </div>
           </CardContent>
         </Card>
@@ -348,35 +412,11 @@
 
       <Card>
         <CardHeader>
-          <CardTitle>Recent Jobs</CardTitle>
-          <CardDescription>Queue job history</CardDescription>
+          <CardTitle>Queue Actions</CardTitle>
+          <CardDescription>Manage job queue</CardDescription>
         </CardHeader>
-        <CardContent>
-          <div class="space-y-3">
-            <div class="flex items-center justify-between p-3 border border-gray-200 rounded-lg">
-              <div>
-                <p class="font-medium text-gray-900">SendWelcomeEmail (ID: 1234)</p>
-                <p class="text-sm text-gray-600">User: John Doe</p>
-              </div>
-              <Badge variant="default">Completed</Badge>
-            </div>
-
-            <div class="flex items-center justify-between p-3 border border-gray-200 rounded-lg">
-              <div>
-                <p class="font-medium text-gray-900">DailyDigestJob (ID: 1235)</p>
-                <p class="text-sm text-gray-600">Dispatched 2 hours ago</p>
-              </div>
-              <Badge variant="secondary">Processing</Badge>
-            </div>
-
-            <div class="flex items-center justify-between p-3 border border-gray-200 rounded-lg">
-              <div>
-                <p class="font-medium text-gray-900">ExportDataJob (ID: 1236)</p>
-                <p class="text-sm text-gray-600">User: Jane Smith</p>
-              </div>
-              <Badge variant="destructive">Failed (1/3)</Badge>
-            </div>
-          </div>
+        <CardContent class="flex gap-3">
+          <Button variant="outline" onclick={refreshQueue}>Refresh Counts</Button>
         </CardContent>
       </Card>
     </TabsContent>
@@ -386,28 +426,45 @@
       <Card>
         <CardHeader>
           <CardTitle>Scheduled Tasks</CardTitle>
-          <CardDescription>Manage application background tasks</CardDescription>
+          <CardDescription>
+            {scheduledTasks.length > 0
+              ? `${scheduledTasks.length} registered tasks`
+              : 'No tasks registered. Configure your scheduler to see tasks here.'}
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          <div class="space-y-3">
-            {#each scheduledTasks as task (task.id)}
-              <div class="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50">
-                <div class="flex-1">
-                  <p class="font-medium text-gray-900">{task.name}</p>
-                  <p class="text-sm text-gray-600">Schedule: {task.schedule}</p>
-                  <p class="text-xs text-gray-500 mt-1">Last run: {formatDate(task.lastRun)}</p>
-                  <p class="text-xs text-gray-500">Next run: {formatDate(task.nextRun)}</p>
+          {#if scheduledTasks.length > 0}
+            <div class="space-y-3">
+              {#each scheduledTasks as task (task.name)}
+                <div class="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50">
+                  <div class="flex-1">
+                    <p class="font-medium text-gray-900">{task.name}</p>
+                    <p class="text-sm text-gray-600">Schedule: {task.humanReadable}</p>
+                    <p class="text-xs text-gray-500 mt-1">Last run: {formatDate(task.lastRun)}</p>
+                    <p class="text-xs text-gray-500">Next run: {formatDate(task.nextRun)}</p>
+                  </div>
+                  <div class="flex items-center gap-3">
+                    {#if task.lastStatus}
+                      <Badge variant={task.lastStatus === 'success' ? 'default' : 'destructive'}>
+                        {task.lastStatus}
+                      </Badge>
+                    {/if}
+                    <Badge variant={task.enabled ? 'default' : 'secondary'}>
+                      {task.enabled ? 'enabled' : 'disabled'}
+                    </Badge>
+                    <Button size="sm" variant="outline" onclick={() => runTask(task.name)}>Run Now</Button>
+                    <Button size="sm" variant="outline" onclick={() => toggleTask(task.name, !task.enabled)}>
+                      {task.enabled ? 'Disable' : 'Enable'}
+                    </Button>
+                  </div>
                 </div>
-                <div class="flex items-center gap-3">
-                  <Badge variant={task.status === 'enabled' ? 'default' : 'secondary'}>
-                    {task.status}
-                  </Badge>
-                  <Button size="sm" variant="outline">Run Now</Button>
-                  <Button size="sm" variant="outline">{task.status === 'enabled' ? 'Disable' : 'Enable'}</Button>
-                </div>
-              </div>
-            {/each}
-          </div>
+              {/each}
+            </div>
+          {:else}
+            <p class="text-sm text-gray-500 py-4 text-center">
+              No scheduled tasks found. Configure the Scheduler in your app.ts to register tasks.
+            </p>
+          {/if}
         </CardContent>
       </Card>
     </TabsContent>
@@ -417,7 +474,12 @@
       <Card>
         <CardHeader>
           <CardTitle>Application Logs</CardTitle>
-          <CardDescription>Recent system and application events</CardDescription>
+          <CardDescription>
+            {logStats.totalEntries} total entries
+            {#if logStats.byLevel?.error}
+              ({logStats.byLevel.error} errors)
+            {/if}
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <div class="flex gap-2 mb-4">
@@ -426,44 +488,55 @@
               variant={logFilter === 'all' ? 'default' : 'outline'}
               onclick={() => (logFilter = 'all')}
             >
-              All
+              All ({logStats.totalEntries})
             </Button>
             <Button
               size="sm"
               variant={logFilter === 'info' ? 'default' : 'outline'}
               onclick={() => (logFilter = 'info')}
             >
-              Info
+              Info ({logStats.byLevel?.info ?? 0})
             </Button>
             <Button
               size="sm"
-              variant={logFilter === 'warning' ? 'default' : 'outline'}
-              onclick={() => (logFilter = 'warning')}
+              variant={logFilter === 'warn' ? 'default' : 'outline'}
+              onclick={() => (logFilter = 'warn')}
             >
-              Warning
+              Warning ({logStats.byLevel?.warn ?? 0})
             </Button>
             <Button
               size="sm"
               variant={logFilter === 'error' ? 'default' : 'outline'}
               onclick={() => (logFilter = 'error')}
             >
-              Error
+              Error ({logStats.byLevel?.error ?? 0})
             </Button>
           </div>
 
-          <div class="space-y-2 max-h-96 overflow-y-auto">
-            {#each filteredLogs as log (log.id)}
-              <div class="flex items-start gap-3 p-3 border border-gray-200 rounded bg-gray-50 text-sm">
-                <Badge variant={getLogBadgeVariant(log.level)} class="mt-0.5">
-                  {log.level.toUpperCase()}
-                </Badge>
-                <div class="flex-1">
-                  <p class="text-gray-900">{log.message}</p>
-                  <p class="text-xs text-gray-500 mt-1">{formatDate(log.timestamp)}</p>
+          {#if filteredLogs.length > 0}
+            <div class="space-y-2 max-h-96 overflow-y-auto">
+              {#each filteredLogs as log, i (i)}
+                <div class="flex items-start gap-3 p-3 border border-gray-200 rounded bg-gray-50 text-sm">
+                  <Badge variant={getLogBadgeVariant(log.level)} class="mt-0.5">
+                    {log.level.toUpperCase()}
+                  </Badge>
+                  <div class="flex-1">
+                    <p class="text-gray-900">{log.message}</p>
+                    <p class="text-xs text-gray-500 mt-1">
+                      {new Date(log.timestamp).toLocaleString()}
+                      {#if log.channel && log.channel !== 'default'}
+                        <span class="ml-2 text-gray-400">[{log.channel}]</span>
+                      {/if}
+                    </p>
+                  </div>
                 </div>
-              </div>
-            {/each}
-          </div>
+              {/each}
+            </div>
+          {:else}
+            <p class="text-sm text-gray-500 py-4 text-center">
+              No log entries found. Logs appear here as your application runs.
+            </p>
+          {/if}
         </CardContent>
       </Card>
     </TabsContent>
