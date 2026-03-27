@@ -19,6 +19,8 @@
   "sidebar_queue": "Monitor de Filas",
   "sidebar_scheduler": "Agendador",
   "sidebar_logs": "Logs",
+  "sidebar_roles": "Papeis",
+  "sidebar_permissions": "Permissoes",
 
   "home_title": "A Experiência Laravel para SvelteKit",
   "home_subtitle": "Svelar traz os padrões poderosos e a experiência de desenvolvimento do Laravel para o SvelteKit. Construa aplicações full-stack com models, migrations, middleware e muito mais.",

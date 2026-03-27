@@ -19,6 +19,8 @@
   "sidebar_queue": "Queue Monitor",
   "sidebar_scheduler": "Scheduler",
   "sidebar_logs": "Logs",
+  "sidebar_roles": "Roles",
+  "sidebar_permissions": "Permissions",
 
   "home_title": "The Laravel Experience for SvelteKit",
   "home_subtitle": "Svelar brings Laravel's powerful patterns and developer experience to SvelteKit. Build full-stack applications with models, migrations, middleware, and more.",

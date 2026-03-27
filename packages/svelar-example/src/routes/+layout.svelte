@@ -19,6 +19,8 @@
   const adminLinks = [
     { href: '/admin?tab=overview', label: () => m.sidebar_system_health(), icon: 'activity' },
     { href: '/admin?tab=users', label: () => m.sidebar_users(), icon: 'users' },
+    { href: '/admin?tab=roles', label: () => m.sidebar_roles(), icon: 'shield' },
+    { href: '/admin?tab=permissions', label: () => m.sidebar_permissions(), icon: 'lock' },
     { href: '/admin?tab=queue', label: () => m.sidebar_queue(), icon: 'briefcase' },
     { href: '/admin?tab=scheduler', label: () => m.sidebar_scheduler(), icon: 'clock' },
     { href: '/admin?tab=logs', label: () => m.sidebar_logs(), icon: 'file-text' },
@@ -59,6 +61,8 @@
       'briefcase': '💼',
       'clock': '⏰',
       'file-text': '📄',
+      'shield': '🛡',
+      'lock': '🔐',
     };
     return icons[icon] || '•';
   }

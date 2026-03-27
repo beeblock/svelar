@@ -4,6 +4,9 @@
  * Centralized error handling with structured responses,
  * error reporting, and SvelteKit integration.
  *
+ * Errors are automatically logged via the Svelar Log system
+ * (console, file, stack channels) instead of leaking to the UI.
+ *
  * @example
  * ```ts
  * // hooks.server.ts
@@ -19,6 +22,8 @@
  * export const handleError = handler.handleSvelteKitError();
  * ```
  */
+
+import { Log } from '../logging/index.js';
 
 // ── Error Classes ──────────────────────────────────────────
 
@@ -217,13 +222,16 @@ export class ErrorHandler {
       }
     }
 
-    // Log to console
-    console.error(`[Svelar Error] ${error.name}: ${error.message}`);
-    if (this.config.debug && error.stack) {
-      console.error(error.stack);
-    }
+    // Log via Svelar Log system (writes to configured channels: console, file, etc.)
+    const context: Record<string, any> = {
+      error: error.name,
+      ...(event?.url ? { url: event.url.toString() } : {}),
+      ...(error.stack ? { stack: error.stack } : {}),
+    };
 
-    // Custom reporter
+    Log.error(error.message, context);
+
+    // Custom reporter (Sentry, Datadog, etc.)
     if (this.config.report) {
       try {
         await this.config.report(error, event ? { url: event.url?.toString() } : undefined);

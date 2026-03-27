@@ -19,6 +19,8 @@
   "sidebar_queue": "Monitor de Colas",
   "sidebar_scheduler": "Programador",
   "sidebar_logs": "Registros",
+  "sidebar_roles": "Roles",
+  "sidebar_permissions": "Permisos",
 
   "home_title": "La Experiencia Laravel para SvelteKit",
   "home_subtitle": "Svelar trae los poderosos patrones y la experiencia de desarrollo de Laravel a SvelteKit. Construye aplicaciones full-stack con modelos, migraciones, middleware y más.",
