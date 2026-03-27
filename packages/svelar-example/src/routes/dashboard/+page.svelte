@@ -2,6 +2,7 @@
   import { Button, Badge, Card, CardHeader, CardTitle, CardDescription, CardContent } from 'svelar/ui';
   import * as m from '$lib/paraglide/messages';
   import { localizeHref } from '$lib/paraglide/runtime';
+  import { timeAgo } from '$lib/dates';
 
   let { data } = $props();
 </script>
@@ -21,9 +22,9 @@
     <Card>
       <CardContent class="pt-6">
         <div>
-          <p class="text-sm text-gray-600">API Keys</p>
+          <p class="text-sm text-gray-600">{m.dash_stat_api_keys()}</p>
           <p class="text-3xl font-bold text-[var(--color-brand)] mt-2">{data.stats.apiKeyCount}</p>
-          <a href={localizeHref('/dashboard/api-keys')} class="text-sm text-[var(--color-brand)] hover:underline mt-2 inline-block">Manage keys</a>
+          <a href={localizeHref('/dashboard/api-keys')} class="text-sm text-[var(--color-brand)] hover:underline mt-2 inline-block">{m.dash_manage_keys()}</a>
         </div>
       </CardContent>
     </Card>
@@ -31,9 +32,9 @@
     <Card>
       <CardContent class="pt-6">
         <div>
-          <p class="text-sm text-gray-600">Team Members</p>
+          <p class="text-sm text-gray-600">{m.dash_stat_team_members()}</p>
           <p class="text-3xl font-bold text-[var(--color-brand)] mt-2">{data.stats.teamMemberCount}</p>
-          <a href={localizeHref('/dashboard/team')} class="text-sm text-[var(--color-brand)] hover:underline mt-2 inline-block">Manage team</a>
+          <a href={localizeHref('/dashboard/team')} class="text-sm text-[var(--color-brand)] hover:underline mt-2 inline-block">{m.dash_manage_team()}</a>
         </div>
       </CardContent>
     </Card>
@@ -41,9 +42,9 @@
     <Card>
       <CardContent class="pt-6">
         <div>
-          <p class="text-sm text-gray-600">Account</p>
+          <p class="text-sm text-gray-600">{m.dash_stat_account()}</p>
           <Badge variant="default" class="mt-2">{data.user.role}</Badge>
-          <a href={localizeHref('/dashboard/billing')} class="text-sm text-[var(--color-brand)] hover:underline mt-2 inline-block block">View billing</a>
+          <a href={localizeHref('/dashboard/billing')} class="text-sm text-[var(--color-brand)] hover:underline mt-2 inline-block block">{m.dash_view_billing()}</a>
         </div>
       </CardContent>
     </Card>
@@ -52,21 +53,21 @@
   <!-- Quick Actions -->
   <Card>
     <CardHeader>
-      <CardTitle>Quick Actions</CardTitle>
+      <CardTitle>{m.dash_quick_actions()}</CardTitle>
     </CardHeader>
     <CardContent class="flex flex-wrap gap-3">
       <a href={localizeHref('/dashboard/api-keys')}>
-        <Button variant="outline">Create API Key</Button>
+        <Button variant="outline">{m.dash_action_create_key()}</Button>
       </a>
       <a href={localizeHref('/dashboard/team')}>
-        <Button variant="outline">Invite Team Member</Button>
+        <Button variant="outline">{m.dash_action_invite()}</Button>
       </a>
       <a href={localizeHref('/dashboard/billing')}>
-        <Button variant="outline">Manage Billing</Button>
+        <Button variant="outline">{m.dash_action_billing()}</Button>
       </a>
       {#if data.user.role === 'admin'}
         <a href={localizeHref('/admin')}>
-          <Button variant="outline">Admin Dashboard</Button>
+          <Button variant="outline">{m.dash_action_admin()}</Button>
         </a>
       {/if}
     </CardContent>
@@ -75,8 +76,8 @@
   <!-- Recent Activity -->
   <Card>
     <CardHeader>
-      <CardTitle>Recent Activity</CardTitle>
-      <CardDescription>Your latest actions and events</CardDescription>
+      <CardTitle>{m.dash_recent_activity()}</CardTitle>
+      <CardDescription>{m.dash_recent_activity_desc()}</CardDescription>
     </CardHeader>
     <CardContent>
       {#if data.recentActivity.length > 0}
@@ -87,16 +88,14 @@
               <div class="flex-1">
                 <p class="text-sm text-gray-900">{entry.description}</p>
                 {#if entry.timestamp}
-                  <p class="text-xs text-gray-500 mt-0.5">{new Date(entry.timestamp).toLocaleString()}</p>
+                  <p class="text-xs text-gray-500 mt-0.5">{timeAgo(entry.timestamp)}</p>
                 {/if}
               </div>
             </div>
           {/each}
         </div>
       {:else}
-        <p class="text-sm text-gray-500 py-4 text-center">
-          No recent activity. Start using API keys, team management, or other features to see activity here.
-        </p>
+        <p class="text-sm text-gray-500 py-4 text-center">{m.dash_no_activity()}</p>
       {/if}
     </CardContent>
   </Card>
@@ -104,8 +103,8 @@
   <!-- Getting Started -->
   <Card>
     <CardHeader>
-      <CardTitle>Getting Started</CardTitle>
-      <CardDescription>Set up your SaaS application</CardDescription>
+      <CardTitle>{m.dash_getting_started()}</CardTitle>
+      <CardDescription>{m.dash_getting_started_desc()}</CardDescription>
     </CardHeader>
     <CardContent>
       <div class="space-y-4">
@@ -114,12 +113,12 @@
             {data.stats.apiKeyCount > 0 ? '✓' : '1'}
           </div>
           <div class="flex-1">
-            <p class="font-medium text-gray-900">Create an API key</p>
-            <p class="text-sm text-gray-600">Generate keys for programmatic access to your application</p>
+            <p class="font-medium text-gray-900">{m.dash_step_api_key()}</p>
+            <p class="text-sm text-gray-600">{m.dash_step_api_key_desc()}</p>
           </div>
           {#if data.stats.apiKeyCount === 0}
             <a href={localizeHref('/dashboard/api-keys')}>
-              <Button size="sm">Create</Button>
+              <Button size="sm">{m.common_create()}</Button>
             </a>
           {/if}
         </div>
@@ -129,12 +128,12 @@
             {data.stats.teamMemberCount > 1 ? '✓' : '2'}
           </div>
           <div class="flex-1">
-            <p class="font-medium text-gray-900">Invite your team</p>
-            <p class="text-sm text-gray-600">Collaborate with team members by sending invitations</p>
+            <p class="font-medium text-gray-900">{m.dash_step_invite()}</p>
+            <p class="text-sm text-gray-600">{m.dash_step_invite_desc()}</p>
           </div>
           {#if data.stats.teamMemberCount <= 1}
             <a href={localizeHref('/dashboard/team')}>
-              <Button size="sm">Invite</Button>
+              <Button size="sm">{m.common_invite()}</Button>
             </a>
           {/if}
         </div>
@@ -142,11 +141,11 @@
         <div class="flex items-center gap-4 p-3 rounded-lg border border-gray-200">
           <div class="w-8 h-8 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center text-sm font-bold">3</div>
           <div class="flex-1">
-            <p class="font-medium text-gray-900">Configure billing</p>
-            <p class="text-sm text-gray-600">Set up Stripe or Polar for subscription billing</p>
+            <p class="font-medium text-gray-900">{m.dash_step_billing()}</p>
+            <p class="text-sm text-gray-600">{m.dash_step_billing_desc()}</p>
           </div>
           <a href={localizeHref('/dashboard/billing')}>
-            <Button size="sm" variant="outline">Configure</Button>
+            <Button size="sm" variant="outline">{m.common_configure()}</Button>
           </a>
         </div>
       </div>

@@ -2,6 +2,7 @@
   import { enhance } from '$app/forms';
   import { Button, Badge, Card, CardHeader, CardTitle, CardDescription, CardContent, Input, Label, Alert } from 'svelar/ui';
   import * as m from '$lib/paraglide/messages';
+  import { formatDate } from '$lib/dates';
 
   let { data, form: actionData } = $props();
   let members = $state(data.members);
@@ -19,20 +20,20 @@
 
   $effect(() => {
     if (actionData?.invited) {
-      message = `Invitation sent to ${actionData.invited}`;
+      message = m.team_invited({ email: actionData.invited });
       messageType = 'success';
       showInviteForm = false;
     }
     if (actionData?.removed) {
-      message = 'Member removed';
+      message = m.team_member_removed();
       messageType = 'success';
     }
     if (actionData?.cancelled) {
-      message = 'Invitation cancelled';
+      message = m.team_inv_cancelled();
       messageType = 'success';
     }
     if (actionData?.updated) {
-      message = 'Team updated';
+      message = m.team_updated();
       messageType = 'success';
     }
     if (actionData?.error) {
@@ -41,23 +42,19 @@
     }
   });
 
-  function formatDate(ts: number): string {
-    return new Date(ts).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-  }
-
   function getRoleColor(role: string): 'default' | 'secondary' | 'destructive' {
     return role === 'owner' ? 'destructive' : role === 'admin' ? 'default' : 'secondary';
   }
 </script>
 
 <svelte:head>
-  <title>Team — {m.app_name()}</title>
+  <title>{m.team_title()} — {m.app_name()}</title>
 </svelte:head>
 
 <div class="space-y-8">
   <div>
-    <h1 class="text-3xl font-bold text-gray-900">Team Settings</h1>
-    <p class="text-gray-600 mt-1">Manage your team members and permissions</p>
+    <h1 class="text-3xl font-bold text-gray-900">{m.team_title()}</h1>
+    <p class="text-gray-600 mt-1">{m.team_subtitle()}</p>
   </div>
 
   {#if message}
@@ -70,20 +67,20 @@
     <!-- Team Info -->
     <Card>
       <CardHeader>
-        <CardTitle>Team Information</CardTitle>
+        <CardTitle>{m.team_info()}</CardTitle>
       </CardHeader>
       <CardContent>
         <form method="POST" action="?/updateTeam" use:enhance class="space-y-4">
           <input type="hidden" name="teamId" value={data.team.id} />
           <div>
-            <Label for="teamName">Team Name</Label>
+            <Label for="teamName">{m.team_name_label()}</Label>
             <div class="flex gap-2 mt-2">
               <Input id="teamName" name="name" bind:value={teamName} class="flex-1" />
-              <Button type="submit">Save</Button>
+              <Button type="submit">{m.common_save()}</Button>
             </div>
           </div>
           <div class="p-4 bg-gray-50 rounded-lg">
-            <p class="text-sm text-gray-600 mb-1">Team ID</p>
+            <p class="text-sm text-gray-600 mb-1">{m.team_id_label()}</p>
             <code class="font-mono text-sm">{data.team.id}</code>
           </div>
         </form>
@@ -93,31 +90,31 @@
     <!-- Invite Member -->
     <Card>
       <CardHeader>
-        <CardTitle>Invite Team Member</CardTitle>
-        <CardDescription>Send invitations to add people to your team</CardDescription>
+        <CardTitle>{m.team_invite_title()}</CardTitle>
+        <CardDescription>{m.team_invite_desc()}</CardDescription>
       </CardHeader>
       <CardContent>
         {#if showInviteForm}
           <form method="POST" action="?/invite" use:enhance class="space-y-4">
             <input type="hidden" name="teamId" value={data.team.id} />
             <div>
-              <Label for="email">Email Address</Label>
+              <Label for="email">{m.team_email()}</Label>
               <Input id="email" name="email" type="email" placeholder="member@example.com" required class="mt-2" />
             </div>
             <div>
-              <Label for="role">Role</Label>
+              <Label for="role">{m.team_role()}</Label>
               <select id="role" name="role" class="mt-2 w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
-                <option value="member">Member</option>
-                <option value="admin">Admin</option>
+                <option value="member">{m.team_role_member()}</option>
+                <option value="admin">{m.team_role_admin()}</option>
               </select>
             </div>
             <div class="flex gap-2">
-              <Button type="submit">Send Invitation</Button>
-              <Button type="button" variant="outline" onclick={() => (showInviteForm = false)}>Cancel</Button>
+              <Button type="submit">{m.team_send_invite()}</Button>
+              <Button type="button" variant="outline" onclick={() => (showInviteForm = false)}>{m.common_cancel()}</Button>
             </div>
           </form>
         {:else}
-          <Button onclick={() => (showInviteForm = true)}>Invite Member</Button>
+          <Button onclick={() => (showInviteForm = true)}>{m.team_invite_btn()}</Button>
         {/if}
       </CardContent>
     </Card>
@@ -125,8 +122,8 @@
     <!-- Members -->
     <Card>
       <CardHeader>
-        <CardTitle>Team Members</CardTitle>
-        <CardDescription>{members.length} member{members.length !== 1 ? 's' : ''}</CardDescription>
+        <CardTitle>{m.team_members_title()}</CardTitle>
+        <CardDescription>{m.team_member_count({ count: String(members.length) })}</CardDescription>
       </CardHeader>
       <CardContent>
         {#if members.length > 0}
@@ -139,9 +136,9 @@
                   </div>
                   <div>
                     <p class="font-medium text-gray-900">
-                      {member.userId == data.user.id ? `${data.user.name} (You)` : `User ${member.userId}`}
+                      {member.userId == data.user.id ? `${data.user.name} ${m.team_you()}` : m.team_user_label({ id: member.userId })}
                     </p>
-                    <p class="text-xs text-gray-500">Joined {formatDate(member.joinedAt)}</p>
+                    <p class="text-xs text-gray-500">{m.team_joined({ date: formatDate(member.joinedAt) })}</p>
                   </div>
                 </div>
                 <div class="flex items-center gap-2">
@@ -153,8 +150,8 @@
                       <input type="hidden" name="teamId" value={data.team.id} />
                       <input type="hidden" name="userId" value={member.userId} />
                       <Button size="sm" variant="destructive" type="submit"
-                        onclick={(e) => { if (!confirm('Remove this member?')) e.preventDefault(); }}>
-                        Remove
+                        onclick={(e) => { if (!confirm(m.team_confirm_remove())) e.preventDefault(); }}>
+                        {m.team_remove()}
                       </Button>
                     </form>
                   {/if}
@@ -163,7 +160,7 @@
             {/each}
           </div>
         {:else}
-          <p class="text-sm text-gray-500 text-center py-4">No members yet.</p>
+          <p class="text-sm text-gray-500 text-center py-4">{m.team_no_members()}</p>
         {/if}
       </CardContent>
     </Card>
@@ -172,8 +169,8 @@
     {#if invitations.length > 0}
       <Card>
         <CardHeader>
-          <CardTitle>Pending Invitations</CardTitle>
-          <CardDescription>{invitations.length} pending</CardDescription>
+          <CardTitle>{m.team_pending_title()}</CardTitle>
+          <CardDescription>{m.team_pending_count({ count: String(invitations.length) })}</CardDescription>
         </CardHeader>
         <CardContent>
           <div class="space-y-2">
@@ -182,14 +179,14 @@
                 <div>
                   <p class="font-medium text-gray-900">{inv.email}</p>
                   <p class="text-xs text-gray-600">
-                    Sent {formatDate(inv.createdAt)} — Expires {formatDate(inv.expiresAt)}
+                    {m.team_sent_expires({ sent: formatDate(inv.createdAt), expires: formatDate(inv.expiresAt) })}
                   </p>
                 </div>
                 <div class="flex items-center gap-2">
                   <Badge variant="secondary">{inv.role}</Badge>
                   <form method="POST" action="?/cancelInvitation" use:enhance>
                     <input type="hidden" name="invitationId" value={inv.id} />
-                    <Button size="sm" variant="outline" type="submit">Cancel</Button>
+                    <Button size="sm" variant="outline" type="submit">{m.common_cancel()}</Button>
                   </form>
                 </div>
               </div>
@@ -201,7 +198,7 @@
   {:else}
     <Card>
       <CardContent class="pt-8 text-center">
-        <p class="text-gray-500">Unable to load team. Please try refreshing the page.</p>
+        <p class="text-gray-500">{m.team_load_error()}</p>
       </CardContent>
     </Card>
   {/if}

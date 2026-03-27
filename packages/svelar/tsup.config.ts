@@ -47,6 +47,7 @@ export default defineConfig({
     'queue/JobMonitor': 'src/queue/JobMonitor.ts',
     'scheduler/ScheduleMonitor': 'src/scheduler/ScheduleMonitor.ts',
     'logging/LogViewer': 'src/logging/LogViewer.ts',
+    'support/date': 'src/support/date.ts',
     'plugins/PluginRegistry': 'src/plugins/PluginRegistry.ts',
     'plugins/PluginPublisher': 'src/plugins/PluginPublisher.ts',
     'plugins/PluginInstaller': 'src/plugins/PluginInstaller.ts',
@@ -59,6 +60,8 @@ export default defineConfig({
   splitting: false,
   external: [
     '@sveltejs/kit',
+    'date-fns',
+    'date-fns/locale',
     'sveltekit-superforms',
     'sveltekit-superforms/adapters',
     'svelte',

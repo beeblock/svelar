@@ -153,6 +153,10 @@
       "types": "./dist/support/index.d.ts",
       "import": "./dist/support/index.js"
     },
+    "./dates": {
+      "types": "./dist/support/date.d.ts",
+      "import": "./dist/support/date.js"
+    },
     "./ui": {
       "types": "./src/ui/index.ts",
       "svelte": "./src/ui/index.ts",
@@ -236,6 +240,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
+    "date-fns": "^4.1.0",
     "drizzle-orm": "^0.38.0",
     "zod": "^3.23.0"
   },

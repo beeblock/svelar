@@ -2,6 +2,7 @@
   import { enhance } from '$app/forms';
   import { Button, Badge, Card, CardHeader, CardTitle, CardDescription, CardContent, Input, Label, Alert } from 'svelar/ui';
   import * as m from '$lib/paraglide/messages';
+  import { formatDate, formatShortRelative } from '$lib/dates';
 
   let { data, form: actionData } = $props();
   let apiKeys = $state(data.apiKeys);
@@ -31,35 +32,21 @@
     showCopyAlert = true;
     setTimeout(() => { showCopyAlert = false; }, 2000);
   }
-
-  function formatDate(ts: number): string {
-    return new Date(ts).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-  }
-
-  function formatRelativeTime(ts: number): string {
-    const diff = Date.now() - ts;
-    const minutes = Math.floor(diff / 60000);
-    const hours = Math.floor(diff / 3600000);
-    const days = Math.floor(diff / 86400000);
-    if (minutes < 60) return `${minutes}m ago`;
-    if (hours < 24) return `${hours}h ago`;
-    return `${days}d ago`;
-  }
 </script>
 
 <svelte:head>
-  <title>API Keys — {m.app_name()}</title>
+  <title>{m.apikeys_title()} — {m.app_name()}</title>
 </svelte:head>
 
 <div class="space-y-8">
   <div>
-    <h1 class="text-3xl font-bold text-gray-900">API Keys</h1>
-    <p class="text-gray-600 mt-1">Manage your API keys for programmatic access</p>
+    <h1 class="text-3xl font-bold text-gray-900">{m.apikeys_title()}</h1>
+    <p class="text-gray-600 mt-1">{m.apikeys_subtitle()}</p>
   </div>
 
   {#if showCopyAlert}
     <Alert variant="default">
-      <span class="text-sm">Copied to clipboard!</span>
+      <span class="text-sm">{m.apikeys_copied()}</span>
     </Alert>
   {/if}
 
@@ -72,11 +59,11 @@
   {#if generatedKey}
     <Alert variant="default">
       <div class="space-y-2">
-        <p class="font-medium">New API Key Created</p>
-        <p class="text-sm">Copy your key now — you won't be able to see it again!</p>
+        <p class="font-medium">{m.apikeys_created()}</p>
+        <p class="text-sm">{m.apikeys_created_desc()}</p>
         <div class="flex gap-2 mt-3">
           <code class="flex-1 bg-gray-100 px-3 py-2 rounded text-sm font-mono break-all">{generatedKey}</code>
-          <Button size="sm" variant="outline" onclick={() => copyToClipboard(generatedKey)}>Copy</Button>
+          <Button size="sm" variant="outline" onclick={() => copyToClipboard(generatedKey)}>{m.common_copy()}</Button>
         </div>
       </div>
     </Alert>
@@ -86,40 +73,40 @@
   {#if showCreateForm}
     <Card>
       <CardHeader>
-        <CardTitle>Create New API Key</CardTitle>
+        <CardTitle>{m.apikeys_create_title()}</CardTitle>
       </CardHeader>
       <CardContent>
         <form method="POST" action="?/create" use:enhance class="space-y-4">
           <div class="space-y-2">
-            <Label for="keyName">Key Name</Label>
-            <Input id="keyName" name="name" placeholder="e.g., Production Server" bind:value={newKeyName} required />
+            <Label for="keyName">{m.apikeys_key_name()}</Label>
+            <Input id="keyName" name="name" placeholder={m.apikeys_key_name_placeholder()} bind:value={newKeyName} required />
           </div>
 
           <div class="space-y-2">
-            <Label for="permissions">Permissions (comma-separated)</Label>
+            <Label for="permissions">{m.apikeys_permissions()}</Label>
             <Input id="permissions" name="permissions" placeholder="read,write" bind:value={newKeyPermissions} />
-            <p class="text-xs text-gray-500">e.g., read, write, delete</p>
+            <p class="text-xs text-gray-500">{m.apikeys_permissions_hint()}</p>
           </div>
 
           <div class="flex gap-2">
-            <Button type="submit">Create Key</Button>
-            <Button type="button" variant="outline" onclick={() => { showCreateForm = false; newKeyName = ''; }}>Cancel</Button>
+            <Button type="submit">{m.apikeys_create_submit()}</Button>
+            <Button type="button" variant="outline" onclick={() => { showCreateForm = false; newKeyName = ''; }}>{m.common_cancel()}</Button>
           </div>
         </form>
       </CardContent>
     </Card>
   {:else}
-    <Button onclick={() => (showCreateForm = true)}>Create New Key</Button>
+    <Button onclick={() => (showCreateForm = true)}>{m.apikeys_create_btn()}</Button>
   {/if}
 
   <!-- Keys List -->
   <div class="space-y-4">
-    <h2 class="text-xl font-bold text-gray-900">Your API Keys ({apiKeys.length})</h2>
+    <h2 class="text-xl font-bold text-gray-900">{m.apikeys_list_title({ count: String(apiKeys.length) })}</h2>
 
     {#if apiKeys.length === 0}
       <Card>
         <CardContent class="pt-8 text-center">
-          <p class="text-gray-500 text-sm">No API keys yet. Create one to get started with programmatic access.</p>
+          <p class="text-gray-500 text-sm">{m.apikeys_empty()}</p>
         </CardContent>
       </Card>
     {:else}
@@ -131,15 +118,15 @@
                 <div class="flex-1">
                   <div class="flex items-center gap-2 mb-2">
                     <h3 class="font-semibold text-gray-900">{key.name}</h3>
-                    <Badge variant="default">Active</Badge>
+                    <Badge variant="default">{m.apikeys_active()}</Badge>
                   </div>
                   <p class="font-mono text-xs bg-gray-100 px-2 py-1 rounded inline-block mb-2">{key.prefix}••••••••</p>
                   <div class="flex gap-4 text-xs text-gray-500">
-                    <span>Created {formatDate(key.createdAt)}</span>
+                    <span>{m.apikeys_created_at({ date: formatDate(key.createdAt) })}</span>
                     {#if key.lastUsedAt}
-                      <span>Last used {formatRelativeTime(key.lastUsedAt)}</span>
+                      <span>{m.apikeys_last_used({ time: formatShortRelative(key.lastUsedAt) })}</span>
                     {:else}
-                      <span>Never used</span>
+                      <span>{m.apikeys_never_used()}</span>
                     {/if}
                   </div>
                   {#if key.permissions.length > 0}
@@ -152,8 +139,8 @@
                 </div>
                 <form method="POST" action="?/revoke" use:enhance>
                   <input type="hidden" name="keyId" value={key.id} />
-                  <Button size="sm" variant="destructive" type="submit" onclick={(e) => { if (!confirm(`Revoke "${key.name}"?`)) e.preventDefault(); }}>
-                    Revoke
+                  <Button size="sm" variant="destructive" type="submit" onclick={(e) => { if (!confirm(m.apikeys_confirm_revoke({ name: key.name }))) e.preventDefault(); }}>
+                    {m.apikeys_revoke()}
                   </Button>
                 </form>
               </div>
@@ -167,11 +154,11 @@
   <!-- Usage Docs -->
   <Card>
     <CardHeader>
-      <CardTitle>API Documentation</CardTitle>
+      <CardTitle>{m.apikeys_docs_title()}</CardTitle>
     </CardHeader>
     <CardContent class="space-y-4">
       <div>
-        <h4 class="font-medium text-gray-900 mb-2">Include API Key in Requests</h4>
+        <h4 class="font-medium text-gray-900 mb-2">{m.apikeys_docs_usage()}</h4>
         <code class="block bg-gray-100 px-4 py-3 rounded text-sm font-mono overflow-x-auto">
           curl -H "Authorization: Bearer sk_your_key_here" https://your-app.com/api/v1/data
         </code>

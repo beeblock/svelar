@@ -2,6 +2,7 @@
   import { apiFetch } from 'svelar/http';
   import { Button, Badge, Card, CardHeader, CardTitle, CardDescription, CardContent, Alert, Tabs, TabsContent, TabsList, TabsTrigger } from 'svelar/ui';
   import * as m from '$lib/paraglide/messages';
+  import { formatDate as fmtDate, timeAgo } from '$lib/dates';
 
   let { data } = $props();
   let users = $state(data.users);
@@ -153,7 +154,7 @@
 
   function formatDate(date: string | null): string {
     if (!date) return 'Never';
-    return new Date(date).toLocaleString();
+    return fmtDate(date, 'Pp');
   }
 
   function formatUptime(seconds: number): string {
@@ -319,7 +320,7 @@
                       </Badge>
                     </td>
                     <td class="py-3 px-4 text-gray-600">
-                      {new Date(user.created_at).toLocaleDateString()}
+                      {fmtDate(user.created_at)}
                     </td>
                     <td class="py-3 px-4">
                       <div class="flex gap-2">
@@ -523,7 +524,7 @@
                   <div class="flex-1">
                     <p class="text-gray-900">{log.message}</p>
                     <p class="text-xs text-gray-500 mt-1">
-                      {new Date(log.timestamp).toLocaleString()}
+                      {fmtDate(log.timestamp, 'Pp')}
                       {#if log.channel && log.channel !== 'default'}
                         <span class="ml-2 text-gray-400">[{log.channel}]</span>
                       {/if}

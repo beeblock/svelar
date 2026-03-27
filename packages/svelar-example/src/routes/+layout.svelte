@@ -10,18 +10,18 @@
   let sidebarOpen = $state(false);
 
   const dashboardLinks = [
-    { href: '/dashboard', label: 'Overview', icon: 'grid' },
-    { href: '/dashboard/billing', label: 'Billing', icon: 'credit-card' },
-    { href: '/dashboard/api-keys', label: 'API Keys', icon: 'key' },
-    { href: '/dashboard/team', label: 'Team', icon: 'users' },
+    { href: '/dashboard', label: () => m.sidebar_overview(), icon: 'grid', exact: true },
+    { href: '/dashboard/billing', label: () => m.sidebar_billing(), icon: 'credit-card' },
+    { href: '/dashboard/api-keys', label: () => m.sidebar_api_keys(), icon: 'key' },
+    { href: '/dashboard/team', label: () => m.sidebar_team(), icon: 'users' },
   ];
 
   const adminLinks = [
-    { href: '/admin?tab=overview', label: 'System Health', icon: 'activity' },
-    { href: '/admin?tab=users', label: 'Users', icon: 'users' },
-    { href: '/admin?tab=queue', label: 'Queue Monitor', icon: 'briefcase' },
-    { href: '/admin?tab=scheduler', label: 'Scheduler', icon: 'clock' },
-    { href: '/admin?tab=logs', label: 'Logs', icon: 'file-text' },
+    { href: '/admin?tab=overview', label: () => m.sidebar_system_health(), icon: 'activity' },
+    { href: '/admin?tab=users', label: () => m.sidebar_users(), icon: 'users' },
+    { href: '/admin?tab=queue', label: () => m.sidebar_queue(), icon: 'briefcase' },
+    { href: '/admin?tab=scheduler', label: () => m.sidebar_scheduler(), icon: 'clock' },
+    { href: '/admin?tab=logs', label: () => m.sidebar_logs(), icon: 'file-text' },
   ];
 
   /**
@@ -35,8 +35,9 @@
     return path.replace(localePattern, '') || '/';
   }
 
-  function isActive(href: string): boolean {
+  function isActive(href: string, exact = false): boolean {
     const bare = getBarePath();
+    if (exact) return bare === href;
     return bare === href || bare.startsWith(href + '/');
   }
 
@@ -93,7 +94,7 @@
       </div>
 
       <div class="flex items-center gap-4">
-        <LanguageSwitcher {locales} {getLocale} {localizeHref} pathname={page.url.pathname} labels={{ en: 'EN', pt: 'PT' }} />
+        <LanguageSwitcher {locales} {getLocale} {localizeHref} pathname={page.url.pathname} labels={{ en: 'EN', pt: 'PT', es: 'ES' }} />
         {#if data.user}
           <div class="flex items-center gap-3">
             <div class="text-right hidden sm:block">
@@ -127,17 +128,17 @@
         <div class="sticky top-20 p-6 space-y-8">
           {#if isOnDashboard()}
             <div>
-              <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Dashboard</h3>
+              <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">{m.nav_dashboard()}</h3>
               <nav class="space-y-1">
                 {#each dashboardLinks as link}
                   <a
                     href={localizeHref(link.href)}
-                    class="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors {isActive(link.href)
+                    class="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors {isActive(link.href, link.exact)
                       ? 'bg-[var(--color-brand)] text-white'
                       : 'text-gray-700 hover:bg-gray-100'}"
                   >
                     <span>{getIcon(link.icon)}</span>
-                    {link.label}
+                    {link.label()}
                   </a>
                 {/each}
               </nav>
@@ -146,7 +147,7 @@
 
           {#if data.user.role === 'admin' && isOnAdmin()}
             <div>
-              <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Administration</h3>
+              <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">{m.nav_admin()}</h3>
               <nav class="space-y-1">
                 {#each adminLinks as link}
                   {@const tabParam = new URL(link.href, 'http://x').searchParams.get('tab')}
@@ -158,7 +159,7 @@
                       : 'text-gray-700 hover:bg-gray-100'}"
                   >
                     <span>{getIcon(link.icon)}</span>
-                    {link.label}
+                    {link.label()}
                   </a>
                 {/each}
               </nav>
