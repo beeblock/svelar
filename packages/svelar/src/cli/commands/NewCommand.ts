@@ -95,7 +95,7 @@ export class NewCommand extends Command {
           dependencies: {
             'better-sqlite3': '^11.0.0',
             'drizzle-orm': '^0.38.0',
-            '@beeblock/svelar': '^0.1.0',
+            '@beeblock/svelar': '^0.2.0',
             zod: '^3.23.0',
           },
         },
