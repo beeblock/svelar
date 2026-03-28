@@ -331,6 +331,149 @@ export class DatabaseSessionStore implements SessionStore {
   }
 }
 
+// ── File Store ──────────────────────────────────────────────
+
+import { promises as fs } from 'node:fs';
+import { join } from 'node:path';
+
+export class FileSessionStore implements SessionStore {
+  private dir: string;
+
+  constructor(directory?: string) {
+    this.dir = directory ?? join(process.cwd(), 'storage', 'sessions');
+  }
+
+  private filePath(id: string): string {
+    // Sanitize ID to prevent directory traversal
+    const safeId = id.replace(/[^a-zA-Z0-9_-]/g, '');
+    return join(this.dir, `${safeId}.json`);
+  }
+
+  private async ensureDir(): Promise<void> {
+    await fs.mkdir(this.dir, { recursive: true });
+  }
+
+  async read(id: string): Promise<SessionData | null> {
+    try {
+      const raw = await fs.readFile(this.filePath(id), 'utf-8');
+      const entry = JSON.parse(raw);
+      if (new Date(entry.expiresAt) < new Date()) {
+        await this.destroy(id);
+        return null;
+      }
+      return entry.data;
+    } catch {
+      return null;
+    }
+  }
+
+  async write(id: string, data: SessionData, ttl: number): Promise<void> {
+    await this.ensureDir();
+    const entry = {
+      data,
+      expiresAt: new Date(Date.now() + ttl * 1000).toISOString(),
+    };
+    await fs.writeFile(this.filePath(id), JSON.stringify(entry), 'utf-8');
+  }
+
+  async destroy(id: string): Promise<void> {
+    try {
+      await fs.unlink(this.filePath(id));
+    } catch {
+      // File may not exist
+    }
+  }
+
+  async gc(_maxLifetime: number): Promise<void> {
+    try {
+      const files = await fs.readdir(this.dir);
+      const now = new Date();
+      for (const file of files) {
+        if (!file.endsWith('.json')) continue;
+        try {
+          const raw = await fs.readFile(join(this.dir, file), 'utf-8');
+          const entry = JSON.parse(raw);
+          if (new Date(entry.expiresAt) < now) {
+            await fs.unlink(join(this.dir, file));
+          }
+        } catch {
+          // Corrupted file, remove it
+          await fs.unlink(join(this.dir, file)).catch(() => {});
+        }
+      }
+    } catch {
+      // Directory may not exist yet
+    }
+  }
+}
+
+// ── Redis Store ─────────────────────────────────────────────
+
+export class RedisSessionStore implements SessionStore {
+  private redis: any;
+  private prefix: string;
+
+  constructor(options?: { client?: any; prefix?: string; url?: string }) {
+    this.prefix = options?.prefix ?? 'svelar_session:';
+
+    if (options?.client) {
+      this.redis = options.client;
+    } else {
+      // Lazy-connect: store config and connect on first use
+      this._url = options?.url;
+    }
+  }
+
+  private _url?: string;
+  private _connecting?: Promise<any>;
+
+  private async getClient(): Promise<any> {
+    if (this.redis) return this.redis;
+
+    if (!this._connecting) {
+      this._connecting = (async () => {
+        try {
+          const { default: Redis } = await import('ioredis' as string);
+          this.redis = this._url ? new Redis(this._url) : new Redis();
+          return this.redis;
+        } catch {
+          throw new Error(
+            'RedisSessionStore requires "ioredis" package. Install it: npm install ioredis'
+          );
+        }
+      })();
+    }
+
+    return this._connecting;
+  }
+
+  async read(id: string): Promise<SessionData | null> {
+    const client = await this.getClient();
+    const raw = await client.get(this.prefix + id);
+    if (!raw) return null;
+
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  async write(id: string, data: SessionData, ttl: number): Promise<void> {
+    const client = await this.getClient();
+    await client.set(this.prefix + id, JSON.stringify(data), 'EX', ttl);
+  }
+
+  async destroy(id: string): Promise<void> {
+    const client = await this.getClient();
+    await client.del(this.prefix + id);
+  }
+
+  async gc(_maxLifetime: number): Promise<void> {
+    // Redis handles expiration natively via TTL — no gc needed
+  }
+}
+
 // ── Session Middleware ──────────────────────────────────────
 
 import { Middleware, type MiddlewareContext, type NextFunction } from '../middleware/Middleware.js';

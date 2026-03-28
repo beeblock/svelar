@@ -1,7 +1,9 @@
 /**
  * Svelar Toast Store & API
  *
- * Reactive toast notification system built on Svelte 5 runes.
+ * Reactive toast notification system using a callback-based store
+ * that works across package boundaries (no Svelte compiler needed).
+ *
  * Import { toast } anywhere to show notifications.
  * Import { Toaster } in your layout to render them.
  *
@@ -50,13 +52,28 @@ export interface ToastOptions {
   action?: { label: string; onClick: () => void };
 }
 
-// ── Reactive Store ────────────────────────────────────────
+// ── Callback-based Store ────────────────────────────────────
 
-let _toasts = $state<ToastItem[]>([]);
+let _toasts: ToastItem[] = [];
 let _counter = 0;
+let _listeners: Set<() => void> = new Set();
 
 const ENTER_DURATION = 300;
 const EXIT_DURATION = 200;
+
+function notify() {
+  for (const listener of _listeners) {
+    listener();
+  }
+}
+
+/**
+ * Subscribe to toast state changes. Returns an unsubscribe function.
+ */
+export function subscribe(listener: () => void): () => void {
+  _listeners.add(listener);
+  return () => _listeners.delete(listener);
+}
 
 export function getToasts(): ToastItem[] {
   return _toasts;
@@ -88,10 +105,12 @@ function addToast(variant: ToastVariant, title: string, options: ToastOptions = 
   };
 
   _toasts = [..._toasts, item];
+  notify();
 
   // Transition to visible after enter animation
   setTimeout(() => {
     _toasts = _toasts.map((t) => (t.id === id ? { ...t, state: 'visible' as ToastState } : t));
+    notify();
   }, ENTER_DURATION);
 
   // Start auto-dismiss timer
@@ -101,36 +120,33 @@ function addToast(variant: ToastVariant, title: string, options: ToastOptions = 
 }
 
 export function dismiss(id: string) {
-  // Clear any pending timeout
   const item = _toasts.find((t) => t.id === id);
   if (!item || item.state === 'exiting') return;
 
   if (item.timeoutId) clearTimeout(item.timeoutId);
 
-  // Start exit animation
   _toasts = _toasts.map((t) => (t.id === id ? { ...t, state: 'exiting' as ToastState } : t));
+  notify();
 
-  // Remove after exit animation
   setTimeout(() => {
     _toasts = _toasts.filter((t) => t.id !== id);
+    notify();
   }, EXIT_DURATION);
 }
 
 export function dismissAll() {
-  // Animate all out
   _toasts = _toasts.map((t) => {
     if (t.timeoutId) clearTimeout(t.timeoutId);
     return { ...t, state: 'exiting' as ToastState };
   });
+  notify();
 
   setTimeout(() => {
     _toasts = [];
+    notify();
   }, EXIT_DURATION);
 }
 
-/**
- * Pause auto-dismiss for a toast (e.g. on hover).
- */
 export function pauseToast(id: string) {
   _toasts = _toasts.map((t) => {
     if (t.id !== id || t.duration <= 0) return t;
@@ -138,11 +154,9 @@ export function pauseToast(id: string) {
     const elapsed = Date.now() - t.createdAt - (t.duration - t.remaining);
     return { ...t, pausedAt: Date.now(), remaining: Math.max(t.remaining - elapsed, 1000), timeoutId: undefined };
   });
+  notify();
 }
 
-/**
- * Resume auto-dismiss for a toast (e.g. on mouse leave).
- */
 export function resumeToast(id: string) {
   const item = _toasts.find((t) => t.id === id);
   if (!item || !item.pausedAt || item.duration <= 0) return;
@@ -151,17 +165,13 @@ export function resumeToast(id: string) {
     if (t.id !== id) return t;
     return { ...t, pausedAt: undefined };
   });
+  notify();
 
   scheduleAutoDismiss(item);
 }
 
 // ── Public API ────────────────────────────────────────────
 
-/**
- * Show a default toast notification.
- *
- * Also available as `toast.success()`, `toast.error()`, `toast.warning()`, `toast.info()`.
- */
 function toastFn(title: string, options?: ToastOptions): string {
   return addToast('default', title, options);
 }
@@ -173,9 +183,6 @@ toastFn.info = (title: string, options?: ToastOptions) => addToast('info', title
 toastFn.dismiss = dismiss;
 toastFn.dismissAll = dismissAll;
 
-/**
- * Show a toast for a promise lifecycle (loading → success/error).
- */
 toastFn.promise = <T>(
   promise: Promise<T>,
   messages: {

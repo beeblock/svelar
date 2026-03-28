@@ -16,12 +16,12 @@ Scheduled tasks are classes that define when and what to run.
 npx svelar make:task CleanupExpiredSessions
 ```
 
-This creates `src/lib/scheduler/CleanupExpiredSessions.ts`:
+This creates `src/lib/scheduler/CleanupExpiredSessions.ts`. Each task must be in its own file with a **default export**:
 
 ```typescript
 import { ScheduledTask } from 'svelar/scheduler';
 
-export class CleanupExpiredSessions extends ScheduledTask {
+export default class CleanupExpiredSessions extends ScheduledTask {
   name = 'cleanup-expired-sessions';
 
   schedule() {
@@ -126,29 +126,22 @@ async onFailure(error: Error): Promise<void> {
 }
 ```
 
-## Creating the Scheduler
+## Task Discovery
 
-Create a scheduler instance and register tasks:
+The CLI auto-discovers task files from `src/lib/scheduler/`. Each file must contain a single class with a **default export**:
+
+```
+src/lib/scheduler/
+├── CleanupExpiredSessions.ts
+├── DailyStatsSummary.ts
+└── BroadcastNotification.ts
+```
 
 ```typescript
-// src/lib/scheduler/tasks.ts
-import { ScheduledTask, Scheduler } from 'svelar/scheduler';
-import { Connection } from 'svelar/database';
+// src/lib/scheduler/DailyStatsSummary.ts
+import { ScheduledTask } from 'svelar/scheduler';
 
-class CleanupExpiredSessions extends ScheduledTask {
-  name = 'cleanup-expired-sessions';
-
-  schedule() {
-    return this.daily();
-  }
-
-  async handle(): Promise<void> {
-    console.log('[Scheduler] Cleaning expired sessions...');
-    // await Connection.raw('DELETE FROM sessions WHERE expires_at < ?', [new Date().toISOString()]);
-  }
-}
-
-class DailyStatsSummary extends ScheduledTask {
+export default class DailyStatsSummary extends ScheduledTask {
   name = 'daily-stats';
 
   schedule() {
@@ -157,11 +150,16 @@ class DailyStatsSummary extends ScheduledTask {
 
   async handle(): Promise<void> {
     console.log('[Scheduler] Generating daily stats...');
-    // const userCount = await User.count();
-    // const postCount = await Post.count();
-    // Send report email...
   }
 }
+```
+
+You can also create a scheduler manually and register tasks programmatically:
+
+```typescript
+import { Scheduler } from 'svelar/scheduler';
+import CleanupExpiredSessions from './CleanupExpiredSessions.ts';
+import DailyStatsSummary from './DailyStatsSummary.ts';
 
 export function createScheduler(): Scheduler {
   const scheduler = new Scheduler();
@@ -229,7 +227,7 @@ Remove expired data:
 import { ScheduledTask } from 'svelar/scheduler';
 import { Connection } from 'svelar/database';
 
-export class CleanupExpiredSessions extends ScheduledTask {
+export default class CleanupExpiredSessions extends ScheduledTask {
   name = 'cleanup-expired-sessions';
 
   schedule() {
@@ -262,10 +260,10 @@ Generate and send daily reports:
 
 ```typescript
 import { ScheduledTask } from 'svelar/scheduler';
-import { User } from '../models/User.js';
-import { Post } from '../models/Post.js';
+import { User } from '../models/User.ts';
+import { Post } from '../models/Post.ts';
 
-export class DailyReportTask extends ScheduledTask {
+export default class DailyReportTask extends ScheduledTask {
   name = 'daily-report';
 
   schedule() {
@@ -307,7 +305,7 @@ import { ScheduledTask } from 'svelar/scheduler';
 import { User } from '../models/User.js';
 import { Notifier } from 'svelar/notifications';
 
-export class SendDailyDigestTask extends ScheduledTask {
+export default class SendDailyDigestTask extends ScheduledTask {
   name = 'send-daily-digest';
 
   schedule() {
@@ -336,7 +334,7 @@ import { ScheduledTask } from 'svelar/scheduler';
 import { Cache } from 'svelar/cache';
 import { Post } from '../models/Post.js';
 
-export class WarmCacheTask extends ScheduledTask {
+export default class WarmCacheTask extends ScheduledTask {
   name = 'warm-cache';
 
   schedule() {
@@ -375,7 +373,7 @@ Optimize tables and indexes:
 import { ScheduledTask } from 'svelar/scheduler';
 import { Connection } from 'svelar/database';
 
-export class OptimizeDatabaseTask extends ScheduledTask {
+export default class OptimizeDatabaseTask extends ScheduledTask {
   name = 'optimize-database';
 
   schedule() {
@@ -397,48 +395,63 @@ export class OptimizeDatabaseTask extends ScheduledTask {
 }
 ```
 
-## Complete Example from svelar-example
+## Broadcasting from Scheduled Tasks
 
-From the svelar-example app:
+The scheduler runs in a separate Node process, so it doesn't share memory with the web server. To send real-time notifications (SSE/WebSocket) from a task, use an internal HTTP bridge — the task POSTs to a protected API endpoint on the web server, which then broadcasts to connected clients:
 
 ```typescript
-// src/lib/scheduler/tasks.ts
-import { ScheduledTask, Scheduler } from 'svelar/scheduler';
-import { Connection } from 'svelar/database';
+// src/lib/scheduler/BroadcastNotification.ts
+import { ScheduledTask } from 'svelar/scheduler';
 
-class CleanupExpiredSessions extends ScheduledTask {
-  name = 'clean-expired-sessions';
+export default class BroadcastNotification extends ScheduledTask {
+  name = 'broadcast-notification';
 
   schedule() {
-    return this.daily();
+    return this.everyMinute();
   }
 
   async handle(): Promise<void> {
-    console.log('[Scheduler] Cleaning expired sessions...');
-    // await Connection.raw('DELETE FROM sessions WHERE expires_at < ?', [new Date().toISOString()]);
+    const baseUrl = process.env.APP_URL || 'http://localhost:5173';
+    const secret = process.env.INTERNAL_SECRET || 'svelar-internal-secret';
+
+    const res = await fetch(`${baseUrl}/api/internal/broadcast`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Internal-Secret': secret,
+      },
+      body: JSON.stringify({
+        channel: 'notifications',
+        eventName: 'toast',
+        data: {
+          variant: 'info',
+          title: 'Scheduled Update',
+          description: `System check completed at ${new Date().toLocaleTimeString()}`,
+        },
+      }),
+    });
+
+    if (!res.ok) throw new Error(`Broadcast failed (${res.status})`);
   }
 }
+```
 
-class DailyStatsSummary extends ScheduledTask {
-  name = 'daily-stats';
+The web server's internal broadcast endpoint receives the request and publishes to the in-memory SSE channel:
 
-  schedule() {
-    return this.dailyAt('09:00');
+```typescript
+// src/routes/api/internal/broadcast/+server.ts
+import { Broadcast } from 'svelar/broadcasting';
+import { json, error } from '@sveltejs/kit';
+
+export async function POST({ request }) {
+  const secret = request.headers.get('X-Internal-Secret');
+  if (secret !== (process.env.INTERNAL_SECRET || 'svelar-internal-secret')) {
+    throw error(403, 'Forbidden');
   }
 
-  async handle(): Promise<void> {
-    console.log('[Scheduler] Generating daily stats...');
-    // const userCount = await User.count();
-    // const postCount = await Post.count();
-    // await Mailer.send({ to: 'admin@example.com', body: `Users: ${userCount}, Posts: ${postCount}` });
-  }
-}
-
-export function createScheduler(): Scheduler {
-  const scheduler = new Scheduler();
-  scheduler.register(new CleanupExpiredSessions());
-  scheduler.register(new DailyStatsSummary());
-  return scheduler;
+  const { channel, eventName, data } = await request.json();
+  Broadcast.channel(channel).emit(eventName, data);
+  return json({ ok: true });
 }
 ```
 

@@ -37,7 +37,7 @@ import {
   ThrottleMiddleware,
 } from '../middleware/Middleware.js';
 import { Application } from '../container/Application.js';
-import { SessionMiddleware, MemorySessionStore } from '../session/Session.js';
+import { SessionMiddleware, MemorySessionStore, type SessionStore } from '../session/Session.js';
 import { AuthenticateMiddleware, type AuthManager } from '../auth/Auth.js';
 import { ErrorHandler, type ErrorHandlerConfig } from '../errors/Handler.js';
 
@@ -63,6 +63,9 @@ export interface SvelarAppConfig {
 
   /** Session secret key (defaults to APP_KEY env var) */
   secret?: string;
+
+  /** Session store (default: MemorySessionStore — lost on restart) */
+  sessionStore?: SessionStore;
 
   /** Session lifetime in seconds (default: 86400 = 24h) */
   sessionLifetime?: number;
@@ -140,6 +143,7 @@ export function createSvelarApp(appConfig: SvelarAppConfig = {}) {
   const {
     auth,
     secret = process.env.APP_KEY || 'svelar-change-me-in-production',
+    sessionStore,
     sessionLifetime = 86400,
     rateLimit = 100,
     rateLimitWindow = 60_000,
@@ -160,7 +164,7 @@ export function createSvelarApp(appConfig: SvelarAppConfig = {}) {
     new RateLimitMiddleware({ maxRequests: rateLimit, windowMs: rateLimitWindow }),
     new CsrfMiddleware({ onlyPaths: csrfPaths, excludePaths: csrfExcludePaths }),
     new SessionMiddleware({
-      store: new MemorySessionStore(),
+      store: sessionStore ?? new MemorySessionStore(),
       secret,
       lifetime: sessionLifetime,
     }),

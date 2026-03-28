@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { getToasts, subscribe, dismiss, pauseToast, resumeToast, type ToastVariant, type ToastState } from './toast.svelte.ts';
-  import { onMount } from 'svelte';
+  import { toasts, dismiss, pauseToast, resumeToast, type ToastVariant, type ToastState } from '$lib/stores/toasts.svelte.ts';
 
   interface Props {
     position?: 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left' | 'top-center' | 'bottom-center';
@@ -10,16 +9,9 @@
 
   let { position = 'bottom-right', maxVisible = 5, class: className = '' }: Props = $props();
 
-  let allToasts = $state(getToasts());
-  const toasts = $derived(allToasts.slice(-maxVisible));
-
+  const allToasts = $derived(toasts());
+  const visible = $derived(allToasts.slice(-maxVisible));
   const isBottom = $derived(position.startsWith('bottom'));
-
-  onMount(() => {
-    return subscribe(() => {
-      allToasts = getToasts();
-    });
-  });
 
   const positionClasses: Record<string, string> = {
     'top-right': 'top-0 right-0 pt-4 pr-4',
@@ -67,14 +59,14 @@
   }
 </script>
 
-{#if toasts.length > 0}
+{#if visible.length > 0}
   <div
     class="fixed z-[9999] flex w-[400px] max-w-[calc(100vw-2rem)] pointer-events-none {isBottom ? 'flex-col-reverse' : 'flex-col'} gap-2 {positionClasses[position]} {className}"
     role="region"
     aria-label="Notifications"
     aria-live="polite"
   >
-    {#each toasts as item (item.id)}
+    {#each visible as item (item.id)}
       {@const icon = icons[item.variant]}
       <div
         class="pointer-events-auto bg-white border border-gray-200 border-l-4 {borderAccent[item.variant]} rounded-lg shadow-lg {animClass(item.state)} group"
@@ -83,7 +75,6 @@
         onmouseleave={() => resumeToast(item.id)}
       >
         <div class="flex items-start gap-3 p-4">
-          <!-- Icon -->
           {#if icon.svg}
             <div class="flex-shrink-0 w-7 h-7 rounded-full ring-1 flex items-center justify-center {icon.colors}">
               <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none">
@@ -92,7 +83,6 @@
             </div>
           {/if}
 
-          <!-- Content -->
           <div class="flex-1 min-w-0 pt-0.5">
             <p class="text-sm font-semibold text-gray-900 leading-snug">{item.title}</p>
             {#if item.description}
@@ -108,7 +98,6 @@
             {/if}
           </div>
 
-          <!-- Close button -->
           {#if item.dismissible}
             <button
               class="flex-shrink-0 p-1 -m-1 rounded-md text-gray-300 opacity-0 group-hover:opacity-100 hover:text-gray-500 hover:bg-gray-100 transition-all duration-150 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-gray-300"
@@ -122,7 +111,6 @@
           {/if}
         </div>
 
-        <!-- Progress bar for timed toasts -->
         {#if item.duration > 0 && item.state !== 'exiting'}
           <div class="h-0.5 bg-gray-100 rounded-b-lg overflow-hidden">
             <div
@@ -137,72 +125,37 @@
 {/if}
 
 <style>
-  /* ── Enter from bottom ─────────────────────────────── */
   .toast-enter-bottom {
     animation: slideInBottom 300ms cubic-bezier(0.21, 1.02, 0.73, 1) forwards;
   }
-
   @keyframes slideInBottom {
-    from {
-      opacity: 0;
-      transform: translateY(100%) scale(0.95);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0) scale(1);
-    }
+    from { opacity: 0; transform: translateY(100%) scale(0.95); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
   }
-
-  /* ── Enter from top ────────────────────────────────── */
   .toast-enter-top {
     animation: slideInTop 300ms cubic-bezier(0.21, 1.02, 0.73, 1) forwards;
   }
-
   @keyframes slideInTop {
-    from {
-      opacity: 0;
-      transform: translateY(-100%) scale(0.95);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0) scale(1);
-    }
+    from { opacity: 0; transform: translateY(-100%) scale(0.95); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
   }
-
-  /* ── Visible (idle) ────────────────────────────────── */
   .toast-visible {
     opacity: 1;
     transform: translateY(0) scale(1);
   }
-
-  /* ── Exit ──────────────────────────────────────────── */
   .toast-exit {
     animation: slideOut 200ms cubic-bezier(0.06, 0.71, 0.55, 1) forwards;
   }
-
   @keyframes slideOut {
-    from {
-      opacity: 1;
-      transform: translateX(0) scale(1);
-    }
-    to {
-      opacity: 0;
-      transform: translateX(100%) scale(0.95);
-    }
+    from { opacity: 1; transform: translateX(0) scale(1); }
+    to { opacity: 0; transform: translateX(100%) scale(0.95); }
   }
-
-  /* ── Progress bar countdown ────────────────────────── */
   .toast-progress {
     animation: progressShrink linear forwards;
     transform-origin: left;
   }
-
   @keyframes progressShrink {
-    from {
-      width: 100%;
-    }
-    to {
-      width: 0%;
-    }
+    from { width: 100%; }
+    to { width: 0%; }
   }
 </style>

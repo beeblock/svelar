@@ -26,4 +26,4 @@ export class Post extends Model {
 }
 
 // Import here to avoid circular dep issues at class level
-import { User } from './User.js';
+import { User } from './User.ts';

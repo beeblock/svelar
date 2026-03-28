@@ -3,6 +3,8 @@ export {
   SessionMiddleware,
   MemorySessionStore,
   DatabaseSessionStore,
+  FileSessionStore,
+  RedisSessionStore,
   type SessionStore,
   type SessionConfig,
   type SessionData,

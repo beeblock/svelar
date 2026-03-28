@@ -1,6 +1,6 @@
 import { Job } from 'svelar/queue';
-import { User } from '../models/User.js';
-import { Post } from '../models/Post.js';
+import { User } from '../models/User.ts';
+import { Post } from '../models/Post.ts';
 
 /**
  * Daily digest job — generates a summary of posts from the last 24 hours

@@ -41,4 +41,4 @@ export class User extends HasRoles(Model) {
 }
 
 // Import here to avoid circular dep issues at class level
-import { Post } from './Post.js';
+import { Post } from './Post.ts';

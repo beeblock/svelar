@@ -1,6 +1,6 @@
 import { ScheduledTask } from 'svelar/scheduler';
 import { Queue } from 'svelar/queue';
-import { DailyDigestJob } from '../jobs/DailyDigestJob.js';
+import { DailyDigestJob } from '../jobs/DailyDigestJob.ts';
 
 /**
  * Generate and dispatch daily digest emails.

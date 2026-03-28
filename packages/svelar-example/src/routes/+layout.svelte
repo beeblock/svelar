@@ -1,12 +1,29 @@
 <script lang="ts">
   import '../app.css';
-  import { Button, Avatar, AvatarImage, AvatarFallback, Toaster, toast } from 'svelar/ui';
+  import { Button, Avatar, AvatarImage, AvatarFallback, Icon } from 'svelar/ui';
+  import { toast } from '$lib/stores/toasts.svelte.ts';
+  import Toaster from '$lib/components/Toaster.svelte';
   import LanguageSwitcher from 'svelar/i18n/LanguageSwitcher.svelte';
   import { page } from '$app/state';
   import { onMount } from 'svelte';
   import * as m from '$lib/paraglide/messages';
   import { locales, getLocale, localizeHref } from '$lib/paraglide/runtime';
   import { useSSE } from 'svelar/broadcasting/client';
+  import LayoutGrid from 'lucide-svelte/icons/layout-grid';
+  import CreditCard from 'lucide-svelte/icons/credit-card';
+  import KeyRound from 'lucide-svelte/icons/key-round';
+  import Users from 'lucide-svelte/icons/users';
+  import Activity from 'lucide-svelte/icons/activity';
+  import Shield from 'lucide-svelte/icons/shield';
+  import Lock from 'lucide-svelte/icons/lock';
+  import Briefcase from 'lucide-svelte/icons/briefcase';
+  import Clock from 'lucide-svelte/icons/clock';
+  import FileText from 'lucide-svelte/icons/file-text';
+  import Menu from 'lucide-svelte/icons/menu';
+  import X from 'lucide-svelte/icons/x';
+  import LayoutDashboard from 'lucide-svelte/icons/layout-dashboard';
+  import ShieldCheck from 'lucide-svelte/icons/shield-check';
+  import type { Component } from 'svelte';
 
   let { data, children } = $props();
   let sidebarOpen = $state(false);
@@ -15,29 +32,29 @@
   onMount(() => {
     const channel = useSSE('notifications');
 
-    channel.listen('toast', (data: { variant?: string; title: string; description?: string }) => {
-      const variant = (data.variant || 'info') as 'success' | 'error' | 'warning' | 'info';
-      toast[variant](data.title, { description: data.description });
+    channel.listen('toast', (eventData: { variant?: string; title: string; description?: string }) => {
+      const variant = (eventData.variant || 'info') as 'success' | 'error' | 'warning' | 'info';
+      toast[variant](eventData.title, { description: eventData.description });
     });
 
     return () => channel.close();
   });
 
-  const dashboardLinks = [
-    { href: '/dashboard', label: () => m.sidebar_overview(), icon: 'grid', exact: true },
-    { href: '/dashboard/billing', label: () => m.sidebar_billing(), icon: 'credit-card' },
-    { href: '/dashboard/api-keys', label: () => m.sidebar_api_keys(), icon: 'key' },
-    { href: '/dashboard/team', label: () => m.sidebar_team(), icon: 'users' },
+  const dashboardLinks: { href: string; label: () => string; icon: Component<any>; exact?: boolean }[] = [
+    { href: '/dashboard', label: () => m.sidebar_overview(), icon: LayoutGrid, exact: true },
+    { href: '/dashboard/billing', label: () => m.sidebar_billing(), icon: CreditCard },
+    { href: '/dashboard/api-keys', label: () => m.sidebar_api_keys(), icon: KeyRound },
+    { href: '/dashboard/team', label: () => m.sidebar_team(), icon: Users },
   ];
 
-  const adminLinks = [
-    { href: '/admin?tab=overview', label: () => m.sidebar_system_health(), icon: 'activity' },
-    { href: '/admin?tab=users', label: () => m.sidebar_users(), icon: 'users' },
-    { href: '/admin?tab=roles', label: () => m.sidebar_roles(), icon: 'shield' },
-    { href: '/admin?tab=permissions', label: () => m.sidebar_permissions(), icon: 'lock' },
-    { href: '/admin?tab=queue', label: () => m.sidebar_queue(), icon: 'briefcase' },
-    { href: '/admin?tab=scheduler', label: () => m.sidebar_scheduler(), icon: 'clock' },
-    { href: '/admin?tab=logs', label: () => m.sidebar_logs(), icon: 'file-text' },
+  const adminLinks: { href: string; label: () => string; icon: Component<any> }[] = [
+    { href: '/admin?tab=overview', label: () => m.sidebar_system_health(), icon: Activity },
+    { href: '/admin?tab=users', label: () => m.sidebar_users(), icon: Users },
+    { href: '/admin?tab=roles', label: () => m.sidebar_roles(), icon: Shield },
+    { href: '/admin?tab=permissions', label: () => m.sidebar_permissions(), icon: Lock },
+    { href: '/admin?tab=queue', label: () => m.sidebar_queue(), icon: Briefcase },
+    { href: '/admin?tab=scheduler', label: () => m.sidebar_scheduler(), icon: Clock },
+    { href: '/admin?tab=logs', label: () => m.sidebar_logs(), icon: FileText },
   ];
 
   function getBarePath(): string {
@@ -64,21 +81,6 @@
     return !!(data.user && (isOnDashboard() || isOnAdmin()));
   }
 
-  function getIcon(icon: string): string {
-    const icons: Record<string, string> = {
-      'grid': '▦',
-      'credit-card': '💳',
-      'key': '🔑',
-      'users': '👥',
-      'activity': '📊',
-      'briefcase': '💼',
-      'clock': '⏰',
-      'file-text': '📄',
-      'shield': '🛡',
-      'lock': '🔐',
-    };
-    return icons[icon] || '•';
-  }
 </script>
 
 <svelte:head>
@@ -102,13 +104,11 @@
             onclick={() => (sidebarOpen = !sidebarOpen)}
             aria-label="Toggle menu"
           >
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              {#if sidebarOpen}
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-              {:else}
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
-              {/if}
-            </svg>
+            {#if sidebarOpen}
+              <Icon icon={X} size={20} />
+            {:else}
+              <Icon icon={Menu} size={20} />
+            {/if}
           </button>
         {/if}
 
@@ -180,7 +180,7 @@
                         ? 'bg-[var(--color-brand)] text-white'
                         : 'text-gray-700 hover:bg-gray-100'}"
                     >
-                      <span>{getIcon(link.icon)}</span>
+                      <Icon icon={link.icon} size={18} />
                       {link.label()}
                     </a>
                   {/each}
@@ -202,7 +202,7 @@
                         ? 'bg-[var(--color-brand)] text-white'
                         : 'text-gray-700 hover:bg-gray-100'}"
                     >
-                      <span>{getIcon(link.icon)}</span>
+                      <Icon icon={link.icon} size={18} />
                       {link.label()}
                     </a>
                   {/each}
@@ -216,12 +216,12 @@
                 <nav class="space-y-1">
                   <a href={localizeHref('/dashboard')} onclick={() => (sidebarOpen = false)}
                     class="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md text-gray-700 hover:bg-gray-100">
-                    <span>{getIcon('grid')}</span> {m.nav_dashboard()}
+                    <Icon icon={LayoutDashboard} size={18} /> {m.nav_dashboard()}
                   </a>
                   {#if data.user.role === 'admin'}
                     <a href={localizeHref('/admin')} onclick={() => (sidebarOpen = false)}
                       class="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md text-gray-700 hover:bg-gray-100">
-                      <span>{getIcon('activity')}</span> {m.nav_admin()}
+                      <Icon icon={ShieldCheck} size={18} /> {m.nav_admin()}
                     </a>
                   {/if}
                 </nav>
@@ -247,7 +247,7 @@
                       ? 'bg-[var(--color-brand)] text-white'
                       : 'text-gray-700 hover:bg-gray-100'}"
                   >
-                    <span>{getIcon(link.icon)}</span>
+                    <Icon icon={link.icon} size={18} />
                     {link.label()}
                   </a>
                 {/each}
@@ -268,7 +268,7 @@
                       ? 'bg-[var(--color-brand)] text-white'
                       : 'text-gray-700 hover:bg-gray-100'}"
                   >
-                    <span>{getIcon(link.icon)}</span>
+                    <Icon icon={link.icon} size={18} />
                     {link.label()}
                   </a>
                 {/each}

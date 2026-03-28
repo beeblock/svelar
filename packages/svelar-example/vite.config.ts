@@ -22,7 +22,7 @@ export default defineConfig({
     alias: {
       'svelar/actions': resolve(svelarRoot, 'dist/actions/index.js'),
       'svelar/auth': resolve(svelarRoot, 'dist/auth/index.js'),
-      'svelar/broadcasting/client': resolve(svelarRoot, 'dist/broadcasting/client.js'),
+      'svelar/broadcasting/client': resolve(svelarRoot, 'src/broadcasting/client.ts'),
       'svelar/broadcasting': resolve(svelarRoot, 'dist/broadcasting/index.js'),
       'svelar/cache': resolve(svelarRoot, 'dist/cache/index.js'),
       'svelar/cli': resolve(svelarRoot, 'dist/cli/index.js'),
@@ -58,7 +58,10 @@ export default defineConfig({
       'svelar': resolve(svelarRoot, 'dist/index.js'),
     },
   },
+  ssr: {
+    noExternal: ['lucide-svelte'],
+  },
   optimizeDeps: {
-    exclude: ['sveltekit-superforms'],
+    exclude: ['sveltekit-superforms', 'lucide-svelte'],
   },
 });

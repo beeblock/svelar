@@ -2,7 +2,18 @@
 
 /**
  * Svelar CLI — Laravel-like Artisan for SvelteKit
+ *
+ * Re-launches with --import ts-resolver.mjs so that dynamic imports of
+ * user .ts files (tasks, commands, seeders) resolve .js → .ts correctly.
  */
+
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { register } from 'node:module';
+
+// Register the TS resolve hook so dynamic imports of .ts files work
+const __dir = dirname(fileURLToPath(import.meta.url));
+register(pathToFileURL(join(__dir, 'ts-resolve-hook.mjs')).href, import.meta.url);
 
 import { Cli } from './Cli.js';
 
@@ -38,6 +49,9 @@ import { QueueWorkCommand } from './commands/QueueWorkCommand.js';
 // Utilities
 import { TinkerCommand } from './commands/TinkerCommand.js';
 
+// Project scaffolding
+import { NewCommand } from './commands/NewCommand.js';
+
 // Plugins
 import { PluginListCommand } from './commands/PluginListCommand.js';
 import { PluginPublishCommand } from './commands/PluginPublishCommand.js';
@@ -46,6 +60,7 @@ import { PluginInstallCommand } from './commands/PluginInstallCommand.js';
 const cli = new Cli('0.1.0');
 
 // Register all built-in commands
+cli.register(NewCommand);
 cli.register(MakeModelCommand);
 cli.register(MakeMigrationCommand);
 cli.register(MakeControllerCommand);

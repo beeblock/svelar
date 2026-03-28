@@ -4,7 +4,7 @@ Svelar ships a minimal, composable component library built on Svelte 5 runes. Ev
 
 ## Available Components
 
-Svelar includes 15 components covering the most common UI patterns: `Button`, `Input`, `Label`, `Card` (with `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`), `Alert`, `Badge`, `Separator`, `Avatar` (with `AvatarImage`, `AvatarFallback`).
+Svelar includes components covering the most common UI patterns: `Button`, `Input`, `Label`, `Card` (with `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`), `Alert`, `Badge`, `Separator`, `Avatar` (with `AvatarImage`, `AvatarFallback`), `Tabs` (with `TabsList`, `TabsTrigger`, `TabsContent`), `Icon`, `Toaster`, and a `toast` notification API.
 
 ## Import
 
@@ -139,6 +139,147 @@ Horizontal divider:
 <Separator />
 <Separator class="my-8" />
 ```
+
+### Tabs
+
+Tab navigation with content panels:
+
+```svelte
+<script lang="ts">
+  import { Tabs, TabsList, TabsTrigger, TabsContent } from 'svelar/ui';
+
+  let activeTab = $state('overview');
+</script>
+
+<Tabs value={activeTab} onchange={(v) => (activeTab = v)}>
+  <TabsList>
+    <TabsTrigger value="overview">Overview</TabsTrigger>
+    <TabsTrigger value="settings">Settings</TabsTrigger>
+  </TabsList>
+  <TabsContent value="overview">Overview content</TabsContent>
+  <TabsContent value="settings">Settings content</TabsContent>
+</Tabs>
+```
+
+### Icon
+
+A generic icon wrapper that supports [lucide-svelte](https://lucide.dev) and [@tabler/icons-svelte](https://tabler.io/icons) components, raw SVG path data, or inline SVG children.
+
+**Important:** Always import lucide icons individually. The barrel export (`from 'lucide-svelte'`) causes SSR issues.
+
+```svelte
+<script lang="ts">
+  import { Icon } from 'svelar/ui';
+  import Users from 'lucide-svelte/icons/users';
+  import KeyRound from 'lucide-svelte/icons/key-round';
+</script>
+
+<!-- Pass a Svelte icon component -->
+<Icon icon={Users} size={20} />
+<Icon icon={KeyRound} size={18} color="gray" />
+
+<!-- Pass raw SVG path data -->
+<Icon path="M5 12l5 5L20 7" size={24} strokeWidth={2} />
+
+<!-- Inline SVG children -->
+<Icon size={24}>
+  <circle cx="12" cy="12" r="10" />
+</Icon>
+```
+
+Props: `icon` (Component), `path` (string), `size` (number, default 24), `strokeWidth` (number, default 2), `color` (string, default `currentColor`), `class`, `aria-label`.
+
+#### Vite Configuration for Icon Libraries
+
+When using `lucide-svelte` or `@tabler/icons-svelte`, add these to your `vite.config.ts`:
+
+```typescript
+export default defineConfig({
+  // ...
+  ssr: {
+    noExternal: ['lucide-svelte'],
+  },
+  optimizeDeps: {
+    exclude: ['lucide-svelte'],
+  },
+});
+```
+
+### Toast Notifications
+
+Svelar includes a full toast notification system with animations, auto-dismiss, hover-to-pause, action buttons, and a progress bar.
+
+#### Basic Usage
+
+```typescript
+import { toast } from 'svelar/ui';
+
+toast('Hello');
+toast.success('Saved!');
+toast.error('Failed', { description: 'Network error' });
+toast.warning('Careful', { duration: 8000 });
+toast.info('Tip', { action: { label: 'Undo', onClick: () => undo() } });
+```
+
+#### Promise Toasts
+
+Track async operations with loading → success/error:
+
+```typescript
+toast.promise(fetch('/api/save'), {
+  loading: 'Saving...',
+  success: 'Saved!',
+  error: (err) => `Failed: ${err.message}`,
+});
+```
+
+#### Dismissing Toasts
+
+```typescript
+const id = toast('Manual dismiss', { duration: 0 });  // persistent
+toast.dismiss(id);   // dismiss one
+toast.dismissAll();  // dismiss all
+```
+
+#### Toast Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `description` | `string` | — | Secondary text below the title |
+| `duration` | `number` | 5000 (8000 for errors) | Auto-dismiss in ms. `0` = persistent |
+| `dismissible` | `boolean` | `true` | Show close button |
+| `action` | `{ label, onClick }` | — | Action button |
+
+#### Rendering Toasts with Toaster
+
+Add `<Toaster />` to your root layout to render toast notifications:
+
+```svelte
+<script>
+  import { Toaster } from 'svelar/ui';
+</script>
+
+<Toaster position="bottom-right" maxVisible={5} />
+```
+
+Positions: `top-right`, `top-left`, `bottom-right`, `bottom-left`, `top-center`, `bottom-center`.
+
+#### Cross-Package Reactivity Note
+
+The toast store uses a callback-based pattern (not `$state`) so it works when imported from the `svelar` package. If you need fine-grained `$state` reactivity in your app, create a local wrapper:
+
+```typescript
+// src/lib/stores/toasts.svelte.ts
+import { getToasts, subscribe as toastSubscribe } from 'svelar/ui';
+export { toast, dismiss } from 'svelar/ui';
+
+let items = $state(getToasts());
+toastSubscribe(() => { items = [...getToasts()]; });
+
+export function toasts() { return items; }
+```
+
+Then use `toasts()` in your components for reactive rendering.
 
 ## Extending the UI
 

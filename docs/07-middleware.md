@@ -93,6 +93,7 @@ You can customize every default:
 export const { handle, handleError } = createSvelarApp({
   auth,
   secret: process.env.APP_KEY,
+  sessionStore: new DatabaseSessionStore(),  // default: MemorySessionStore
   sessionLifetime: 60 * 60 * 24 * 7, // 7 days
   rateLimit: 200,
   rateLimitWindow: 120_000,           // 2 minutes
