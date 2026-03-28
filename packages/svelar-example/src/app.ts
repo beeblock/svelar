@@ -17,6 +17,7 @@ import { Teams } from 'svelar/teams';
 import { EmailTemplates } from 'svelar/email-templates';
 import { Uploads } from 'svelar/uploads';
 import { configureDashboard } from 'svelar/dashboard';
+import { Broadcast } from 'svelar/broadcasting';
 import { JobMonitor } from 'svelar/queue/JobMonitor';
 import { LogViewer } from 'svelar/logging/LogViewer';
 import { User } from './lib/models/User.js';
@@ -90,6 +91,14 @@ JobMonitor.configure({
   },
 });
 
+// ── Broadcasting (SSE) ────────────────────────────────────
+Broadcast.configure({
+  default: 'sse',
+  drivers: {
+    sse: { driver: 'sse' },
+  },
+});
+
 // ── Dashboard ─────────────────────────────────────────────
 configureDashboard({ enabled: true, prefix: '/admin' });
 
@@ -100,4 +109,4 @@ import { ExportDataJob } from './lib/jobs/ExportDataJob.js';
 
 Queue.registerAll([SendWelcomeEmail, DailyDigestJob, ExportDataJob]);
 
-export { Connection, Hash };
+export { Connection, Hash, Broadcast };

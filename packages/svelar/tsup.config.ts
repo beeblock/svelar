@@ -25,6 +25,7 @@ export default defineConfig({
     'mail/index': 'src/mail/index.ts',
     'notifications/index': 'src/notifications/index.ts',
     'broadcasting/index': 'src/broadcasting/index.ts',
+    'broadcasting/client': 'src/broadcasting/client.ts',
     'config/index': 'src/config/index.ts',
     'services/index': 'src/services/index.ts',
     'actions/index': 'src/actions/index.ts',

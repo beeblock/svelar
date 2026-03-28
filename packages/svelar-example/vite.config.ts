@@ -22,6 +22,7 @@ export default defineConfig({
     alias: {
       'svelar/actions': resolve(svelarRoot, 'dist/actions/index.js'),
       'svelar/auth': resolve(svelarRoot, 'dist/auth/index.js'),
+      'svelar/broadcasting/client': resolve(svelarRoot, 'dist/broadcasting/client.js'),
       'svelar/broadcasting': resolve(svelarRoot, 'dist/broadcasting/index.js'),
       'svelar/cache': resolve(svelarRoot, 'dist/cache/index.js'),
       'svelar/cli': resolve(svelarRoot, 'dist/cli/index.js'),
@@ -39,7 +40,6 @@ export default defineConfig({
       'svelar/notifications': resolve(svelarRoot, 'dist/notifications/index.js'),
       'svelar/orm': resolve(svelarRoot, 'dist/orm/index.js'),
       'svelar/pagination': resolve(svelarRoot, 'dist/pagination/index.js'),
-      'svelar/permissions': resolve(svelarRoot, 'dist/permissions/index.js'),
       'svelar/permissions': resolve(svelarRoot, 'dist/permissions/index.js'),
       'svelar/plugins': resolve(svelarRoot, 'dist/plugins/index.js'),
       'svelar/queue': resolve(svelarRoot, 'dist/queue/index.js'),
