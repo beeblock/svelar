@@ -29,7 +29,7 @@ export const createPostSchema = z.object({
 
 ```typescript
 // src/routes/dashboard/+page.server.ts
-import { createFormAction, loadForm } from 'svelar/forms';
+import { createFormAction, loadForm } from '@beeblock/svelar/forms';
 import { createPostSchema } from '$lib/schemas/post';
 
 export const load = async () => ({
@@ -49,7 +49,7 @@ export const actions = {
 ```svelte
 <script>
   import { superForm } from 'sveltekit-superforms';
-  import { Button, Input, Label, Alert } from 'svelar/ui';
+  import { Button, Input, Label, Alert } from '@beeblock/svelar/ui';
 
   let { data } = $props();
 
@@ -88,7 +88,7 @@ export const actions = {
 Creates a server-side form action with Zod validation:
 
 ```typescript
-import { createFormAction } from 'svelar/forms';
+import { createFormAction } from '@beeblock/svelar/forms';
 
 createFormAction(schema, handler, options?)
 ```
@@ -112,7 +112,7 @@ export const actions = {
 Loads an empty (or pre-filled) form for a SvelteKit `load` function:
 
 ```typescript
-import { loadForm } from 'svelar/forms';
+import { loadForm } from '@beeblock/svelar/forms';
 
 // Empty form
 export const load = async () => ({
@@ -133,7 +133,7 @@ export const load = async ({ params }) => {
 Standalone validation for API routes or custom actions:
 
 ```typescript
-import { validateForm } from 'svelar/forms';
+import { validateForm } from '@beeblock/svelar/forms';
 
 // In a +server.ts API endpoint
 export async function POST(event) {

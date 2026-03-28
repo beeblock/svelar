@@ -20,7 +20,7 @@ export class MakePluginCommand extends Command {
     }
 
     const pluginName = name.endsWith('Plugin') ? name : `${name}Plugin`;
-    const pluginsDir = join(process.cwd(), 'src', 'lib', 'plugins');
+    const pluginsDir = join(process.cwd(), 'src', 'lib', 'shared', 'plugins');
     mkdirSync(pluginsDir, { recursive: true });
 
     const filePath = join(pluginsDir, `${pluginName}.ts`);
@@ -34,8 +34,8 @@ export class MakePluginCommand extends Command {
       .toLowerCase()
       .replace(/^-/, '');
 
-    const content = `import { Plugin } from 'svelar/plugins';
-import type { Container } from 'svelar/container';
+    const content = `import { Plugin } from '@beeblock/svelar/plugins';
+import type { Container } from '@beeblock/svelar/container';
 
 export class ${pluginName} extends Plugin {
   readonly name = '${kebabName}';
@@ -59,6 +59,6 @@ export class ${pluginName} extends Plugin {
 `;
 
     writeFileSync(filePath, content);
-    this.success(`Plugin created: src/lib/plugins/${pluginName}.ts`);
+    this.success(`Plugin created: src/lib/shared/plugins/${pluginName}.ts`);
   }
 }

@@ -27,8 +27,8 @@ npx svelar make:plugin AnalyticsPlugin
 This creates `src/lib/plugins/AnalyticsPlugin.ts`:
 
 ```typescript
-import { Plugin } from 'svelar/plugins';
-import type { Container } from 'svelar/container';
+import { Plugin } from '@beeblock/svelar/plugins';
+import type { Container } from '@beeblock/svelar/container';
 
 export class AnalyticsPlugin extends Plugin {
   readonly name = 'svelar-analytics';
@@ -228,8 +228,8 @@ Here's the analytics plugin from the svelar-example:
 
 ```typescript
 // src/lib/plugins/AnalyticsPlugin.ts
-import { Plugin } from 'svelar/plugins';
-import type { Container } from 'svelar/container';
+import { Plugin } from '@beeblock/svelar/plugins';
+import type { Container } from '@beeblock/svelar/container';
 
 /**
  * Analytics Plugin
@@ -322,7 +322,7 @@ export class AnalyticsPlugin extends Plugin {
 Register plugins in your application:
 
 ```typescript
-import { PluginManager } from 'svelar/plugins';
+import { PluginManager } from '@beeblock/svelar/plugins';
 import { AnalyticsPlugin } from './lib/plugins/AnalyticsPlugin.js';
 import { SeoPlugin } from './lib/plugins/SeoPlugin.js';
 

@@ -43,17 +43,21 @@ export class NewCommand extends Command {
       '',
       'src',
       'src/lib',
-      'src/lib/models',
-      'src/lib/schema',
-      'src/lib/controllers',
-      'src/lib/middleware',
-      'src/lib/services',
-      'src/lib/stores',
-      'src/lib/components',
+      'src/lib/modules',
+      'src/lib/shared/middleware',
+      'src/lib/shared/components',
+      'src/lib/shared/stores',
+      'src/lib/shared/jobs',
+      'src/lib/shared/plugins',
+      'src/lib/shared/channels',
+      'src/lib/shared/commands',
+      'src/lib/shared/providers',
+      'src/lib/shared/scheduler',
+      'src/lib/database/migrations',
+      'src/lib/database/seeders',
       'src/routes',
       'src/routes/api',
       'static',
-      'migrations',
     ];
     for (const dir of dirs) {
       mkdirSync(join(projectDir, dir), { recursive: true });
@@ -91,7 +95,7 @@ export class NewCommand extends Command {
           dependencies: {
             'better-sqlite3': '^11.0.0',
             'drizzle-orm': '^0.38.0',
-            svelar: '^0.1.0',
+            '@beeblock/svelar': '^0.1.0',
             zod: '^3.23.0',
           },
         },
@@ -133,56 +137,56 @@ import { dirname, resolve } from 'path';
 
 // Resolve the svelar package root so we can alias submodule imports
 const require_ = createRequire(import.meta.url);
-const svelarRoot = dirname(require_.resolve('svelar/package.json'));
+const svelarRoot = dirname(require_.resolve('@beeblock/svelar/package.json'));
 
 export default defineConfig({
   plugins: [sveltekit(), tailwindcss()],
   resolve: {
     alias: {
-      'svelar/actions': resolve(svelarRoot, 'dist/actions/index.js'),
-      'svelar/api-keys': resolve(svelarRoot, 'dist/api-keys/index.js'),
-      'svelar/audit': resolve(svelarRoot, 'dist/audit/index.js'),
-      'svelar/auth': resolve(svelarRoot, 'dist/auth/index.js'),
-      'svelar/broadcasting/client': resolve(svelarRoot, 'src/broadcasting/client.ts'),
-      'svelar/broadcasting': resolve(svelarRoot, 'dist/broadcasting/index.js'),
-      'svelar/cache': resolve(svelarRoot, 'dist/cache/index.js'),
-      'svelar/cli': resolve(svelarRoot, 'dist/cli/index.js'),
-      'svelar/config': resolve(svelarRoot, 'dist/config/index.js'),
-      'svelar/container': resolve(svelarRoot, 'dist/container/index.js'),
-      'svelar/dashboard': resolve(svelarRoot, 'dist/dashboard/index.js'),
-      'svelar/database': resolve(svelarRoot, 'dist/database/index.js'),
-      'svelar/dates': resolve(svelarRoot, 'dist/support/date.js'),
-      'svelar/email-templates': resolve(svelarRoot, 'dist/email-templates/index.js'),
-      'svelar/errors': resolve(svelarRoot, 'dist/errors/index.js'),
-      'svelar/events': resolve(svelarRoot, 'dist/events/index.js'),
-      'svelar/forms': resolve(svelarRoot, 'dist/forms/index.js'),
-      'svelar/hashing': resolve(svelarRoot, 'dist/hashing/index.js'),
-      'svelar/hooks': resolve(svelarRoot, 'dist/hooks/index.js'),
-      'svelar/http': resolve(svelarRoot, 'dist/http/index.js'),
-      'svelar/logging': resolve(svelarRoot, 'dist/logging/index.js'),
-      'svelar/mail': resolve(svelarRoot, 'dist/mail/index.js'),
-      'svelar/middleware': resolve(svelarRoot, 'dist/middleware/index.js'),
-      'svelar/notifications': resolve(svelarRoot, 'dist/notifications/index.js'),
-      'svelar/orm': resolve(svelarRoot, 'dist/orm/index.js'),
-      'svelar/pagination': resolve(svelarRoot, 'dist/pagination/index.js'),
-      'svelar/permissions': resolve(svelarRoot, 'dist/permissions/index.js'),
-      'svelar/plugins': resolve(svelarRoot, 'dist/plugins/index.js'),
-      'svelar/queue': resolve(svelarRoot, 'dist/queue/index.js'),
-      'svelar/repositories': resolve(svelarRoot, 'dist/repositories/index.js'),
-      'svelar/routing': resolve(svelarRoot, 'dist/routing/index.js'),
-      'svelar/scheduler': resolve(svelarRoot, 'dist/scheduler/index.js'),
-      'svelar/services': resolve(svelarRoot, 'dist/services/index.js'),
-      'svelar/session': resolve(svelarRoot, 'dist/session/index.js'),
-      'svelar/storage': resolve(svelarRoot, 'dist/storage/index.js'),
-      'svelar/support': resolve(svelarRoot, 'dist/support/index.js'),
-      'svelar/teams': resolve(svelarRoot, 'dist/teams/index.js'),
-      'svelar/uploads': resolve(svelarRoot, 'dist/uploads/index.js'),
-      'svelar/validation': resolve(svelarRoot, 'dist/validation/index.js'),
-      'svelar/webhooks': resolve(svelarRoot, 'dist/webhooks/index.js'),
-      'svelar/ui': resolve(svelarRoot, 'src/ui/index.ts'),
-      'svelar/i18n/LanguageSwitcher.svelte': resolve(svelarRoot, 'src/i18n/LanguageSwitcher.svelte'),
-      'svelar/i18n': resolve(svelarRoot, 'dist/i18n/index.js'),
-      'svelar': resolve(svelarRoot, 'dist/index.js'),
+      '@beeblock/svelar/actions': resolve(svelarRoot, 'dist/actions/index.js'),
+      '@beeblock/svelar/api-keys': resolve(svelarRoot, 'dist/api-keys/index.js'),
+      '@beeblock/svelar/audit': resolve(svelarRoot, 'dist/audit/index.js'),
+      '@beeblock/svelar/auth': resolve(svelarRoot, 'dist/auth/index.js'),
+      '@beeblock/svelar/broadcasting/client': resolve(svelarRoot, 'src/broadcasting/client.ts'),
+      '@beeblock/svelar/broadcasting': resolve(svelarRoot, 'dist/broadcasting/index.js'),
+      '@beeblock/svelar/cache': resolve(svelarRoot, 'dist/cache/index.js'),
+      '@beeblock/svelar/cli': resolve(svelarRoot, 'dist/cli/index.js'),
+      '@beeblock/svelar/config': resolve(svelarRoot, 'dist/config/index.js'),
+      '@beeblock/svelar/container': resolve(svelarRoot, 'dist/container/index.js'),
+      '@beeblock/svelar/dashboard': resolve(svelarRoot, 'dist/dashboard/index.js'),
+      '@beeblock/svelar/database': resolve(svelarRoot, 'dist/database/index.js'),
+      '@beeblock/svelar/dates': resolve(svelarRoot, 'dist/support/date.js'),
+      '@beeblock/svelar/email-templates': resolve(svelarRoot, 'dist/email-templates/index.js'),
+      '@beeblock/svelar/errors': resolve(svelarRoot, 'dist/errors/index.js'),
+      '@beeblock/svelar/events': resolve(svelarRoot, 'dist/events/index.js'),
+      '@beeblock/svelar/forms': resolve(svelarRoot, 'dist/forms/index.js'),
+      '@beeblock/svelar/hashing': resolve(svelarRoot, 'dist/hashing/index.js'),
+      '@beeblock/svelar/hooks': resolve(svelarRoot, 'dist/hooks/index.js'),
+      '@beeblock/svelar/http': resolve(svelarRoot, 'dist/http/index.js'),
+      '@beeblock/svelar/logging': resolve(svelarRoot, 'dist/logging/index.js'),
+      '@beeblock/svelar/mail': resolve(svelarRoot, 'dist/mail/index.js'),
+      '@beeblock/svelar/middleware': resolve(svelarRoot, 'dist/middleware/index.js'),
+      '@beeblock/svelar/notifications': resolve(svelarRoot, 'dist/notifications/index.js'),
+      '@beeblock/svelar/orm': resolve(svelarRoot, 'dist/orm/index.js'),
+      '@beeblock/svelar/pagination': resolve(svelarRoot, 'dist/pagination/index.js'),
+      '@beeblock/svelar/permissions': resolve(svelarRoot, 'dist/permissions/index.js'),
+      '@beeblock/svelar/plugins': resolve(svelarRoot, 'dist/plugins/index.js'),
+      '@beeblock/svelar/queue': resolve(svelarRoot, 'dist/queue/index.js'),
+      '@beeblock/svelar/repositories': resolve(svelarRoot, 'dist/repositories/index.js'),
+      '@beeblock/svelar/routing': resolve(svelarRoot, 'dist/routing/index.js'),
+      '@beeblock/svelar/scheduler': resolve(svelarRoot, 'dist/scheduler/index.js'),
+      '@beeblock/svelar/services': resolve(svelarRoot, 'dist/services/index.js'),
+      '@beeblock/svelar/session': resolve(svelarRoot, 'dist/session/index.js'),
+      '@beeblock/svelar/storage': resolve(svelarRoot, 'dist/storage/index.js'),
+      '@beeblock/svelar/support': resolve(svelarRoot, 'dist/support/index.js'),
+      '@beeblock/svelar/teams': resolve(svelarRoot, 'dist/teams/index.js'),
+      '@beeblock/svelar/uploads': resolve(svelarRoot, 'dist/uploads/index.js'),
+      '@beeblock/svelar/validation': resolve(svelarRoot, 'dist/validation/index.js'),
+      '@beeblock/svelar/webhooks': resolve(svelarRoot, 'dist/webhooks/index.js'),
+      '@beeblock/svelar/ui': resolve(svelarRoot, 'src/ui/index.ts'),
+      '@beeblock/svelar/i18n/LanguageSwitcher.svelte': resolve(svelarRoot, 'src/i18n/LanguageSwitcher.svelte'),
+      '@beeblock/svelar/i18n': resolve(svelarRoot, 'dist/i18n/index.js'),
+      '@beeblock/svelar': resolve(svelarRoot, 'dist/index.js'),
     },
   },
   server: {
@@ -266,9 +270,9 @@ export default defineConfig({
  * This file runs once when the server starts.
  */
 
-import { Connection } from 'svelar/database';
-import { Hash } from 'svelar/hashing';
-import { AuthManager } from 'svelar/auth';
+import { Connection } from '@beeblock/svelar/database';
+import { Hash } from '@beeblock/svelar/hashing';
+import { AuthManager } from '@beeblock/svelar/auth';
 // import { User } from './lib/models/User.js';
 
 // ── Database (SQLite) ─────────────────────────────────────
@@ -302,8 +306,8 @@ export { Connection, Hash };
  * SvelteKit Server Hooks — Svelar middleware pipeline
  */
 
-import { createSvelarApp } from 'svelar/hooks';
-import { MemorySessionStore } from 'svelar/session';
+import { createSvelarApp } from '@beeblock/svelar/hooks';
+import { MemorySessionStore } from '@beeblock/svelar/session';
 
 // Import app.ts to trigger database + hashing configuration
 import './app.js';
@@ -346,7 +350,7 @@ export const { handle, handleError } = createSvelarApp({
     writeFileSync(
       join(projectDir, 'src', 'routes', '+page.svelte'),
       `<script lang="ts">
-  import { Button, Card, Badge, Separator, Icon } from 'svelar/ui';
+  import { Button, Card, Badge, Separator, Icon } from '@beeblock/svelar/ui';
 </script>
 
 <svelte:head>

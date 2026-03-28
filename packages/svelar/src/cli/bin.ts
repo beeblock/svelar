@@ -37,6 +37,7 @@ import { MakeChannelCommand } from './commands/MakeChannelCommand.js';
 import { MakeDockerCommand } from './commands/MakeDockerCommand.js';
 import { MakeBroadcastingCommand } from './commands/MakeBroadcastingCommand.js';
 import { MakeDashboardCommand } from './commands/MakeDashboardCommand.js';
+import { MakeResourceCommand } from './commands/MakeResourceCommand.js';
 
 // Database
 import { MigrateCommand } from './commands/MigrateCommand.js';
@@ -71,6 +72,7 @@ cli.register(MakeServiceCommand);
 cli.register(MakeRepositoryCommand);
 cli.register(MakeActionCommand);
 cli.register(MakeRequestCommand);
+cli.register(MakeResourceCommand);
 cli.register(MakePluginCommand);
 cli.register(MakeTaskCommand);
 cli.register(MakeJobCommand);
@@ -98,7 +100,7 @@ async function discoverUserCommands(): Promise<void> {
   const { existsSync, readdirSync } = await import('node:fs');
   const { pathToFileURL } = await import('node:url');
 
-  const commandsDir = join(process.cwd(), 'src', 'lib', 'commands');
+  const commandsDir = join(process.cwd(), 'src', 'lib', 'shared', 'commands');
   if (!existsSync(commandsDir)) return;
 
   const files = readdirSync(commandsDir).filter(

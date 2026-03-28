@@ -11,8 +11,8 @@ Sessions store user data across requests using signed cookies.
 The simplest way to configure sessions is via `createSvelarApp`:
 
 ```typescript
-import { createSvelarApp } from 'svelar/hooks';
-import { DatabaseSessionStore } from 'svelar/session';
+import { createSvelarApp } from '@beeblock/svelar/hooks';
+import { DatabaseSessionStore } from '@beeblock/svelar/session';
 
 export const { handle, handleError } = createSvelarApp({
   auth,
@@ -23,7 +23,7 @@ export const { handle, handleError } = createSvelarApp({
 For manual setup with `createSvelarHooks`:
 
 ```typescript
-import { SessionMiddleware, MemorySessionStore } from 'svelar/session';
+import { SessionMiddleware, MemorySessionStore } from '@beeblock/svelar/session';
 
 export const handle = createSvelarHooks({
   middleware: [
@@ -69,7 +69,7 @@ const theme = event.locals.session.get('preferences.theme', 'light');
 **MemorySessionStore** (development):
 
 ```typescript
-import { MemorySessionStore } from 'svelar/session';
+import { MemorySessionStore } from '@beeblock/svelar/session';
 
 new SessionMiddleware({
   store: new MemorySessionStore(),
@@ -79,7 +79,7 @@ new SessionMiddleware({
 **DatabaseSessionStore** (production — survives server restarts):
 
 ```typescript
-import { DatabaseSessionStore } from 'svelar/session';
+import { DatabaseSessionStore } from '@beeblock/svelar/session';
 
 new SessionMiddleware({
   store: new DatabaseSessionStore('sessions'),
@@ -111,7 +111,7 @@ export default class CreateSessionsTable extends Migration {
 **FileSessionStore** (simple persistent storage, no database needed):
 
 ```typescript
-import { FileSessionStore } from 'svelar/session';
+import { FileSessionStore } from '@beeblock/svelar/session';
 
 new SessionMiddleware({
   store: new FileSessionStore(),  // defaults to storage/sessions/
@@ -128,7 +128,7 @@ Each session is stored as a JSON file. Expired sessions are cleaned up on `gc()`
 **RedisSessionStore** (high-performance, multi-server):
 
 ```typescript
-import { RedisSessionStore } from 'svelar/session';
+import { RedisSessionStore } from '@beeblock/svelar/session';
 
 // Auto-connect to localhost:6379
 new SessionMiddleware({
@@ -163,7 +163,7 @@ Securely hash passwords and other sensitive data.
 ### Configuration
 
 ```typescript
-import { Hash } from 'svelar/hashing';
+import { Hash } from '@beeblock/svelar/hashing';
 
 Hash.configure({
   driver: 'scrypt',  // 'bcrypt', 'argon2'
@@ -173,7 +173,7 @@ Hash.configure({
 ### Hashing Passwords
 
 ```typescript
-import { Hash } from 'svelar/hashing';
+import { Hash } from '@beeblock/svelar/hashing';
 
 // Hash password
 const hashedPassword = await Hash.make('user-password');
@@ -201,7 +201,7 @@ Cache frequently accessed data to improve performance.
 ### Configuration
 
 ```typescript
-import { Cache } from 'svelar/cache';
+import { Cache } from '@beeblock/svelar/cache';
 
 Cache.configure({
   default: 'memory',
@@ -225,7 +225,7 @@ Cache.configure({
 ### Using Cache
 
 ```typescript
-import { Cache } from 'svelar/cache';
+import { Cache } from '@beeblock/svelar/cache';
 
 // Set cache
 await Cache.put('user:1:posts', posts, 3600);  // 1 hour
@@ -255,7 +255,7 @@ Decouple components using a pub/sub event system.
 ### Emitting Events
 
 ```typescript
-import { EventDispatcher } from 'svelar/events';
+import { EventDispatcher } from '@beeblock/svelar/events';
 
 // Emit event
 await EventDispatcher.dispatch('user:registered', user);
@@ -265,7 +265,7 @@ await EventDispatcher.dispatch('post:published', { post, author });
 ### Listening to Events
 
 ```typescript
-import { EventDispatcher } from 'svelar/events';
+import { EventDispatcher } from '@beeblock/svelar/events';
 
 // Listen to event
 EventDispatcher.listen('user:registered', async (user) => {
@@ -290,7 +290,7 @@ EventDispatcher.stop('user:registered');
 ### Creating Event Classes
 
 ```typescript
-import { Event } from 'svelar/events';
+import { Event } from '@beeblock/svelar/events';
 
 export class UserRegisteredEvent extends Event {
   constructor(readonly user: User) {
@@ -314,7 +314,7 @@ Log messages for debugging and monitoring.
 ### Configuration
 
 ```typescript
-import { Log } from 'svelar/logging';
+import { Log } from '@beeblock/svelar/logging';
 
 Log.configure({
   default: 'stack',
@@ -335,7 +335,7 @@ Log.configure({
 ### Using Logs
 
 ```typescript
-import { Log } from 'svelar/logging';
+import { Log } from '@beeblock/svelar/logging';
 
 // Log levels
 Log.debug('Debug message');
@@ -358,7 +358,7 @@ Send emails from your application.
 ### Configuration
 
 ```typescript
-import { Mailer } from 'svelar/mail';
+import { Mailer } from '@beeblock/svelar/mail';
 
 Mailer.configure({
   default: 'smtp',
@@ -382,7 +382,7 @@ Mailer.configure({
 ### Sending Mail
 
 ```typescript
-import { Mailer } from 'svelar/mail';
+import { Mailer } from '@beeblock/svelar/mail';
 
 // Simple mail
 await Mailer.send({
@@ -408,7 +408,7 @@ await Mailer.send({
 Define reusable email templates:
 
 ```typescript
-import { Mailable } from 'svelar/mail';
+import { Mailable } from '@beeblock/svelar/mail';
 
 export class WelcomeEmail extends Mailable {
   constructor(private user: User) {
@@ -436,7 +436,7 @@ Send notifications via multiple channels (email, SMS, database).
 ### Configuration
 
 ```typescript
-import { Notifier } from 'svelar/notifications';
+import { Notifier } from '@beeblock/svelar/notifications';
 
 Notifier.configure({
   channels: {
@@ -459,7 +459,7 @@ Notifier.configure({
 ### Notification Classes
 
 ```typescript
-import { Notification } from 'svelar/notifications';
+import { Notification } from '@beeblock/svelar/notifications';
 
 export class OrderShippedNotification extends Notification {
   constructor(private order: Order) {
@@ -522,7 +522,7 @@ Flags: `--sse` (SSE routes only), `--pusher` (Pusher/Soketi routes only), `--for
 The generated `config/broadcasting.ts` uses Soketi by default:
 
 ```typescript
-import { env } from 'svelar/config';
+import { env } from '@beeblock/svelar/config';
 
 export default {
   default: env('BROADCAST_DRIVER', 'pusher'),
@@ -545,7 +545,7 @@ export default {
 Load it in `src/app.ts`:
 
 ```typescript
-import { Broadcast } from 'svelar/broadcasting';
+import { Broadcast } from '@beeblock/svelar/broadcasting';
 import broadcastingConfig from '../config/broadcasting.js';
 
 Broadcast.configure(broadcastingConfig);
@@ -558,7 +558,7 @@ In Docker Compose the app gets `PUSHER_HOST=soketi` automatically, so Soketi wor
 The generated `src/lib/broadcasting.ts` initializes the Pusher connection:
 
 ```typescript
-import { usePusher } from 'svelar/broadcasting/client';
+import { usePusher } from '@beeblock/svelar/broadcasting/client';
 
 export const echo = usePusher({
   key: import.meta.env.VITE_PUSHER_KEY ?? 'svelar-key',
@@ -568,7 +568,7 @@ export const echo = usePusher({
   authEndpoint: '/api/broadcasting/auth',
 });
 
-export { useChannel, usePresenceChannel, leaveChannel } from 'svelar/broadcasting/client';
+export { useChannel, usePresenceChannel, leaveChannel } from '@beeblock/svelar/broadcasting/client';
 ```
 
 Import it in your root layout:
@@ -635,7 +635,7 @@ For the SSE driver, use `useSSE` instead — no external dependencies:
 
 ```svelte
 <script>
-  import { useSSE } from 'svelar/broadcasting/client';
+  import { useSSE } from '@beeblock/svelar/broadcasting/client';
 
   const channel = useSSE('private-orders.123');
   channel.listen('OrderShipped', (data) => {
@@ -680,7 +680,7 @@ npx svelar make:channel Chat --presence
 This creates files in `src/lib/channels/`. Register them in `src/app.ts`:
 
 ```typescript
-import { Broadcast } from 'svelar/broadcasting';
+import { Broadcast } from '@beeblock/svelar/broadcasting';
 
 // Private channel — return true/false
 Broadcast.channel('private-orders.{orderId}', async (user, { orderId }) => {
@@ -703,7 +703,7 @@ The scaffolded auth route at `src/routes/api/broadcasting/auth/+server.ts` handl
 Two ways to broadcast from your server code:
 
 ```typescript
-import { Broadcast } from 'svelar/broadcasting';
+import { Broadcast } from '@beeblock/svelar/broadcasting';
 
 // Shorthand — send to a channel directly
 await Broadcast.to('private-orders.123').send('OrderShipped', { orderId: 123 });
@@ -752,7 +752,7 @@ Manage file storage across local filesystem and S3-compatible object storage (Ru
 ### Configuration
 
 ```typescript
-import { Storage } from 'svelar/storage';
+import { Storage } from '@beeblock/svelar/storage';
 
 Storage.configure({
   default: 'local',
@@ -777,7 +777,7 @@ Storage.configure({
 ### Using Storage
 
 ```typescript
-import { Storage } from 'svelar/storage';
+import { Storage } from '@beeblock/svelar/storage';
 
 const disk = Storage.disk('local');
 
@@ -858,7 +858,7 @@ Config files live in `config/` and export a default object. Use the `env()` help
 
 ```typescript
 // config/app.ts
-import { env } from 'svelar/config';
+import { env } from '@beeblock/svelar/config';
 
 export default {
   name: env('APP_NAME', 'Svelar'),
@@ -873,7 +873,7 @@ export default {
 
 ```typescript
 // config/database.ts
-import { env } from 'svelar/config';
+import { env } from '@beeblock/svelar/config';
 
 export default {
   default: env('DB_DRIVER', 'sqlite'),
@@ -900,7 +900,7 @@ Load all config files from the directory at application startup in `src/app.ts`:
 
 ```typescript
 // src/app.ts
-import { config } from 'svelar/config';
+import { config } from '@beeblock/svelar/config';
 
 // Load all config/*.ts files — each filename becomes a top-level key
 await config.loadFromDirectory('./config');
@@ -911,7 +911,7 @@ await config.loadFromDirectory('./config');
 Or load config manually if you prefer:
 
 ```typescript
-import { config, env } from 'svelar/config';
+import { config, env } from '@beeblock/svelar/config';
 
 config.load({
   app: {
@@ -929,7 +929,7 @@ config.load({
 Access values anywhere using dot notation:
 
 ```typescript
-import { config } from 'svelar/config';
+import { config } from '@beeblock/svelar/config';
 
 // Get a value
 const appName = config.get('app.name');
@@ -957,7 +957,7 @@ const allConfig = config.all();
 The `env()` function reads environment variables with automatic type casting:
 
 ```typescript
-import { env } from 'svelar/config';
+import { env } from '@beeblock/svelar/config';
 
 env('APP_NAME')                    // string (default: '')
 env('APP_NAME', 'Svelar')         // string with default
@@ -974,7 +974,7 @@ The IoC container manages application dependencies.
 ### Service Providers
 
 ```typescript
-import { ServiceProvider } from 'svelar/container';
+import { ServiceProvider } from '@beeblock/svelar/container';
 
 export class AnalyticsProvider extends ServiceProvider {
   register() {
@@ -991,7 +991,7 @@ export class AnalyticsProvider extends ServiceProvider {
 ### Container Usage
 
 ```typescript
-import { container } from 'svelar/container';
+import { container } from '@beeblock/svelar/container';
 
 // Bind dependencies
 container.bind('pdf', () => new PdfGenerator());
@@ -1015,7 +1015,7 @@ const services = container.bindings();
 Access environment variables safely:
 
 ```typescript
-import { env } from 'svelar/config';
+import { env } from '@beeblock/svelar/config';
 
 const appKey = env('APP_KEY');
 const dbHost = env('DB_HOST', 'localhost');
@@ -1034,7 +1034,7 @@ Handle errors gracefully across your application.
 ### Error Handler
 
 ```typescript
-import { ErrorHandler } from 'svelar/errors';
+import { ErrorHandler } from '@beeblock/svelar/errors';
 
 ErrorHandler.configure({
   render: (error, event) => {
@@ -1051,7 +1051,7 @@ ErrorHandler.configure({
 ### Throwing Errors
 
 ```typescript
-import { abort, abortIf, abortUnless, ModelNotFoundError } from 'svelar/errors';
+import { abort, abortIf, abortUnless, ModelNotFoundError } from '@beeblock/svelar/errors';
 
 // Throw 404
 abort(404, 'Resource not found');
@@ -1089,7 +1089,7 @@ Svelar provides built-in generators for modern, time-sortable identifiers. Both 
 UUIDv7 (RFC 9562) embeds a Unix timestamp in the first 48 bits, making IDs time-sortable while remaining globally unique. This is the recommended UUID version for database primary keys — unlike UUIDv4, rows insert in chronological order which keeps B-tree indexes efficient.
 
 ```typescript
-import { uuidv7, isUuidv7, uuidv7Timestamp } from 'svelar/support';
+import { uuidv7, isUuidv7, uuidv7Timestamp } from '@beeblock/svelar/support';
 
 const id = uuidv7();
 // → '019503a4-6b2c-7a1e-8f3d-4a2b1c0d9e8f'
@@ -1116,8 +1116,8 @@ async up() {
 Then generate values in your model:
 
 ```typescript
-import { Model } from 'svelar/orm';
-import { uuidv7 } from 'svelar/support';
+import { Model } from '@beeblock/svelar/orm';
+import { uuidv7 } from '@beeblock/svelar/support';
 
 export class Order extends Model {
   static table = 'orders';
@@ -1137,7 +1137,7 @@ export class Order extends Model {
 ULIDs are 26-character Crockford Base32 strings that are lexicographically sortable by creation time. They're URL-safe, case-insensitive, and encode 48 bits of timestamp + 80 bits of randomness.
 
 ```typescript
-import { ulid, isUlid, ulidTimestamp } from 'svelar/support';
+import { ulid, isUlid, ulidTimestamp } from '@beeblock/svelar/support';
 
 const id = ulid();
 // → '01ARYZ6S41TSV4RRFFQ69G5FAV'
@@ -1188,7 +1188,7 @@ npx svelar make:command SyncUsers
 This creates `src/lib/commands/SyncUsersCommand.ts`:
 
 ```typescript
-import { Command } from 'svelar/cli';
+import { Command } from '@beeblock/svelar/cli';
 
 export class SyncUsersCommand extends Command {
   name = 'app:sync-users';
@@ -1268,7 +1268,7 @@ Configure the connection in your app:
 
 ```typescript
 // src/app.ts
-import { PDF } from 'svelar/pdf';
+import { PDF } from '@beeblock/svelar/pdf';
 
 PDF.configure({
   url: process.env.GOTENBERG_URL ?? 'http://localhost:3001',
@@ -1281,7 +1281,7 @@ In Docker Compose the app connects to Gotenberg at `http://gotenberg:3000` autom
 ### HTML to PDF
 
 ```typescript
-import { PDF } from 'svelar/pdf';
+import { PDF } from '@beeblock/svelar/pdf';
 
 // Simple conversion
 const buffer = await PDF.html('<h1>Invoice #1234</h1><p>Total: $99.00</p>').generate();
@@ -1401,8 +1401,8 @@ const buffer = await PDF.html(content)
 ### In a Controller
 
 ```typescript
-import { Controller } from 'svelar';
-import { PDF } from 'svelar/pdf';
+import { Controller } from '@beeblock/svelar';
+import { PDF } from '@beeblock/svelar/pdf';
 
 export class InvoiceController extends Controller {
   async download() {
@@ -1456,7 +1456,7 @@ Create a webhook receiver route to handle the result:
 // src/routes/api/pdf/webhook/+server.ts
 import type { RequestHandler } from '@sveltejs/kit';
 import { writeFileSync, mkdirSync } from 'node:fs';
-import { Broadcast } from 'svelar/broadcasting';
+import { Broadcast } from '@beeblock/svelar/broadcasting';
 
 export const POST: RequestHandler = async ({ request }) => {
   const contentType = request.headers.get('content-type') ?? '';
@@ -1511,7 +1511,7 @@ PDF.configure({
 For the best of both worlds — non-blocking requests + reliable retries — dispatch PDF generation as a queue job:
 
 ```typescript
-import { PDF } from 'svelar/pdf';
+import { PDF } from '@beeblock/svelar/pdf';
 
 // Dispatch to background worker — returns immediately
 await PDF.dispatch({
@@ -1532,8 +1532,8 @@ await PDF.dispatch({
 The `GeneratePdfJob` handles the generation in a worker process. Register it once in `src/app.ts`:
 
 ```typescript
-import { Queue } from 'svelar/queue';
-import { GeneratePdfJob } from 'svelar/pdf';
+import { Queue } from '@beeblock/svelar/queue';
+import { GeneratePdfJob } from '@beeblock/svelar/pdf';
 
 Queue.register(GeneratePdfJob);
 ```
@@ -1602,10 +1602,10 @@ This creates API routes (`/api/admin/*`) and a dashboard page with system health
 Configure the dashboard in your `app.ts`:
 
 ```typescript
-import { configureDashboard } from 'svelar/dashboard';
-import { JobMonitor } from 'svelar/queue/JobMonitor';
-import { ScheduleMonitor } from 'svelar/scheduler/ScheduleMonitor';
-import { LogViewer } from 'svelar/logging/LogViewer';
+import { configureDashboard } from '@beeblock/svelar/dashboard';
+import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
+import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
+import { LogViewer } from '@beeblock/svelar/logging/LogViewer';
 
 // Configure JobMonitor with your queue connection
 JobMonitor.configure({
@@ -1650,9 +1650,9 @@ The `make:dashboard` command scaffolds these SvelteKit API routes:
 You can use the monitor singletons from anywhere in your server code:
 
 ```typescript
-import { JobMonitor } from 'svelar/queue/JobMonitor';
-import { ScheduleMonitor } from 'svelar/scheduler/ScheduleMonitor';
-import { LogViewer } from 'svelar/logging/LogViewer';
+import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
+import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
+import { LogViewer } from '@beeblock/svelar/logging/LogViewer';
 
 // Queue job counts
 const counts = await JobMonitor.getCounts('default');
@@ -1708,7 +1708,7 @@ Access the dashboard at `/admin` (or `/admin/dashboard` if using the scaffolded 
 Plugins extend Svelar with new capabilities. Install plugins from npm:
 
 ```typescript
-import { PluginManager } from 'svelar/plugins';
+import { PluginManager } from '@beeblock/svelar/plugins';
 
 const plugins = new PluginManager(app);
 plugins.use(new StripePlugin());
@@ -1729,7 +1729,7 @@ await plugins.boot();
 Track user actions and system changes:
 
 ```typescript
-import { Audit } from 'svelar/audit';
+import { Audit } from '@beeblock/svelar/audit';
 
 // Log an action
 await Audit.log('user:created', {
@@ -1752,7 +1752,7 @@ Use the `@auditable()` decorator on models to track all changes automatically.
 Secure token-based authentication:
 
 ```typescript
-import { ApiKey } from 'svelar/api-keys';
+import { ApiKey } from '@beeblock/svelar/api-keys';
 
 // Create a key
 const key = await ApiKey.create('My Integration', ['users:read', 'posts:write']);
@@ -1769,7 +1769,7 @@ Keys are hashed and can be revoked at any time.
 Send events to external services:
 
 ```typescript
-import { Webhook } from 'svelar/webhooks';
+import { Webhook } from '@beeblock/svelar/webhooks';
 
 // Register an endpoint
 await Webhook.register('https://example.com/events', {
@@ -1787,7 +1787,7 @@ Events are signed with HMAC and retried automatically.
 Multi-tenant team management:
 
 ```typescript
-import { Team } from 'svelar/teams';
+import { Team } from '@beeblock/svelar/teams';
 
 // Create a team
 const team = await Team.create({
@@ -1811,7 +1811,7 @@ Supports role-based access control (owner, admin, member, viewer).
 Manage and render email templates:
 
 ```typescript
-import { EmailTemplate } from 'svelar/email-templates';
+import { EmailTemplate } from '@beeblock/svelar/email-templates';
 
 // Register a template
 await EmailTemplate.register('welcome', {
@@ -1833,7 +1833,7 @@ Built-in templates for password reset, invitations, and notifications.
 Track and serve user-uploaded files:
 
 ```typescript
-import { Upload } from 'svelar/uploads';
+import { Upload } from '@beeblock/svelar/uploads';
 
 // Store a file
 const upload = await Upload.store(formFile, {
@@ -1860,7 +1860,7 @@ npx svelar plugin:publish svelar-stripe
 Then configure:
 
 ```typescript
-import { Stripe } from 'svelar/stripe';
+import { Stripe } from '@beeblock/svelar/stripe';
 
 const subscription = await Stripe.createSubscription(user, {
   plan: 'pro',

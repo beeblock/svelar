@@ -15,7 +15,7 @@ npx svelar make:middleware CheckAdmin
 This creates `src/lib/middleware/CheckAdmin.ts`:
 
 ```typescript
-import { Middleware, type MiddlewareContext, type NextFunction } from 'svelar/middleware';
+import { Middleware, type MiddlewareContext, type NextFunction } from '@beeblock/svelar/middleware';
 
 export class CheckAdminMiddleware extends Middleware {
   async handle(ctx: MiddlewareContext, next: NextFunction): Promise<Response | void> {
@@ -38,7 +38,7 @@ export class CheckAdminMiddleware extends Middleware {
 Every middleware extends the `Middleware` class and implements a `handle()` method:
 
 ```typescript
-import { Middleware, type MiddlewareContext, type NextFunction } from 'svelar/middleware';
+import { Middleware, type MiddlewareContext, type NextFunction } from '@beeblock/svelar/middleware';
 
 export class MyMiddleware extends Middleware {
   async handle(ctx: MiddlewareContext, next: NextFunction): Promise<Response | void> {
@@ -76,7 +76,7 @@ The simplest way to set up the middleware pipeline is `createSvelarApp`. It auto
 
 ```typescript
 // src/hooks.server.ts
-import { createSvelarApp } from 'svelar/hooks';
+import { createSvelarApp } from '@beeblock/svelar/hooks';
 import { paraglideMiddleware } from '$lib/paraglide/server';
 import { getTextDirection } from '$lib/paraglide/runtime';
 import { auth } from './app.js';
@@ -111,10 +111,10 @@ export const { handle, handleError } = createSvelarApp({
 For full control, use `createSvelarHooks` to compose the pipeline manually:
 
 ```typescript
-import { createSvelarHooks } from 'svelar/hooks';
-import { SessionMiddleware, MemorySessionStore } from 'svelar/session';
-import { AuthenticateMiddleware } from 'svelar/auth';
-import { RateLimitMiddleware, LoggingMiddleware, CorsMiddleware } from 'svelar/middleware';
+import { createSvelarHooks } from '@beeblock/svelar/hooks';
+import { SessionMiddleware, MemorySessionStore } from '@beeblock/svelar/session';
+import { AuthenticateMiddleware } from '@beeblock/svelar/auth';
+import { RateLimitMiddleware, LoggingMiddleware, CorsMiddleware } from '@beeblock/svelar/middleware';
 import { auth } from './app.js';
 
 const sessionStore = new MemorySessionStore();
@@ -174,7 +174,7 @@ After this middleware, `event.locals.session` is available to get/set session da
 Resolves authenticated user from session, JWT, or API token:
 
 ```typescript
-import { AuthenticateMiddleware } from 'svelar/auth';
+import { AuthenticateMiddleware } from '@beeblock/svelar/auth';
 import { auth } from './app.js';
 
 new AuthenticateMiddleware(auth)
@@ -228,7 +228,7 @@ new CorsMiddleware({
 Protect against CSRF attacks:
 
 ```typescript
-import { CsrfMiddleware } from 'svelar/middleware';
+import { CsrfMiddleware } from '@beeblock/svelar/middleware';
 
 new CsrfMiddleware({
   tokenLength: 32,
@@ -243,7 +243,7 @@ Here's a custom auth middleware from the svelar-example:
 
 ```typescript
 // src/lib/middleware/AuthMiddleware.ts
-import { Middleware, type MiddlewareContext, type NextFunction } from 'svelar/middleware';
+import { Middleware, type MiddlewareContext, type NextFunction } from '@beeblock/svelar/middleware';
 
 export class AuthMiddleware extends Middleware {
   async handle(ctx: MiddlewareContext, next: NextFunction): Promise<Response | void> {
@@ -271,8 +271,8 @@ export class AuthMiddleware extends Middleware {
 Apply middleware to specific controller methods:
 
 ```typescript
-import { Controller } from 'svelar/routing';
-import { RequireAuthMiddleware } from 'svelar/auth';
+import { Controller } from '@beeblock/svelar/routing';
+import { RequireAuthMiddleware } from '@beeblock/svelar/auth';
 
 export class PostController extends Controller {
   constructor() {
@@ -405,7 +405,7 @@ Here's the complete setup from the svelar-example app using `createSvelarApp`:
 
 ```typescript
 // src/hooks.server.ts
-import { createSvelarApp } from 'svelar/hooks';
+import { createSvelarApp } from '@beeblock/svelar/hooks';
 import { paraglideMiddleware } from '$lib/paraglide/server';
 import { getTextDirection } from '$lib/paraglide/runtime';
 import { auth } from './app.js';

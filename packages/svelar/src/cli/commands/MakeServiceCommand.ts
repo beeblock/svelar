@@ -13,6 +13,7 @@ export class MakeServiceCommand extends Command {
   flags = [
     { name: 'crud', description: 'Create a CRUD service with model', type: 'boolean' as const },
     { name: 'model', alias: 'm', description: 'Model name for CRUD service', type: 'string' as const },
+    { name: 'module', description: 'Module name (e.g. auth, billing)', type: 'string' as const },
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
@@ -23,10 +24,16 @@ export class MakeServiceCommand extends Command {
     }
 
     const serviceName = name.endsWith('Service') ? name : `${name}Service`;
-    const servicesDir = join(process.cwd(), 'src', 'lib', 'services');
-    mkdirSync(servicesDir, { recursive: true });
+    const baseName = serviceName.replace(/Service$/, '');
+    const moduleName = flags.module || baseName.toLowerCase();
+    if (!flags.module) {
+      this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
+    }
 
-    const filePath = join(servicesDir, `${serviceName}.ts`);
+    const moduleDir = join(process.cwd(), 'src', 'lib', 'modules', moduleName);
+    mkdirSync(moduleDir, { recursive: true });
+
+    const filePath = join(moduleDir, `${serviceName}.ts`);
     if (existsSync(filePath)) {
       this.warn(`Service ${serviceName} already exists.`);
       return;
@@ -37,13 +44,13 @@ export class MakeServiceCommand extends Command {
       : this.generateBasicService(serviceName);
 
     writeFileSync(filePath, content);
-    this.success(`Service created: src/lib/services/${serviceName}.ts`);
+    this.success(`Service created: src/lib/modules/${moduleName}/${serviceName}.ts`);
   }
 
   private generateCrudService(name: string, model?: string): string {
     const modelName = model || 'Model';
-    return `import { CrudService, type ServiceResult } from 'svelar/services';
-import { ${modelName} } from '../models/${modelName}.js';
+    return `import { CrudService, type ServiceResult } from '@beeblock/svelar/services';
+import { ${modelName} } from './${modelName}.js';
 
 export class ${name} extends CrudService<${modelName}> {
   protected model = ${modelName};
@@ -59,7 +66,7 @@ export class ${name} extends CrudService<${modelName}> {
   }
 
   private generateBasicService(name: string): string {
-    return `import { Service, type ServiceResult } from 'svelar/services';
+    return `import { Service, type ServiceResult } from '@beeblock/svelar/services';
 
 export class ${name} extends Service {
   async execute(data: any): Promise<ServiceResult<any>> {

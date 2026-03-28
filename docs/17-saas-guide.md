@@ -118,7 +118,7 @@ Define clear model boundaries and relationships:
 
 ```typescript
 // src/lib/models/Team.ts
-import { Model } from 'svelar/orm';
+import { Model } from '@beeblock/svelar/orm';
 
 export class Team extends Model {
   static table = 'teams';
@@ -209,7 +209,7 @@ Use jobs for async work and events for loose coupling:
 
 ```typescript
 // src/lib/jobs/SendWelcomeEmailJob.ts
-import { Job } from 'svelar/queue';
+import { Job } from '@beeblock/svelar/queue';
 
 export class SendWelcomeEmailJob extends Job {
   queue = 'default';
@@ -230,7 +230,7 @@ export class SendWelcomeEmailJob extends Job {
 Dispatch jobs from controllers or services:
 
 ```typescript
-import { Queue } from 'svelar/queue';
+import { Queue } from '@beeblock/svelar/queue';
 import { SendWelcomeEmailJob } from '../jobs/SendWelcomeEmailJob.js';
 
 // In a service or controller
@@ -243,7 +243,7 @@ Run periodic tasks with the scheduler:
 
 ```typescript
 // src/lib/scheduler/Tasks.ts
-import { scheduler } from 'svelar/scheduler';
+import { scheduler } from '@beeblock/svelar/scheduler';
 import { SubscriptionService } from '../services/SubscriptionService.js';
 
 scheduler.add('renew-subscriptions', {
@@ -351,8 +351,8 @@ npx svelar plugin:publish svelar-resend
 
 ```typescript
 // src/lib/plugins/AnalyticsPlugin.ts
-import { Plugin } from 'svelar/plugins';
-import { Container } from 'svelar/container';
+import { Plugin } from '@beeblock/svelar/plugins';
+import { Container } from '@beeblock/svelar/container';
 
 export class AnalyticsPlugin extends Plugin {
   readonly name = 'my-analytics';
@@ -382,7 +382,7 @@ export class AnalyticsPlugin extends Plugin {
 Register in `src/app.ts`:
 
 ```typescript
-import { PluginManager } from 'svelar/plugins';
+import { PluginManager } from '@beeblock/svelar/plugins';
 import { AnalyticsPlugin } from './lib/plugins/AnalyticsPlugin.js';
 
 const plugins = new PluginManager(app);
@@ -424,7 +424,7 @@ services:
 Use Redis for caching and sessions:
 
 ```typescript
-import { Cache } from 'svelar/cache';
+import { Cache } from '@beeblock/svelar/cache';
 
 // Cache user posts for 1 hour
 const posts = await Cache.remember(
@@ -459,7 +459,7 @@ Monitor system health at `/admin/dashboard`:
 ### Queue Monitoring
 
 ```typescript
-import { Queue } from 'svelar/queue';
+import { Queue } from '@beeblock/svelar/queue';
 
 // Get queue health
 const health = await Queue.health();

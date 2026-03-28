@@ -7,7 +7,7 @@ Learn how to work with databases in Svelar, including migrations, seeders, schem
 Database configuration happens in `src/app.ts`:
 
 ```typescript
-import { Connection } from 'svelar/database';
+import { Connection } from '@beeblock/svelar/database';
 
 Connection.configure({
   default: 'sqlite',
@@ -51,7 +51,7 @@ npx svelar make:migration create_users_table
 This creates `src/lib/database/migrations/[timestamp]_create_users_table.ts`:
 
 ```typescript
-import { Migration } from 'svelar/database';
+import { Migration } from '@beeblock/svelar/database';
 
 export default class CreateUsersTable extends Migration {
   async up() {
@@ -235,7 +235,7 @@ npx svelar make:seeder DatabaseSeeder
 This creates `src/lib/database/seeders/DatabaseSeeder.ts`:
 
 ```typescript
-import { Seeder } from 'svelar/database';
+import { Seeder } from '@beeblock/svelar/database';
 import { User } from '../../models/User.js';
 import { Post } from '../../models/Post.js';
 
@@ -280,7 +280,7 @@ This runs the `run()` method of the seeder, populating your database.
 For complex queries or when you need direct database access, use raw SQL:
 
 ```typescript
-import { Connection } from 'svelar/database';
+import { Connection } from '@beeblock/svelar/database';
 
 // Simple query
 const users = await Connection.raw('SELECT * FROM users WHERE age > ?', [18]);
@@ -312,7 +312,7 @@ Here's a complete example of setting up a blog database with users, posts, and c
 
 ```typescript
 // 20260325000001_create_users_table.ts
-import { Migration } from 'svelar/database';
+import { Migration } from '@beeblock/svelar/database';
 
 export default class CreateUsersTable extends Migration {
   async up() {
@@ -333,7 +333,7 @@ export default class CreateUsersTable extends Migration {
 
 ```typescript
 // 20260325000002_create_posts_table.ts
-import { Migration } from 'svelar/database';
+import { Migration } from '@beeblock/svelar/database';
 
 export default class CreatePostsTable extends Migration {
   async up() {
@@ -356,7 +356,7 @@ export default class CreatePostsTable extends Migration {
 
 ```typescript
 // 20260325000003_create_comments_table.ts
-import { Migration } from 'svelar/database';
+import { Migration } from '@beeblock/svelar/database';
 
 export default class CreateCommentsTable extends Migration {
   async up() {
@@ -387,10 +387,10 @@ This creates the users, posts, and comments tables in your database.
 
 ```typescript
 // src/lib/database/seeders/DatabaseSeeder.ts
-import { Seeder } from 'svelar/database';
+import { Seeder } from '@beeblock/svelar/database';
 import { User } from '../../models/User.js';
 import { Post } from '../../models/Post.js';
-import { Hash } from 'svelar/hashing';
+import { Hash } from '@beeblock/svelar/hashing';
 
 export class DatabaseSeeder extends Seeder {
   async run(): Promise<void> {
@@ -436,7 +436,7 @@ npx svelar seed:run
 The `Connection` class manages database drivers and provides raw SQL access:
 
 ```typescript
-import { Connection } from 'svelar/database';
+import { Connection } from '@beeblock/svelar/database';
 
 // Run raw queries with parameterized bindings (safe from SQL injection)
 const results = await Connection.raw('SELECT * FROM users WHERE active = ?', [true]);

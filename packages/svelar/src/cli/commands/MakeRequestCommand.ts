@@ -10,9 +10,11 @@ export class MakeRequestCommand extends Command {
   name = 'make:request';
   description = 'Create a new FormRequest validation class';
   arguments = ['name'];
-  flags = [];
+  flags = [
+    { name: 'module', description: 'Module name (e.g. auth, billing)', type: 'string' as const },
+  ];
 
-  async handle(args: string[]): Promise<void> {
+  async handle(args: string[], flags: Record<string, any>): Promise<void> {
     const name = args[0];
     if (!name) {
       this.error('Please provide a request name.');
@@ -20,17 +22,23 @@ export class MakeRequestCommand extends Command {
     }
 
     const requestName = name.endsWith('Request') ? name : `${name}Request`;
-    const dtosDir = join(process.cwd(), 'src', 'lib', 'dtos');
-    mkdirSync(dtosDir, { recursive: true });
+    const baseName = requestName.replace(/Request$/, '');
+    const moduleName = flags.module || baseName.toLowerCase();
+    if (!flags.module) {
+      this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
+    }
 
-    const filePath = join(dtosDir, `${requestName}.ts`);
+    const moduleDir = join(process.cwd(), 'src', 'lib', 'modules', moduleName);
+    mkdirSync(moduleDir, { recursive: true });
+
+    const filePath = join(moduleDir, `${requestName}.ts`);
     if (existsSync(filePath)) {
       this.warn(`Request ${requestName} already exists.`);
       return;
     }
 
-    const content = `import { FormRequest } from 'svelar/routing';
-import { z } from 'svelar/validation';
+    const content = `import { FormRequest } from '@beeblock/svelar/routing';
+import { z } from '@beeblock/svelar/validation';
 
 export class ${requestName} extends FormRequest {
   rules() {
@@ -61,6 +69,6 @@ export class ${requestName} extends FormRequest {
 `;
 
     writeFileSync(filePath, content);
-    this.success(`Request created: src/lib/dtos/${requestName}.ts`);
+    this.success(`Request created: src/lib/modules/${moduleName}/${requestName}.ts`);
   }
 }

@@ -20,7 +20,7 @@ export class MakeJobCommand extends Command {
     }
 
     const jobName = name.endsWith('Job') ? name : name;
-    const jobsDir = join(process.cwd(), 'src', 'lib', 'jobs');
+    const jobsDir = join(process.cwd(), 'src', 'lib', 'shared', 'jobs');
     mkdirSync(jobsDir, { recursive: true });
 
     const filePath = join(jobsDir, `${jobName}.ts`);
@@ -29,7 +29,7 @@ export class MakeJobCommand extends Command {
       return;
     }
 
-    const content = `import { Job } from 'svelar/queue';
+    const content = `import { Job } from '@beeblock/svelar/queue';
 
 export class ${jobName} extends Job {
   maxAttempts = 3;      // Retry up to 3 times
@@ -56,6 +56,6 @@ export class ${jobName} extends Job {
 `;
 
     writeFileSync(filePath, content);
-    this.success(`Job created: src/lib/jobs/${jobName}.ts`);
+    this.success(`Job created: src/lib/shared/jobs/${jobName}.ts`);
   }
 }

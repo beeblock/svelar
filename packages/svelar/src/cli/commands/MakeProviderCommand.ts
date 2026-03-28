@@ -20,7 +20,7 @@ export class MakeProviderCommand extends Command {
     }
 
     const providerName = name.endsWith('ServiceProvider') ? name : `${name}ServiceProvider`;
-    const providersDir = join(process.cwd(), 'src', 'lib', 'providers');
+    const providersDir = join(process.cwd(), 'src', 'lib', 'shared', 'providers');
     mkdirSync(providersDir, { recursive: true });
 
     const filePath = join(providersDir, `${providerName}.ts`);
@@ -29,8 +29,8 @@ export class MakeProviderCommand extends Command {
       return;
     }
 
-    const content = `import { ServiceProvider } from 'svelar/container';
-import type { Container } from 'svelar/container';
+    const content = `import { ServiceProvider } from '@beeblock/svelar/container';
+import type { Container } from '@beeblock/svelar/container';
 
 export class ${providerName} extends ServiceProvider {
   /**
@@ -53,6 +53,6 @@ export class ${providerName} extends ServiceProvider {
 `;
 
     writeFileSync(filePath, content);
-    this.success(`Provider created: src/lib/providers/${providerName}.ts`);
+    this.success(`Provider created: src/lib/shared/providers/${providerName}.ts`);
   }
 }

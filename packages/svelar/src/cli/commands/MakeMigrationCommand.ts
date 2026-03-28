@@ -36,7 +36,7 @@ export class MakeMigrationCommand extends Command {
     let content: string;
 
     if (createTable) {
-      content = `import { Migration } from 'svelar/database';
+      content = `import { Migration } from '@beeblock/svelar/database';
 
 export default class ${className} extends Migration {
   async up() {
@@ -53,7 +53,7 @@ export default class ${className} extends Migration {
 }
 `;
     } else if (alterTable) {
-      content = `import { Migration } from 'svelar/database';
+      content = `import { Migration } from '@beeblock/svelar/database';
 
 export default class ${className} extends Migration {
   async up() {
@@ -69,7 +69,7 @@ export default class ${className} extends Migration {
 }
 `;
     } else {
-      content = `import { Migration } from 'svelar/database';
+      content = `import { Migration } from '@beeblock/svelar/database';
 
 export default class ${className} extends Migration {
   async up() {

@@ -22,7 +22,7 @@ export class MakeCommandCommand extends Command {
     }
 
     const className = name.endsWith('Command') ? name : `${name}Command`;
-    const commandsDir = join(process.cwd(), 'src', 'lib', 'commands');
+    const commandsDir = join(process.cwd(), 'src', 'lib', 'shared', 'commands');
     mkdirSync(commandsDir, { recursive: true });
 
     const filePath = join(commandsDir, `${className}.ts`);
@@ -35,7 +35,7 @@ export class MakeCommandCommand extends Command {
     // SyncUsersCommand → app:sync-users
     const commandName = flags.command ?? this.deriveCommandName(className);
 
-    const content = `import { Command } from 'svelar/cli';
+    const content = `import { Command } from '@beeblock/svelar/cli';
 
 export class ${className} extends Command {
   name = '${commandName}';
@@ -61,7 +61,7 @@ export class ${className} extends Command {
 `;
 
     writeFileSync(filePath, content);
-    this.success(`Command created: src/lib/commands/${className}.ts`);
+    this.success(`Command created: src/lib/shared/commands/${className}.ts`);
     this.info(`Command name: ${commandName}`);
     this.newLine();
     this.info('Your command will be auto-discovered. Run it with:');

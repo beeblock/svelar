@@ -6,146 +6,132 @@ Get a new Svelar project up and running in minutes.
 
 - **Node.js**: 20.0.0 or higher
 - **npm**: 10.0.0 or higher (or pnpm, yarn)
-- **TypeScript**: 5.0 or higher (included automatically)
+- **Docker**: Recommended for production (optional for development)
 
 ## Creating a New Project
 
-The easiest way to scaffold a new Svelar application is with `create-svelar`:
-
 ```bash
-npx create-svelar my-app
+npx @beeblock/svelar new my-app
 cd my-app
-npm install
 npm run dev
 ```
 
-This creates a fully configured SvelteKit project with Svelar, a sample database schema, and example controllers.
+That's it. The CLI scaffolds a complete SvelteKit + Svelar project, installs dependencies, and you're ready to go.
 
-### What's Included
+### What's Scaffolded
 
-The scaffolded project includes:
+- **SvelteKit 2** with Vite and TypeScript
+- **Tailwind CSS 4** with theme variables (`--color-brand`, etc.)
+- **Svelar Framework** — ORM, Auth, Sessions, Middleware, Queue, Scheduler, and 35+ modules
+- **SQLite Database** — Pre-configured, zero setup
+- **Icon Libraries** — `lucide-svelte` and `@tabler/icons-svelte` included
+- **Environment Config** — `.env.example` with sensible defaults
+- **Vite Config** — All `@beeblock/svelar/*` aliases, SSR config, and `fs.allow` pre-wired
 
-- **SvelteKit 2** - Latest version with Vite
-- **TypeScript** - Full type safety
-- **Svelar Framework** - All core modules (ORM, Auth, Middleware, etc.)
-- **SQLite Database** - Pre-configured, zero setup
-- **Example App** - Controllers, models, migrations, seeders
-- **Environment Config** - `.env.example` file with sensible defaults
+### Project Structure (DDD Modular Monolith)
 
-## Manual Setup
+```
+my-app/
+├── src/
+│   ├── app.ts                    # Bootstrap (database, hashing, auth)
+│   ├── app.css                   # Tailwind CSS + theme
+│   ├── app.html                  # SvelteKit shell
+│   ├── hooks.server.ts           # Middleware pipeline
+│   ├── lib/
+│   │   ├── modules/              # Domain modules (DDD)
+│   │   │   ├── auth/             #   User.ts, AuthController.ts, AuthService.ts, auth.schema.ts
+│   │   │   ├── billing/          #   Invoice.ts, BillingService.ts, billing.schema.ts
+│   │   │   └── posts/            #   Post.ts, PostController.ts, PostService.ts
+│   │   ├── shared/               # Cross-cutting concerns
+│   │   │   ├── middleware/       #   Custom middleware
+│   │   │   ├── components/       #   Shared Svelte components
+│   │   │   ├── stores/           #   Svelte stores
+│   │   │   ├── jobs/             #   Queue jobs
+│   │   │   ├── plugins/          #   Custom plugins
+│   │   │   ├── channels/         #   Broadcast channels
+│   │   │   ├── commands/         #   Custom CLI commands
+│   │   │   ├── providers/        #   Service providers
+│   │   │   └── scheduler/        #   Scheduled tasks
+│   │   └── database/
+│   │       ├── migrations/
+│   │       └── seeders/
+│   └── routes/
+│       ├── +layout.svelte
+│       ├── +page.svelte
+│       └── api/
+├── static/
+├── vite.config.ts
+├── svelte.config.js
+├── svelar.database.json
+├── .env.example
+└── package.json
+```
 
-If you prefer to set up Svelar manually, start with a basic SvelteKit project:
+Each **module** is a self-contained domain — its model, controller, service, repository, DTOs, and schema all live together. The `shared/` folder holds cross-cutting infrastructure.
+
+## Step 1: Environment Variables
+
+Copy the example env file and configure it:
 
 ```bash
-npm create svelte@latest my-app
-cd my-app
-npm install
+cp .env.example .env
 ```
 
-Then install Svelar:
+Edit `.env`:
 
 ```bash
-npm install svelar
+# App Security — generate a random string for production
+APP_KEY=change-me-to-a-random-string
+
+# Database (SQLite by default, no extra config needed)
+DB_DRIVER=sqlite
+DB_PATH=database.db
+
+# PostgreSQL (uncomment to switch)
+# DB_DRIVER=postgresql
+# DB_HOST=localhost
+# DB_PORT=5432
+# DB_NAME=svelar_db
+# DB_USER=postgres
+# DB_PASSWORD=secret
+
+# MySQL (uncomment to switch)
+# DB_DRIVER=mysql2
+# DB_HOST=localhost
+# DB_PORT=3306
+# DB_NAME=svelar_db
+# DB_USER=root
+# DB_PASSWORD=secret
+
+# JWT (if using JWT auth)
+# JWT_SECRET=your-jwt-secret-key
+
+# Mail (optional)
+# MAIL_DRIVER=log
+# MAIL_FROM=hello@example.com
+
+# Redis (optional — needed for BullMQ queue and Redis cache/session)
+# REDIS_URL=redis://localhost:6379
+
+# Broadcasting (optional — Pusher/Soketi WebSocket)
+# PUSHER_KEY=app-key
+# PUSHER_SECRET=app-secret
+# PUSHER_APP_ID=app-id
+# PUSHER_HOST=localhost
+# PUSHER_PORT=6001
 ```
 
-### Bootstrap Configuration
+## Step 2: Create Your First Model & Migration
 
-Create `src/app.ts` to configure database, hashing, and auth:
-
-```typescript
-// src/app.ts
-import { Connection } from 'svelar/database';
-import { Hash } from 'svelar/hashing';
-import { AuthManager } from 'svelar/auth';
-import { User } from './lib/models/User.js';
-
-// Configure Database
-Connection.configure({
-  default: 'sqlite',
-  connections: {
-    sqlite: {
-      driver: 'sqlite',
-      filename: process.env.DB_PATH ?? 'database.db',
-    },
-  },
-});
-
-// Configure Hashing
-Hash.configure({
-  driver: 'scrypt', // 'bcrypt', 'argon2'
-});
-
-// Configure Auth
-export const auth = new AuthManager({
-  guard: 'session', // 'jwt', 'api'
-  model: User,
-});
-
-export { Connection, Hash };
+```bash
+npx @beeblock/svelar make:model User
+npx @beeblock/svelar make:migration CreateUsersTable
 ```
 
-### Middleware Setup
-
-Create `src/hooks.server.ts` to set up the middleware pipeline. The simplest setup uses `createSvelarApp`, which auto-wires origin validation, rate limiting, CSRF, sessions, auth, and error handling:
+Edit the generated migration in `src/lib/database/migrations/`:
 
 ```typescript
-// src/hooks.server.ts
-import { createSvelarApp } from 'svelar/hooks';
-import { auth } from './app.js';
-
-export const { handle, handleError } = createSvelarApp({
-  auth,
-  secret: process.env.APP_KEY || 'dev-secret',
-});
-```
-
-To add i18n, pass the paraglide middleware:
-
-```typescript
-// src/hooks.server.ts
-import { createSvelarApp } from 'svelar/hooks';
-import { paraglideMiddleware } from '$lib/paraglide/server';
-import { getTextDirection } from '$lib/paraglide/runtime';
-import { auth } from './app.js';
-
-export const { handle, handleError } = createSvelarApp({
-  auth,
-  i18n: { paraglideMiddleware, getTextDirection },
-});
-```
-
-For full manual control, see [Middleware](./07-middleware.md).
-
-### Create Your First Model
-
-Create `src/lib/models/User.ts`:
-
-```typescript
-// src/lib/models/User.ts
-import { Model } from 'svelar/orm';
-
-export class User extends Model {
-  static table = 'users';
-  static timestamps = true;
-  static fillable = ['name', 'email', 'password'];
-  static hidden = ['password'];
-
-  declare id: number;
-  declare name: string;
-  declare email: string;
-  declare password: string;
-  declare created_at: Date;
-  declare updated_at: Date;
-}
-```
-
-### Create Your First Migration
-
-Create `src/lib/database/migrations/20260325000001_create_users_table.ts`:
-
-```typescript
-// src/lib/database/migrations/20260325000001_create_users_table.ts
-import { Migration } from 'svelar/database';
+import { Migration } from '@beeblock/svelar/database';
 
 export default class CreateUsersTable extends Migration {
   async up() {
@@ -164,22 +150,99 @@ export default class CreateUsersTable extends Migration {
 }
 ```
 
-### Run Migrations
+## Step 3: Run Migrations
 
 ```bash
-npx svelar migrate
+npx @beeblock/svelar migrate
 ```
 
-You're all set! Your Svelar app is ready to use.
+Check migration status:
 
-## Database Configuration
+```bash
+npx @beeblock/svelar migrate --status
+```
 
-### SQLite (Default)
+## Step 4: Start Building
 
-SQLite requires no external setup and is great for development:
+```bash
+npm run dev
+```
+
+Visit `http://localhost:5173`. Your app is running.
+
+## Docker Deployment
+
+When you're ready for production, scaffold Docker files:
+
+```bash
+npx @beeblock/svelar make:docker
+```
+
+This generates:
+
+| File | Description |
+|------|-------------|
+| `Dockerfile` | Multi-stage Node 20 Alpine build with PM2 |
+| `docker-compose.yml` | App + PostgreSQL + Redis + Soketi + Gotenberg + RustFS |
+| `ecosystem.config.cjs` | PM2 config: web (clustered), queue workers, scheduler |
+| `.dockerignore` | Excludes node_modules, .env, build artifacts |
+
+### Docker Flags
+
+```bash
+npx @beeblock/svelar make:docker --db=mysql       # MySQL instead of PostgreSQL
+npx @beeblock/svelar make:docker --db=sqlite      # SQLite (no external DB)
+npx @beeblock/svelar make:docker --no-redis       # Skip Redis
+npx @beeblock/svelar make:docker --no-soketi      # Skip WebSocket server
+npx @beeblock/svelar make:docker --no-gotenberg   # Skip PDF service
+npx @beeblock/svelar make:docker --no-rustfs      # Skip object storage
+npx @beeblock/svelar make:docker --force          # Overwrite existing files
+```
+
+### Quick Start
+
+```bash
+# Generate Docker files
+npx @beeblock/svelar make:docker
+
+# Build and start everything
+docker compose up -d --build
+
+# Run migrations inside the container
+docker compose exec app npx @beeblock/svelar migrate
+
+# Seed data
+docker compose exec app npx @beeblock/svelar seed:run
+
+# View logs
+docker compose logs -f app
+
+# Stop
+docker compose down
+```
+
+### PM2 Processes
+
+| Process | Description | Instances |
+|---------|-------------|-----------|
+| web | SvelteKit production server | All CPU cores |
+| worker | Queue job processor | 2 |
+| scheduler | Scheduled task runner | 1 |
+
+## Manual Setup
+
+If you prefer adding Svelar to an existing SvelteKit project:
+
+```bash
+npm install @beeblock/svelar
+```
+
+Then create `src/app.ts`:
 
 ```typescript
-// src/app.ts
+import { Connection } from '@beeblock/svelar/database';
+import { Hash } from '@beeblock/svelar/hashing';
+
 Connection.configure({
   default: 'sqlite',
   connections: {
@@ -189,309 +252,109 @@ Connection.configure({
     },
   },
 });
+
+Hash.configure({ driver: 'scrypt' });
 ```
 
-### PostgreSQL
+And `src/hooks.server.ts`:
 
 ```typescript
-Connection.configure({
-  default: 'pgsql',
-  connections: {
-    pgsql: {
-      driver: 'postgresql',
-      host: process.env.DB_HOST || 'localhost',
-      port: parseInt(process.env.DB_PORT || '5432'),
-      database: process.env.DB_NAME || 'svelar',
-      user: process.env.DB_USER || 'postgres',
-      password: process.env.DB_PASSWORD || '',
-    },
-  },
+import { createSvelarApp } from '@beeblock/svelar/hooks';
+import { MemorySessionStore } from '@beeblock/svelar/session';
+import './app.js';
+
+export const { handle, handleError } = createSvelarApp({
+  secret: process.env.APP_KEY || 'change-me',
+  sessionStore: new MemorySessionStore(),
 });
 ```
 
-### MySQL
+> **Note:** Manual setup requires configuring Vite aliases for `@beeblock/svelar/*` submodules. Use `npx @beeblock/svelar new` to see the full vite.config.ts as reference.
 
-```typescript
-Connection.configure({
-  default: 'mysql',
-  connections: {
-    mysql: {
-      driver: 'mysql2',
-      host: process.env.DB_HOST || 'localhost',
-      port: parseInt(process.env.DB_PORT || '3306'),
-      database: process.env.DB_NAME || 'svelar',
-      user: process.env.DB_USER || 'root',
-      password: process.env.DB_PASSWORD || '',
-    },
-  },
-});
-```
+## CLI Commands
 
-## Environment Variables
-
-Create a `.env` file in your project root:
+All commands available after installation:
 
 ```bash
-# Database
-DB_PATH=database.db                    # SQLite only
-DB_HOST=localhost                      # PostgreSQL/MySQL
-DB_PORT=5432                           # PostgreSQL/MySQL
-DB_NAME=svelar_db                      # PostgreSQL/MySQL
-DB_USER=postgres                       # PostgreSQL/MySQL
-DB_PASSWORD=password                   # PostgreSQL/MySQL
+# Project
+npx @beeblock/svelar new <name>              # Scaffold new project
 
-# App Security
-APP_KEY=your-random-secret-key         # Used for sessions
-JWT_SECRET=your-jwt-secret-key         # Used for JWT tokens
-
-# Mail (Optional)
-MAIL_DRIVER=log                        # 'smtp', 'log'
-MAIL_FROM=hello@example.com
-
-# Storage (Optional)
-STORAGE_DISK=local
-```
-
-## Verify Installation
-
-Test that everything is working:
-
-```bash
-# Run migrations
-npx svelar migrate
-
-# Seed demo data (if you have a DatabaseSeeder)
-npx svelar seed:run
-
-# Start dev server
-npm run dev
-```
-
-Visit `http://localhost:5173` in your browser. You should see the SvelteKit welcome page.
-
-## Project Structure Overview
-
-```
-my-app/
-├── config/                      # Configuration files
-│   ├── app.ts
-│   ├── database.ts
-│   ├── auth.ts
-│   ├── mail.ts
-│   └── queue.ts
-├── src/
-│   ├── app.ts                    # Bootstrap configuration
-│   ├── hooks.server.ts           # Middleware pipeline
-│   ├── lib/
-│   │   ├── controllers/          # Request handlers
-│   │   ├── models/               # ORM models
-│   │   ├── services/             # Business logic
-│   │   ├── repositories/         # Data access
-│   │   ├── dtos/                 # Validation classes
-│   │   ├── actions/              # Single-use cases
-│   │   ├── middleware/           # Custom middleware
-│   │   ├── channels/            # Broadcast channel authorization
-│   │   ├── commands/            # Custom CLI commands
-│   │   ├── plugins/             # Custom plugins
-│   │   ├── scheduler/           # Scheduled tasks
-│   │   ├── database/
-│   │   │   ├── migrations/
-│   │   │   └── seeders/
-│   │   └── jobs/                # Queue jobs
-│   └── routes/                   # SvelteKit routes
-│       ├── +layout.svelte
-│       ├── +page.svelte
-│       └── api/
-├── package.json
-├── svelte.config.js
-├── vite.config.ts
-└── .env
-```
-
-## Available Commands
-
-After installation, you have access to Svelar CLI commands:
-
-```bash
 # Migrations
-npx svelar migrate                # Run pending migrations
-npx svelar migrate --rollback     # Rollback last migration batch
-npx svelar migrate --reset        # Rollback ALL migrations
-npx svelar migrate --refresh      # Reset + re-run all migrations
-npx svelar migrate --fresh        # Drop all tables + re-run all migrations
-npx svelar migrate --status       # Show migration status table
-npx svelar migrate --seed         # Run seeders after migrating
-npx svelar migrate --fresh --force # Force destructive command in production
+npx @beeblock/svelar migrate                 # Run pending migrations
+npx @beeblock/svelar migrate --rollback      # Rollback last batch
+npx @beeblock/svelar migrate --reset         # Rollback ALL
+npx @beeblock/svelar migrate --refresh       # Reset + re-run all
+npx @beeblock/svelar migrate --fresh         # Drop all tables + re-run
+npx @beeblock/svelar migrate --status        # Show migration status
+npx @beeblock/svelar migrate --seed          # Run seeders after migrating
 
 # Seeding
-npx svelar seed:run               # Run database seeders
+npx @beeblock/svelar seed:run                # Run database seeders
 
-# Code Generation
-npx svelar make:model Name        # Create new model
-npx svelar make:migration Name    # Create new migration
-npx svelar make:controller Name   # Create new controller
-npx svelar make:middleware Name   # Create new middleware
-npx svelar make:seeder Name       # Create new seeder
-npx svelar make:provider Name     # Create new service provider
-npx svelar make:service Name      # Create new service (--crud for CrudService)
-npx svelar make:repository Name   # Create new repository (--model=ModelName)
-npx svelar make:action Name       # Create new action
-npx svelar make:request Name      # Create new FormRequest DTO
-npx svelar make:plugin Name       # Create new plugin
-npx svelar make:task Name         # Create new scheduled task
-npx svelar make:job Name          # Create new queue job
-npx svelar make:command Name      # Create new custom CLI command
-npx svelar make:config Name       # Create new config file (presets: app, database, auth, mail, etc.)
-npx svelar make:channel Name      # Create new broadcast channel authorization (-p for presence)
-npx svelar make:broadcasting      # Scaffold broadcasting routes, client init, and config
-npx svelar make:docker            # Scaffold Docker deployment files (Dockerfile, compose, PM2)
-npx svelar make:dashboard         # Scaffold admin dashboard routes and pages
+# Code Generation — Domain (goes into src/lib/modules/<module>/)
+npx @beeblock/svelar make:model User --module=auth        # Model
+npx @beeblock/svelar make:controller User --module=auth   # Controller
+npx @beeblock/svelar make:service Billing --module=billing # Service (--crud)
+npx @beeblock/svelar make:repository User --module=auth   # Repository (--model=X)
+npx @beeblock/svelar make:action CreateUser --module=auth  # Action
+npx @beeblock/svelar make:request StoreUser --module=auth  # FormRequest DTO
+npx @beeblock/svelar make:resource User --module=auth     # API Resource (response)
+
+# Code Generation — Shared (goes into src/lib/shared/<type>/)
+npx @beeblock/svelar make:middleware RateLimit  # Middleware
+npx @beeblock/svelar make:job SendWelcomeEmail  # Queue job
+npx @beeblock/svelar make:task CleanupExpired   # Scheduled task
+npx @beeblock/svelar make:command SyncUsers     # Custom CLI command
+npx @beeblock/svelar make:plugin Stripe         # Plugin class
+npx @beeblock/svelar make:provider App          # Service provider
+npx @beeblock/svelar make:channel Order         # Broadcast channel (-p for presence)
+
+# Code Generation — Database (goes into src/lib/database/)
+npx @beeblock/svelar make:migration <Name>   # Migration file
+npx @beeblock/svelar make:seeder <Name>      # Seeder class
+npx @beeblock/svelar make:config <Name>      # Config file
+
+# Scaffolding
+npx @beeblock/svelar make:docker             # Docker deployment files
+npx @beeblock/svelar make:broadcasting       # Broadcasting routes + client
+npx @beeblock/svelar make:dashboard          # Admin dashboard routes
 
 # Plugins
-npx svelar plugin:list            # List installed and available plugins
-npx svelar plugin:publish <name>  # Publish a plugin's config and migrations
-npx svelar plugin:install <pkg>   # Install a plugin from npm
+npx @beeblock/svelar plugin:list             # List plugins
+npx @beeblock/svelar plugin:publish <name>   # Publish plugin config/migrations
+npx @beeblock/svelar plugin:install <pkg>    # Install plugin from npm
 
-# Scheduler & Queue
-npx svelar schedule:run           # Run the scheduler (checks every 60s)
-npx svelar schedule:run --once    # Run due tasks once and exit (for cron)
-npx svelar queue:work             # Process queued jobs
-npx svelar queue:work --queue=urgent   # Process a specific queue
-npx svelar queue:work --max-jobs=100   # Stop after N jobs
-npx svelar queue:work --max-time=3600  # Stop after N seconds
-npx svelar queue:work --sleep=2000     # Polling interval in ms
-npx svelar queue:work --once           # Process one job and exit
-
-# Utilities
-npx svelar tinker                 # Interactive REPL for your app
-
-# Dev Server (SvelteKit)
-npm run dev                        # Start dev server
-npm run build                      # Build for production
-npm run preview                    # Preview production build
+# Runtime
+npx @beeblock/svelar schedule:run            # Run scheduler
+npx @beeblock/svelar queue:work              # Process queued jobs
+npx @beeblock/svelar tinker                  # Interactive REPL
 ```
 
-> **Production safety**: Destructive migration commands (`--reset`, `--refresh`, `--fresh`) are blocked in production unless you pass `--force`. Svelar checks `NODE_ENV` and `APP_ENV` environment variables to detect the production environment.
-
-## Docker Deployment
-
-Svelar includes built-in Docker support for production deployments. Generate all the necessary files with a single command:
-
-```bash
-npx svelar make:docker
-```
-
-By default this includes Redis (BullMQ queues), Soketi (WebSocket), Gotenberg (PDF generation), and RustFS (S3-compatible object storage). This creates four files:
-
-- **Dockerfile** — Multi-stage build (Node 20 Alpine). Stage 1 installs deps and builds the SvelteKit app; stage 2 copies the production build and runs it with PM2.
-- **docker-compose.yml** — Orchestrates the app, PostgreSQL (default), Redis, Soketi (WebSocket server), Gotenberg (PDF engine), and RustFS (S3 object storage). All services include health checks and named volumes.
-- **ecosystem.config.cjs** — PM2 process config that runs three processes: the SvelteKit web server (clustered across all CPU cores), queue workers, and the scheduler.
-- **.dockerignore** — Excludes `node_modules`, `.env`, build artifacts, and database files from the Docker context.
-
-### Flags
-
-```bash
-npx svelar make:docker --db=mysql      # Use MySQL instead of PostgreSQL
-npx svelar make:docker --db=sqlite     # SQLite (no external DB service)
-npx svelar make:docker --no-redis      # Skip Redis service
-npx svelar make:docker --no-soketi     # Skip Soketi WebSocket server
-npx svelar make:docker --no-gotenberg  # Skip Gotenberg PDF service
-npx svelar make:docker --no-rustfs     # Skip RustFS object storage
-npx svelar make:docker --force         # Overwrite existing files
-```
-
-### Quick Start
-
-```bash
-# Generate Docker files
-npx svelar make:docker
-
-# Build and start all services
-docker compose up -d --build
-
-# Run migrations
-docker compose exec app npx svelar migrate
-
-# Seed demo data
-docker compose exec app npx svelar seed:run
-
-# View logs
-docker compose logs -f app
-
-# Stop everything
-docker compose down
-```
-
-### PM2 Process Management
-
-The `ecosystem.config.cjs` runs three processes inside the container:
-
-| Process   | Description                        | Instances     |
-|-----------|-------------------------------------|---------------|
-| web       | SvelteKit production server         | All CPU cores |
-| worker    | Queue job processor                 | 2             |
-| scheduler | Scheduled task runner               | 1 (always)    |
-
-The web process uses PM2's cluster mode for zero-downtime restarts and automatic load balancing. Workers auto-restart after `--max-time=3600` (1 hour) to prevent memory leaks. The scheduler always runs as a single instance to prevent duplicate task execution.
-
-### Soketi (WebSocket Server)
-
-The generated `docker-compose.yml` includes Soketi — a self-hosted, Pusher-compatible WebSocket server. It connects automatically to your Svelar app via the `PUSHER_HOST=soketi` environment variable. Configure your broadcasting to use the Pusher driver and point it at Soketi:
-
-```typescript
-// config/broadcasting.ts
-export default {
-  default: 'pusher',
-  drivers: {
-    pusher: {
-      key: process.env.PUSHER_KEY,
-      secret: process.env.PUSHER_SECRET,
-      appId: process.env.PUSHER_APP_ID,
-      host: process.env.PUSHER_HOST,   // 'soketi' in Docker
-      port: Number(process.env.PUSHER_PORT ?? 6001),
-      useTLS: false,
-    },
-  },
-};
-```
-
-### Production Checklist
-
-Before deploying to production:
-
-1. Set strong values for `APP_KEY`, `JWT_SECRET`, `DB_PASSWORD`, and Pusher credentials in `.env`
-2. Set `NODE_ENV=production` and `APP_ENV=production`
-3. Use named Docker volumes for database persistence (`pgdata`, `mysqldata`)
-4. Configure log rotation for PM2 logs in `storage/logs/`
-5. Set up a reverse proxy (Nginx, Traefik, Caddy) in front of the app for TLS termination
-6. Run `docker compose exec app npx svelar migrate` after every deployment
+> **Production safety**: Destructive migration commands (`--reset`, `--refresh`, `--fresh`) are blocked in production unless you pass `--force`.
 
 ## Troubleshooting
 
-### "Cannot find module 'svelar'"
-
-Make sure you've installed Svelar:
+### "Cannot find module '@beeblock/svelar'"
 
 ```bash
-npm install svelar
+npm install @beeblock/svelar
 ```
 
 ### Database file not found
 
-Check that `DB_PATH` is set correctly in your `.env` file. The default is `database.db` in your project root.
+Check `DB_PATH` in your `.env`. Default is `database.db` in project root.
 
 ### Migrations not running
 
-Ensure `src/app.ts` is imported in `src/hooks.server.ts` to initialize the database connection:
+Make sure `src/app.ts` is imported in `src/hooks.server.ts`:
 
 ```typescript
-// src/hooks.server.ts
-import { auth } from './app.js'; // This triggers app.ts
+import './app.js'; // Triggers database configuration
 ```
 
 ### TypeScript errors with models
 
-Make sure you have `skipLibCheck: true` in your `tsconfig.json`:
+Add `skipLibCheck: true` to `tsconfig.json`:
 
 ```json
 {
@@ -503,11 +366,8 @@ Make sure you have `skipLibCheck: true` in your `tsconfig.json`:
 
 ## Next Steps
 
-- Read the [Database](./02-database.md) guide to learn about migrations and seeders
-- Explore [Models & ORM](./03-models-orm.md) to build your data layer
-- Check [Controllers & Routing](./04-controllers-routing.md) to handle requests
-- Learn [Authentication](./06-authentication.md) for user management
-
----
-
-**Svelar Installation Guide** © 2026
+- [Database](./02-database.md) — Migrations, seeders, multiple drivers
+- [Models & ORM](./03-models-orm.md) — Eloquent-style queries, relationships
+- [Controllers & Routing](./04-controllers-routing.md) — Request handling
+- [Authentication](./06-authentication.md) — Sessions, JWT, API tokens
+- [Middleware](./07-middleware.md) — CORS, CSRF, rate limiting, custom middleware

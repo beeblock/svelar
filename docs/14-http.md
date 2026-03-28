@@ -9,7 +9,7 @@ The `apiFetch` function is a drop-in replacement for `fetch` that automatically 
 ### Import
 
 ```typescript
-import { apiFetch } from 'svelar/http';
+import { apiFetch } from '@beeblock/svelar/http';
 ```
 
 ### Basic Usage
@@ -39,7 +39,7 @@ await apiFetch(`/api/posts/${id}`, { method: 'DELETE' });
 
 ```svelte
 <script lang="ts">
-  import { apiFetch } from 'svelar/http';
+  import { apiFetch } from '@beeblock/svelar/http';
 
   let posts: any[] = $state([]);
   let loading = $state(false);
@@ -87,7 +87,7 @@ Safe methods (GET, HEAD, OPTIONS) skip CSRF entirely. If the body is a string an
 Helper to construct URLs with query parameters:
 
 ```typescript
-import { buildUrl } from 'svelar/http';
+import { buildUrl } from '@beeblock/svelar/http';
 
 buildUrl('/api/posts', { page: 1, per_page: 10 });
 // => '/api/posts?page=1&per_page=10'
@@ -105,7 +105,7 @@ buildUrl('/api/posts', { page: 1, search: undefined });
 Extract the CSRF token directly:
 
 ```typescript
-import { getCsrfToken } from 'svelar/http';
+import { getCsrfToken } from '@beeblock/svelar/http';
 
 const token = getCsrfToken();
 // Returns null on the server (SSR)

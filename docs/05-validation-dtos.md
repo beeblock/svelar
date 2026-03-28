@@ -15,8 +15,8 @@ npx svelar make:request CreatePostRequest
 This creates `src/lib/dtos/CreatePostRequest.ts`:
 
 ```typescript
-import { FormRequest } from 'svelar/routing';
-import { z } from 'svelar/validation';
+import { FormRequest } from '@beeblock/svelar/routing';
+import { z } from '@beeblock/svelar/validation';
 
 export class CreatePostRequest extends FormRequest {
   rules() {
@@ -142,8 +142,8 @@ passedValidation(data: any) {
 
 ```typescript
 // src/lib/dtos/RegisterRequest.ts
-import { FormRequest } from 'svelar/routing';
-import { z } from 'svelar/validation';
+import { FormRequest } from '@beeblock/svelar/routing';
+import { z } from '@beeblock/svelar/validation';
 
 export class RegisterRequest extends FormRequest {
   rules() {
@@ -172,8 +172,8 @@ export class RegisterRequest extends FormRequest {
 
 ```typescript
 // src/lib/dtos/LoginRequest.ts
-import { FormRequest } from 'svelar/routing';
-import { z } from 'svelar/validation';
+import { FormRequest } from '@beeblock/svelar/routing';
+import { z } from '@beeblock/svelar/validation';
 
 export class LoginRequest extends FormRequest {
   rules() {
@@ -196,8 +196,8 @@ export class LoginRequest extends FormRequest {
 
 ```typescript
 // src/lib/dtos/CreatePostRequest.ts
-import { FormRequest } from 'svelar/routing';
-import { z } from 'svelar/validation';
+import { FormRequest } from '@beeblock/svelar/routing';
+import { z } from '@beeblock/svelar/validation';
 
 export class CreatePostRequest extends FormRequest {
   rules() {
@@ -239,8 +239,8 @@ export class CreatePostRequest extends FormRequest {
 
 ```typescript
 // src/lib/dtos/UpdatePostRequest.ts
-import { FormRequest } from 'svelar/routing';
-import { z } from 'svelar/validation';
+import { FormRequest } from '@beeblock/svelar/routing';
+import { z } from '@beeblock/svelar/validation';
 import { Post } from '../models/Post.js';
 
 export class UpdatePostRequest extends FormRequest {
@@ -352,7 +352,7 @@ z.object({
 For simple cases, you can validate directly in the controller using the `validate` helper:
 
 ```typescript
-import { validate, z } from 'svelar/validation';
+import { validate, z } from '@beeblock/svelar/validation';
 
 export class PostController extends Controller {
   async store(event: any) {
@@ -381,7 +381,7 @@ export class PostController extends Controller {
 Svelar provides a `rules` helper with named validators that map to common Laravel validation rules. These are convenience wrappers around Zod:
 
 ```typescript
-import { rules, z } from 'svelar/validation';
+import { rules, z } from '@beeblock/svelar/validation';
 
 const schema = z.object({
   name:     rules.required(),                     // z.string().min(1)

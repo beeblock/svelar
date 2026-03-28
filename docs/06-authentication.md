@@ -7,7 +7,7 @@ Learn how to authenticate users in Svelar using sessions, JWT tokens, or API tok
 Authentication is configured in `src/app.ts`:
 
 ```typescript
-import { AuthManager } from 'svelar/auth';
+import { AuthManager } from '@beeblock/svelar/auth';
 import { User } from './lib/models/User.js';
 
 export const auth = new AuthManager({
@@ -27,9 +27,9 @@ Session-based auth is the default and recommended approach for web apps. Users l
 In `src/hooks.server.ts`:
 
 ```typescript
-import { createSvelarHooks } from 'svelar/hooks';
-import { SessionMiddleware, MemorySessionStore } from 'svelar/session';
-import { AuthenticateMiddleware } from 'svelar/auth';
+import { createSvelarHooks } from '@beeblock/svelar/hooks';
+import { SessionMiddleware, MemorySessionStore } from '@beeblock/svelar/session';
+import { AuthenticateMiddleware } from '@beeblock/svelar/auth';
 import { auth } from './app.js';
 
 const sessionStore = new MemorySessionStore();
@@ -51,7 +51,7 @@ export const handle = createSvelarHooks({
 Your User model must have a method to find by a unique identifier (usually email):
 
 ```typescript
-import { Model } from 'svelar/orm';
+import { Model } from '@beeblock/svelar/orm';
 
 export class User extends Model {
   static table = 'users';
@@ -72,7 +72,7 @@ export class User extends Model {
 
 ```typescript
 import { User } from '../models/User.js';
-import { Hash } from 'svelar/hashing';
+import { Hash } from '@beeblock/svelar/hashing';
 
 export class AuthService extends Service {
   async register(data: { name: string; email: string; password: string }) {
@@ -225,7 +225,7 @@ For stateless APIs, use JWT (JSON Web Tokens). Each request includes a token in 
 In `src/app.ts`:
 
 ```typescript
-import { AuthManager } from 'svelar/auth';
+import { AuthManager } from '@beeblock/svelar/auth';
 import { User } from './lib/models/User.js';
 
 export const auth = new AuthManager({
@@ -242,7 +242,7 @@ export const auth = new AuthManager({
 In `src/hooks.server.ts`, use `AuthenticateMiddleware` (it handles both session and JWT):
 
 ```typescript
-import { AuthenticateMiddleware } from 'svelar/auth';
+import { AuthenticateMiddleware } from '@beeblock/svelar/auth';
 
 export const handle = createSvelarHooks({
   middleware: [
@@ -254,7 +254,7 @@ export const handle = createSvelarHooks({
 ### Issuing Tokens
 
 ```typescript
-import { signJwt } from 'svelar/auth';
+import { signJwt } from '@beeblock/svelar/auth';
 
 export class AuthController extends Controller {
   async login(event: any) {
@@ -301,7 +301,7 @@ For machine-to-machine authentication, generate API tokens per user.
 Create an `api_tokens` table:
 
 ```typescript
-import { Migration } from 'svelar/database';
+import { Migration } from '@beeblock/svelar/database';
 
 export default class CreateApiTokensTable extends Migration {
   async up() {
@@ -364,7 +364,7 @@ Middleware resolves the token and sets `event.locals.user`.
 Resolves the authenticated user from session, JWT, or API token:
 
 ```typescript
-import { AuthenticateMiddleware } from 'svelar/auth';
+import { AuthenticateMiddleware } from '@beeblock/svelar/auth';
 
 export const handle = createSvelarHooks({
   middleware: [
@@ -380,7 +380,7 @@ After this middleware, `event.locals.user` is either the User model or null.
 Ensures a user is authenticated. Returns 401 if not:
 
 ```typescript
-import { RequireAuthMiddleware } from 'svelar/auth';
+import { RequireAuthMiddleware } from '@beeblock/svelar/auth';
 
 export const handle = createSvelarHooks({
   middleware: [
@@ -453,7 +453,7 @@ Svelar provides multiple hashing drivers for password security.
 In `src/app.ts`:
 
 ```typescript
-import { Hash } from 'svelar/hashing';
+import { Hash } from '@beeblock/svelar/hashing';
 
 Hash.configure({
   driver: 'scrypt', // 'bcrypt', 'argon2'
@@ -463,7 +463,7 @@ Hash.configure({
 ### Hashing Passwords
 
 ```typescript
-import { Hash } from 'svelar/hashing';
+import { Hash } from '@beeblock/svelar/hashing';
 
 // Hash password
 const hashedPassword = await Hash.make('user-password');
@@ -483,7 +483,7 @@ const isValid = await Hash.verify('user-password', hashedPassword);
 ### Memory Store (Development)
 
 ```typescript
-import { MemorySessionStore } from 'svelar/session';
+import { MemorySessionStore } from '@beeblock/svelar/session';
 
 const sessionStore = new MemorySessionStore();
 
@@ -503,7 +503,7 @@ Sessions are stored in memory and lost on restart. Great for development.
 ### Database Store (Production)
 
 ```typescript
-import { DatabaseSessionStore } from 'svelar/session';
+import { DatabaseSessionStore } from '@beeblock/svelar/session';
 
 const sessionStore = new DatabaseSessionStore('sessions');
 

@@ -20,7 +20,7 @@ export class MakeMiddlewareCommand extends Command {
     }
 
     const middlewareName = name.endsWith('Middleware') ? name : `${name}Middleware`;
-    const middlewareDir = join(process.cwd(), 'src', 'lib', 'middleware');
+    const middlewareDir = join(process.cwd(), 'src', 'lib', 'shared', 'middleware');
     mkdirSync(middlewareDir, { recursive: true });
 
     const filePath = join(middlewareDir, `${middlewareName}.ts`);
@@ -29,7 +29,7 @@ export class MakeMiddlewareCommand extends Command {
       return;
     }
 
-    const content = `import { Middleware, type MiddlewareContext, type NextFunction } from 'svelar/middleware';
+    const content = `import { Middleware, type MiddlewareContext, type NextFunction } from '@beeblock/svelar/middleware';
 
 export class ${middlewareName} extends Middleware {
   async handle(ctx: MiddlewareContext, next: NextFunction): Promise<Response | void> {
@@ -45,6 +45,6 @@ export class ${middlewareName} extends Middleware {
 `;
 
     writeFileSync(filePath, content);
-    this.success(`Middleware created: src/lib/middleware/${middlewareName}.ts`);
+    this.success(`Middleware created: src/lib/shared/middleware/${middlewareName}.ts`);
   }
 }

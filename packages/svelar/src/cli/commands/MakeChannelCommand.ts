@@ -22,7 +22,7 @@ export class MakeChannelCommand extends Command {
     }
 
     const className = name.endsWith('Channel') ? name : `${name}Channel`;
-    const channelsDir = join(process.cwd(), 'src', 'lib', 'channels');
+    const channelsDir = join(process.cwd(), 'src', 'lib', 'shared', 'channels');
     mkdirSync(channelsDir, { recursive: true });
 
     const filePath = join(channelsDir, `${className}.ts`);
@@ -48,17 +48,17 @@ export class MakeChannelCommand extends Command {
       : this.privateTemplate(className, channelPattern, paramName);
 
     writeFileSync(filePath, content);
-    this.success(`Channel created: src/lib/channels/${className}.ts`);
+    this.success(`Channel created: src/lib/shared/channels/${className}.ts`);
     this.info(`Channel pattern: ${channelPattern}`);
     this.newLine();
     this.info('Register it in src/app.ts or a service provider:');
-    this.log(`  import { register${className} } from './lib/channels/${className}.js';`);
+    this.log(`  import { register${className} } from './lib/shared/channels/${className}.js';`);
     this.log(`  register${className}();`);
   }
 
   private privateTemplate(className: string, pattern: string, paramName: string): string {
     const modelName = className.replace(/Channel$/, '');
-    return `import { Broadcast } from 'svelar/broadcasting';
+    return `import { Broadcast } from '@beeblock/svelar/broadcasting';
 
 /**
  * ${className}
@@ -81,7 +81,7 @@ export function register${className}(): void {
 
   private presenceTemplate(className: string, pattern: string, paramName: string): string {
     const modelName = className.replace(/Channel$/, '');
-    return `import { Broadcast } from 'svelar/broadcasting';
+    return `import { Broadcast } from '@beeblock/svelar/broadcasting';
 
 /**
  * ${className}

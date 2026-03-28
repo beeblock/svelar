@@ -1,6 +1,6 @@
 {
   "name": "@beeblock/svelar",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Laravel-inspired framework on top of SvelteKit 2",
   "type": "module",
   "main": "./dist/index.js",
@@ -17,6 +17,7 @@
   ],
   "svelte": "./src/ui/index.ts",
   "exports": {
+    "./package.json": "./package.json",
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
@@ -262,20 +263,48 @@
     "mysql2": "*",
     "postgres": "*",
     "ioredis": ">=5.0.0",
-    "pusher-js": ">=8.0.0",
     "pusher-js": ">=8.0.0"
   },
   "peerDependenciesMeta": {
-    "@aws-sdk/client-s3": { "optional": true },
-    "@aws-sdk/s3-request-presigner": { "optional": true },
-    "better-sqlite3": { "optional": true },
-    "bullmq": { "optional": true },
-    "ioredis": { "optional": true },
-    "mysql2": { "optional": true },
-    "postgres": { "optional": true },
-    "pusher-js": { "optional": true }
+    "@aws-sdk/client-s3": {
+      "optional": true
+    },
+    "@aws-sdk/s3-request-presigner": {
+      "optional": true
+    },
+    "better-sqlite3": {
+      "optional": true
+    },
+    "bullmq": {
+      "optional": true
+    },
+    "ioredis": {
+      "optional": true
+    },
+    "mysql2": {
+      "optional": true
+    },
+    "postgres": {
+      "optional": true
+    },
+    "pusher-js": {
+      "optional": true
+    }
   },
-  "keywords": ["svelte", "sveltekit", "laravel", "orm", "framework", "drizzle", "middleware", "auth", "session", "cache", "queue", "mail"],
+  "keywords": [
+    "svelte",
+    "sveltekit",
+    "laravel",
+    "orm",
+    "framework",
+    "drizzle",
+    "middleware",
+    "auth",
+    "session",
+    "cache",
+    "queue",
+    "mail"
+  ],
   "license": "MIT",
   "author": "Raoni <alephtus@gmail.com>",
   "repository": {

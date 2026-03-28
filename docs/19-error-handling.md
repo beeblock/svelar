@@ -18,7 +18,7 @@ If you're using `createSvelarApp`, error handling is already wired up:
 
 ```typescript
 // hooks.server.ts
-import { createSvelarApp } from 'svelar/hooks';
+import { createSvelarApp } from '@beeblock/svelar/hooks';
 export const { handle, handleError } = createSvelarApp({ auth });
 ```
 
@@ -27,7 +27,7 @@ Add the `<Toaster />` component to your layout for client-side toast notificatio
 ```svelte
 <!-- +layout.svelte -->
 <script>
-  import { Toaster } from 'svelar/ui';
+  import { Toaster } from '@beeblock/svelar/ui';
 </script>
 
 <slot />
@@ -50,7 +50,7 @@ import {
   TooManyRequestsError,
   ServiceUnavailableError,
   ModelNotFoundError,
-} from 'svelar/errors';
+} from '@beeblock/svelar/errors';
 ```
 
 ### Throwing Errors
@@ -91,7 +91,7 @@ Add `<Toaster />` once in your root layout:
 
 ```svelte
 <script>
-  import { Toaster } from 'svelar/ui';
+  import { Toaster } from '@beeblock/svelar/ui';
 </script>
 
 <Toaster position="bottom-right" />
@@ -100,7 +100,7 @@ Add `<Toaster />` once in your root layout:
 ### Manual Usage
 
 ```typescript
-import { toast } from 'svelar/ui';
+import { toast } from '@beeblock/svelar/ui';
 
 toast('Hello world');
 toast.success('Profile saved!');
@@ -146,7 +146,7 @@ toast.dismissAll();
 Enhanced fetch that automatically shows toast notifications on error responses:
 
 ```typescript
-import { apiFetch } from 'svelar/http';
+import { apiFetch } from '@beeblock/svelar/http';
 
 // Errors auto-show as toasts
 const res = await apiFetch('/api/posts', {
@@ -169,7 +169,7 @@ const res = await apiFetch('/api/billing', {
 Typed wrapper that never throws — returns `{ data, error, ok }`:
 
 ```typescript
-import { apiFetchJson } from 'svelar/http';
+import { apiFetchJson } from '@beeblock/svelar/http';
 
 interface Post { id: number; title: string; }
 
@@ -218,11 +218,11 @@ Protect entire route groups via `+layout.server.ts`:
 
 ```typescript
 // src/routes/dashboard/+layout.server.ts
-import { guardAuth } from 'svelar/auth';
+import { guardAuth } from '@beeblock/svelar/auth';
 export const load = guardAuth();
 
 // src/routes/admin/+layout.server.ts — with role check
-import { guardAuth } from 'svelar/auth';
+import { guardAuth } from '@beeblock/svelar/auth';
 export const load = guardAuth('/dashboard', { role: 'admin' });
 ```
 
@@ -231,7 +231,7 @@ export const load = guardAuth('/dashboard', { role: 'admin' });
 For API routes, returns 401 JSON:
 
 ```typescript
-import { RequireAuthMiddleware } from 'svelar/auth';
+import { RequireAuthMiddleware } from '@beeblock/svelar/auth';
 // Returns { message: 'Unauthenticated' } with status 401
 ```
 
@@ -240,14 +240,14 @@ import { RequireAuthMiddleware } from 'svelar/auth';
 For page routes, 302 redirects to login:
 
 ```typescript
-import { RedirectIfNotAuthenticated } from 'svelar/auth';
+import { RedirectIfNotAuthenticated } from '@beeblock/svelar/auth';
 // Redirects to /login (or custom path)
 ```
 
 ## Custom Error Reporting
 
 ```typescript
-import { createSvelarApp } from 'svelar/hooks';
+import { createSvelarApp } from '@beeblock/svelar/hooks';
 
 export const { handle, handleError } = createSvelarApp({
   auth,

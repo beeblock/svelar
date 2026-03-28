@@ -15,7 +15,7 @@ import {
   toLocal,
   castDates,
   dateCaster,
-} from 'svelar/dates';
+} from '@beeblock/svelar/dates';
 ```
 
 ## The Off-by-One-Day Problem
@@ -158,8 +158,8 @@ export const load = async ({ locals }) => {
 Re-exported from date-fns for convenience:
 
 ```typescript
-import { isToday, isYesterday, isTomorrow, isValid } from 'svelar/dates';
-import { differenceInDays, differenceInHours, differenceInMinutes, differenceInSeconds } from 'svelar/dates';
+import { isToday, isYesterday, isTomorrow, isValid } from '@beeblock/svelar/dates';
+import { differenceInDays, differenceInHours, differenceInMinutes, differenceInSeconds } from '@beeblock/svelar/dates';
 
 isToday(user.createdAt)                          // true/false
 differenceInDays(new Date(), user.trialEndsAt)   // -5 (5 days remaining)
@@ -170,7 +170,7 @@ differenceInDays(new Date(), user.trialEndsAt)   // -5 (5 days remaining)
 Re-exported from date-fns:
 
 ```typescript
-import { startOfDay, endOfDay, addDays, addHours, addMinutes, subDays, subHours, subMinutes } from 'svelar/dates';
+import { startOfDay, endOfDay, addDays, addHours, addMinutes, subDays, subHours, subMinutes } from '@beeblock/svelar/dates';
 
 const tomorrow = addDays(new Date(), 1);
 const dayStart = startOfDay(new Date());

@@ -12,7 +12,7 @@ All components are available from the `svelar/ui` entry point:
 
 ```svelte
 <script>
-  import { Button, Card, CardContent, Input, Label } from 'svelar/ui';
+  import { Button, Card, CardContent, Input, Label } from '@beeblock/svelar/ui';
 </script>
 ```
 
@@ -20,7 +20,7 @@ You can also import individual components directly:
 
 ```svelte
 <script>
-  import Button from 'svelar/ui/Button.svelte';
+  import Button from '@beeblock/svelar/ui/Button.svelte';
 </script>
 ```
 
@@ -146,7 +146,7 @@ Tab navigation with content panels:
 
 ```svelte
 <script lang="ts">
-  import { Tabs, TabsList, TabsTrigger, TabsContent } from 'svelar/ui';
+  import { Tabs, TabsList, TabsTrigger, TabsContent } from '@beeblock/svelar/ui';
 
   let activeTab = $state('overview');
 </script>
@@ -169,7 +169,7 @@ A generic icon wrapper that supports [lucide-svelte](https://lucide.dev) and [@t
 
 ```svelte
 <script lang="ts">
-  import { Icon } from 'svelar/ui';
+  import { Icon } from '@beeblock/svelar/ui';
   import Users from 'lucide-svelte/icons/users';
   import KeyRound from 'lucide-svelte/icons/key-round';
 </script>
@@ -212,7 +212,7 @@ Svelar includes a full toast notification system with animations, auto-dismiss, 
 #### Basic Usage
 
 ```typescript
-import { toast } from 'svelar/ui';
+import { toast } from '@beeblock/svelar/ui';
 
 toast('Hello');
 toast.success('Saved!');
@@ -256,7 +256,7 @@ Add `<Toaster />` to your root layout to render toast notifications:
 
 ```svelte
 <script>
-  import { Toaster } from 'svelar/ui';
+  import { Toaster } from '@beeblock/svelar/ui';
 </script>
 
 <Toaster position="bottom-right" maxVisible={5} />
@@ -270,8 +270,8 @@ The toast store uses a callback-based pattern (not `$state`) so it works when im
 
 ```typescript
 // src/lib/stores/toasts.svelte.ts
-import { getToasts, subscribe as toastSubscribe } from 'svelar/ui';
-export { toast, dismiss } from 'svelar/ui';
+import { getToasts, subscribe as toastSubscribe } from '@beeblock/svelar/ui';
+export { toast, dismiss } from '@beeblock/svelar/ui';
 
 let items = $state(getToasts());
 toastSubscribe(() => { items = [...getToasts()]; });
@@ -292,7 +292,7 @@ Create your custom components in `src/lib/components/` and import svelar's base 
 ```svelte
 <!-- src/lib/components/PostCard.svelte -->
 <script lang="ts">
-  import { Card, CardHeader, CardTitle, CardContent, CardFooter, Badge, Button } from 'svelar/ui';
+  import { Card, CardHeader, CardTitle, CardContent, CardFooter, Badge, Button } from '@beeblock/svelar/ui';
 
   interface Props {
     title: string;
@@ -349,7 +349,7 @@ Compose `Label`, `Input`, and error display into a reusable form field:
 ```svelte
 <!-- src/lib/components/FormField.svelte -->
 <script lang="ts">
-  import { Label, Input } from 'svelar/ui';
+  import { Label, Input } from '@beeblock/svelar/ui';
 
   interface Props {
     label: string;
@@ -397,7 +397,7 @@ Build higher-level UI patterns on top of the base components:
 ```svelte
 <!-- src/lib/components/ConfirmDialog.svelte -->
 <script lang="ts">
-  import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, Button } from 'svelar/ui';
+  import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, Button } from '@beeblock/svelar/ui';
 
   interface Props {
     open: boolean;
@@ -447,7 +447,7 @@ Build higher-level UI patterns on top of the base components:
 ```svelte
 <!-- src/lib/components/LoadingButton.svelte -->
 <script lang="ts">
-  import { Button } from 'svelar/ui';
+  import { Button } from '@beeblock/svelar/ui';
   import type { Snippet } from 'svelte';
 
   interface Props {

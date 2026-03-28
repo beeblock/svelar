@@ -9,3 +9,5 @@ export {
 } from './Controller.js';
 
 export { FormRequest, FormValidationError, FormAuthorizationError } from './FormRequest.js';
+
+export { Resource, ResourceResponse, ResourceCollectionResponse } from './Resource.js';

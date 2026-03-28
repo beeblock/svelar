@@ -15,7 +15,7 @@ npx svelar make:controller AuthController
 This creates `src/lib/controllers/AuthController.ts`:
 
 ```typescript
-import { Controller } from 'svelar/routing';
+import { Controller } from '@beeblock/svelar/routing';
 
 export class AuthController extends Controller {
   async register(event: any) {
@@ -116,7 +116,7 @@ Here's a complete authentication controller from the svelar-example app:
 
 ```typescript
 // src/lib/controllers/AuthController.ts
-import { Controller } from 'svelar/routing';
+import { Controller } from '@beeblock/svelar/routing';
 import { RegisterRequest } from '../dtos/RegisterRequest.js';
 import { LoginRequest } from '../dtos/LoginRequest.js';
 import { RegisterUserAction } from '../actions/RegisterUserAction.js';
@@ -231,7 +231,7 @@ Here's a complete post controller with CRUD operations:
 
 ```typescript
 // src/lib/controllers/PostController.ts
-import { Controller } from 'svelar/routing';
+import { Controller } from '@beeblock/svelar/routing';
 import { CreatePostRequest } from '../dtos/CreatePostRequest.js';
 import { UpdatePostRequest } from '../dtos/UpdatePostRequest.js';
 import { PostService } from '../services/PostService.js';
@@ -357,7 +357,7 @@ export class AdminController extends Controller {
 Controllers can throw errors that are automatically caught and formatted:
 
 ```typescript
-import { Controller, ValidationError, NotFoundError, UnauthorizedError, ForbiddenError } from 'svelar/routing';
+import { Controller, ValidationError, NotFoundError, UnauthorizedError, ForbiddenError } from '@beeblock/svelar/routing';
 
 export class PostController extends Controller {
   async show(event: any) {
@@ -425,6 +425,116 @@ export class PostController extends Controller {
 5. **Consistency in responses** - Follow a consistent JSON response format across your API
 6. **Handle errors gracefully** - Throw appropriate exceptions; let middleware handle them
 7. **Use type safety** - Define request/response types for better IDE support
+
+## API Resources (Response Transformers)
+
+Resources control the shape of your API responses — like Laravel's `JsonResource`. They decouple your database schema from your API contract.
+
+### Creating a Resource
+
+```bash
+npx @beeblock/svelar make:resource User --module=auth
+npx @beeblock/svelar make:resource User --module=auth --collection  # also creates UserCollectionResource
+```
+
+This creates `src/lib/modules/auth/UserResource.ts`:
+
+```typescript
+import { Resource } from '@beeblock/svelar/routing';
+import type { User } from './User.js';
+
+export class UserResource extends Resource<User> {
+  toJSON() {
+    return {
+      id: this.data.id,
+      name: this.data.name,
+      email: this.data.email,
+      avatar_url: this.data.avatar,
+      member_since: this.data.created_at,
+      // Notice: password is NOT exposed
+    };
+  }
+}
+```
+
+### Using Resources in Controllers
+
+```typescript
+import { UserResource } from './UserResource.js';
+
+export class UserController extends Controller {
+  // Single resource → { data: { id, name, email, ... } }
+  async show(event: RequestEvent) {
+    const user = await User.findOrFail(event.params.id);
+    return UserResource.make(user).toResponse();
+  }
+
+  // Collection → { data: [{ id, ... }, ...] }
+  async index(event: RequestEvent) {
+    const users = await User.all();
+    return UserResource.collection(users).toResponse();
+  }
+
+  // Collection with pagination metadata
+  async index(event: RequestEvent) {
+    const page = Number(event.url.searchParams.get('page') ?? 1);
+    const users = await User.paginate(page, 20);
+    return UserResource.collection(users.data)
+      .additional({
+        total: users.total,
+        page: users.page,
+        per_page: users.perPage,
+        last_page: users.lastPage,
+      })
+      .toResponse();
+  }
+}
+```
+
+### Response Format
+
+```json
+// Single: UserResource.make(user)
+{
+  "data": {
+    "id": 1,
+    "name": "John Doe",
+    "email": "john@example.com",
+    "member_since": "2026-01-15T10:30:00Z"
+  }
+}
+
+// Collection with meta: UserResource.collection(users).additional({...})
+{
+  "data": [
+    { "id": 1, "name": "John Doe", ... },
+    { "id": 2, "name": "Jane Doe", ... }
+  ],
+  "meta": {
+    "total": 42,
+    "page": 1,
+    "per_page": 20,
+    "last_page": 3
+  }
+}
+```
+
+### Resource Options
+
+```typescript
+// Custom status code
+UserResource.make(user).status(201).toResponse();
+
+// Custom headers
+UserResource.make(user).headers({ 'X-Request-Id': '...' }).toResponse();
+
+// Remove the "data" wrapper
+UserResource.make(user).wrapper(null).toResponse();
+// → { "id": 1, "name": "John Doe", ... }
+
+// Plain object (for testing or further processing)
+const obj = UserResource.make(user).toObject();
+```
 
 ## Next Steps
 

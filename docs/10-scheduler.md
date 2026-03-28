@@ -19,7 +19,7 @@ npx svelar make:task CleanupExpiredSessions
 This creates `src/lib/scheduler/CleanupExpiredSessions.ts`. Each task must be in its own file with a **default export**:
 
 ```typescript
-import { ScheduledTask } from 'svelar/scheduler';
+import { ScheduledTask } from '@beeblock/svelar/scheduler';
 
 export default class CleanupExpiredSessions extends ScheduledTask {
   name = 'cleanup-expired-sessions';
@@ -139,7 +139,7 @@ src/lib/scheduler/
 
 ```typescript
 // src/lib/scheduler/DailyStatsSummary.ts
-import { ScheduledTask } from 'svelar/scheduler';
+import { ScheduledTask } from '@beeblock/svelar/scheduler';
 
 export default class DailyStatsSummary extends ScheduledTask {
   name = 'daily-stats';
@@ -157,7 +157,7 @@ export default class DailyStatsSummary extends ScheduledTask {
 You can also create a scheduler manually and register tasks programmatically:
 
 ```typescript
-import { Scheduler } from 'svelar/scheduler';
+import { Scheduler } from '@beeblock/svelar/scheduler';
 import CleanupExpiredSessions from './CleanupExpiredSessions.ts';
 import DailyStatsSummary from './DailyStatsSummary.ts';
 
@@ -224,8 +224,8 @@ Create a script that calls `scheduler.runDueTasks()` and schedule it with cron:
 Remove expired data:
 
 ```typescript
-import { ScheduledTask } from 'svelar/scheduler';
-import { Connection } from 'svelar/database';
+import { ScheduledTask } from '@beeblock/svelar/scheduler';
+import { Connection } from '@beeblock/svelar/database';
 
 export default class CleanupExpiredSessions extends ScheduledTask {
   name = 'cleanup-expired-sessions';
@@ -259,7 +259,7 @@ export default class CleanupExpiredSessions extends ScheduledTask {
 Generate and send daily reports:
 
 ```typescript
-import { ScheduledTask } from 'svelar/scheduler';
+import { ScheduledTask } from '@beeblock/svelar/scheduler';
 import { User } from '../models/User.ts';
 import { Post } from '../models/Post.ts';
 
@@ -301,9 +301,9 @@ export default class DailyReportTask extends ScheduledTask {
 Send notifications periodically:
 
 ```typescript
-import { ScheduledTask } from 'svelar/scheduler';
+import { ScheduledTask } from '@beeblock/svelar/scheduler';
 import { User } from '../models/User.js';
-import { Notifier } from 'svelar/notifications';
+import { Notifier } from '@beeblock/svelar/notifications';
 
 export default class SendDailyDigestTask extends ScheduledTask {
   name = 'send-daily-digest';
@@ -330,8 +330,8 @@ export default class SendDailyDigestTask extends ScheduledTask {
 Pre-compute expensive data:
 
 ```typescript
-import { ScheduledTask } from 'svelar/scheduler';
-import { Cache } from 'svelar/cache';
+import { ScheduledTask } from '@beeblock/svelar/scheduler';
+import { Cache } from '@beeblock/svelar/cache';
 import { Post } from '../models/Post.js';
 
 export default class WarmCacheTask extends ScheduledTask {
@@ -370,8 +370,8 @@ export default class WarmCacheTask extends ScheduledTask {
 Optimize tables and indexes:
 
 ```typescript
-import { ScheduledTask } from 'svelar/scheduler';
-import { Connection } from 'svelar/database';
+import { ScheduledTask } from '@beeblock/svelar/scheduler';
+import { Connection } from '@beeblock/svelar/database';
 
 export default class OptimizeDatabaseTask extends ScheduledTask {
   name = 'optimize-database';
@@ -401,7 +401,7 @@ The scheduler runs in a separate Node process, so it doesn't share memory with t
 
 ```typescript
 // src/lib/scheduler/BroadcastNotification.ts
-import { ScheduledTask } from 'svelar/scheduler';
+import { ScheduledTask } from '@beeblock/svelar/scheduler';
 
 export default class BroadcastNotification extends ScheduledTask {
   name = 'broadcast-notification';
@@ -440,7 +440,7 @@ The web server's internal broadcast endpoint receives the request and publishes 
 
 ```typescript
 // src/routes/api/internal/broadcast/+server.ts
-import { Broadcast } from 'svelar/broadcasting';
+import { Broadcast } from '@beeblock/svelar/broadcasting';
 import { json, error } from '@sveltejs/kit';
 
 export async function POST({ request }) {
@@ -460,7 +460,7 @@ export async function POST({ request }) {
 For simple cases, use inline tasks without creating separate classes:
 
 ```typescript
-import { task } from 'svelar/scheduler';
+import { task } from '@beeblock/svelar/scheduler';
 
 export const scheduler = new Scheduler()
   .task('cleanup', async () => {

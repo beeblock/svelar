@@ -10,9 +10,11 @@ export class MakeActionCommand extends Command {
   name = 'make:action';
   description = 'Create a new action class';
   arguments = ['name'];
-  flags = [];
+  flags = [
+    { name: 'module', description: 'Module name (e.g. auth, billing)', type: 'string' as const },
+  ];
 
-  async handle(args: string[]): Promise<void> {
+  async handle(args: string[], flags: Record<string, any>): Promise<void> {
     const name = args[0];
     if (!name) {
       this.error('Please provide an action name.');
@@ -20,16 +22,22 @@ export class MakeActionCommand extends Command {
     }
 
     const actionName = name.endsWith('Action') ? name : `${name}Action`;
-    const actionsDir = join(process.cwd(), 'src', 'lib', 'actions');
-    mkdirSync(actionsDir, { recursive: true });
+    const baseName = actionName.replace(/Action$/, '');
+    const moduleName = flags.module || baseName.toLowerCase();
+    if (!flags.module) {
+      this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
+    }
 
-    const filePath = join(actionsDir, `${actionName}.ts`);
+    const moduleDir = join(process.cwd(), 'src', 'lib', 'modules', moduleName);
+    mkdirSync(moduleDir, { recursive: true });
+
+    const filePath = join(moduleDir, `${actionName}.ts`);
     if (existsSync(filePath)) {
       this.warn(`Action ${actionName} already exists.`);
       return;
     }
 
-    const content = `import { Action } from 'svelar/actions';
+    const content = `import { Action } from '@beeblock/svelar/actions';
 
 interface ${actionName}Input {
   // Define input type
@@ -48,6 +56,6 @@ export class ${actionName} extends Action<${actionName}Input, ${actionName}Outpu
 `;
 
     writeFileSync(filePath, content);
-    this.success(`Action created: src/lib/actions/${actionName}.ts`);
+    this.success(`Action created: src/lib/modules/${moduleName}/${actionName}.ts`);
   }
 }

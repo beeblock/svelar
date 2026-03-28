@@ -33,7 +33,7 @@ npx svelar make:repository UserRepository
 This creates `src/lib/repositories/UserRepository.ts`:
 
 ```typescript
-import { Repository } from 'svelar/repositories';
+import { Repository } from '@beeblock/svelar/repositories';
 import { User } from '../models/User.js';
 
 export class UserRepository extends Repository<User> {
@@ -120,7 +120,7 @@ await userRepo.delete(1);
 
 ```typescript
 // src/lib/repositories/PostRepository.ts
-import { Repository } from 'svelar/repositories';
+import { Repository } from '@beeblock/svelar/repositories';
 import { Post } from '../models/Post.js';
 
 export class PostRepository extends Repository<Post> {
@@ -173,8 +173,8 @@ npx svelar make:service AuthService
 This creates `src/lib/services/AuthService.ts`:
 
 ```typescript
-import { Service } from 'svelar/services';
-import { Hash } from 'svelar/hashing';
+import { Service } from '@beeblock/svelar/services';
+import { Hash } from '@beeblock/svelar/hashing';
 import { UserRepository } from '../repositories/UserRepository.js';
 
 const userRepo = new UserRepository();
@@ -259,7 +259,7 @@ const user = result.data;
 For standard CRUD operations, extend `CrudService`:
 
 ```typescript
-import { CrudService } from 'svelar/services';
+import { CrudService } from '@beeblock/svelar/services';
 import { PostRepository } from '../repositories/PostRepository.js';
 import type { Post } from '../models/Post.js';
 
@@ -316,7 +316,7 @@ export class AuthService extends Service {
 }
 
 // Listen to event elsewhere
-import { EventDispatcher } from 'svelar/events';
+import { EventDispatcher } from '@beeblock/svelar/events';
 
 EventDispatcher.listen('user:registered', async (user) => {
   // Send welcome email, create profile, etc.
@@ -337,10 +337,10 @@ npx svelar make:action RegisterUserAction
 This creates `src/lib/actions/RegisterUserAction.ts`:
 
 ```typescript
-import { Action } from 'svelar/actions';
+import { Action } from '@beeblock/svelar/actions';
 import { AuthService } from '../services/AuthService.js';
 import type { User } from '../models/User.js';
-import type { ServiceResult } from 'svelar/services';
+import type { ServiceResult } from '@beeblock/svelar/services';
 
 interface RegisterInput {
   name: string;
@@ -402,7 +402,7 @@ export class PublishPostAction extends Action<PublishInput, ServiceResult<Post>>
 Chain multiple actions together:
 
 ```typescript
-import { ChainableAction } from 'svelar/actions';
+import { ChainableAction } from '@beeblock/svelar/actions';
 
 const chain = new ChainableAction()
   .add(new CreatePostAction())
@@ -430,7 +430,7 @@ export const POST = ctrl.handle('register');
 
 ```typescript
 // src/lib/controllers/AuthController.ts
-import { Controller } from 'svelar/routing';
+import { Controller } from '@beeblock/svelar/routing';
 import { RegisterRequest } from '../dtos/RegisterRequest.js';
 import { RegisterUserAction } from '../actions/RegisterUserAction.js';
 
@@ -463,9 +463,9 @@ export class AuthController extends Controller {
 
 ```typescript
 // src/lib/actions/RegisterUserAction.ts
-import { Action } from 'svelar/actions';
+import { Action } from '@beeblock/svelar/actions';
 import { AuthService } from '../services/AuthService.js';
-import type { ServiceResult } from 'svelar/services';
+import type { ServiceResult } from '@beeblock/svelar/services';
 
 export class RegisterUserAction extends Action<RegisterInput, ServiceResult<User>> {
   async execute(input: RegisterInput): Promise<ServiceResult<User>> {
@@ -478,8 +478,8 @@ export class RegisterUserAction extends Action<RegisterInput, ServiceResult<User
 
 ```typescript
 // src/lib/services/AuthService.ts
-import { Service } from 'svelar/services';
-import { Hash } from 'svelar/hashing';
+import { Service } from '@beeblock/svelar/services';
+import { Hash } from '@beeblock/svelar/hashing';
 import { UserRepository } from '../repositories/UserRepository.js';
 
 export class AuthService extends Service {
@@ -506,7 +506,7 @@ export class AuthService extends Service {
 
 ```typescript
 // src/lib/repositories/UserRepository.ts
-import { Repository } from 'svelar/repositories';
+import { Repository } from '@beeblock/svelar/repositories';
 import { User } from '../models/User.js';
 
 export class UserRepository extends Repository<User> {
@@ -524,7 +524,7 @@ export class UserRepository extends Repository<User> {
 
 ```typescript
 // src/lib/models/User.ts
-import { Model } from 'svelar/orm';
+import { Model } from '@beeblock/svelar/orm';
 
 export class User extends Model {
   static table = 'users';

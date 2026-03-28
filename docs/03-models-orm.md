@@ -11,7 +11,7 @@ npx svelar make:model Post
 This generates `src/lib/models/Post.ts`:
 
 ```typescript
-import { Model } from 'svelar/orm';
+import { Model } from '@beeblock/svelar/orm';
 
 export class Post extends Model {
   static table = 'posts';
@@ -558,7 +558,7 @@ Relationships are defined as methods on the model that return a relationship ins
 A user has one profile:
 
 ```typescript
-import { Model } from 'svelar/orm';
+import { Model } from '@beeblock/svelar/orm';
 import { Profile } from './Profile.js';
 
 export class User extends Model {
@@ -594,7 +594,7 @@ const profile = await user.profile().create({
 A user has many posts:
 
 ```typescript
-import { Model } from 'svelar/orm';
+import { Model } from '@beeblock/svelar/orm';
 import { Post } from './Post.js';
 
 export class User extends Model {
@@ -632,7 +632,7 @@ const posts = await user.posts().createMany([
 A post belongs to a user:
 
 ```typescript
-import { Model } from 'svelar/orm';
+import { Model } from '@beeblock/svelar/orm';
 import { User } from './User.js';
 
 export class Post extends Model {
@@ -877,7 +877,7 @@ user.setRelation('posts', []);
 When the query builder isn't enough, use raw SQL directly:
 
 ```typescript
-import { Connection } from 'svelar/database';
+import { Connection } from '@beeblock/svelar/database';
 
 // Raw select
 const rows = await Connection.raw(
@@ -898,7 +898,7 @@ const users = await Connection.raw(
 
 ```typescript
 // src/lib/models/User.ts
-import { Model } from 'svelar/orm';
+import { Model } from '@beeblock/svelar/orm';
 
 export class User extends Model {
   static table = 'users';
@@ -938,7 +938,7 @@ import { Profile } from './Profile.js';
 
 ```typescript
 // src/lib/models/Post.ts
-import { Model } from 'svelar/orm';
+import { Model } from '@beeblock/svelar/orm';
 
 export class Post extends Model {
   static table = 'posts';
@@ -979,7 +979,7 @@ import { Tag } from './Tag.js';
 
 ```typescript
 // src/lib/models/Comment.ts
-import { Model } from 'svelar/orm';
+import { Model } from '@beeblock/svelar/orm';
 
 export class Comment extends Model {
   static table = 'comments';

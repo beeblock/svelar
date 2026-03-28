@@ -15,6 +15,7 @@ export class MakeModelCommand extends Command {
     { name: 'controller', alias: 'c', description: 'Also create a controller', type: 'boolean' as const },
     { name: 'resource', alias: 'r', description: 'Create a resource controller', type: 'boolean' as const },
     { name: 'all', alias: 'a', description: 'Create model, migration, and controller', type: 'boolean' as const },
+    { name: 'module', description: 'Module name (e.g. auth, billing)', type: 'string' as const },
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
@@ -24,7 +25,13 @@ export class MakeModelCommand extends Command {
       return;
     }
 
-    const modelsDir = join(process.cwd(), 'src', 'lib', 'models');
+    const tableName = this.toSnakeCase(this.pluralize(name));
+    const moduleName = flags.module || this.toSnakeCase(this.pluralize(name));
+    if (!flags.module) {
+      this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
+    }
+
+    const modelsDir = join(process.cwd(), 'src', 'lib', 'modules', moduleName);
     mkdirSync(modelsDir, { recursive: true });
 
     const filePath = join(modelsDir, `${name}.ts`);
@@ -33,9 +40,7 @@ export class MakeModelCommand extends Command {
       return;
     }
 
-    const tableName = this.toSnakeCase(this.pluralize(name));
-
-    const content = `import { Model } from 'svelar/orm';
+    const content = `import { Model } from '@beeblock/svelar/orm';
 
 export class ${name} extends Model {
   static table = '${tableName}';
@@ -55,7 +60,7 @@ export class ${name} extends Model {
 `;
 
     writeFileSync(filePath, content);
-    this.success(`Model created: src/lib/models/${name}.ts`);
+    this.success(`Model created: src/lib/modules/${moduleName}/${name}.ts`);
 
     // Create migration if requested
     if (flags.migration || flags.all) {
@@ -64,7 +69,7 @@ export class ${name} extends Model {
       const migrationsDir = join(process.cwd(), 'src', 'lib', 'database', 'migrations');
       mkdirSync(migrationsDir, { recursive: true });
 
-      const migrationContent = `import { Migration } from 'svelar/database';
+      const migrationContent = `import { Migration } from '@beeblock/svelar/database';
 
 export default class Create${name}sTable extends Migration {
   async up() {
@@ -90,23 +95,23 @@ export default class Create${name}sTable extends Migration {
     // Create controller if requested
     if (flags.controller || flags.resource || flags.all) {
       const controllerName = `${name}Controller`;
-      const controllersDir = join(process.cwd(), 'src', 'lib', 'controllers');
-      mkdirSync(controllersDir, { recursive: true });
+      const controllerDir = join(process.cwd(), 'src', 'lib', 'modules', moduleName);
+      mkdirSync(controllerDir, { recursive: true });
 
       const isResource = flags.resource || flags.all;
       const controllerContent = isResource
         ? this.generateResourceController(name, controllerName)
         : this.generateBasicController(name, controllerName);
 
-      writeFileSync(join(controllersDir, `${controllerName}.ts`), controllerContent);
-      this.success(`Controller created: src/lib/controllers/${controllerName}.ts`);
+      writeFileSync(join(controllerDir, `${controllerName}.ts`), controllerContent);
+      this.success(`Controller created: src/lib/modules/${moduleName}/${controllerName}.ts`);
     }
   }
 
   private generateResourceController(modelName: string, controllerName: string): string {
-    return `import { Controller, type RequestEvent } from 'svelar/routing';
-import { z } from 'svelar/validation';
-import { ${modelName} } from '../models/${modelName}.js';
+    return `import { Controller, type RequestEvent } from '@beeblock/svelar/routing';
+import { z } from '@beeblock/svelar/validation';
+import { ${modelName} } from './${modelName}.js';
 
 export class ${controllerName} extends Controller {
   /** GET /api/${this.toSnakeCase(this.pluralize(modelName))} */
@@ -151,8 +156,8 @@ export class ${controllerName} extends Controller {
   }
 
   private generateBasicController(modelName: string, controllerName: string): string {
-    return `import { Controller, type RequestEvent } from 'svelar/routing';
-import { ${modelName} } from '../models/${modelName}.js';
+    return `import { Controller, type RequestEvent } from '@beeblock/svelar/routing';
+import { ${modelName} } from './${modelName}.js';
 
 export class ${controllerName} extends Controller {
   async index(event: RequestEvent) {

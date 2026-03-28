@@ -29,7 +29,7 @@ export class MakeSeederCommand extends Command {
       return;
     }
 
-    const content = `import { Seeder } from 'svelar/database';
+    const content = `import { Seeder } from '@beeblock/svelar/database';
 
 export class ${seederName} extends Seeder {
   async run(): Promise<void> {

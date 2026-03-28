@@ -20,7 +20,7 @@ export class MakeTaskCommand extends Command {
     }
 
     const taskName = name.endsWith('Task') ? name : name;
-    const schedulerDir = join(process.cwd(), 'src', 'lib', 'scheduler');
+    const schedulerDir = join(process.cwd(), 'src', 'lib', 'shared', 'scheduler');
     mkdirSync(schedulerDir, { recursive: true });
 
     const filePath = join(schedulerDir, `${taskName}.ts`);
@@ -29,7 +29,7 @@ export class MakeTaskCommand extends Command {
       return;
     }
 
-    const content = `import { ScheduledTask } from 'svelar/scheduler';
+    const content = `import { ScheduledTask } from '@beeblock/svelar/scheduler';
 
 export class ${taskName} extends ScheduledTask {
   name = '${this.toKebabCase(taskName)}';
@@ -65,7 +65,7 @@ export class ${taskName} extends ScheduledTask {
 `;
 
     writeFileSync(filePath, content);
-    this.success(`Scheduled task created: src/lib/scheduler/${taskName}.ts`);
+    this.success(`Scheduled task created: src/lib/shared/scheduler/${taskName}.ts`);
   }
 
   private toKebabCase(str: string): string {

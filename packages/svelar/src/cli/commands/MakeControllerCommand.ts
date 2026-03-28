@@ -13,6 +13,7 @@ export class MakeControllerCommand extends Command {
   flags = [
     { name: 'resource', alias: 'r', description: 'Create a resource controller with CRUD methods', type: 'boolean' as const },
     { name: 'model', alias: 'm', description: 'Model name for resource controller', type: 'string' as const },
+    { name: 'module', description: 'Module name (e.g. auth, billing)', type: 'string' as const },
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
@@ -23,10 +24,16 @@ export class MakeControllerCommand extends Command {
     }
 
     const controllerName = name.endsWith('Controller') ? name : `${name}Controller`;
-    const controllersDir = join(process.cwd(), 'src', 'lib', 'controllers');
-    mkdirSync(controllersDir, { recursive: true });
+    const baseName = controllerName.replace(/Controller$/, '');
+    const moduleName = flags.module || baseName.toLowerCase();
+    if (!flags.module) {
+      this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
+    }
 
-    const filePath = join(controllersDir, `${controllerName}.ts`);
+    const moduleDir = join(process.cwd(), 'src', 'lib', 'modules', moduleName);
+    mkdirSync(moduleDir, { recursive: true });
+
+    const filePath = join(moduleDir, `${controllerName}.ts`);
     if (existsSync(filePath)) {
       this.warn(`Controller ${controllerName} already exists.`);
       return;
@@ -37,16 +44,16 @@ export class MakeControllerCommand extends Command {
       : this.generateBasicController(controllerName);
 
     writeFileSync(filePath, content);
-    this.success(`Controller created: src/lib/controllers/${controllerName}.ts`);
+    this.success(`Controller created: src/lib/modules/${moduleName}/${controllerName}.ts`);
   }
 
   private generateResourceController(name: string, model?: string): string {
     const modelImport = model
-      ? `import { ${model} } from '../models/${model}.js';\n`
+      ? `import { ${model} } from './${model}.js';\n`
       : '';
 
-    return `import { Controller, type RequestEvent } from 'svelar/routing';
-import { z } from 'svelar/validation';
+    return `import { Controller, type RequestEvent } from '@beeblock/svelar/routing';
+import { z } from '@beeblock/svelar/validation';
 ${modelImport}
 export class ${name} extends Controller {
   async index(event: RequestEvent) {
@@ -87,7 +94,7 @@ export class ${name} extends Controller {
   }
 
   private generateBasicController(name: string): string {
-    return `import { Controller, type RequestEvent } from 'svelar/routing';
+    return `import { Controller, type RequestEvent } from '@beeblock/svelar/routing';
 
 export class ${name} extends Controller {
   async index(event: RequestEvent) {

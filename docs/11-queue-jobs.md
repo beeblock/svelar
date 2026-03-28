@@ -28,7 +28,7 @@ npx svelar make:job SendWelcomeEmail
 This creates `src/lib/jobs/SendWelcomeEmail.ts`:
 
 ```typescript
-import { Job } from 'svelar/queue';
+import { Job } from '@beeblock/svelar/queue';
 
 export class SendWelcomeEmail extends Job {
   maxAttempts = 3;      // Retry up to 3 times
@@ -155,7 +155,7 @@ You can dispatch jobs from **anywhere** in your application — controllers, ser
 ### Basic Dispatch
 
 ```typescript
-import { Queue } from 'svelar/queue';
+import { Queue } from '@beeblock/svelar/queue';
 import { SendWelcomeEmail } from '../jobs/SendWelcomeEmail.js';
 
 // In a controller
@@ -174,7 +174,7 @@ export class AuthController extends Controller {
 ### Dispatch from a Service
 
 ```typescript
-import { Queue } from 'svelar/queue';
+import { Queue } from '@beeblock/svelar/queue';
 import { GenerateInvoicePdf } from '../jobs/GenerateInvoicePdf.js';
 
 export class OrderService extends Service {
@@ -192,8 +192,8 @@ export class OrderService extends Service {
 ### Dispatch from Model Hooks
 
 ```typescript
-import { Model } from 'svelar/orm';
-import { Queue } from 'svelar/queue';
+import { Model } from '@beeblock/svelar/orm';
+import { Queue } from '@beeblock/svelar/queue';
 import { SendWelcomeEmail } from '../jobs/SendWelcomeEmail.js';
 
 export class User extends Model {
@@ -226,8 +226,8 @@ export class ProcessOrder extends Job {
 ### Dispatch from Scheduled Tasks
 
 ```typescript
-import { ScheduledTask } from 'svelar/scheduler';
-import { Queue } from 'svelar/queue';
+import { ScheduledTask } from '@beeblock/svelar/scheduler';
+import { Queue } from '@beeblock/svelar/queue';
 import { GenerateMonthlyReport } from '../jobs/GenerateMonthlyReport.js';
 
 export class MonthlyReportTask extends ScheduledTask {
@@ -329,7 +329,7 @@ await Queue.chain([
 Configure the queue in `src/app.ts`:
 
 ```typescript
-import { Queue } from 'svelar/queue';
+import { Queue } from '@beeblock/svelar/queue';
 
 Queue.configure({
   default: 'memory',
@@ -353,7 +353,7 @@ Queue.configure({
 When using the **database driver**, you must register your job classes so the worker can reconstruct them from their serialized payloads:
 
 ```typescript
-import { Queue } from 'svelar/queue';
+import { Queue } from '@beeblock/svelar/queue';
 import { SendWelcomeEmail } from './lib/jobs/SendWelcomeEmail.js';
 import { ProcessImage } from './lib/jobs/ProcessImage.js';
 import { GenerateReport } from './lib/jobs/GenerateReport.js';
@@ -428,7 +428,7 @@ Queue.configure({
 Create the jobs table migration:
 
 ```typescript
-import { Migration } from 'svelar/database';
+import { Migration } from '@beeblock/svelar/database';
 
 export default class CreateSvelarJobsTable extends Migration {
   async up() {
@@ -542,7 +542,7 @@ npx svelar queue:work --once
 You can also run the worker from code:
 
 ```typescript
-import { Queue } from 'svelar/queue';
+import { Queue } from '@beeblock/svelar/queue';
 
 // Process up to 100 jobs from the 'emails' queue
 const processed = await Queue.work({
@@ -569,8 +569,8 @@ await Queue.clear('default');
 ### Send Email Job
 
 ```typescript
-import { Job } from 'svelar/queue';
-import { Mailer } from 'svelar/mail';
+import { Job } from '@beeblock/svelar/queue';
+import { Mailer } from '@beeblock/svelar/mail';
 
 export class SendWelcomeEmail extends Job {
   maxAttempts = 3;
@@ -597,7 +597,7 @@ export class SendWelcomeEmail extends Job {
 ### Generate PDF Job
 
 ```typescript
-import { Job } from 'svelar/queue';
+import { Job } from '@beeblock/svelar/queue';
 
 export class GenerateInvoicePdf extends Job {
   maxAttempts = 2;
@@ -628,8 +628,8 @@ export class GenerateInvoicePdf extends Job {
 ### Process Image Job
 
 ```typescript
-import { Job } from 'svelar/queue';
-import { Storage } from 'svelar/storage';
+import { Job } from '@beeblock/svelar/queue';
+import { Storage } from '@beeblock/svelar/storage';
 import sharp from 'sharp';
 
 export class ProcessImageJob extends Job {
@@ -661,7 +661,7 @@ export class ProcessImageJob extends Job {
 ### Webhook Delivery Job
 
 ```typescript
-import { Job } from 'svelar/queue';
+import { Job } from '@beeblock/svelar/queue';
 
 export class TriggerWebhookJob extends Job {
   maxAttempts = 5;
@@ -702,7 +702,7 @@ export class TriggerWebhookJob extends Job {
 Here's a full production setup in `src/app.ts`:
 
 ```typescript
-import { Queue } from 'svelar/queue';
+import { Queue } from '@beeblock/svelar/queue';
 import { SendWelcomeEmail } from './lib/jobs/SendWelcomeEmail.js';
 import { ProcessImageJob } from './lib/jobs/ProcessImageJob.js';
 import { GenerateInvoicePdf } from './lib/jobs/GenerateInvoicePdf.js';

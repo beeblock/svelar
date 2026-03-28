@@ -50,17 +50,14 @@ Get a new Svelar app up and running in minutes:
 
 ```bash
 # Create a new project
-npx create-svelar my-app
+npx @beeblock/svelar new my-app
 cd my-app
 
-# Install dependencies
-npm install
+# Configure environment
+cp .env.example .env
 
 # Run migrations
-npx svelar migrate
-
-# Seed demo data
-npx svelar seed:run
+npx @beeblock/svelar migrate
 
 # Start the development server
 npm run dev
@@ -68,56 +65,45 @@ npm run dev
 
 Your app is now running at `http://localhost:5173`
 
-## Project Structure
+## Project Structure (DDD Modular Monolith)
 
 ```
 my-app/
 ├── src/
 │   ├── app.ts                    # Bootstrap (database, hash, auth config)
 │   ├── app.css                   # Global styles + CSS custom properties
-│   ├── app.html                  # HTML template (with %lang% / %dir% for i18n)
-│   ├── app.d.ts                  # TypeScript declarations
+│   ├── app.html                  # HTML template
 │   ├── hooks.server.ts           # Middleware pipeline (createSvelarApp)
-│   ├── hooks.ts                  # Client reroute hook (i18n)
 │   ├── lib/
-│   │   ├── paraglide/            # Generated i18n runtime (auto-generated)
-│   │   ├── components/           # App-specific components (extend svelar/ui)
-│   │   │   ├── PostCard.svelte
-│   │   │   ├── FormField.svelte
-│   │   │   └── ...
-│   │   ├── schemas/              # Zod validation schemas
-│   │   │   ├── post.ts
-│   │   │   └── ...
-│   │   ├── actions/              # Single-responsibility use cases
-│   │   ├── controllers/          # Request handlers
-│   │   ├── database/
-│   │   │   ├── migrations/       # Database schema changes
-│   │   │   └── seeders/          # Demo/test data
-│   │   ├── dtos/                 # FormRequest validation classes
-│   │   ├── models/               # ORM models (User, Post, etc.)
-│   │   ├── services/             # Business logic layer
-│   │   ├── repositories/         # Data access layer
-│   │   ├── middleware/           # Custom middleware
-│   │   ├── jobs/                 # Background queue jobs
-│   │   ├── plugins/              # Custom plugins
-│   │   └── scheduler/            # Scheduled tasks
+│   │   ├── modules/              # Domain modules (DDD)
+│   │   │   ├── auth/             # User.ts, AuthController.ts, AuthService.ts
+│   │   │   ├── billing/          # Invoice.ts, BillingService.ts
+│   │   │   └── posts/            # Post.ts, PostController.ts, PostRepository.ts
+│   │   ├── shared/               # Cross-cutting concerns
+│   │   │   ├── middleware/       # Custom middleware
+│   │   │   ├── components/       # Shared Svelte components
+│   │   │   ├── stores/           # Svelte stores
+│   │   │   ├── jobs/             # Background queue jobs
+│   │   │   ├── plugins/          # Custom plugins
+│   │   │   ├── channels/         # Broadcast channel authorization
+│   │   │   ├── commands/         # Custom CLI commands
+│   │   │   ├── providers/        # Service providers
+│   │   │   └── scheduler/        # Scheduled tasks
+│   │   └── database/
+│   │       ├── migrations/       # Database schema changes
+│   │       └── seeders/          # Seed data
 │   └── routes/                   # SvelteKit routes
-│       ├── +layout.svelte        # App layout (uses svelar/ui, svelar/i18n)
-│       ├── +page.svelte          # Home page
-│       ├── +error.svelte         # Error page
-│       ├── api/                  # API endpoints
-│       ├── dashboard/            # Protected pages
-│       ├── login/                # Auth pages
-│       ├── register/
+│       ├── +layout.svelte
+│       ├── +page.svelte
+│       ├── api/
+│       ├── dashboard/
 │       └── admin/
-├── messages/                     # i18n translation files
-│   ├── en.json
-│   └── pt.json
-├── project.inlang/               # Paraglide i18n config
 ├── package.json
 ├── svelte.config.js
 └── vite.config.ts
 ```
+
+Each **module** under `modules/` is a self-contained domain — model, controller, service, repository, DTOs, and schema all live together. The `shared/` folder holds cross-cutting infrastructure that spans multiple domains.
 
 ## Architecture
 
@@ -161,9 +147,9 @@ Svelar configuration happens in `src/app.ts`:
 
 ```typescript
 // src/app.ts
-import { Connection } from 'svelar/database';
-import { Hash } from 'svelar/hashing';
-import { AuthManager } from 'svelar/auth';
+import { Connection } from '@beeblock/svelar/database';
+import { Hash } from '@beeblock/svelar/hashing';
+import { AuthManager } from '@beeblock/svelar/auth';
 import { User } from './lib/models/User.js';
 
 // Database
@@ -197,7 +183,7 @@ The simplest way to set up the middleware pipeline is `createSvelarApp`, which a
 
 ```typescript
 // src/hooks.server.ts
-import { createSvelarApp } from 'svelar/hooks';
+import { createSvelarApp } from '@beeblock/svelar/hooks';
 import { paraglideMiddleware } from '$lib/paraglide/server';
 import { getTextDirection } from '$lib/paraglide/runtime';
 import { auth } from './app.js';
@@ -211,10 +197,10 @@ export const { handle, handleError } = createSvelarApp({
 For full control, use `createSvelarHooks` to compose the pipeline manually:
 
 ```typescript
-import { createSvelarHooks } from 'svelar/hooks';
-import { SessionMiddleware, MemorySessionStore } from 'svelar/session';
-import { AuthenticateMiddleware } from 'svelar/auth';
-import { RateLimitMiddleware, CsrfMiddleware, OriginMiddleware } from 'svelar/middleware';
+import { createSvelarHooks } from '@beeblock/svelar/hooks';
+import { SessionMiddleware, MemorySessionStore } from '@beeblock/svelar/session';
+import { AuthenticateMiddleware } from '@beeblock/svelar/auth';
+import { RateLimitMiddleware, CsrfMiddleware, OriginMiddleware } from '@beeblock/svelar/middleware';
 import { auth } from './app.js';
 
 export const handle = createSvelarHooks({
