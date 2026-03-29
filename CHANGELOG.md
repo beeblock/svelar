@@ -4,6 +4,32 @@ All notable changes to `@beeblock/svelar` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-03-29
+
+### Added
+
+- **JWT refresh tokens** — single-use rotation with HMAC-SHA256 hashed storage; `attemptJwt()` returns token pairs, `refreshJwt()` exchanges refresh tokens, `revokeRefreshTokens()` revokes all for a user
+- **API request signature verification** — `SignatureMiddleware` validates HMAC-SHA256 signatures over timestamp+method+path+body with configurable tolerance
+- **`signedFetch()` HTTP client** — client-side fetch wrapper that signs requests using Web Crypto API
+- **Toaster customization** — `<Toaster>` now accepts `variants` prop for per-variant custom icons (any Svelte component), icon/border/progress/container classes, plus global `toastClass`, `titleClass`, `descriptionClass`, `actionClass`, `closeClass`, `progressBarClass` props
+- **Improved toast icons** — default icons upgraded to Lucide-inspired CircleCheck, CircleX, TriangleAlert, and CircleInfo SVGs
+- **CLI `.env` loading** — the CLI now reads `.env` files on startup (zero-dependency, does not override existing env vars)
+- **Getting Started guide** — comprehensive `docs/00-getting-started.md` covering out-of-the-box features, setup, migrations, configuration, and building your first features
+- **Error Handling documentation** — `docs/19-error-handling.md` with custom error pages, error boundaries, and API error responses
+- **Architecture documentation** — `docs/20-architecture.md` covering DDD modular monolith structure
+
+### Changed
+
+- **Admin System Health** — memory display now shows actual OS RAM usage (via `os.totalmem()`/`os.freemem()`) instead of V8 heap, with Node.js process memory as secondary detail
+- **Admin Scheduler tab** — tasks now appear via `ScheduleMonitor` configured with task definitions in a server-only module; "Run Now" button executes tasks in-process with direct `Broadcast` access
+- **BroadcastNotification task** — uses direct `Broadcast` singleton when running in-process (admin "Run Now"), falls back to HTTP bridge for CLI scheduler; gracefully skips when web server is unavailable
+- **Documentation** — expanded authentication (cookie security, password hashing, CORS, JWT vs API tokens, refresh tokens, request signatures), middleware (CORS production config, SignatureMiddleware), UI components (Toaster customization), and cross-doc link references
+
+### Fixed
+
+- **Docs 404s** — internal markdown links (`./06-authentication.md`) now rewrite to `/docs/slug` in both svelar-example and svelar-site
+- **Scheduler CLI errors** — broadcast task no longer dumps HTML error pages; strips trailing slashes from `APP_URL`; handles `ECONNREFUSED` gracefully
+
 ## [0.2.1] - 2026-03-27
 
 ### Changed
