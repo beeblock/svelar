@@ -12,6 +12,5 @@ export default class CleanExpiredSessions extends ScheduledTask {
   }
 
   async handle(): Promise<void> {
-    console.log('[Scheduler] Cleaning expired sessions...');
   }
 }

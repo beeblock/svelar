@@ -81,7 +81,7 @@
     <CardFooter class="flex-col gap-4 border-t pt-6">
       <p class="text-sm text-center text-gray-600">
         Remember your password?
-        <a href="/login" class="font-medium text-[var(--color-brand)] hover:underline">
+        <a href="/login" class="font-medium text-brand hover:underline">
           Sign in
         </a>
       </p>

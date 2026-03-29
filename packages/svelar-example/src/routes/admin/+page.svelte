@@ -430,7 +430,7 @@
           <CardContent class="pt-6">
             <div>
               <p class="text-sm text-gray-600">Total Users</p>
-              <p class="text-3xl font-bold text-[var(--color-brand)] mt-2">{data.stats.userCount}</p>
+              <p class="text-3xl font-bold text-brand mt-2">{data.stats.userCount}</p>
             </div>
           </CardContent>
         </Card>
@@ -439,7 +439,7 @@
           <CardContent class="pt-6">
             <div>
               <p class="text-sm text-gray-600">Total Posts</p>
-              <p class="text-3xl font-bold text-[var(--color-brand)] mt-2">{data.stats.postCount}</p>
+              <p class="text-3xl font-bold text-brand mt-2">{data.stats.postCount}</p>
             </div>
           </CardContent>
         </Card>
@@ -478,20 +478,24 @@
           </div>
           <div class="space-y-2">
             <div class="flex justify-between text-sm">
-              <span>Memory Usage</span>
-              <Badge variant={health.memoryPercent > 90 ? 'destructive' : health.memoryPercent > 70 ? 'secondary' : 'default'}>
-                {health.memoryUsedMB} MB / {health.memoryTotalMB} MB ({health.memoryPercent}%)
+              <span>System Memory</span>
+              <Badge variant={health.systemPercent > 90 ? 'destructive' : health.systemPercent > 70 ? 'secondary' : 'default'}>
+                {health.systemUsedMB} MB / {health.systemTotalMB} MB ({health.systemPercent}%)
               </Badge>
             </div>
             <div class="h-2 bg-gray-200 rounded-full overflow-hidden">
               <div
                 class="h-full transition-all"
-                class:bg-green-500={health.memoryPercent <= 70}
-                class:bg-yellow-500={health.memoryPercent > 70 && health.memoryPercent <= 90}
-                class:bg-red-500={health.memoryPercent > 90}
-                style="width: {health.memoryPercent}%"
+                class:bg-green-500={health.systemPercent <= 70}
+                class:bg-yellow-500={health.systemPercent > 70 && health.systemPercent <= 90}
+                class:bg-red-500={health.systemPercent > 90}
+                style="width: {health.systemPercent}%"
               ></div>
             </div>
+          </div>
+          <div class="flex justify-between text-sm">
+            <span>Node.js Process</span>
+            <span class="font-medium">{health.processMemoryMB} MB (heap: {health.heapUsedMB} / {health.heapTotalMB} MB)</span>
           </div>
           <div class="flex justify-between text-sm">
             <span>Queue Throughput</span>
@@ -675,7 +679,7 @@
                         <button
                           type="button"
                           class="px-2 py-1 rounded text-xs border transition-colors {has
-                            ? 'bg-[var(--color-brand)] text-white border-[var(--color-brand)]'
+                            ? 'bg-brand text-white border-brand'
                             : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400'}"
                           onclick={() => toggleRolePermission(role.id, perm.id)}
                         >

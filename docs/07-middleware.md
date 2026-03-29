@@ -219,7 +219,78 @@ new CorsMiddleware({
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization'],
   exposeHeaders: ['X-Total-Count'],         // Expose custom headers
-  maxAge: 600,                               // Preflight cache
+  maxAge: 600,                               // Preflight cache (seconds)
+})
+```
+
+#### Production CORS Configuration
+
+> **Warning**: `origin: '*'` with `credentials: true` is invalid per the CORS spec — browsers will reject the response. Always specify explicit origins in production.
+
+```typescript
+// Production — explicit allowed origins
+new CorsMiddleware({
+  origin: [
+    'https://myapp.com',
+    'https://admin.myapp.com',
+  ],
+  credentials: true,
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'],
+  maxAge: 86400, // Cache preflight for 24 hours
+})
+
+// Or use environment variable
+new CorsMiddleware({
+  origin: process.env.CORS_ORIGIN?.split(',') || ['https://myapp.com'],
+  credentials: true,
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization'],
+})
+```
+
+#### Preflight Requests
+
+Browsers send an `OPTIONS` preflight request before any "non-simple" request (e.g., `POST` with JSON body, custom headers). CorsMiddleware handles preflight automatically — it responds to `OPTIONS` with the configured CORS headers and a `204 No Content` status. No route handler is needed.
+
+#### CORS Options Reference
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `origin` | `string \| string[]` | `'*'` | Allowed origins |
+| `credentials` | `boolean` | `false` | Allow cookies/auth headers |
+| `allowMethods` | `string[]` | `['GET','POST','PUT','DELETE','OPTIONS']` | Allowed HTTP methods |
+| `allowHeaders` | `string[]` | `['Content-Type','Authorization']` | Allowed request headers |
+| `exposeHeaders` | `string[]` | `[]` | Headers the browser can read |
+| `maxAge` | `number` | `600` | Preflight cache duration (seconds) |
+
+### OriginMiddleware
+
+Blocks cross-origin mutation requests (POST, PUT, PATCH, DELETE) that don't come from the same origin. This provides an extra layer of protection beyond CSRF tokens:
+
+```typescript
+import { OriginMiddleware } from '@beeblock/svelar/middleware';
+```
+
+How it works:
+- **GET/HEAD/OPTIONS** requests pass through unconditionally
+- **POST/PUT/PATCH/DELETE** requests must have an `Origin` or `Referer` header matching the app's host
+- Requests with a `Bearer` token in the `Authorization` header are exempted (API clients don't send Origin headers)
+- `createSvelarApp` enables OriginMiddleware automatically — no extra configuration needed
+
+This is different from CORS (which controls what *other* sites can access) — OriginMiddleware controls what origins can *mutate* your data.
+
+### SignatureMiddleware
+
+Verify HMAC-signed API requests to prevent tampering and replay attacks. See [API Request Signatures](./06-authentication.md#api-request-signatures) for full documentation.
+
+```typescript
+import { SignatureMiddleware } from '@beeblock/svelar/middleware';
+
+new SignatureMiddleware({
+  secret: process.env.API_SIGNING_SECRET!,
+  tolerance: 300,                    // 5 minute window
+  onlyPaths: ['/api/partner/'],      // Only enforce on specific routes
 })
 ```
 

@@ -1,6 +1,6 @@
 # UI Components
 
-Svelar ships a minimal, composable component library built on Svelte 5 runes. Every component is themed via CSS custom properties and works out of the box with Tailwind CSS.
+Svelar ships a minimal, composable component library built on Svelte 5 runes. Every component is themed via Tailwind CSS v4 `@theme` tokens and works out of the box.
 
 ## Available Components
 
@@ -263,6 +263,72 @@ Add `<Toaster />` to your root layout to render toast notifications:
 ```
 
 Positions: `top-right`, `top-left`, `bottom-right`, `bottom-left`, `top-center`, `bottom-center`.
+
+#### Default Icons
+
+Each variant ships with a Lucide-inspired icon:
+
+| Variant | Icon | Description |
+|---------|------|-------------|
+| `success` | CircleCheck | Green circle with checkmark |
+| `error` | CircleX | Red circle with X |
+| `warning` | TriangleAlert | Amber triangle with exclamation |
+| `info` | CircleInfo | Blue circle with "i" |
+| `default` | — | No icon |
+
+#### Customizing the Toaster
+
+The `<Toaster />` component accepts props for global and per-variant styling:
+
+**Global style props:**
+
+| Prop | Type | Description |
+|------|------|-------------|
+| `toastClass` | `string` | Class added to every toast container |
+| `titleClass` | `string` | Class for the title text |
+| `descriptionClass` | `string` | Class for the description text |
+| `actionClass` | `string` | Class for the action button |
+| `closeClass` | `string` | Class for the dismiss button |
+| `progressBarClass` | `string` | Class for the countdown progress bar |
+
+**Per-variant overrides** via the `variants` prop:
+
+```svelte
+<script>
+  import { Toaster } from '@beeblock/svelar/ui';
+  import PartyPopper from 'lucide-svelte/icons/party-popper';
+  import Flame from 'lucide-svelte/icons/flame';
+</script>
+
+<Toaster
+  position="top-right"
+  toastClass="rounded-xl"
+  variants={{
+    success: {
+      icon: PartyPopper,
+      iconClass: 'text-green-700 bg-green-100 ring-green-300',
+      borderClass: 'border-l-green-600',
+      progressClass: 'bg-green-400',
+    },
+    error: {
+      icon: Flame,
+      iconClass: 'text-rose-700 bg-rose-100 ring-rose-300',
+      borderClass: 'border-l-rose-600',
+      containerClass: 'bg-rose-50',
+    },
+  }}
+/>
+```
+
+Each variant accepts:
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `icon` | Svelte Component | Custom icon component (receives `size` prop) |
+| `iconClass` | `string` | Classes for the icon badge (colors, background, ring) |
+| `borderClass` | `string` | Left border accent class |
+| `progressClass` | `string` | Progress bar color class |
+| `containerClass` | `string` | Additional classes on the toast container |
 
 #### Cross-Package Reactivity Note
 

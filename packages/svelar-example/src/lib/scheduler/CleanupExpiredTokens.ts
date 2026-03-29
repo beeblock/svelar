@@ -12,6 +12,5 @@ export default class CleanupExpiredTokens extends ScheduledTask {
   }
 
   async handle(): Promise<void> {
-    console.log('[Scheduler] Cleaning up expired API tokens...');
   }
 }

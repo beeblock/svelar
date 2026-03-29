@@ -736,46 +736,113 @@ await user.roles().sync([1, 2, 4]);
 await user.roles().toggle([2, 5]);
 ```
 
-### Eager Loading
+### Eager Loading (Avoiding N+1 Queries)
 
-Eager loading solves the N+1 query problem by loading relationships in bulk:
+The N+1 problem is the most common performance issue with ORMs. It happens when you load a list of models and then query a relationship for each one individually.
+
+#### The Problem
 
 ```typescript
-// BAD: N+1 queries (1 query for users + N queries for posts)
-const users = await User.all();
+// BAD: N+1 queries — 1 query for users + 1 query PER user for their posts
+const users = await User.all();              // SELECT * FROM users (1 query)
 for (const user of users) {
-  const posts = await user.posts().load(user); // query per user!
+  const posts = await user.posts().load(user); // SELECT * FROM posts WHERE user_id = ? (N queries!)
+  console.log(`${user.name}: ${posts.length} posts`);
 }
+// If you have 100 users, this runs 101 queries!
+```
 
-// GOOD: 2 queries total (1 for users + 1 for all posts)
+#### The Solution: `.with()`
+
+```typescript
+// GOOD: 2 queries total, no matter how many users
 const users = await User.with('posts').get();
+// Query 1: SELECT * FROM users
+// Query 2: SELECT * FROM posts WHERE user_id IN (1, 2, 3, ..., 100)
+
 for (const user of users) {
-  console.log(user.getRelation('posts')); // already loaded, no extra query
+  const posts = user.getRelation('posts');   // already loaded, zero extra queries
+  console.log(`${user.name}: ${posts.length} posts`);
 }
 ```
 
-**Multiple relationships:**
+#### Multiple Relationships
 
 ```typescript
+// 3 queries total: users + posts + profiles
 const users = await User.with('posts', 'profile').get();
 ```
 
-**Nested eager loading** — load relationships of relationships:
+#### Nested Eager Loading
+
+Load relationships of relationships with dot notation:
 
 ```typescript
-// Load users → their posts → each post's comments
+// 3 queries: users → posts → comments
 const users = await User.with('posts.comments').get();
+
+for (const user of users) {
+  for (const post of user.getRelation('posts')) {
+    const comments = post.getRelation('comments');
+    console.log(`${post.title}: ${comments.length} comments`);
+  }
+}
 ```
 
-**With query conditions:**
+#### Common Real-World Patterns
 
 ```typescript
+// API endpoint: list posts with author and comment count
+const posts = await Post
+  .where('published', true)
+  .with('author', 'comments')
+  .latest()
+  .paginate(page, 20);
+
+// Dashboard: users with roles and recent activity
 const users = await User
   .where('active', true)
-  .with('posts')
+  .with('roles', 'profile')
   .orderBy('name')
   .get();
+
+// E-commerce: orders with items and products
+const orders = await Order
+  .where('user_id', userId)
+  .with('items.product')
+  .latest()
+  .get();
 ```
+
+#### When You Can't Use `.with()`
+
+Sometimes you need aggregated data rather than full relationship loading. In these cases use joins or subqueries instead:
+
+```typescript
+// Count posts per user without loading all post objects
+const users = await User.query()
+  .select('users.*')
+  .selectSub((sub) => {
+    sub.from('posts')
+       .selectRaw('COUNT(*)')
+       .whereRaw('posts.user_id = users.id');
+  }, 'post_count')
+  .get();
+
+// Or use a join with groupBy
+const users = await User.query()
+  .select('users.*', 'COUNT(posts.id) as post_count')
+  .leftJoin('posts', 'users.id', '=', 'posts.user_id')
+  .groupBy('users.id')
+  .get();
+```
+
+#### Rules of Thumb
+
+1. **Always use `.with()`** when iterating over models and accessing their relationships
+2. **Use joins** when you need aggregated data (counts, sums) from related tables
+3. **Use `selectSub()`** for computed columns based on related data
+4. **Never call `.load()` inside a loop** — that's the N+1 pattern
 
 ## Model Hooks (Lifecycle Events)
 
@@ -841,6 +908,159 @@ User.boot({
 ```
 
 Available hooks: `creating`, `created`, `updating`, `updated`, `saving`, `saved`, `deleting`, `deleted`.
+
+## Model Observers
+
+When a model has many lifecycle concerns (sending emails, logging, syncing caches), inline hooks become unwieldy. Observers let you group all lifecycle logic for a model into a dedicated class.
+
+### Creating an Observer
+
+```bash
+npx svelar make:observer UserObserver --model User --module users
+```
+
+This generates `src/lib/modules/users/UserObserver.ts`:
+
+```typescript
+import { ModelObserver } from '@beeblock/svelar/orm';
+import type { User } from './User.js';
+
+export class UserObserver extends ModelObserver {
+  async created(user: User) {
+    await sendWelcomeEmail(user);
+  }
+
+  async deleting(user: User) {
+    // Clean up related data before deletion
+    await user.posts().query().delete();
+  }
+
+  async updating(user: User) {
+    // Normalize email before saving
+    user.setAttribute('email', user.getAttribute('email')?.toLowerCase());
+  }
+}
+```
+
+### Registering an Observer
+
+Register observers in your app startup (e.g. `src/app.ts` or a service provider):
+
+```typescript
+import { User } from './lib/modules/users/User.js';
+import { UserObserver } from './lib/modules/users/UserObserver.js';
+
+User.observe(new UserObserver());
+```
+
+You can register multiple observers on the same model — they run in registration order:
+
+```typescript
+User.observe(new UserObserver());
+User.observe(new AuditObserver());
+```
+
+Remove all observers with `removeObservers()`:
+
+```typescript
+User.removeObservers();
+```
+
+### Observer Method Reference
+
+Each method is optional. Only implement the ones you need:
+
+| Method | When it fires |
+|---|---|
+| `creating(model)` | Before a new record is inserted |
+| `created(model)` | After a new record is inserted |
+| `updating(model)` | Before an existing record is updated |
+| `updated(model)` | After an existing record is updated |
+| `saving(model)` | Before any save (create or update) |
+| `saved(model)` | After any save (create or update) |
+| `deleting(model)` | Before deletion |
+| `deleted(model)` | After deletion |
+
+### Auto Event Dispatch
+
+Every model lifecycle event is automatically dispatched through the `Event` system. You can listen for them by string name:
+
+```typescript
+import { Event } from '@beeblock/svelar/events';
+
+// Listen for any user creation
+Event.listen('user.created', async (user) => {
+  await syncToExternalCRM(user);
+});
+
+// Listen for post updates
+Event.listen('post.updated', async (post) => {
+  await invalidateCache(`post:${post.getAttribute('id')}`);
+});
+```
+
+Event names follow the pattern `{modelname}.{event}` (lowercase model name + dot + event name).
+
+### Custom Model Events
+
+Beyond the built-in lifecycle events, you can declare and fire custom events:
+
+```typescript
+import { Model } from '@beeblock/svelar/orm';
+
+export class Post extends Model {
+  static table = 'posts';
+  static events = ['published', 'archived', 'featured'];
+
+  async publish() {
+    await this.update({ published: true, published_at: new Date().toISOString() });
+    await this.fireEvent('published');
+  }
+
+  async archive() {
+    await this.update({ archived: true });
+    await this.fireEvent('archived');
+  }
+}
+```
+
+Listen for custom events the same way:
+
+```typescript
+Event.listen('post.published', async (post) => {
+  await notifySubscribers(post);
+  await pingSearchEngine(post);
+});
+```
+
+Observers can also handle custom events by adding methods matching the event name:
+
+```typescript
+export class PostObserver extends ModelObserver {
+  async created(post: Post) {
+    // ...
+  }
+
+  // Custom event handler
+  async published(post: Post) {
+    await notifySubscribers(post);
+  }
+
+  async archived(post: Post) {
+    await removeFromFeed(post);
+  }
+}
+```
+
+### Hooks vs Observers — When to Use Which
+
+| Use case | Hooks | Observers |
+|---|---|---|
+| Simple, one-liner logic | Inline method or `boot()` | Overkill |
+| Multiple concerns per model | Gets messy | Clean separation |
+| Shared logic across models | Duplicate in each model | Create a reusable observer |
+| Testing | Harder to isolate | Easy to mock/swap |
+| Custom domain events | Not supported | `fireEvent()` + observer methods |
 
 ## Serialization
 
@@ -1077,6 +1297,392 @@ const noSpam = await Comment.where('flagged', true).doesntExist();
 
 // ── Get just emails ──
 const emails = await User.where('active', true).query().pluck('email');
+```
+
+## Advanced Queries
+
+### Nested Where Groups
+
+Group conditions with parentheses for complex logic:
+
+```typescript
+// WHERE active = true AND (role = 'admin' OR role = 'moderator')
+const staff = await User.query()
+  .where('active', true)
+  .whereNested((q) => {
+    q.where('role', 'admin')
+     .orWhere('role', 'moderator');
+  })
+  .get();
+
+// WHERE (age >= 18 AND age <= 65) OR role = 'admin'
+const eligible = await User.query()
+  .whereNested((q) => {
+    q.where('age', '>=', 18)
+     .where('age', '<=', 65);
+  })
+  .orWhereNested((q) => {
+    q.where('role', 'admin');
+  })
+  .get();
+```
+
+### Subqueries (whereSub)
+
+Use a subquery as a value in a WHERE clause:
+
+```typescript
+// Users whose post count is above average
+const prolific = await User.query()
+  .whereSub('id', 'IN', (sub) => {
+    sub.from('posts')
+       .select('user_id')
+       .groupBy('user_id')
+       .whereRaw('COUNT(*) > (SELECT AVG(cnt) FROM (SELECT COUNT(*) as cnt FROM posts GROUP BY user_id))');
+  })
+  .get();
+
+// Users who have the highest-spending order
+const bigSpenders = await User.query()
+  .whereSub('id', '=', (sub) => {
+    sub.from('orders')
+       .select('user_id')
+       .orderBy('total', 'desc')
+       .limit(1);
+  })
+  .get();
+```
+
+### WHERE EXISTS / NOT EXISTS
+
+Check for the existence of related rows:
+
+```typescript
+// Users who have published at least one post
+const authors = await User.query()
+  .whereExists((sub) => {
+    sub.from('posts')
+       .select('1')
+       .whereRaw('posts.user_id = users.id')
+       .where('published', true);
+  })
+  .get();
+
+// Users with no posts
+const lurkers = await User.query()
+  .whereNotExists((sub) => {
+    sub.from('posts')
+       .select('1')
+       .whereRaw('posts.user_id = users.id');
+  })
+  .get();
+```
+
+### CTEs (Common Table Expressions)
+
+Use WITH clauses for readable complex queries:
+
+```typescript
+// Top authors: users ranked by post count
+const topAuthors = await User.query()
+  .withCTE('author_stats', (cte) => {
+    cte.from('posts')
+       .select('user_id', 'COUNT(*) as post_count')
+       .groupBy('user_id');
+  })
+  .select('users.*', 'author_stats.post_count')
+  .join('author_stats', 'users.id', '=', 'author_stats.user_id')
+  .orderBy('author_stats.post_count', 'desc')
+  .limit(10)
+  .get();
+
+// Raw CTE for more complex SQL
+const categories = await Product.query()
+  .withRawCTE('category_revenue', `
+    SELECT category_id, SUM(price * quantity) as revenue
+    FROM order_items
+    GROUP BY category_id
+  `)
+  .select('products.*', 'category_revenue.revenue')
+  .join('category_revenue', 'products.category_id', '=', 'category_revenue.category_id')
+  .orderBy('category_revenue.revenue', 'desc')
+  .get();
+
+// Recursive CTE (e.g., category tree)
+const tree = await Category.query()
+  .withRawCTE('category_tree', `
+    SELECT id, name, parent_id, 0 as depth FROM categories WHERE parent_id IS NULL
+    UNION ALL
+    SELECT c.id, c.name, c.parent_id, ct.depth + 1
+    FROM categories c
+    INNER JOIN category_tree ct ON c.parent_id = ct.id
+  `, [], true)
+  .from('category_tree')
+  .orderBy('depth')
+  .get();
+```
+
+### UNION / UNION ALL
+
+Combine multiple queries into a single result set:
+
+```typescript
+// Active admins UNION active moderators (deduped)
+const staff = await User.query()
+  .where('role', 'admin')
+  .where('active', true)
+  .union((q) => {
+    q.from('users')
+     .where('role', 'moderator')
+     .where('active', true);
+  })
+  .get();
+
+// All posts + all drafts (with duplicates)
+const everything = await Post.query()
+  .where('published', true)
+  .unionAll((q) => {
+    q.from('posts')
+     .where('published', false);
+  })
+  .get();
+```
+
+### Select Raw Expressions
+
+Add raw SQL expressions to your SELECT:
+
+```typescript
+// Count with a custom expression
+const stats = await Order.query()
+  .select('user_id')
+  .selectRaw('COUNT(*) as order_count')
+  .selectRaw('SUM(total) as total_spent')
+  .selectRaw('AVG(total) as avg_order')
+  .groupBy('user_id')
+  .having('order_count', '>', 5)
+  .get();
+```
+
+### Single Value
+
+Get a single scalar value from the database:
+
+```typescript
+const maxPrice = await Product.query().value('price');
+const userName = await User.query().where('id', 1).value('name');
+```
+
+### Conditional Clauses (when)
+
+Apply query conditions conditionally without breaking the chain:
+
+```typescript
+const search = request.url.searchParams.get('search');
+const role = request.url.searchParams.get('role');
+const sortBy = request.url.searchParams.get('sort') ?? 'created_at';
+
+const users = await User.query()
+  .when(!!search, (q) => q.where('name', 'LIKE', `%${search}%`))
+  .when(!!role, (q) => q.where('role', role))
+  .orderBy(sortBy, 'desc')
+  .paginate(1, 20);
+```
+
+### Chunking
+
+Process large datasets in batches without loading everything into memory:
+
+```typescript
+// Process 100 users at a time
+await User.query()
+  .where('active', true)
+  .orderBy('id')
+  .chunk(100, async (users, page) => {
+    for (const user of users) {
+      await sendNewsletter(user);
+    }
+    console.log(`Processed page ${page}`);
+    // Return false to stop early
+  });
+```
+
+### Upsert (Insert or Update)
+
+Insert a row, or update it if a conflict occurs on unique columns:
+
+```typescript
+// Insert user, or update name if email already exists
+await User.query().upsert(
+  { email: 'john@example.com', name: 'John Updated', role: 'admin' },
+  ['email'],          // conflict columns (unique constraint)
+  ['name', 'role']    // columns to update on conflict
+);
+
+// If updateColumns is omitted, updates all non-conflict columns
+await User.query().upsert(
+  { email: 'john@example.com', name: 'John', role: 'admin' },
+  ['email']
+);
+```
+
+Works across SQLite (`ON CONFLICT ... DO UPDATE`), PostgreSQL (`ON CONFLICT ... DO UPDATE SET ... = EXCLUDED`), and MySQL (`ON DUPLICATE KEY UPDATE`).
+
+### Bulk Insert
+
+Insert multiple rows in a single query:
+
+```typescript
+await Post.query().insertMany([
+  { title: 'Post 1', slug: 'post-1', body: 'Content 1', user_id: 1 },
+  { title: 'Post 2', slug: 'post-2', body: 'Content 2', user_id: 1 },
+  { title: 'Post 3', slug: 'post-3', body: 'Content 3', user_id: 2 },
+]);
+```
+
+### Cross Join
+
+```typescript
+const combos = await Size.query()
+  .select('sizes.name as size', 'colors.name as color')
+  .crossJoin('colors')
+  .get();
+```
+
+### Clone
+
+Reuse a query without mutating the original:
+
+```typescript
+const baseQuery = User.query()
+  .where('active', true)
+  .orderBy('name');
+
+const admins = await baseQuery.clone().where('role', 'admin').get();
+const editors = await baseQuery.clone().where('role', 'editor').get();
+const total = await baseQuery.clone().count();
+```
+
+### Transactions
+
+Wrap multiple operations in a database transaction — automatically commits on success, rolls back on error:
+
+```typescript
+import { Connection } from '@beeblock/svelar/database';
+
+// Basic transaction
+await Connection.transaction(async () => {
+  const user = await User.create({ name: 'John', email: 'john@example.com', password: hash });
+  await Profile.create({ user_id: user.id, bio: 'Hello!' });
+  await user.roles().attach(1);
+});
+// If any operation fails, ALL changes are rolled back
+
+// Transaction with return value
+const order = await Connection.transaction(async () => {
+  const order = await Order.create({ user_id: userId, total: 99.99 });
+  await OrderItem.query().insertMany([
+    { order_id: order.id, product_id: 1, quantity: 2, price: 49.99 },
+    { order_id: order.id, product_id: 3, quantity: 1, price: 0.01 },
+  ]);
+  await Product.where('id', 1).decrement('stock', 2);
+  await Product.where('id', 3).decrement('stock', 1);
+  return order;
+});
+
+// Transaction on a specific connection
+await Connection.transaction(async () => {
+  await AnalyticsEvent.create({ type: 'purchase', payload: { orderId: 1 } });
+}, 'analytics');
+```
+
+### firstOrCreate / updateOrCreate
+
+Find-or-insert patterns without race conditions:
+
+```typescript
+// Find user by email, or create with defaults
+const user = await User.query().firstOrCreate(
+  { email: 'john@example.com' },           // search criteria
+  { name: 'John Doe', role: 'user' }       // extra data if creating
+);
+
+// Find by email and update, or create new
+const user = await User.query().updateOrCreate(
+  { email: 'john@example.com' },           // search criteria
+  { name: 'John Updated', last_login: new Date().toISOString() } // data to set
+);
+```
+
+### Compare Columns (whereColumn)
+
+Compare two database columns directly:
+
+```typescript
+// Posts where updated_at is after created_at (i.e., edited)
+const edited = await Post.query()
+  .whereColumn('updated_at', '>', 'created_at')
+  .get();
+
+// Two-arg form (defaults to =)
+const selfReferencing = await Employee.query()
+  .whereColumn('manager_id', 'id')
+  .get();
+```
+
+### Subquery Select
+
+Use a subquery as a computed column:
+
+```typescript
+const users = await User.query()
+  .select('users.*')
+  .selectSub((sub) => {
+    sub.from('posts')
+       .selectRaw('COUNT(*)')
+       .whereRaw('posts.user_id = users.id');
+  }, 'post_count')
+  .orderBy('post_count', 'desc')
+  .get();
+```
+
+### Raw Having / Raw Order By
+
+```typescript
+// Having with raw SQL
+const stats = await Order.query()
+  .select('user_id')
+  .selectRaw('SUM(total) as revenue')
+  .groupBy('user_id')
+  .havingRaw('SUM(total) > ?', [1000])
+  .get();
+
+// Order by raw expression
+const users = await User.query()
+  .orderByRaw("CASE WHEN role = 'admin' THEN 0 WHEN role = 'mod' THEN 1 ELSE 2 END")
+  .get();
+```
+
+### Truncate
+
+Clear all rows from a table (resets auto-increment):
+
+```typescript
+await Post.query().truncate();
+```
+
+### Or Variants
+
+All major WHERE methods have `or` variants:
+
+```typescript
+const users = await User.query()
+  .where('role', 'admin')
+  .orWhereIn('id', [1, 2, 3])
+  .orWhereNull('deleted_at')
+  .orWhereNotNull('verified_at')
+  .orWhereRaw('age > ?', [21])
+  .get();
 ```
 
 ## Best Practices

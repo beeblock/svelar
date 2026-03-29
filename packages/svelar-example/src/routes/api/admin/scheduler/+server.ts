@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from '@sveltejs/kit';
-import { ScheduleMonitor } from 'svelar/scheduler/ScheduleMonitor';
+import { ScheduleMonitor } from '$lib/server/scheduler-monitor.js';
 
 /**
  * GET /api/admin/scheduler

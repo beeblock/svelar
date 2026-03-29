@@ -27,19 +27,21 @@ That's it. The CLI scaffolds a complete SvelteKit + Svelar project, installs dep
 - **Icon Libraries** — `lucide-svelte` and `@tabler/icons-svelte` included
 - **Environment Config** — `.env.example` with sensible defaults
 - **Vite Config** — All `@beeblock/svelar/*` aliases, SSR config, and `fs.allow` pre-wired
+- **EventServiceProvider** — Pre-wired for event listeners, subscribers, and model observers
+- **Application Bootstrap** — `app.ts` bootstraps the service provider lifecycle
 
 ### Project Structure (DDD Modular Monolith)
 
 ```
 my-app/
 ├── src/
-│   ├── app.ts                    # Bootstrap (database, hashing, auth)
+│   ├── app.ts                    # Bootstrap (database, hashing, providers)
 │   ├── app.css                   # Tailwind CSS + theme
 │   ├── app.html                  # SvelteKit shell
 │   ├── hooks.server.ts           # Middleware pipeline
 │   ├── lib/
 │   │   ├── modules/              # Domain modules (DDD)
-│   │   │   ├── auth/             #   User.ts, AuthController.ts, AuthService.ts, auth.schema.ts
+│   │   │   ├── auth/             #   User.ts, UserObserver.ts, AuthController.ts, AuthService.ts
 │   │   │   ├── billing/          #   Invoice.ts, BillingService.ts, billing.schema.ts
 │   │   │   └── posts/            #   Post.ts, PostController.ts, PostService.ts
 │   │   ├── shared/               # Cross-cutting concerns
@@ -50,8 +52,10 @@ my-app/
 │   │   │   ├── plugins/          #   Custom plugins
 │   │   │   ├── channels/         #   Broadcast channels
 │   │   │   ├── commands/         #   Custom CLI commands
-│   │   │   ├── providers/        #   Service providers
+│   │   │   ├── providers/        #   Service providers (EventServiceProvider, etc.)
 │   │   │   └── scheduler/        #   Scheduled tasks
+│   │   ├── events/               # Event classes (npx svelar make:event)
+│   │   ├── listeners/            # Listener classes (npx svelar make:listener)
 │   │   └── database/
 │   │       ├── migrations/
 │   │       └── seeders/
@@ -59,6 +63,11 @@ my-app/
 │       ├── +layout.svelte
 │       ├── +page.svelte
 │       └── api/
+├── storage/
+│   ├── logs/                     # Application logs
+│   ├── cache/                    # File-based cache
+│   ├── uploads/                  # User uploads
+│   └── sessions/                 # File-based sessions
 ├── static/
 ├── vite.config.ts
 ├── svelte.config.js
@@ -67,7 +76,7 @@ my-app/
 └── package.json
 ```
 
-Each **module** is a self-contained domain — its model, controller, service, repository, DTOs, and schema all live together. The `shared/` folder holds cross-cutting infrastructure.
+Each **module** is a self-contained domain — its model, controller, service, repository, observers, DTOs, and schema all live together. The `shared/` folder holds cross-cutting infrastructure. The `events/` and `listeners/` folders hold application-wide event classes and their handlers.
 
 ## Step 1: Environment Variables
 
@@ -299,6 +308,19 @@ npx @beeblock/svelar make:repository User --module=auth   # Repository (--model=
 npx @beeblock/svelar make:action CreateUser --module=auth  # Action
 npx @beeblock/svelar make:request StoreUser --module=auth  # FormRequest DTO
 npx @beeblock/svelar make:resource User --module=auth     # API Resource (response)
+npx @beeblock/svelar make:schema User --module=auth       # Contract schema (Zod + shared types)
+npx @beeblock/svelar make:observer UserObserver --model=User --module=auth  # Model Observer
+
+# Code Generation — Routes
+npx @beeblock/svelar make:route posts --api --resource -c PostController    # CRUD routes
+npx @beeblock/svelar make:route admin/settings --api -m GET,PUT             # Custom methods
+npx @beeblock/svelar routes:list                           # Show all routes
+npx @beeblock/svelar routes:list --api                     # API routes only
+npx @beeblock/svelar routes:list --method POST             # Filter by method
+
+# Code Generation — Events (goes into src/lib/events/ and src/lib/listeners/)
+npx @beeblock/svelar make:event UserRegistered             # Event class
+npx @beeblock/svelar make:listener SendWelcomeEmail --event=UserRegistered  # Listener class
 
 # Code Generation — Shared (goes into src/lib/shared/<type>/)
 npx @beeblock/svelar make:middleware RateLimit  # Middleware

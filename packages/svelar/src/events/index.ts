@@ -191,3 +191,8 @@ import { singleton } from '../support/singleton.js';
  * Global event dispatcher singleton
  */
 export const Event = singleton('svelar.event', () => new EventDispatcher());
+
+// ── Re-exports ────────────────────────────────────────────
+
+export { Listener } from './Listener.js';
+export { EventServiceProvider, type ListenMap, type ObserverMap, type ListenerClass } from './EventServiceProvider.js';

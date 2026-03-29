@@ -16,7 +16,7 @@
       hreflang={locale}
       data-sveltekit-reload
       class="px-2 py-1 text-xs font-medium transition-colors {current
-        ? 'bg-[var(--color-brand)] text-white'
+        ? 'bg-brand text-white'
         : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'}"
     >
       {labels[locale] ?? locale.toUpperCase()}

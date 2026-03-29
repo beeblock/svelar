@@ -25,6 +25,8 @@
 
 import { QueryBuilder } from './QueryBuilder.js';
 import { HasOne, HasMany, BelongsTo, BelongsToMany } from './Relationship.js';
+import { type ModelObserver, type ModelEventName, MODEL_EVENTS } from './Observer.js';
+import { Event } from '../events/index.js';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -76,6 +78,12 @@ export class Model {
 
   /** Registered model hooks */
   private static hooks: Map<string, ModelHooks> = new Map();
+
+  /** Registered model observers */
+  private static observers: Map<string, ModelObserver[]> = new Map();
+
+  /** Custom model events (e.g. ['published', 'archived']) */
+  static events: string[] = [];
 
   // ── Instance Properties ──
 
@@ -503,17 +511,70 @@ export class Model {
     this.hooks.set(this.name, hooks);
   }
 
+  /** Register an observer for this model class */
+  static observe(observer: ModelObserver): void {
+    const existing = this.observers.get(this.name) ?? [];
+    existing.push(observer);
+    this.observers.set(this.name, existing);
+  }
+
+  /** Remove all observers for this model class */
+  static removeObservers(): void {
+    this.observers.delete(this.name);
+  }
+
   private async fireHook(event: keyof ModelHooks): Promise<void> {
     const ctor = this.constructor as typeof Model;
+
+    // Inline hooks (from static boot())
     const hooks = Model.hooks.get(ctor.name);
     if (hooks?.[event]) {
       await hooks[event]!(this);
     }
 
-    // Also check instance-level methods
+    // Instance-level methods (e.g. creating() on the model itself)
     if (typeof (this as any)[event] === 'function') {
       await (this as any)[event]();
     }
+
+    // Observer methods
+    const observers = Model.observers.get(ctor.name) ?? [];
+    for (const observer of observers) {
+      const method = observer[event as ModelEventName];
+      if (typeof method === 'function') {
+        await method.call(observer, this);
+      }
+    }
+
+    // Auto-dispatch event through EventDispatcher (e.g. 'user.created')
+    const modelName = ctor.name.toLowerCase();
+    await Event.emit(`${modelName}.${event}`, this);
+  }
+
+  /** Fire a custom model event */
+  async fireEvent(eventName: string): Promise<void> {
+    const ctor = this.constructor as typeof Model;
+
+    // Validate it's a declared custom event
+    if (!ctor.events.includes(eventName)) {
+      throw new Error(
+        `Event "${eventName}" is not declared in ${ctor.name}.events. ` +
+        `Add it to: static events = ['${eventName}', ...];`
+      );
+    }
+
+    // Call observer method if it exists
+    const observers = Model.observers.get(ctor.name) ?? [];
+    for (const observer of observers) {
+      const method = (observer as any)[eventName];
+      if (typeof method === 'function') {
+        await method.call(observer, this);
+      }
+    }
+
+    // Dispatch through EventDispatcher
+    const modelName = ctor.name.toLowerCase();
+    await Event.emit(`${modelName}.${eventName}`, this);
   }
 
   // ── Private Helpers ──────────────────────────────────────

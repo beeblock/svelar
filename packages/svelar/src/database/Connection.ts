@@ -181,6 +181,57 @@ class ConnectionManager {
     return this.connections.has(name ?? this.defaultName);
   }
 
+  /**
+   * Run a callback inside a database transaction.
+   * Automatically commits on success, rolls back on error.
+   */
+  async transaction<T>(callback: () => Promise<T>, connectionName?: string): Promise<T> {
+    const config = this.getConfig(connectionName);
+    const client = await this.rawClient(connectionName);
+
+    switch (config.driver) {
+      case 'sqlite': {
+        client.exec('BEGIN');
+        try {
+          const result = await callback();
+          client.exec('COMMIT');
+          return result;
+        } catch (err) {
+          client.exec('ROLLBACK');
+          throw err;
+        }
+      }
+      case 'postgres': {
+        // postgres.js uses sql`...` template strings
+        await client`BEGIN`;
+        try {
+          const result = await callback();
+          await client`COMMIT`;
+          return result;
+        } catch (err) {
+          await client`ROLLBACK`;
+          throw err;
+        }
+      }
+      case 'mysql': {
+        const conn = await client.getConnection();
+        await conn.beginTransaction();
+        try {
+          const result = await callback();
+          await conn.commit();
+          conn.release();
+          return result;
+        } catch (err) {
+          await conn.rollback();
+          conn.release();
+          throw err;
+        }
+      }
+      default:
+        throw new Error(`Unsupported driver: ${config.driver}`);
+    }
+  }
+
   // ── Private ──────────────────────────────────────────────
 
   private async createConnection(config: DatabaseConfig): Promise<ActiveConnection> {

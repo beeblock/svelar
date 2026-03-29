@@ -23,8 +23,8 @@
       <CardContent class="pt-6">
         <div>
           <p class="text-sm text-gray-600">{m.dash_stat_api_keys()}</p>
-          <p class="text-3xl font-bold text-[var(--color-brand)] mt-2">{data.stats.apiKeyCount}</p>
-          <a href={localizeHref('/dashboard/api-keys')} class="text-sm text-[var(--color-brand)] hover:underline mt-2 inline-block">{m.dash_manage_keys()}</a>
+          <p class="text-3xl font-bold text-brand mt-2">{data.stats.apiKeyCount}</p>
+          <a href={localizeHref('/dashboard/api-keys')} class="text-sm text-brand hover:underline mt-2 inline-block">{m.dash_manage_keys()}</a>
         </div>
       </CardContent>
     </Card>
@@ -33,8 +33,8 @@
       <CardContent class="pt-6">
         <div>
           <p class="text-sm text-gray-600">{m.dash_stat_team_members()}</p>
-          <p class="text-3xl font-bold text-[var(--color-brand)] mt-2">{data.stats.teamMemberCount}</p>
-          <a href={localizeHref('/dashboard/team')} class="text-sm text-[var(--color-brand)] hover:underline mt-2 inline-block">{m.dash_manage_team()}</a>
+          <p class="text-3xl font-bold text-brand mt-2">{data.stats.teamMemberCount}</p>
+          <a href={localizeHref('/dashboard/team')} class="text-sm text-brand hover:underline mt-2 inline-block">{m.dash_manage_team()}</a>
         </div>
       </CardContent>
     </Card>
@@ -44,7 +44,7 @@
         <div>
           <p class="text-sm text-gray-600">{m.dash_stat_account()}</p>
           <Badge variant="default" class="mt-2">{data.user.role}</Badge>
-          <a href={localizeHref('/dashboard/billing')} class="text-sm text-[var(--color-brand)] hover:underline mt-2 inline-block block">{m.dash_view_billing()}</a>
+          <a href={localizeHref('/dashboard/billing')} class="text-sm text-brand hover:underline mt-2 inline-block block">{m.dash_view_billing()}</a>
         </div>
       </CardContent>
     </Card>
@@ -84,7 +84,7 @@
         <div class="space-y-3">
           {#each data.recentActivity as entry, i (i)}
             <div class="flex items-start gap-3 py-2 {i < data.recentActivity.length - 1 ? 'border-b border-gray-100' : ''}">
-              <div class="w-2 h-2 mt-2 rounded-full bg-[var(--color-brand)]"></div>
+              <div class="w-2 h-2 mt-2 rounded-full bg-brand"></div>
               <div class="flex-1">
                 <p class="text-sm text-gray-900">{entry.description}</p>
                 {#if entry.timestamp}

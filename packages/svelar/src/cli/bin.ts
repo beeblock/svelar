@@ -10,6 +10,27 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { register } from 'node:module';
+import { readFileSync, existsSync } from 'node:fs';
+
+// Load .env file (zero-dependency, won't override existing env vars)
+const envPath = join(process.cwd(), '.env');
+if (existsSync(envPath)) {
+  for (const line of readFileSync(envPath, 'utf-8').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx === -1) continue;
+    const key = trimmed.slice(0, eqIdx).trim();
+    let value = trimmed.slice(eqIdx + 1).trim();
+    // Strip surrounding quotes
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    if (!(key in process.env)) {
+      process.env[key] = value;
+    }
+  }
+}
 
 // Register the TS resolve hook so dynamic imports of .ts files work
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -38,6 +59,12 @@ import { MakeDockerCommand } from './commands/MakeDockerCommand.js';
 import { MakeBroadcastingCommand } from './commands/MakeBroadcastingCommand.js';
 import { MakeDashboardCommand } from './commands/MakeDashboardCommand.js';
 import { MakeResourceCommand } from './commands/MakeResourceCommand.js';
+import { MakeSchemaCommand } from './commands/MakeSchemaCommand.js';
+import { MakeObserverCommand } from './commands/MakeObserverCommand.js';
+import { MakeEventCommand } from './commands/MakeEventCommand.js';
+import { MakeListenerCommand } from './commands/MakeListenerCommand.js';
+import { MakeRouteCommand } from './commands/MakeRouteCommand.js';
+import { RoutesListCommand } from './commands/RoutesListCommand.js';
 
 // Database
 import { MigrateCommand } from './commands/MigrateCommand.js';
@@ -73,6 +100,7 @@ cli.register(MakeRepositoryCommand);
 cli.register(MakeActionCommand);
 cli.register(MakeRequestCommand);
 cli.register(MakeResourceCommand);
+cli.register(MakeSchemaCommand);
 cli.register(MakePluginCommand);
 cli.register(MakeTaskCommand);
 cli.register(MakeJobCommand);
@@ -82,6 +110,11 @@ cli.register(MakeChannelCommand);
 cli.register(MakeDockerCommand);
 cli.register(MakeBroadcastingCommand);
 cli.register(MakeDashboardCommand);
+cli.register(MakeObserverCommand);
+cli.register(MakeEventCommand);
+cli.register(MakeListenerCommand);
+cli.register(MakeRouteCommand);
+cli.register(RoutesListCommand);
 cli.register(MigrateCommand);
 cli.register(SeedCommand);
 cli.register(ScheduleRunCommand);

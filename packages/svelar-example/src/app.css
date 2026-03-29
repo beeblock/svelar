@@ -12,6 +12,6 @@
 
 @layer components {
   .prose-code {
-    @apply bg-gray-100 px-1.5 py-0.5 rounded text-sm font-mono text-[var(--color-brand)];
+    @apply bg-gray-100 px-1.5 py-0.5 rounded text-sm font-mono text-brand;
   }
 }

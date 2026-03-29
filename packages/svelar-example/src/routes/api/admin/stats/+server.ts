@@ -3,7 +3,7 @@ import type { RequestEvent } from '@sveltejs/kit';
 import { User } from '$lib/models/User.js';
 import { Post } from '$lib/models/Post.js';
 import { JobMonitor } from 'svelar/queue/JobMonitor';
-import { ScheduleMonitor } from 'svelar/scheduler/ScheduleMonitor';
+import { ScheduleMonitor } from '$lib/server/scheduler-monitor.js';
 import { LogViewer } from 'svelar/logging/LogViewer';
 
 export async function GET(event: RequestEvent) {

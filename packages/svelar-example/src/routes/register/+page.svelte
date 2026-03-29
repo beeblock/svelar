@@ -101,7 +101,7 @@
     <CardFooter class="border-t pt-6">
       <p class="text-sm text-center w-full text-gray-600">
         {m.register_has_account()}
-        <a href={localizeHref('/login')} class="font-medium text-[var(--color-brand)] hover:underline">
+        <a href={localizeHref('/login')} class="font-medium text-brand hover:underline">
           {m.register_login_link()}
         </a>
       </p>

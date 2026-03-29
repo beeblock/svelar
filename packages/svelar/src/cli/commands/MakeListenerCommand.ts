@@ -1,0 +1,60 @@
+/**
+ * make:listener — Generate a new event Listener class
+ */
+
+import { Command } from '../Command.js';
+import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+
+export class MakeListenerCommand extends Command {
+  name = 'make:listener';
+  description = 'Create a new event listener class';
+  arguments = ['name'];
+  flags = [
+    { name: 'event', alias: 'e', description: 'The event class this listener handles', type: 'string' as const },
+  ];
+
+  async handle(args: string[], flags: Record<string, any>): Promise<void> {
+    const name = args[0];
+    if (!name) {
+      this.error('Please provide a listener name (e.g. SendWelcomeEmail).');
+      return;
+    }
+
+    const listenersDir = join(process.cwd(), 'src', 'lib', 'listeners');
+    mkdirSync(listenersDir, { recursive: true });
+
+    const filePath = join(listenersDir, `${name}.ts`);
+    if (existsSync(filePath)) {
+      this.warn(`Listener ${name} already exists at ${filePath}`);
+      return;
+    }
+
+    const eventName = flags.event || 'any';
+    const eventImport = flags.event
+      ? `import type { ${flags.event} } from '../events/${flags.event}.js';\n\n`
+      : '';
+    const eventType = flags.event || 'any';
+
+    const content = `import { Listener } from '@beeblock/svelar/events';
+${eventImport}export class ${name} extends Listener<${eventType}> {
+  async handle(event: ${eventType}): Promise<void> {
+    // Handle the event
+    // e.g. await Mail.to(event.user.email).send(new WelcomeEmail());
+  }
+
+  // Optionally filter which events to handle:
+  // shouldHandle(event: ${eventType}): boolean {
+  //   return true;
+  // }
+}
+`;
+
+    writeFileSync(filePath, content);
+    this.success(`Listener created: src/lib/listeners/${name}.ts`);
+    if (flags.event) {
+      this.info(`Don't forget to register it in your EventServiceProvider:`);
+      this.info(`  [${flags.event}.name]: [${name}]`);
+    }
+  }
+}

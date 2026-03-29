@@ -12,6 +12,6 @@ export default class QueueHealthCheck extends ScheduledTask {
   }
 
   async handle(): Promise<void> {
-    console.log('[Scheduler] Running queue health check...');
+    // Check queue size and pending retries
   }
 }

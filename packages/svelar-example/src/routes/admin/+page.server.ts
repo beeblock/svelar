@@ -2,7 +2,7 @@ import type { ServerLoadEvent } from '@sveltejs/kit';
 import { User } from '$lib/models/User.js';
 import { Post } from '$lib/models/Post.js';
 import { JobMonitor } from 'svelar/queue/JobMonitor';
-import { ScheduleMonitor } from 'svelar/scheduler/ScheduleMonitor';
+import { ScheduleMonitor } from '$lib/server/scheduler-monitor.js';
 import { LogViewer } from 'svelar/logging/LogViewer';
 import { Permissions } from 'svelar/permissions';
 
@@ -42,13 +42,22 @@ export async function load(event: ServerLoadEvent) {
   } catch { /* no logs yet */ }
 
   // System health
+  const { totalmem, freemem } = await import('os');
   const memUsage = process.memoryUsage();
+  const systemTotalMB = Math.round(totalmem() / 1024 / 1024);
+  const systemFreeMB = Math.round(freemem() / 1024 / 1024);
+  const systemUsedMB = systemTotalMB - systemFreeMB;
   const health = {
     status: 'ok',
     uptime: process.uptime(),
-    memoryUsedMB: Math.round(memUsage.heapUsed / 1024 / 1024),
-    memoryTotalMB: Math.round(memUsage.heapTotal / 1024 / 1024),
-    memoryPercent: Math.round((memUsage.heapUsed / memUsage.heapTotal) * 100),
+    // Process memory (RSS = total memory footprint of this Node process)
+    processMemoryMB: Math.round(memUsage.rss / 1024 / 1024),
+    heapUsedMB: Math.round(memUsage.heapUsed / 1024 / 1024),
+    heapTotalMB: Math.round(memUsage.heapTotal / 1024 / 1024),
+    // System memory
+    systemUsedMB,
+    systemTotalMB,
+    systemPercent: Math.round((systemUsedMB / systemTotalMB) * 100),
   };
 
   // Roles & Permissions

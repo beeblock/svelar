@@ -11,7 +11,7 @@
   let { variant = 'default', class: className = '', children, ...rest }: Props = $props();
 
   const variants: Record<string, string> = {
-    default: 'bg-[var(--color-brand)] text-white',
+    default: 'bg-brand text-white',
     secondary: 'bg-gray-100 text-gray-900',
     destructive: 'bg-red-100 text-red-900',
     outline: 'border border-gray-300 bg-white text-gray-900',

@@ -24,12 +24,12 @@
   }: Props = $props();
 
   const variants: Record<string, string> = {
-    default: 'bg-[var(--color-brand)] text-white hover:bg-[var(--color-brand-dark)] shadow-sm',
+    default: 'bg-brand text-white hover:bg-brand-dark shadow-sm',
     destructive: 'bg-red-500 text-white hover:bg-red-600 shadow-sm',
     outline: 'border border-gray-300 bg-white hover:bg-gray-50 text-gray-700',
     secondary: 'bg-gray-100 text-gray-900 hover:bg-gray-200',
     ghost: 'hover:bg-gray-100 text-gray-700',
-    link: 'text-[var(--color-brand)] underline-offset-4 hover:underline',
+    link: 'text-brand underline-offset-4 hover:underline',
   };
 
   const sizes: Record<string, string> = {
@@ -43,7 +43,7 @@
 <button
   {type}
   {disabled}
-  class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 {variants[variant]} {sizes[size]} {className}"
+  class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 {variants[variant]} {sizes[size]} {className}"
   {onclick}
   {...rest}
 >

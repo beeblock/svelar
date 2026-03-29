@@ -444,6 +444,147 @@ export class OriginMiddleware extends Middleware {
 }
 
 /**
+ * API Signature Verification Middleware
+ *
+ * Verifies that incoming API requests are signed with an HMAC signature.
+ * This provides an extra layer of security beyond Bearer tokens — even if
+ * a token is stolen, requests can't be forged without the signing secret.
+ *
+ * Clients sign requests by computing:
+ *   HMAC-SHA256(secret, timestamp + method + path + body)
+ *
+ * And sending the signature + timestamp in headers:
+ *   X-Signature: <hex digest>
+ *   X-Timestamp: <unix seconds>
+ *
+ * The middleware rejects requests with:
+ * - Missing signature or timestamp headers
+ * - Timestamp older than the tolerance window (prevents replay attacks)
+ * - Invalid HMAC signature
+ *
+ * @example
+ * ```ts
+ * new SignatureMiddleware({
+ *   secret: process.env.API_SIGNING_SECRET,
+ *   tolerance: 300,  // 5 minutes
+ * })
+ * ```
+ */
+export class SignatureMiddleware extends Middleware {
+  private secret: string;
+  private tolerance: number;
+  private signatureHeader: string;
+  private timestampHeader: string;
+  private onlyPaths: string[] | null;
+
+  constructor(
+    options: {
+      /** The shared signing secret */
+      secret: string;
+      /** Max age of a request in seconds (default: 300 = 5 minutes) */
+      tolerance?: number;
+      /** Header name for the signature (default: 'X-Signature') */
+      signatureHeader?: string;
+      /** Header name for the timestamp (default: 'X-Timestamp') */
+      timestampHeader?: string;
+      /** If set, only enforce signature on these path prefixes */
+      onlyPaths?: string[];
+    }
+  ) {
+    super();
+    this.secret = options.secret;
+    this.tolerance = options.tolerance ?? 300;
+    this.signatureHeader = options.signatureHeader ?? 'X-Signature';
+    this.timestampHeader = options.timestampHeader ?? 'X-Timestamp';
+    this.onlyPaths = options.onlyPaths ?? null;
+  }
+
+  async handle(ctx: MiddlewareContext, next: NextFunction): Promise<Response | void> {
+    const { event } = ctx;
+
+    // Only enforce on matching paths (if configured)
+    if (this.onlyPaths) {
+      const pathname = event.url.pathname;
+      if (!this.onlyPaths.some((p: string) => pathname.startsWith(p))) {
+        return next();
+      }
+    }
+
+    const signature = event.request.headers.get(this.signatureHeader);
+    const timestamp = event.request.headers.get(this.timestampHeader);
+
+    if (!signature || !timestamp) {
+      return new Response(
+        JSON.stringify({ message: 'Missing request signature' }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Check timestamp to prevent replay attacks
+    const requestTime = parseInt(timestamp, 10);
+    const now = Math.floor(Date.now() / 1000);
+    if (isNaN(requestTime) || Math.abs(now - requestTime) > this.tolerance) {
+      return new Response(
+        JSON.stringify({ message: 'Request signature expired' }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Read body (clone request so downstream can still read it)
+    const clone = event.request.clone();
+    const body = await clone.text();
+
+    // Compute expected signature: HMAC-SHA256(secret, timestamp.method.path.body)
+    const { createHmac } = await import('node:crypto');
+    const method = event.request.method.toUpperCase();
+    const path = event.url.pathname + event.url.search;
+    const payload = `${timestamp}.${method}.${path}.${body}`;
+    const expected = createHmac('sha256', this.secret).update(payload).digest('hex');
+
+    // Timing-safe comparison
+    if (signature.length !== expected.length || !this.timingSafeCompare(signature, expected)) {
+      return new Response(
+        JSON.stringify({ message: 'Invalid request signature' }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    return next();
+  }
+
+  private timingSafeCompare(a: string, b: string): boolean {
+    if (a.length !== b.length) return false;
+    const encoder = new TextEncoder();
+    const bufA = encoder.encode(a);
+    const bufB = encoder.encode(b);
+    let result = 0;
+    for (let i = 0; i < bufA.length; i++) {
+      result |= bufA[i] ^ bufB[i];
+    }
+    return result === 0;
+  }
+
+  /**
+   * Helper to generate a signature on the client side.
+   * Can be used in Node.js clients or exported for documentation.
+   */
+  static sign(
+    secret: string,
+    method: string,
+    path: string,
+    body: string,
+    timestamp?: number
+  ): { signature: string; timestamp: number } {
+    // Use dynamic import to avoid issues in non-Node environments
+    const { createHmac } = require('node:crypto');
+    const ts = timestamp ?? Math.floor(Date.now() / 1000);
+    const payload = `${ts}.${method.toUpperCase()}.${path}.${body}`;
+    const signature = createHmac('sha256', secret).update(payload).digest('hex');
+    return { signature, timestamp: ts };
+  }
+}
+
+/**
  * Throttle Middleware — stricter per-route rate limiting
  *
  * Unlike the global RateLimitMiddleware, this is designed for specific

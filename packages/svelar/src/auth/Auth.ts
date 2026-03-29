@@ -40,6 +40,12 @@ export interface JwtConfig {
   expiresIn?: number; // seconds, default 3600
   algorithm?: 'HS256' | 'HS384' | 'HS512';
   issuer?: string;
+  /** Enable refresh tokens (default: false) */
+  refreshTokens?: boolean;
+  /** Refresh token lifetime in seconds (default: 604800 = 7 days) */
+  refreshExpiresIn?: number;
+  /** Table storing refresh tokens (default: 'refresh_tokens') */
+  refreshTable?: string;
 }
 
 export interface TokenConfig {
@@ -60,6 +66,14 @@ export interface JwtPayload {
   exp: number;
   iss?: string;
   [key: string]: any;
+}
+
+export interface JwtTokenPair {
+  user: AuthUser;
+  token: string;
+  expiresAt: Date;
+  refreshToken?: string;
+  refreshExpiresAt?: Date;
 }
 
 // ── JWT Helpers (zero-dependency) ──────────────────────────
@@ -175,11 +189,11 @@ export class AuthManager {
 
   /**
    * Attempt JWT-based login.
-   * Returns user + token on success, null on failure.
+   * Returns user + access token (+ refresh token if enabled) on success, null on failure.
    */
   async attemptJwt(
     credentials: Record<string, any>
-  ): Promise<{ user: AuthUser; token: string; expiresAt: Date } | null> {
+  ): Promise<JwtTokenPair | null> {
     const { Hash } = await import('../hashing/Hash.js');
 
     if (!this.config.jwt) {
@@ -204,20 +218,111 @@ export class AuthManager {
 
     this.currentUser = user;
 
-    const expiresIn = this.config.jwt.expiresIn ?? 3600;
+    return this.issueTokenPair(user);
+  }
+
+  /**
+   * Issue an access token (and optionally a refresh token) for a user.
+   */
+  private async issueTokenPair(user: AuthUser): Promise<JwtTokenPair> {
+    const jwt = this.config.jwt!;
+    const expiresIn = jwt.expiresIn ?? 3600;
     const now = Math.floor(Date.now() / 1000);
 
     const payload: JwtPayload = {
       sub: user.getAttribute('id'),
       iat: now,
       exp: now + expiresIn,
-      ...(this.config.jwt.issuer ? { iss: this.config.jwt.issuer } : {}),
+      ...(jwt.issuer ? { iss: jwt.issuer } : {}),
     };
 
-    const token = signJwt(payload, this.config.jwt.secret, this.config.jwt.algorithm);
+    const token = signJwt(payload, jwt.secret, jwt.algorithm);
     const expiresAt = new Date((now + expiresIn) * 1000);
 
-    return { user, token, expiresAt };
+    const result: JwtTokenPair = { user, token, expiresAt };
+
+    // Issue refresh token if enabled
+    if (jwt.refreshTokens) {
+      const refreshExpiresIn = jwt.refreshExpiresIn ?? 604800; // 7 days
+      const refreshToken = randomBytes(32).toString('base64url');
+      const hashedRefresh = createHmac('sha256', jwt.secret).update(refreshToken).digest('hex');
+      const refreshExpiresAt = new Date((now + refreshExpiresIn) * 1000);
+
+      const { Connection } = await import('../database/Connection.js');
+      const table = jwt.refreshTable ?? 'refresh_tokens';
+
+      await Connection.raw(
+        `INSERT INTO ${table} (user_id, token, expires_at, created_at) VALUES (?, ?, ?, ?)`,
+        [user.getAttribute('id'), hashedRefresh, refreshExpiresAt.toISOString(), new Date().toISOString()]
+      );
+
+      result.refreshToken = refreshToken;
+      result.refreshExpiresAt = refreshExpiresAt;
+    }
+
+    return result;
+  }
+
+  /**
+   * Exchange a refresh token for a new access token + refresh token pair.
+   * The old refresh token is revoked (rotation).
+   */
+  async refreshJwt(refreshToken: string): Promise<JwtTokenPair | null> {
+    if (!this.config.jwt) {
+      throw new Error('JWT configuration required.');
+    }
+    if (!this.config.jwt.refreshTokens) {
+      throw new Error('Refresh tokens are not enabled. Set jwt.refreshTokens = true.');
+    }
+
+    const jwt = this.config.jwt;
+    const hashedRefresh = createHmac('sha256', jwt.secret).update(refreshToken).digest('hex');
+    const { Connection } = await import('../database/Connection.js');
+    const table = jwt.refreshTable ?? 'refresh_tokens';
+
+    // Find the refresh token
+    const rows = await Connection.raw(
+      `SELECT user_id, expires_at, revoked_at FROM ${table} WHERE token = ?`,
+      [hashedRefresh]
+    );
+
+    if (rows.length === 0) return null;
+
+    const row = rows[0];
+
+    // Check if revoked
+    if (row.revoked_at) return null;
+
+    // Check if expired
+    if (new Date(row.expires_at) < new Date()) return null;
+
+    // Revoke the old refresh token (rotation — each token is single-use)
+    await Connection.raw(
+      `UPDATE ${table} SET revoked_at = ? WHERE token = ?`,
+      [new Date().toISOString(), hashedRefresh]
+    );
+
+    // Resolve user and issue new pair
+    const user = await this.config.model.find(row.user_id);
+    if (!user) return null;
+
+    this.currentUser = user;
+    return this.issueTokenPair(user);
+  }
+
+  /**
+   * Revoke all refresh tokens for a user (e.g. on logout or password change).
+   */
+  async revokeRefreshTokens(userId: string | number): Promise<void> {
+    if (!this.config.jwt?.refreshTokens) return;
+
+    const { Connection } = await import('../database/Connection.js');
+    const table = this.config.jwt.refreshTable ?? 'refresh_tokens';
+
+    await Connection.raw(
+      `UPDATE ${table} SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL`,
+      [new Date().toISOString(), userId]
+    );
   }
 
   /**

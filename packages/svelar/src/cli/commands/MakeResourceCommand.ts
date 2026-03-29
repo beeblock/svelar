@@ -59,33 +59,53 @@ export class MakeResourceCommand extends Command {
   }
 
   private generateResource(resourceName: string, modelName: string): string {
+    const shapeName = `${modelName}Data`;
     return `import { Resource } from '@beeblock/svelar/routing';
 import type { ${modelName} } from './${modelName}.js';
 
-export class ${resourceName} extends Resource<${modelName}> {
-  toJSON() {
+// ── API Contract ────────────────────────────────────────────
+// Define the shape once — import this type on the frontend.
+//
+//   import type { ${shapeName} } from '$lib/modules/.../${resourceName}';
+//
+
+export interface ${shapeName} {
+  id: number;
+  // Add your fields here
+  // name: string;
+  // email: string;
+  // created_at: string;
+}
+
+// ── Resource ────────────────────────────────────────────────
+
+export class ${resourceName} extends Resource<${modelName}, ${shapeName}> {
+  toJSON(): ${shapeName} {
     return {
       id: this.data.id,
-      // Map your model fields here — only expose what the API consumer needs
+      // Map model fields to the API contract
       // name: this.data.name,
       // email: this.data.email,
       // created_at: this.data.created_at,
     };
   }
-}
 
-// Usage in a controller:
-//
-//   // Single resource
-//   return ${resourceName}.make(user).toResponse();
-//
-//   // Collection
-//   return ${resourceName}.collection(users).toResponse();
-//
-//   // With metadata (pagination, etc.)
-//   return ${resourceName}.collection(users)
-//     .additional({ total: 100, page: 1, per_page: 20 })
-//     .toResponse();
+  // Override toWith() to include top-level data in every response
+  // (roles, permissions, related context). Can be async.
+  //
+  // async toWith() {
+  //   return {
+  //     roles: await this.data.getRoleNames(),
+  //     permissions: await this.data.getAllPermissions(),
+  //   };
+  // }
+
+  // Override toAdditional() to include metadata under "meta"
+  //
+  // toAdditional() {
+  //   return { comments_count: this.data.comments_count ?? 0 };
+  // }
+}
 `;
   }
 

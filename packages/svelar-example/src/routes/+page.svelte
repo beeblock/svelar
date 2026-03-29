@@ -20,7 +20,7 @@
     <h1 class="text-5xl sm:text-6xl font-bold tracking-tight">
       <span class="text-gray-900">{m.home_build_with()}</span>
       <br />
-      <span class="text-[var(--color-brand)]">{m.home_laravel_conventions()}</span>
+      <span class="text-brand">{m.home_laravel_conventions()}</span>
     </h1>
 
     <p class="text-xl text-gray-600 max-w-2xl mx-auto">
@@ -54,7 +54,7 @@
         </CardHeader>
         <CardContent class="text-sm text-gray-600">
           {m.home_feature_orm_body()}
-          <div class="mt-3 bg-gray-100 p-2 rounded text-xs font-mono text-[var(--color-brand)]">
+          <div class="mt-3 bg-gray-100 p-2 rounded text-xs font-mono text-brand">
             User.where('active', true).with('posts').get()
           </div>
         </CardContent>
@@ -67,7 +67,7 @@
         </CardHeader>
         <CardContent class="text-sm text-gray-600">
           {m.home_feature_auth_body()}
-          <div class="mt-3 bg-gray-100 p-2 rounded text-xs font-mono text-[var(--color-brand)]">
+          <div class="mt-3 bg-gray-100 p-2 rounded text-xs font-mono text-brand">
             auth.attempt(credentials, session)
           </div>
         </CardContent>
@@ -80,7 +80,7 @@
         </CardHeader>
         <CardContent class="text-sm text-gray-600">
           {m.home_feature_routing_body()}
-          <div class="mt-3 bg-gray-100 p-2 rounded text-xs font-mono text-[var(--color-brand)]">
+          <div class="mt-3 bg-gray-100 p-2 rounded text-xs font-mono text-brand">
             export const GET = ctrl.handle('index')
           </div>
         </CardContent>
@@ -93,7 +93,7 @@
         </CardHeader>
         <CardContent class="text-sm text-gray-600">
           {m.home_feature_validation_body()}
-          <div class="mt-3 bg-gray-100 p-2 rounded text-xs font-mono text-[var(--color-brand)]">
+          <div class="mt-3 bg-gray-100 p-2 rounded text-xs font-mono text-brand">
             await CreatePostRequest.validate(event)
           </div>
         </CardContent>
@@ -106,7 +106,7 @@
         </CardHeader>
         <CardContent class="text-sm text-gray-600">
           {m.home_feature_ddd_body()}
-          <div class="mt-3 bg-gray-100 p-2 rounded text-xs font-mono text-[var(--color-brand)]">
+          <div class="mt-3 bg-gray-100 p-2 rounded text-xs font-mono text-brand">
             Controller → DTO → Service → Action → Repository
           </div>
         </CardContent>
@@ -119,7 +119,7 @@
         </CardHeader>
         <CardContent class="text-sm text-gray-600">
           {m.home_feature_migrations_body()}
-          <div class="mt-3 bg-gray-100 p-2 rounded text-xs font-mono text-[var(--color-brand)]">
+          <div class="mt-3 bg-gray-100 p-2 rounded text-xs font-mono text-brand">
             npx svelar migrate
           </div>
         </CardContent>
@@ -132,28 +132,28 @@
     <h2 class="text-3xl font-bold text-center">{m.home_quickstart_title()}</h2>
     <div class="max-w-2xl mx-auto space-y-3">
       <div class="flex gap-4 items-start">
-        <div class="flex-shrink-0 w-10 h-10 rounded-full bg-[var(--color-brand)] text-white flex items-center justify-center font-bold">1</div>
+        <div class="flex-shrink-0 w-10 h-10 rounded-full bg-brand text-white flex items-center justify-center font-bold">1</div>
         <div>
           <h4 class="font-semibold">{m.home_step1()}</h4>
           <code class="text-sm bg-gray-100 px-2 py-1 rounded block mt-1">npx create-svelar my-app</code>
         </div>
       </div>
       <div class="flex gap-4 items-start">
-        <div class="flex-shrink-0 w-10 h-10 rounded-full bg-[var(--color-brand)] text-white flex items-center justify-center font-bold">2</div>
+        <div class="flex-shrink-0 w-10 h-10 rounded-full bg-brand text-white flex items-center justify-center font-bold">2</div>
         <div>
           <h4 class="font-semibold">{m.home_step2()}</h4>
           <code class="text-sm bg-gray-100 px-2 py-1 rounded block mt-1">npx svelar migrate</code>
         </div>
       </div>
       <div class="flex gap-4 items-start">
-        <div class="flex-shrink-0 w-10 h-10 rounded-full bg-[var(--color-brand)] text-white flex items-center justify-center font-bold">3</div>
+        <div class="flex-shrink-0 w-10 h-10 rounded-full bg-brand text-white flex items-center justify-center font-bold">3</div>
         <div>
           <h4 class="font-semibold">{m.home_step3()}</h4>
           <code class="text-sm bg-gray-100 px-2 py-1 rounded block mt-1">npx svelar db:seed</code>
         </div>
       </div>
       <div class="flex gap-4 items-start">
-        <div class="flex-shrink-0 w-10 h-10 rounded-full bg-[var(--color-brand)] text-white flex items-center justify-center font-bold">4</div>
+        <div class="flex-shrink-0 w-10 h-10 rounded-full bg-brand text-white flex items-center justify-center font-bold">4</div>
         <div>
           <h4 class="font-semibold">{m.home_step4()}</h4>
           <code class="text-sm bg-gray-100 px-2 py-1 rounded block mt-1">npm run dev</code>

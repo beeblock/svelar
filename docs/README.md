@@ -6,7 +6,7 @@ Svelar is a Laravel-inspired framework built on top of SvelteKit 2. It brings en
 
 ### Key Features
 
-- **UI Components**: Minimal, composable Svelte 5 component library (Button, Card, Input, Alert, Badge, Avatar, etc.) themed via CSS custom properties
+- **UI Components**: Minimal, composable Svelte 5 component library (Button, Card, Input, Alert, Badge, Avatar, etc.) themed via Tailwind CSS v4 `@theme` tokens
 - **ORM with Relationships**: Eloquent-like query builder with eager loading, relationships (hasOne, hasMany, belongsTo, belongsToMany)
 - **Database Migrations & Seeders**: Version-controlled schema management and seed data
 - **Authentication**: Session-based auth, JWT support, and API tokens
@@ -27,56 +27,54 @@ Svelar is a Laravel-inspired framework built on top of SvelteKit 2. It brings en
 
 ## Table of Contents
 
-1. [Installation](./01-installation.md) - Set up a new Svelar project
+0. [Getting Started](./00-getting-started.md) - **Start here** — what you get, step-by-step setup, your first 10 minutes
+1. [Installation](./01-installation.md) - CLI commands, manual setup, Docker deployment
 2. [Database](./02-database.md) - Migrations, seeders, and database configuration
 3. [Models & ORM](./03-models-orm.md) - Eloquent-like ORM with relationships
-4. [Controllers & Routing](./04-controllers-routing.md) - Request handling and routing
-5. [Validation & DTOs](./05-validation-dtos.md) - Form validation with Zod and FormRequest classes
-6. [Authentication](./06-authentication.md) - Session, JWT, and API token authentication
-7. [Middleware](./07-middleware.md) - Global and controller-level middleware
+4. [Controllers & Routing](./04-controllers-routing.md) - Request handling, resources, response objects
+5. [Validation & DTOs](./05-validation-dtos.md) - Form validation with Zod, contract schemas
+6. [Authentication](./06-authentication.md) - Session, JWT, refresh tokens, API tokens, request signatures
+7. [Middleware](./07-middleware.md) - CORS, CSRF, rate limiting, origin validation, signatures
 8. [Services, Actions & Repositories](./08-services-actions-repositories.md) - Business logic layers
 9. [Plugins](./09-plugins.md) - Extend Svelar with custom plugins
 10. [Scheduler](./10-scheduler.md) - Schedule periodic tasks
 11. [Job Queue](./11-queue-jobs.md) - Background job processing
 12. [Additional Features](./12-additional-features.md) - Events, logging, mail, notifications, broadcasting, storage, and more
 13. [UI Components](./13-ui-components.md) - Component library with theming and extension guide
-14. [HTTP Utilities](./14-http.md) - CSRF-aware fetch wrapper
+14. [HTTP Utilities](./14-http.md) - CSRF-aware fetch, signed requests
 15. [Internationalization](./15-i18n.md) - Paraglide-js integration for multi-language apps
 16. [Forms](./16-forms.md) - Superforms + Zod bridge for validated form actions
+17. [SaaS Guide](./17-saas-guide.md) - Multi-tenancy, production checklist, scaling
+18. [Dates](./18-dates.md) - Date utilities and formatting
+19. [Error Handling](./19-error-handling.md) - Error pages, localization, exception handling
+20. [Architecture & Module Communication](./20-architecture.md) - DDD boundaries, events as glue, anti-patterns
 
 ## Quick Start
 
-Get a new Svelar app up and running in minutes:
-
 ```bash
-# Create a new project
 npx @beeblock/svelar new my-app
 cd my-app
-
-# Configure environment
 cp .env.example .env
-
-# Run migrations
 npx @beeblock/svelar migrate
-
-# Start the development server
 npm run dev
 ```
 
-Your app is now running at `http://localhost:5173`
+Your app is now running at `http://localhost:5173` with auth, dashboard, admin panel, teams, API keys, and more — all working out of the box.
+
+> **New to Svelar?** Read the [Getting Started](./00-getting-started.md) guide for a complete walkthrough of what you get and how to set everything up.
 
 ## Project Structure (DDD Modular Monolith)
 
 ```
 my-app/
 ├── src/
-│   ├── app.ts                    # Bootstrap (database, hash, auth config)
-│   ├── app.css                   # Global styles + CSS custom properties
+│   ├── app.ts                    # Bootstrap (database, hashing, providers)
+│   ├── app.css                   # Tailwind CSS v4 + @theme tokens
 │   ├── app.html                  # HTML template
 │   ├── hooks.server.ts           # Middleware pipeline (createSvelarApp)
 │   ├── lib/
 │   │   ├── modules/              # Domain modules (DDD)
-│   │   │   ├── auth/             # User.ts, AuthController.ts, AuthService.ts
+│   │   │   ├── auth/             # User.ts, UserObserver.ts, AuthController.ts, AuthService.ts
 │   │   │   ├── billing/          # Invoice.ts, BillingService.ts
 │   │   │   └── posts/            # Post.ts, PostController.ts, PostRepository.ts
 │   │   ├── shared/               # Cross-cutting concerns
@@ -87,8 +85,10 @@ my-app/
 │   │   │   ├── plugins/          # Custom plugins
 │   │   │   ├── channels/         # Broadcast channel authorization
 │   │   │   ├── commands/         # Custom CLI commands
-│   │   │   ├── providers/        # Service providers
+│   │   │   ├── providers/        # Service providers (EventServiceProvider, etc.)
 │   │   │   └── scheduler/        # Scheduled tasks
+│   │   ├── events/               # Event classes (npx svelar make:event)
+│   │   ├── listeners/            # Listener classes (npx svelar make:listener)
 │   │   └── database/
 │   │       ├── migrations/       # Database schema changes
 │   │       └── seeders/          # Seed data
@@ -98,12 +98,19 @@ my-app/
 │       ├── api/
 │       ├── dashboard/
 │       └── admin/
+├── storage/
+│   ├── logs/                     # Application logs
+│   ├── cache/                    # File-based cache
+│   ├── uploads/                  # User uploads
+│   └── sessions/                 # File-based sessions
 ├── package.json
 ├── svelte.config.js
+├── svelar.database.json
+├── .env.example
 └── vite.config.ts
 ```
 
-Each **module** under `modules/` is a self-contained domain — model, controller, service, repository, DTOs, and schema all live together. The `shared/` folder holds cross-cutting infrastructure that spans multiple domains.
+Each **module** under `modules/` is a self-contained domain — model, controller, service, repository, observers, DTOs, and schema all live together. The `shared/` folder holds cross-cutting infrastructure that spans multiple domains.
 
 ## Architecture
 
@@ -140,6 +147,19 @@ Model (ORM, database interaction)
 **Repositories**: Provide data access methods. Abstract the Model layer. Cache queries when needed.
 
 **Models**: Map database tables to objects. Define relationships. Support eager loading and casting.
+
+### Module Communication
+
+Modules **never import each other directly**. Cross-module communication goes through the event system:
+
+```
+Auth Module ──► Event: UserRegistered ──► Billing Module (CreateFreePlan)
+                                      ──► Notifications Module (SendWelcomeEmail)
+```
+
+All event-to-listener mappings and model observers are registered in the `EventServiceProvider`, giving you a single place to see how your modules interact.
+
+See [Architecture & Module Communication](./20-architecture.md) for the full guide, including patterns, anti-patterns, shared contracts, and testing strategies.
 
 ## Configuration
 
@@ -245,11 +265,12 @@ STORAGE_DISK=local
 
 ## Next Steps
 
-- Read the [Installation](./01-installation.md) guide to set up your first project
-- Explore [Models & ORM](./03-models-orm.md) to understand data modeling
-- Learn [Controllers & Routing](./04-controllers-routing.md) for handling requests
-- Check [Authentication](./06-authentication.md) for user management
-- Study the [svelar-example](https://github.com/yourusername/svelar/tree/main/packages/svelar-example) app for real-world patterns
+- **Start here**: [Getting Started](./00-getting-started.md) — what you get, setup steps, first 10 minutes
+- [Installation](./01-installation.md) — CLI commands, Docker deployment, manual setup
+- [Models & ORM](./03-models-orm.md) — define your domain models
+- [Controllers & Routing](./04-controllers-routing.md) — build your API
+- [Authentication](./06-authentication.md) — JWT, refresh tokens, API tokens, request signatures
+- [Architecture](./20-architecture.md) — DDD module boundaries and patterns
 
 ## Getting Help
 

@@ -1,48 +1,86 @@
 # Validation & DTOs
 
-Learn how to validate incoming data with FormRequest classes and Zod schemas.
+Learn how to validate incoming data with FormRequest classes, Zod schemas, and contract schemas that share types across your entire stack.
+
+## Contract Schemas — Single Source of Truth
+
+Instead of defining Zod schemas inline in FormRequests and types separately on the frontend, define them once in a **contract schema** file. Every layer imports from it.
+
+```bash
+npx @beeblock/svelar make:schema Post --module=posts
+```
+
+This creates `src/lib/modules/posts/post.schema.ts`:
+
+```typescript
+import { z } from 'zod';
+
+// ── Response schema (what the API returns) ──────────────────
+
+export const postSchema = z.object({
+  id: z.number(),
+  title: z.string(),
+  slug: z.string(),
+  body: z.string(),
+  published: z.boolean(),
+  author: z.string(),
+  created_at: z.string(),
+});
+
+// ── Input schemas (what the API accepts) ────────────────────
+
+export const createPostSchema = z.object({
+  title: z.string().min(3, 'Title must be at least 3 characters').max(255),
+  slug: z.string().regex(/^[a-z0-9-]+$/).optional(),
+  body: z.string().min(10, 'Body must be at least 10 characters'),
+  published: z.boolean().optional().default(false),
+});
+
+export const updatePostSchema = createPostSchema.partial();
+
+// ── Inferred types — shared between server and frontend ─────
+
+export type PostData = z.infer<typeof postSchema>;
+export type CreatePostInput = z.infer<typeof createPostSchema>;
+export type UpdatePostInput = z.infer<typeof updatePostSchema>;
+```
+
+Now every layer imports from this one file — zero type duplication:
+
+| Layer | Imports | Uses |
+|-------|---------|------|
+| **FormRequest** | `createPostSchema` | Validation rules |
+| **Resource** | `PostData` | `Resource<Post, PostData>` output shape |
+| **Controller** | nothing extra | data typed automatically |
+| **Frontend** | `PostData`, `CreatePostInput` | Type-safe forms and responses |
 
 ## FormRequest Classes (DTOs)
 
-FormRequest classes encapsulate validation logic and authorization checks. They're ideal for form submissions and API requests.
+FormRequest classes encapsulate validation logic and authorization checks. They import their schema from the contract file.
 
 ### Creating a FormRequest
 
 ```bash
-npx svelar make:request CreatePostRequest
+npx svelar make:request CreatePost --module=posts
 ```
 
-This creates `src/lib/dtos/CreatePostRequest.ts`:
+Wire it to the contract schema:
 
 ```typescript
+// src/lib/modules/posts/CreatePostRequest.ts
 import { FormRequest } from '@beeblock/svelar/routing';
-import { z } from '@beeblock/svelar/validation';
+import { createPostSchema } from './post.schema.js';
 
 export class CreatePostRequest extends FormRequest {
   rules() {
-    return z.object({
-      title: z.string().min(3).max(255),
-      slug: z.string().regex(/^[a-z0-9-]+$/).optional(),
-      body: z.string().min(10),
-      published: z.boolean().optional().default(false),
-    });
-  }
-
-  messages() {
-    return {
-      'title.too_small': 'Title must be at least 3 characters',
-      'title.too_big': 'Title cannot exceed 255 characters',
-      'body.too_small': 'Body must be at least 10 characters',
-    };
+    return createPostSchema;
   }
 
   authorize(event: any): boolean {
-    // Only authenticated users can create posts
     return !!event.locals.user;
   }
 
   passedValidation(data: any) {
-    // Transform data after validation
     if (!data.slug) {
       data.slug = data.title
         .toLowerCase()
@@ -54,29 +92,84 @@ export class CreatePostRequest extends FormRequest {
 }
 ```
 
+The update request reuses the same schema with `.partial()`:
+
+```typescript
+// src/lib/modules/posts/UpdatePostRequest.ts
+import { FormRequest } from '@beeblock/svelar/routing';
+import { updatePostSchema } from './post.schema.js';
+
+export class UpdatePostRequest extends FormRequest {
+  rules() {
+    return updatePostSchema;
+  }
+
+  async authorize(event: any): Promise<boolean> {
+    const post = await Post.find(event.params.id);
+    return post?.user_id === event.locals.user?.id;
+  }
+}
+```
+
 ### Using FormRequest in Controllers
 
 ```typescript
-import { CreatePostRequest } from '../dtos/CreatePostRequest.js';
+import { CreatePostRequest } from './CreatePostRequest.js';
+import { PostResource } from './PostResource.js';
 
 export class PostController extends Controller {
   async store(event: any) {
-    // Validate and authorize request
-    // Throws FormValidationError (422) or FormAuthorizationError (403)
-    // If passed, returns validated and transformed data
+    // Validate and authorize — throws 422 or 403 on failure
+    // data is typed as CreatePostInput
     const data = await CreatePostRequest.validate(event);
 
-    // data is guaranteed to be valid
-    return this.created(await Post.create(data));
+    const post = await Post.create({
+      ...data,
+      user_id: event.locals.user.id,
+    });
+
+    return PostResource.make(post).status(201).toResponse();
   }
 }
+```
+
+### Using Types on the Frontend
+
+```typescript
+// +page.svelte or any client component
+import type { PostData, CreatePostInput } from '$lib/modules/posts/post.schema';
+import { apiFetchJson } from '@beeblock/svelar/http';
+
+// Form data is typed — IDE catches missing fields
+let form: CreatePostInput = {
+  title: '',
+  body: '',
+  published: false,
+};
+
+// Response is typed — autocomplete on data.title, data.slug, etc.
+const { data } = await apiFetchJson<{ data: PostData }>('/api/posts', {
+  method: 'POST',
+  body: JSON.stringify(form),
+});
 ```
 
 ## FormRequest Methods
 
 ### rules()
 
-Define Zod schema for validation:
+Define Zod schema for validation. Prefer importing from a contract schema file:
+
+```typescript
+// Recommended — import from contract schema
+import { createUserSchema } from './user.schema.js';
+
+rules() {
+  return createUserSchema;
+}
+```
+
+Or define inline for simple cases:
 
 ```typescript
 rules() {
@@ -101,6 +194,124 @@ messages() {
     'email.invalid': 'Please enter a valid email address',
     'password.too_small': 'Password must be at least 8 characters',
   };
+}
+```
+
+### Localized Validation Messages
+
+There are two approaches to localize validation messages with Paraglide.
+
+**Approach 1: In the contract schema** (recommended — messages live with the schema):
+
+```typescript
+// src/lib/modules/auth/user.schema.ts
+import { z } from 'zod';
+import * as m from '$lib/paraglide/messages';
+
+export const registerSchema = z.object({
+  name: z.string().min(2, m.validation_name_min()),
+  email: z.string().email(m.validation_email_invalid()),
+  password: z.string().min(8, m.validation_password_min()),
+  password_confirmation: z.string(),
+}).refine((data) => data.password === data.password_confirmation, {
+  message: m.validation_passwords_must_match(),
+  path: ['password_confirmation'],
+});
+```
+
+```json
+// messages/en.json
+{
+  "validation_name_min": "Name must be at least 2 characters",
+  "validation_email_invalid": "Please enter a valid email address",
+  "validation_password_min": "Password must be at least 8 characters",
+  "validation_passwords_must_match": "Passwords do not match"
+}
+
+// messages/es.json
+{
+  "validation_name_min": "El nombre debe tener al menos 2 caracteres",
+  "validation_email_invalid": "Ingrese una direccion de correo valida",
+  "validation_password_min": "La contrasena debe tener al menos 8 caracteres",
+  "validation_passwords_must_match": "Las contrasenas no coinciden"
+}
+
+// messages/pt.json
+{
+  "validation_name_min": "O nome deve ter pelo menos 2 caracteres",
+  "validation_email_invalid": "Insira um endereco de email valido",
+  "validation_password_min": "A senha deve ter pelo menos 8 caracteres",
+  "validation_passwords_must_match": "As senhas nao coincidem"
+}
+```
+
+The FormRequest just imports the schema — messages are already localized:
+
+```typescript
+import { registerSchema } from './user.schema.js';
+
+export class RegisterRequest extends FormRequest {
+  rules() {
+    return registerSchema;
+  }
+}
+```
+
+**Approach 2: In the `messages()` override** (useful when the schema is shared/generic):
+
+```typescript
+import * as m from '$lib/paraglide/messages';
+
+export class RegisterRequest extends FormRequest {
+  rules() {
+    return registerSchema; // schema with English defaults
+  }
+
+  messages() {
+    return {
+      'name.too_small': m.validation_name_min(),
+      'email.invalid_string': m.validation_email_invalid(),
+      'password.too_small': m.validation_password_min(),
+      'password_confirmation': m.validation_passwords_must_match(),
+    };
+  }
+}
+```
+
+### Localized Messages with Parameters
+
+Paraglide messages support parameters for dynamic values:
+
+```json
+// messages/en.json
+{
+  "validation_min_length": "{field} must be at least {min} characters",
+  "validation_max_length": "{field} must not exceed {max} characters"
+}
+```
+
+```typescript
+import * as m from '$lib/paraglide/messages';
+
+export const createPostSchema = z.object({
+  title: z.string()
+    .min(3, m.validation_min_length({ field: m.field_title(), min: '3' }))
+    .max(255, m.validation_max_length({ field: m.field_title(), max: '255' })),
+  body: z.string()
+    .min(10, m.validation_min_length({ field: m.field_body(), min: '10' })),
+});
+```
+
+The API returns localized field errors based on the user's detected locale:
+
+```json
+// Response for Spanish user submitting invalid data
+{
+  "message": "Validation failed",
+  "errors": {
+    "title": ["Titulo debe tener al menos 3 caracteres"],
+    "body": ["Contenido debe tener al menos 10 caracteres"]
+  }
 }
 ```
 
@@ -136,94 +347,122 @@ passedValidation(data: any) {
 }
 ```
 
-## Complete FormRequest Examples
+## Complete Examples with Contract Schemas
 
-### Register Request
+### Auth Module
 
 ```typescript
-// src/lib/dtos/RegisterRequest.ts
+// src/lib/modules/auth/user.schema.ts
+import { z } from 'zod';
+
+export const userSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  email: z.string().email(),
+  created_at: z.string(),
+});
+
+export const registerSchema = z.object({
+  name: z.string().min(2, 'Name must be at least 2 characters').max(100),
+  email: z.string().email('Please enter a valid email address'),
+  password: z.string().min(8, 'Password must be at least 8 characters'),
+  password_confirmation: z.string(),
+}).refine((data) => data.password === data.password_confirmation, {
+  message: 'Passwords do not match',
+  path: ['password_confirmation'],
+});
+
+export const loginSchema = z.object({
+  email: z.string().email('Please enter a valid email address'),
+  password: z.string().min(1, 'Password is required'),
+});
+
+export type UserData = z.infer<typeof userSchema>;
+export type RegisterInput = z.infer<typeof registerSchema>;
+export type LoginInput = z.infer<typeof loginSchema>;
+```
+
+```typescript
+// src/lib/modules/auth/RegisterRequest.ts
 import { FormRequest } from '@beeblock/svelar/routing';
-import { z } from '@beeblock/svelar/validation';
+import { registerSchema } from './user.schema.js';
 
 export class RegisterRequest extends FormRequest {
   rules() {
-    return z.object({
-      name: z.string().min(2).max(100),
-      email: z.string().email(),
-      password: z.string().min(8),
-      password_confirmation: z.string(),
-    }).refine((data) => data.password === data.password_confirmation, {
-      message: 'Passwords do not match',
-      path: ['password_confirmation'],
-    });
-  }
-
-  messages() {
-    return {
-      'name.too_small': 'Name must be at least 2 characters',
-      'email.invalid_string': 'Please enter a valid email address',
-      'password.too_small': 'Password must be at least 8 characters',
-    };
+    return registerSchema;
   }
 }
 ```
 
-### Login Request
-
 ```typescript
-// src/lib/dtos/LoginRequest.ts
+// src/lib/modules/auth/LoginRequest.ts
 import { FormRequest } from '@beeblock/svelar/routing';
-import { z } from '@beeblock/svelar/validation';
+import { loginSchema } from './user.schema.js';
 
 export class LoginRequest extends FormRequest {
   rules() {
-    return z.object({
-      email: z.string().email(),
-      password: z.string().min(1),
-    });
-  }
-
-  messages() {
-    return {
-      'email.invalid_string': 'Please enter a valid email address',
-      'password.min_length': 'Password is required',
-    };
+    return loginSchema;
   }
 }
 ```
 
-### Create Post Request with Authorization
+```typescript
+// Frontend — register form
+import type { RegisterInput } from '$lib/modules/auth/user.schema';
+
+let form: RegisterInput = {
+  name: '',
+  email: '',
+  password: '',
+  password_confirmation: '',
+};
+```
+
+### Posts Module
 
 ```typescript
-// src/lib/dtos/CreatePostRequest.ts
+// src/lib/modules/posts/post.schema.ts
+import { z } from 'zod';
+
+export const postSchema = z.object({
+  id: z.number(),
+  title: z.string(),
+  slug: z.string(),
+  body: z.string(),
+  published: z.boolean(),
+  author: z.string(),
+  created_at: z.string(),
+});
+
+export const createPostSchema = z.object({
+  title: z.string().min(3, 'Title must be at least 3 characters').max(255),
+  slug: z.string().regex(/^[a-z0-9-]+$/).optional(),
+  body: z.string().min(10, 'Body must be at least 10 characters'),
+  published: z.boolean().optional().default(false),
+});
+
+export const updatePostSchema = createPostSchema.partial();
+
+export type PostData = z.infer<typeof postSchema>;
+export type CreatePostInput = z.infer<typeof createPostSchema>;
+export type UpdatePostInput = z.infer<typeof updatePostSchema>;
+```
+
+```typescript
+// src/lib/modules/posts/CreatePostRequest.ts
 import { FormRequest } from '@beeblock/svelar/routing';
-import { z } from '@beeblock/svelar/validation';
+import { createPostSchema } from './post.schema.js';
 
 export class CreatePostRequest extends FormRequest {
   rules() {
-    return z.object({
-      title: z.string().min(3).max(255),
-      slug: z.string().regex(/^[a-z0-9-]+$/).optional(),
-      body: z.string().min(10),
-      published: z.boolean().optional().default(false),
-    });
-  }
-
-  messages() {
-    return {
-      'title.too_small': 'Title must be at least 3 characters',
-      'title.too_big': 'Title cannot exceed 255 characters',
-      'body.too_small': 'Body must be at least 10 characters',
-    };
+    return createPostSchema;
   }
 
   authorize(event: any): boolean {
-    // Only authenticated users can create posts
     return !!event.locals.user;
   }
 
   passedValidation(data: any) {
-    // Auto-generate slug if not provided
     if (!data.slug) {
       data.slug = data.title
         .toLowerCase()
@@ -235,33 +474,79 @@ export class CreatePostRequest extends FormRequest {
 }
 ```
 
-### Update Post Request with Authorization
-
 ```typescript
-// src/lib/dtos/UpdatePostRequest.ts
+// src/lib/modules/posts/UpdatePostRequest.ts
 import { FormRequest } from '@beeblock/svelar/routing';
-import { z } from '@beeblock/svelar/validation';
-import { Post } from '../models/Post.js';
+import { updatePostSchema } from './post.schema.js';
 
 export class UpdatePostRequest extends FormRequest {
   rules() {
-    return z.object({
-      title: z.string().min(3).max(255).optional(),
-      slug: z.string().regex(/^[a-z0-9-]+$/).optional(),
-      body: z.string().min(10).optional(),
-      published: z.boolean().optional(),
-    });
+    return updatePostSchema;
   }
 
   async authorize(event: any): Promise<boolean> {
     const post = await Post.find(event.params.id);
-    if (!post) return false;
-
-    // Only the post author can update it
-    return post.user_id === event.locals.user?.id;
+    return post?.user_id === event.locals.user?.id;
   }
 }
 ```
+
+```typescript
+// src/lib/modules/posts/PostResource.ts
+import { Resource } from '@beeblock/svelar/routing';
+import type { Post } from './Post.js';
+import type { PostData } from './post.schema.js';
+
+export class PostResource extends Resource<Post, PostData> {
+  toJSON(): PostData {
+    return {
+      id: this.data.id,
+      title: this.data.title,
+      slug: this.data.slug,
+      body: this.data.body,
+      published: this.data.published,
+      author: this.data.author_name,
+      created_at: this.data.created_at,
+    };
+  }
+}
+```
+
+```typescript
+// src/lib/modules/posts/PostController.ts — thin controller
+import { Controller } from '@beeblock/svelar/routing';
+import { CreatePostRequest } from './CreatePostRequest.js';
+import { UpdatePostRequest } from './UpdatePostRequest.js';
+import { PostResource } from './PostResource.js';
+
+export class PostController extends Controller {
+  async index(event: any) {
+    const page = Number(event.url.searchParams.get('page') ?? 1);
+    const result = await Post.query().paginate(page, 20);
+    return PostResource.paginate(result).toResponse();
+  }
+
+  async show(event: any) {
+    const post = await Post.findOrFail(event.params.id);
+    return PostResource.make(post).toResponse();
+  }
+
+  async store(event: any) {
+    const data = await CreatePostRequest.validate(event);
+    const post = await Post.create({ ...data, user_id: event.locals.user.id });
+    return PostResource.make(post).status(201).toResponse();
+  }
+
+  async update(event: any) {
+    const data = await UpdatePostRequest.validate(event);
+    const post = await Post.findOrFail(event.params.id);
+    await post.update(data);
+    return PostResource.make(post).toResponse();
+  }
+}
+```
+
+The entire module's type contract lives in `post.schema.ts`. Change it once, TypeScript catches mismatches everywhere — controller, resource, FormRequests, and frontend.
 
 ## Zod Validation Schema
 
@@ -445,68 +730,67 @@ When `authorize()` returns false, a `FormAuthorizationError` is thrown:
 
 Status code is 403 (Forbidden).
 
-## Validation Example in Action
+## Full Stack Flow
 
-Here's a complete flow in the svelar-example app:
+Here's the complete flow from route to frontend using a contract schema:
+
+```
+post.schema.ts  →  CreatePostRequest  →  PostController  →  PostResource  →  Frontend
+  (contract)         (validation)          (thin)            (response)       (typed)
+```
 
 ```typescript
-// Route handler
-// src/routes/api/posts/+server.ts
-import { PostController } from '$lib/controllers/PostController.js';
+// 1. Contract — src/lib/modules/posts/post.schema.ts
+export const createPostSchema = z.object({
+  title: z.string().min(3).max(255),
+  body: z.string().min(10),
+});
+export type CreatePostInput = z.infer<typeof createPostSchema>;
+export type PostData = z.infer<typeof postSchema>;
 
+// 2. FormRequest — src/lib/modules/posts/CreatePostRequest.ts
+export class CreatePostRequest extends FormRequest {
+  rules() { return createPostSchema; }
+  authorize(event: any) { return !!event.locals.user; }
+}
+
+// 3. Resource — src/lib/modules/posts/PostResource.ts
+export class PostResource extends Resource<Post, PostData> {
+  toJSON(): PostData { return { id: this.data.id, title: this.data.title, ... }; }
+}
+
+// 4. Controller — src/lib/modules/posts/PostController.ts
+export class PostController extends Controller {
+  async store(event: any) {
+    const data = await CreatePostRequest.validate(event); // typed as CreatePostInput
+    const post = await Post.create({ ...data, user_id: event.locals.user.id });
+    return PostResource.make(post).status(201).toResponse();
+  }
+}
+
+// 5. Route — src/routes/api/posts/+server.ts
 const ctrl = new PostController();
 export const POST = ctrl.handle('store');
 
-// Controller
-// src/lib/controllers/PostController.ts
-export class PostController extends Controller {
-  async store(event: any) {
-    const data = await CreatePostRequest.validate(event);
-    // data is validated, authorized, and transformed
-
-    const post = await createPostAction.run({
-      userId: event.locals.user.id,
-      ...data,
-    });
-
-    return this.created(post);
-  }
-}
-
-// DTO (FormRequest)
-// src/lib/dtos/CreatePostRequest.ts
-export class CreatePostRequest extends FormRequest {
-  rules() {
-    return z.object({
-      title: z.string().min(3).max(255),
-      slug: z.string().optional(),
-      body: z.string().min(10),
-      published: z.boolean().optional().default(false),
-    });
-  }
-
-  authorize(event: any): boolean {
-    return !!event.locals.user;
-  }
-
-  passedValidation(data: any) {
-    if (!data.slug) {
-      data.slug = data.title.toLowerCase().replace(/\s+/g, '-');
-    }
-    return data;
-  }
-}
+// 6. Frontend — src/routes/posts/new/+page.svelte
+import type { CreatePostInput, PostData } from '$lib/modules/posts/post.schema';
+let form: CreatePostInput = { title: '', body: '' };
+const { data } = await apiFetchJson<{ data: PostData }>('/api/posts', {
+  method: 'POST',
+  body: JSON.stringify(form),
+});
 ```
 
 ## Best Practices
 
-1. **Use FormRequest for API requests** - Encapsulates validation and authorization
-2. **Keep validation rules in `rules()`** - Makes it easy to see what's validated
-3. **Provide helpful error messages** - Use `messages()` for user-friendly errors
-4. **Validate authorization in `authorize()`** - Keeps authorization logic in one place
-5. **Transform data in `passedValidation()`** - Hash passwords, slugify fields, etc. here
-6. **Use Zod's built-in validation** - Don't write custom validators for common patterns
-7. **Test your validation** - Write tests for edge cases in your schemas
+1. **Use contract schemas** — Define Zod schemas + types once in `*.schema.ts`, import everywhere
+2. **Use FormRequest for API requests** — Encapsulates validation and authorization
+3. **Import schemas, don't inline them** — `rules() { return createPostSchema; }` not `rules() { return z.object({...}); }`
+4. **Provide helpful error messages** — Define them in the schema: `z.string().min(2, 'Too short')`
+5. **Validate authorization in `authorize()`** — Keeps auth logic in one place
+6. **Transform data in `passedValidation()`** — Hash passwords, slugify fields, etc.
+7. **Keep controllers thin** — Validate with FormRequest, respond with Resource, logic in Services/Actions
+8. **Share types with the frontend** — `import type { PostData } from '$lib/modules/posts/post.schema'`
 
 ## Next Steps
 

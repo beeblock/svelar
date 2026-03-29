@@ -131,7 +131,7 @@
             {#each members as member (member.id)}
               <div class="flex items-center justify-between p-3 border border-gray-200 rounded-lg">
                 <div class="flex items-center gap-3">
-                  <div class="w-8 h-8 bg-[var(--color-brand)] rounded-full flex items-center justify-center text-white text-xs font-bold">
+                  <div class="w-8 h-8 bg-brand rounded-full flex items-center justify-center text-white text-xs font-bold">
                     {String(member.userId).substring(0, 2).toUpperCase()}
                   </div>
                   <div>

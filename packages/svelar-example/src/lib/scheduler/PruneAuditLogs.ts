@@ -12,6 +12,6 @@ export default class PruneAuditLogs extends ScheduledTask {
   }
 
   async handle(): Promise<void> {
-    console.log('[Scheduler] Pruning old audit logs...');
+    // Prune audit logs older than 90 days
   }
 }

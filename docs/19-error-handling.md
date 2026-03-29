@@ -244,6 +244,204 @@ import { RedirectIfNotAuthenticated } from '@beeblock/svelar/auth';
 // Redirects to /login (or custom path)
 ```
 
+## Localized Error Messages
+
+Svelar supports error localization at three levels: the error page, server-side error classes, and client-side API toasts.
+
+### Level 1: Error Page (Automatic)
+
+The `+error.svelte` page already localizes error messages using Paraglide. Each HTTP status code maps to an i18n key:
+
+```
+error_401_title → "Unauthenticated" (EN) / "No autenticado" (ES) / "Nao autenticado" (PT)
+error_401_desc  → "Your session has expired..." / "Tu sesion ha expirado..." / ...
+```
+
+This means for **page routes** (load functions, form actions), you don't need to localize server-side messages — the error page overrides them with the user's locale automatically. The server just throws the right status code:
+
+```typescript
+// +page.server.ts — no need to localize, the error page handles it
+export const load = async ({ locals }) => {
+  abortUnless(locals.user, 401); // Error page shows localized 401 message
+};
+```
+
+### Level 2: Server-Side Localized Errors (API Routes)
+
+For API routes that return JSON, the client receives the `message` field. If your API consumers are browsers using your own frontend, you can localize server-side using Paraglide messages.
+
+Paraglide 2.x makes message functions available on the server within the request context. Import them in your controllers or services:
+
+```typescript
+// src/lib/modules/posts/PostController.ts
+import { Controller } from '@beeblock/svelar/routing';
+import { NotFoundError, ForbiddenError } from '@beeblock/svelar/errors';
+import * as m from '$lib/paraglide/messages';
+
+export class PostController extends Controller {
+  async show(event: any) {
+    const post = await Post.find(event.params.id);
+
+    if (!post) {
+      // Localized error message — uses the request's detected locale
+      throw new NotFoundError(m.error_post_not_found());
+    }
+
+    if (!post.published && post.user_id !== event.locals.user?.id) {
+      throw new ForbiddenError(m.error_post_private());
+    }
+
+    return this.json(post);
+  }
+}
+```
+
+Add the corresponding message keys to all locale files:
+
+```json
+// messages/en.json
+{
+  "error_post_not_found": "Post not found",
+  "error_post_private": "You don't have permission to view this post"
+}
+
+// messages/es.json
+{
+  "error_post_not_found": "Publicacion no encontrada",
+  "error_post_private": "No tienes permiso para ver esta publicacion"
+}
+
+// messages/pt.json
+{
+  "error_post_not_found": "Publicacao nao encontrada",
+  "error_post_private": "Voce nao tem permissao para ver esta publicacao"
+}
+```
+
+### Level 3: Localized Validation Messages
+
+Validation errors often need field-level localization. Use Paraglide messages in your `FormRequest` classes:
+
+```typescript
+// src/lib/modules/auth/RegisterRequest.ts
+import { FormRequest } from '@beeblock/svelar/routing';
+import { z } from 'zod';
+import * as m from '$lib/paraglide/messages';
+
+export class RegisterRequest extends FormRequest {
+  rules() {
+    return z.object({
+      name: z.string().min(2, m.validation_name_min()),
+      email: z.string().email(m.validation_email_invalid()),
+      password: z.string().min(8, m.validation_password_min()),
+    });
+  }
+}
+```
+
+```json
+// messages/en.json
+{
+  "validation_name_min": "Name must be at least 2 characters",
+  "validation_email_invalid": "Please enter a valid email address",
+  "validation_password_min": "Password must be at least 8 characters"
+}
+
+// messages/es.json
+{
+  "validation_name_min": "El nombre debe tener al menos 2 caracteres",
+  "validation_email_invalid": "Ingrese una direccion de correo valida",
+  "validation_password_min": "La contrasena debe tener al menos 8 caracteres"
+}
+```
+
+The validation error response will contain localized field messages:
+
+```json
+{
+  "message": "Validation failed",
+  "errors": {
+    "email": ["Ingrese una direccion de correo valida"],
+    "password": ["La contrasena debe tener al menos 8 caracteres"]
+  }
+}
+```
+
+### Localized Validation with Parameters
+
+Paraglide messages support parameters for dynamic values:
+
+```json
+// messages/en.json
+{
+  "validation_min_length": "{field} must be at least {min} characters",
+  "validation_max_length": "{field} must not exceed {max} characters",
+  "validation_unique": "This {field} is already taken"
+}
+```
+
+```typescript
+import * as m from '$lib/paraglide/messages';
+
+z.string().min(2, m.validation_min_length({ field: m.field_name(), min: '2' }));
+```
+
+### Localized abort() Helper
+
+You can pass localized messages to `abort()` and its variants:
+
+```typescript
+import { abort, abortUnless } from '@beeblock/svelar/errors';
+import * as m from '$lib/paraglide/messages';
+
+// In a load function or controller method
+abortUnless(locals.user, 401, m.error_401_title());
+abort(403, m.error_admin_only());
+abortIf(post.archived, 410, m.error_post_archived());
+```
+
+### Localized Custom Error Classes
+
+For domain-specific errors, create localized error classes:
+
+```typescript
+// src/lib/modules/billing/errors.ts
+import { HttpError } from '@beeblock/svelar/errors';
+import * as m from '$lib/paraglide/messages';
+
+export class InsufficientCreditsError extends HttpError {
+  constructor(required: number, available: number) {
+    super(402, m.error_insufficient_credits({ required: String(required), available: String(available) }));
+  }
+}
+
+export class SubscriptionExpiredError extends HttpError {
+  constructor() {
+    super(403, m.error_subscription_expired());
+  }
+}
+```
+
+```json
+// messages/en.json
+{
+  "error_insufficient_credits": "You need {required} credits but only have {available}",
+  "error_subscription_expired": "Your subscription has expired. Please renew to continue."
+}
+```
+
+### Summary: When to Localize Where
+
+| Layer | Who localizes | How |
+|-------|--------------|-----|
+| **Error pages** (`+error.svelte`) | Client | Automatic — maps status code to i18n key |
+| **API JSON responses** | Server | Pass `m.message_key()` when throwing errors |
+| **Validation field errors** | Server | Use `m.message_key()` in Zod schemas / FormRequest |
+| **Toast notifications** | Client | `apiFetch` shows the server's `message` field |
+| **Custom error classes** | Server | Use `m.message_key()` in constructor |
+
+> **Tip:** For public-facing APIs consumed by third parties, keep error messages in English (the HTTP standard). Use localization only for APIs consumed by your own frontend where you control the locale detection.
+
 ## Custom Error Reporting
 
 ```typescript

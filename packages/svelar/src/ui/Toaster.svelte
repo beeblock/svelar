@@ -1,14 +1,43 @@
 <script lang="ts">
   import { getToasts, subscribe, dismiss, pauseToast, resumeToast, type ToastVariant, type ToastState } from './toast.svelte.ts';
   import { onMount } from 'svelte';
+  import type { Component } from 'svelte';
+
+  interface VariantStyle {
+    icon?: Component<any>;
+    iconClass?: string;
+    borderClass?: string;
+    progressClass?: string;
+    containerClass?: string;
+  }
 
   interface Props {
     position?: 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left' | 'top-center' | 'bottom-center';
     maxVisible?: number;
     class?: string;
+    // Per-variant customization
+    variants?: Partial<Record<ToastVariant, VariantStyle>>;
+    // Global overrides
+    toastClass?: string;
+    titleClass?: string;
+    descriptionClass?: string;
+    actionClass?: string;
+    closeClass?: string;
+    progressBarClass?: string;
   }
 
-  let { position = 'bottom-right', maxVisible = 5, class: className = '' }: Props = $props();
+  let {
+    position = 'bottom-right',
+    maxVisible = 5,
+    class: className = '',
+    variants = {},
+    toastClass = '',
+    titleClass = '',
+    descriptionClass = '',
+    actionClass = '',
+    closeClass = '',
+    progressBarClass = '',
+  }: Props = $props();
 
   let allToasts = $state(getToasts());
   const toasts = $derived(allToasts.slice(-maxVisible));
@@ -30,33 +59,70 @@
     'bottom-center': 'bottom-0 left-1/2 -translate-x-1/2 pb-4',
   };
 
-  const icons: Record<ToastVariant, { svg: string; colors: string }> = {
+  // Default icon SVGs (proper Lucide-inspired icons)
+  const defaultIcons: Record<ToastVariant, { svg: string; colors: string }> = {
     default: { svg: '', colors: '' },
     success: {
-      svg: '<path d="M5 12l5 5L20 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
+      // CircleCheck
+      svg: '<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
       colors: 'text-emerald-600 bg-emerald-50 ring-emerald-200',
     },
     error: {
-      svg: '<path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>',
+      // CircleX
+      svg: '<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M15 9l-6 6M9 9l6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>',
       colors: 'text-red-600 bg-red-50 ring-red-200',
     },
     warning: {
-      svg: '<path d="M12 9v4M12 17h.01" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>',
+      // TriangleAlert
+      svg: '<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M12 9v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="17" r="1" fill="currentColor"/>',
       colors: 'text-amber-600 bg-amber-50 ring-amber-200',
     },
     info: {
-      svg: '<circle cx="12" cy="12" r="1" fill="currentColor"/><path d="M12 16v-4" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>',
+      // CircleInfo
+      svg: '<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M12 16v-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="8" r="1" fill="currentColor"/>',
       colors: 'text-blue-600 bg-blue-50 ring-blue-200',
     },
   };
 
-  const borderAccent: Record<ToastVariant, string> = {
+  const defaultBorder: Record<ToastVariant, string> = {
     default: 'border-l-gray-300',
     success: 'border-l-emerald-500',
     error: 'border-l-red-500',
     warning: 'border-l-amber-500',
     info: 'border-l-blue-500',
   };
+
+  const defaultProgress: Record<ToastVariant, string> = {
+    default: 'bg-gray-400',
+    success: 'bg-emerald-400',
+    error: 'bg-red-400',
+    warning: 'bg-amber-400',
+    info: 'bg-blue-400',
+  };
+
+  function getIconColors(variant: ToastVariant): string {
+    return variants[variant]?.iconClass ?? defaultIcons[variant].colors;
+  }
+
+  function getBorderClass(variant: ToastVariant): string {
+    return variants[variant]?.borderClass ?? defaultBorder[variant];
+  }
+
+  function getProgressClass(variant: ToastVariant): string {
+    return variants[variant]?.progressClass ?? defaultProgress[variant];
+  }
+
+  function getContainerClass(variant: ToastVariant): string {
+    return variants[variant]?.containerClass ?? '';
+  }
+
+  function hasCustomIcon(variant: ToastVariant): boolean {
+    return !!variants[variant]?.icon;
+  }
+
+  function hasDefaultIcon(variant: ToastVariant): boolean {
+    return !!defaultIcons[variant].svg;
+  }
 
   function animClass(state: ToastState): string {
     if (state === 'entering') {
@@ -75,17 +141,22 @@
     aria-live="polite"
   >
     {#each toasts as item (item.id)}
-      {@const icon = icons[item.variant]}
+      {@const icon = defaultIcons[item.variant]}
+      {@const CustomIcon = variants[item.variant]?.icon}
       <div
-        class="pointer-events-auto bg-white border border-gray-200 border-l-4 {borderAccent[item.variant]} rounded-lg shadow-lg {animClass(item.state)} group"
+        class="pointer-events-auto bg-white border border-gray-200 border-l-4 {getBorderClass(item.variant)} rounded-lg shadow-lg {animClass(item.state)} group {toastClass} {getContainerClass(item.variant)}"
         role="alert"
         onmouseenter={() => pauseToast(item.id)}
         onmouseleave={() => resumeToast(item.id)}
       >
         <div class="flex items-start gap-3 p-4">
-          <!-- Icon -->
-          {#if icon.svg}
-            <div class="flex-shrink-0 w-7 h-7 rounded-full ring-1 flex items-center justify-center {icon.colors}">
+          <!-- Icon: custom component or default SVG -->
+          {#if hasCustomIcon(item.variant) && CustomIcon}
+            <div class="flex-shrink-0 w-7 h-7 rounded-full ring-1 flex items-center justify-center {getIconColors(item.variant)}">
+              <CustomIcon size={16} />
+            </div>
+          {:else if hasDefaultIcon(item.variant)}
+            <div class="flex-shrink-0 w-7 h-7 rounded-full ring-1 flex items-center justify-center {getIconColors(item.variant)}">
               <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none">
                 {@html icon.svg}
               </svg>
@@ -94,13 +165,13 @@
 
           <!-- Content -->
           <div class="flex-1 min-w-0 pt-0.5">
-            <p class="text-sm font-semibold text-gray-900 leading-snug">{item.title}</p>
+            <p class="text-sm font-semibold text-gray-900 leading-snug {titleClass}">{item.title}</p>
             {#if item.description}
-              <p class="text-[13px] text-gray-500 mt-1 leading-relaxed">{item.description}</p>
+              <p class="text-[13px] text-gray-500 mt-1 leading-relaxed {descriptionClass}">{item.description}</p>
             {/if}
             {#if item.action}
               <button
-                class="text-[13px] font-semibold mt-2 text-[var(--color-brand,#6366f1)] hover:underline focus:outline-none"
+                class="text-[13px] font-semibold mt-2 text-brand hover:underline focus:outline-none {actionClass}"
                 onclick={() => { item.action?.onClick(); dismiss(item.id); }}
               >
                 {item.action.label}
@@ -111,7 +182,7 @@
           <!-- Close button -->
           {#if item.dismissible}
             <button
-              class="flex-shrink-0 p-1 -m-1 rounded-md text-gray-300 opacity-0 group-hover:opacity-100 hover:text-gray-500 hover:bg-gray-100 transition-all duration-150 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-gray-300"
+              class="flex-shrink-0 p-1 -m-1 rounded-md text-gray-300 opacity-0 group-hover:opacity-100 hover:text-gray-500 hover:bg-gray-100 transition-all duration-150 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-gray-300 {closeClass}"
               onclick={() => dismiss(item.id)}
               aria-label="Dismiss notification"
             >
@@ -126,7 +197,7 @@
         {#if item.duration > 0 && item.state !== 'exiting'}
           <div class="h-0.5 bg-gray-100 rounded-b-lg overflow-hidden">
             <div
-              class="h-full rounded-b-lg {item.variant === 'success' ? 'bg-emerald-400' : item.variant === 'error' ? 'bg-red-400' : item.variant === 'warning' ? 'bg-amber-400' : item.variant === 'info' ? 'bg-blue-400' : 'bg-gray-400'} toast-progress"
+              class="h-full rounded-b-lg {getProgressClass(item.variant)} {progressBarClass} toast-progress"
               style="animation-duration: {item.duration}ms; {item.pausedAt ? 'animation-play-state: paused;' : ''}"
             ></div>
           </div>

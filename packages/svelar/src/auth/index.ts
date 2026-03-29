@@ -11,6 +11,7 @@ export {
   type GuardType,
   type JwtConfig,
   type JwtPayload,
+  type JwtTokenPair,
   type TokenConfig,
 } from './Auth.js';
 

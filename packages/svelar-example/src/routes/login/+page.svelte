@@ -75,7 +75,7 @@
     <CardFooter class="flex-col gap-4 border-t pt-6">
       <p class="text-sm text-center text-gray-600">
         {m.login_no_account()}
-        <a href={localizeHref('/register')} class="font-medium text-[var(--color-brand)] hover:underline">
+        <a href={localizeHref('/register')} class="font-medium text-brand hover:underline">
           {m.login_register_link()}
         </a>
       </p>

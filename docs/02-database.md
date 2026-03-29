@@ -457,6 +457,113 @@ await Connection.disconnect();                  // close default
 await Connection.disconnect('analytics');       // close named connection
 ```
 
+## Multiple Connections
+
+Svelar supports multiple database connections simultaneously. Configure them all in `src/app.ts`, then tell each model which connection to use.
+
+### Configuring Multiple Connections
+
+```typescript
+// src/app.ts
+import { Connection } from '@beeblock/svelar/database';
+
+Connection.configure({
+  default: 'sqlite',
+  connections: {
+    sqlite: {
+      driver: 'sqlite',
+      filename: process.env.DB_PATH ?? 'database.db',
+    },
+    analytics: {
+      driver: 'postgres',
+      host: process.env.ANALYTICS_DB_HOST ?? 'localhost',
+      port: parseInt(process.env.ANALYTICS_DB_PORT ?? '5432'),
+      database: process.env.ANALYTICS_DB_NAME ?? 'analytics',
+      user: process.env.ANALYTICS_DB_USER ?? 'postgres',
+      password: process.env.ANALYTICS_DB_PASSWORD ?? '',
+    },
+    legacy: {
+      driver: 'mysql',
+      host: process.env.LEGACY_DB_HOST ?? 'localhost',
+      port: parseInt(process.env.LEGACY_DB_PORT ?? '3306'),
+      database: process.env.LEGACY_DB_NAME ?? 'legacy_app',
+      user: process.env.LEGACY_DB_USER ?? 'root',
+      password: process.env.LEGACY_DB_PASSWORD ?? '',
+    },
+  },
+});
+```
+
+Connections are lazily initialized — Svelar only connects to a database when it's first used, and caches the connection for subsequent queries.
+
+### Per-Model Connections
+
+Set `static connection` on any model to route its queries to a specific database:
+
+```typescript
+import { Model } from '@beeblock/svelar/orm';
+
+// Uses the default connection (sqlite)
+export class User extends Model {
+  static table = 'users';
+}
+
+// Uses the 'analytics' connection (postgres)
+export class AnalyticsEvent extends Model {
+  static table = 'events';
+  static connection = 'analytics';
+}
+
+// Uses the 'legacy' connection (mysql)
+export class LegacyOrder extends Model {
+  static table = 'orders';
+  static connection = 'legacy';
+}
+```
+
+Queries automatically route to the correct database:
+
+```typescript
+const users = await User.all();                 // → sqlite
+const events = await AnalyticsEvent.all();      // → postgres
+const orders = await LegacyOrder.where('status', 'pending').get(); // → mysql
+```
+
+### Raw Queries on a Specific Connection
+
+Pass the connection name as the third argument to `Connection.raw()`:
+
+```typescript
+const rows = await Connection.raw('SELECT * FROM logs', [], 'analytics');
+```
+
+### Migrations for Other Connections
+
+By default, migrations run on the default connection. To run a migration against a specific connection, create a `Schema` with the connection name:
+
+```typescript
+import { Migration, Schema } from '@beeblock/svelar/database';
+
+export default class CreateEventsTable extends Migration {
+  private analyticsSchema = new Schema('analytics');
+
+  async up() {
+    await this.analyticsSchema.createTable('events', (table) => {
+      table.increments('id');
+      table.string('event_type');
+      table.json('payload');
+      table.timestamps();
+    });
+  }
+
+  async down() {
+    await this.analyticsSchema.dropTable('events');
+  }
+}
+```
+
+Each connection maintains its own `svelar_migrations` table, so migration history is tracked independently per database.
+
 ## Best Practices
 
 1. **Always use migrations** - Never modify the database schema manually. Use migrations to version control your schema.

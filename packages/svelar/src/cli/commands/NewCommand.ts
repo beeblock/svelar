@@ -53,11 +53,17 @@ export class NewCommand extends Command {
       'src/lib/shared/commands',
       'src/lib/shared/providers',
       'src/lib/shared/scheduler',
+      'src/lib/events',
+      'src/lib/listeners',
       'src/lib/database/migrations',
       'src/lib/database/seeders',
       'src/routes',
       'src/routes/api',
       'static',
+      'storage/logs',
+      'storage/cache',
+      'storage/uploads',
+      'storage/sessions',
     ];
     for (const dir of dirs) {
       mkdirSync(join(projectDir, dir), { recursive: true });
@@ -272,7 +278,9 @@ export default defineConfig({
 
 import { Connection } from '@beeblock/svelar/database';
 import { Hash } from '@beeblock/svelar/hashing';
-import { AuthManager } from '@beeblock/svelar/auth';
+import { Application } from '@beeblock/svelar/container';
+import { EventServiceProvider } from './lib/shared/providers/EventServiceProvider.js';
+// import { AuthManager } from '@beeblock/svelar/auth';
 // import { User } from './lib/models/User.js';
 
 // ── Database (SQLite) ─────────────────────────────────────
@@ -289,13 +297,23 @@ Connection.configure({
 // ── Hashing (scrypt, zero dependencies) ───────────────────
 Hash.configure({ driver: 'scrypt' });
 
+// ── Application Bootstrap ─────────────────────────────────
+// Register models for observer support (uncomment when you have models):
+// import { EventServiceProvider as BaseProvider } from '@beeblock/svelar/events';
+// BaseProvider.registerModels(User);
+
+const app = new Application();
+app.register(EventServiceProvider);
+// app.register(AuthServiceProvider);
+await app.bootstrap();
+
 // ── Auth (uncomment when you have a User model) ──────────
 // export const auth = new AuthManager({
 //   guard: 'session',
 //   model: User,
 // });
 
-export { Connection, Hash };
+export { Connection, Hash, app };
 `
     );
 
@@ -359,19 +377,19 @@ export const { handle, handleError } = createSvelarApp({
 
 <div class="min-h-screen bg-white flex flex-col items-center justify-center px-4">
   <div class="text-center max-w-lg">
-    <div class="w-16 h-16 bg-[var(--color-brand)] rounded-2xl flex items-center justify-center mx-auto mb-6">
+    <div class="w-16 h-16 bg-brand rounded-2xl flex items-center justify-center mx-auto mb-6">
       <span class="text-white font-bold text-2xl">&lt;/&gt;</span>
     </div>
 
     <Badge variant="outline" class="mb-4">Svelar + SvelteKit</Badge>
 
     <h1 class="text-4xl font-extrabold text-gray-900 mb-4">
-      Welcome to <span class="text-[var(--color-brand)]">${projectName}</span>
+      Welcome to <span class="text-brand">${projectName}</span>
     </h1>
 
     <p class="text-gray-600 mb-8 leading-relaxed">
       Your new Svelar project is ready. Edit
-      <code class="bg-gray-100 px-1.5 py-0.5 rounded text-sm text-[var(--color-brand)]">src/routes/+page.svelte</code>
+      <code class="bg-gray-100 px-1.5 py-0.5 rounded text-sm text-brand">src/routes/+page.svelte</code>
       to get started.
     </p>
 
@@ -416,19 +434,114 @@ dist
 .env.*
 *.db
 !.env.example
+
+# Storage (keep dirs, ignore contents)
+storage/logs/*
+storage/cache/*
+storage/uploads/*
+storage/sessions/*
+!storage/**/.gitkeep
 `
     );
+
+    // .gitkeep files in storage directories
+    for (const dir of ['storage/logs', 'storage/cache', 'storage/uploads', 'storage/sessions']) {
+      writeFileSync(join(projectDir, dir, '.gitkeep'), '');
+    }
 
     // ── 13. .env.example ──
     writeFileSync(
       join(projectDir, '.env.example'),
-      `APP_KEY=change-me-to-a-random-string
+      `# App Security — generate a random string for production
+APP_KEY=change-me-to-a-random-string
+
+# Database (SQLite by default, no extra config needed)
 DB_DRIVER=sqlite
 DB_PATH=database.db
+
+# PostgreSQL (uncomment to switch)
+# DB_DRIVER=postgresql
+# DB_HOST=localhost
+# DB_PORT=5432
+# DB_NAME=svelar_db
+# DB_USER=postgres
+# DB_PASSWORD=secret
+
+# MySQL (uncomment to switch)
+# DB_DRIVER=mysql2
+# DB_HOST=localhost
+# DB_PORT=3306
+# DB_NAME=svelar_db
+# DB_USER=root
+# DB_PASSWORD=secret
+
+# JWT (if using JWT auth)
+# JWT_SECRET=your-jwt-secret-key
+
+# Mail (optional)
+# MAIL_DRIVER=log
+# MAIL_FROM=hello@example.com
+
+# Redis (optional — needed for BullMQ queue and Redis cache/session)
+# REDIS_URL=redis://localhost:6379
+
+# Broadcasting (optional — Pusher/Soketi WebSocket)
+# PUSHER_KEY=app-key
+# PUSHER_SECRET=app-secret
+# PUSHER_APP_ID=app-id
+# PUSHER_HOST=localhost
+# PUSHER_PORT=6001
 `
     );
 
-    // ── 14. Database config for CLI ──
+    // ── 14. Default EventServiceProvider ──
+    writeFileSync(
+      join(projectDir, 'src', 'lib', 'shared', 'providers', 'EventServiceProvider.ts'),
+      `import { EventServiceProvider as BaseProvider } from '@beeblock/svelar/events';
+
+/**
+ * Event Service Provider
+ *
+ * Register all event listeners, subscribers, and model observers here.
+ * This gives you a single place to see all event wiring in your app.
+ */
+export class EventServiceProvider extends BaseProvider {
+  /**
+   * Map event names to their listener classes.
+   *
+   * Example:
+   *   import { UserRegistered } from '../../events/UserRegistered.js';
+   *   import { SendWelcomeEmail } from '../../listeners/SendWelcomeEmail.js';
+   *
+   *   protected listen = {
+   *     [UserRegistered.name]: [SendWelcomeEmail],
+   *     'order.created': [NotifyWarehouse],
+   *   };
+   */
+  protected listen = {};
+
+  /**
+   * Map model class names to their observer classes.
+   *
+   * Example:
+   *   import { UserObserver } from '../../modules/users/UserObserver.js';
+   *
+   *   protected observers = {
+   *     User: [UserObserver],
+   *   };
+   */
+  protected observers = {};
+
+  /**
+   * Subscriber classes to register.
+   * Each subscriber can listen to multiple events in its subscribe() method.
+   */
+  protected subscribe = [];
+}
+`
+    );
+
+    // ── 15. Database config for CLI ──
     writeFileSync(
       join(projectDir, 'svelar.database.json'),
       JSON.stringify(

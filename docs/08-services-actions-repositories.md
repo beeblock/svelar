@@ -308,39 +308,40 @@ export class AuthService extends Service {
   async register(data: any) {
     const user = await userRepo.create(data);
 
-    // Emit event
+    // Emit domain event
     await this.emit('user:registered', user);
 
     return this.ok(user);
   }
 }
 
-// Listen to event elsewhere
-import { EventDispatcher } from '@beeblock/svelar/events';
+// Listen to event elsewhere (or in your EventServiceProvider)
+import { Event } from '@beeblock/svelar/events';
 
-EventDispatcher.listen('user:registered', async (user) => {
+Event.listen('user:registered', async (user) => {
   // Send welcome email, create profile, etc.
   console.log('New user registered:', user.email);
 });
 ```
 
+For the full events system including typed event classes, listeners, and the EventServiceProvider, see [Events & Listeners](./12-additional-features.md#events--listeners).
+
 ## Actions
 
-Actions encapsulate single, well-defined use cases. Each action does one thing well.
+Actions encapsulate single, well-defined use cases. Each action does one thing well. They support before/after hooks, middleware pipelines, safe execution, and chaining.
 
 ### Creating an Action
 
 ```bash
-npx svelar make:action RegisterUserAction
+npx svelar make:action RegisterUser --module=auth
 ```
 
-This creates `src/lib/actions/RegisterUserAction.ts`:
+This creates `src/lib/modules/auth/RegisterUser.ts`:
 
 ```typescript
 import { Action } from '@beeblock/svelar/actions';
-import { AuthService } from '../services/AuthService.js';
-import type { User } from '../models/User.js';
-import type { ServiceResult } from '@beeblock/svelar/services';
+import { Hash } from '@beeblock/svelar/hashing';
+import { User } from './User.js';
 
 interface RegisterInput {
   name: string;
@@ -348,11 +349,14 @@ interface RegisterInput {
   password: string;
 }
 
-const authService = new AuthService();
-
-export class RegisterUserAction extends Action<RegisterInput, ServiceResult<User>> {
-  async execute(input: RegisterInput): Promise<ServiceResult<User>> {
-    return authService.register(input);
+export class RegisterUser extends Action<RegisterInput, User> {
+  async execute(input: RegisterInput): Promise<User> {
+    const user = await User.create({
+      name: input.name,
+      email: input.email,
+      password: await Hash.make(input.password),
+    });
+    return user;
   }
 }
 ```
@@ -360,9 +364,17 @@ export class RegisterUserAction extends Action<RegisterInput, ServiceResult<User
 ### Using Actions
 
 ```typescript
-const registerAction = new RegisterUserAction();
+const action = new RegisterUser();
 
-const result = await registerAction.run({
+// Standard execution — throws on error
+const user = await action.run({
+  name: 'John Doe',
+  email: 'john@example.com',
+  password: 'password123',
+});
+
+// Safe execution — returns ActionResult (never throws)
+const result = await action.runSafe({
   name: 'John Doe',
   email: 'john@example.com',
   password: 'password123',
@@ -375,41 +387,273 @@ if (result.success) {
 }
 ```
 
-### Action Hooks
+### Inline Actions
 
-Actions support hooks that run at specific lifecycle points:
+For simple one-off actions without creating a class:
 
 ```typescript
-export class PublishPostAction extends Action<PublishInput, ServiceResult<Post>> {
-  async execute(input: PublishInput): Promise<ServiceResult<Post>> {
-    return postService.publish(input);
-  }
+import { inlineAction } from '@beeblock/svelar/actions';
 
-  async beforeExecute(input: PublishInput): Promise<void> {
-    console.log('Publishing post...');
-  }
+const sendEmail = inlineAction(async (data: { to: string; body: string }) => {
+  await mailer.send(data);
+  return { sent: true };
+});
 
-  async afterExecute(result: ServiceResult<Post>): Promise<void> {
-    if (result.success) {
-      console.log('Post published successfully');
-    }
-  }
-}
+await sendEmail.run({ to: 'user@example.com', body: 'Hello!' });
 ```
 
-### ChainableAction
+### Action Hooks (Before/After)
 
-Chain multiple actions together:
+Attach hooks that run before or after the action executes:
+
+```typescript
+const action = new RegisterUser();
+
+// Before hook — runs before execute()
+action.before(async (input) => {
+  console.log('Registering:', input.email);
+  // Validate, transform, log, etc.
+});
+
+// After hook — runs after execute() with both input and output
+action.after(async (input, user) => {
+  console.log('Registered user:', user.getAttribute('id'));
+  await Event.dispatch(new UserRegistered(user));
+});
+
+const user = await action.run({ name: 'Jane', email: 'jane@test.com', password: 'secret' });
+```
+
+Hooks are chainable:
+
+```typescript
+const user = await new RegisterUser()
+  .before((input) => { input.email = input.email.toLowerCase(); })
+  .after((input, user) => { console.log('Created user:', user.getAttribute('id')); })
+  .run(data);
+```
+
+### Action Middleware
+
+Actions support a middleware pipeline — each middleware receives the input and a `next` function:
+
+```typescript
+import type { ActionMiddleware } from '@beeblock/svelar/actions';
+
+// Middleware that logs execution time
+const timingMiddleware: ActionMiddleware<RegisterInput> = async (input, next) => {
+  const start = Date.now();
+  const result = await next(input);
+  console.log(`RegisterUser took ${Date.now() - start}ms`);
+  return result;
+};
+
+// Middleware that validates input
+const validateMiddleware: ActionMiddleware<RegisterInput> = async (input, next) => {
+  if (!input.email.includes('@')) {
+    throw new Error('Invalid email');
+  }
+  return next(input);
+};
+
+const user = await new RegisterUser()
+  .through(validateMiddleware)
+  .through(timingMiddleware)
+  .run(data);
+```
+
+Middleware executes in the order it's added. Each middleware can:
+- Modify the input before calling `next()`
+- Modify the result after `next()` returns
+- Halt the chain by not calling `next()` or throwing
+
+### Chainable Actions
+
+When the output of one action becomes the input of the next, use `ChainableAction`:
 
 ```typescript
 import { ChainableAction } from '@beeblock/svelar/actions';
 
-const chain = new ChainableAction()
-  .add(new CreatePostAction())
-  .add(new PublishPostAction())
-  .add(new SendNotificationAction());
+// Step 1: Parse raw CSV data into rows
+class ParseCsv extends ChainableAction<string, string[][]> {
+  async execute(csv: string) {
+    return csv.split('\n').map(row => row.split(','));
+  }
+}
 
-const results = await chain.run({ title: 'Hello', body: '...' });
+// Step 2: Validate rows
+class ValidateRows extends ChainableAction<string[][], ValidatedRow[]> {
+  async execute(rows: string[][]) {
+    return rows
+      .filter(row => row.length === 3)
+      .map(([name, email, role]) => ({ name, email, role }));
+  }
+}
+
+// Step 3: Import into database
+class ImportUsers extends ChainableAction<ValidatedRow[], ImportResult> {
+  async execute(rows: ValidatedRow[]) {
+    let imported = 0;
+    for (const row of rows) {
+      await User.create(row);
+      imported++;
+    }
+    return { imported, total: rows.length };
+  }
+}
+
+// Chain them: ParseCsv → ValidateRows → ImportUsers
+const importPipeline = new ParseCsv()
+  .then(new ValidateRows())
+  .then(new ImportUsers());
+
+const result = await importPipeline.run(csvString);
+// result: { imported: 42, total: 50 }
+```
+
+Each action in the chain is **type-safe** — TypeScript ensures the output type of one matches the input type of the next.
+
+### ChainableAction vs Pipeline
+
+Both process data through steps, but they serve different purposes:
+
+| | ChainableAction | Pipeline |
+|---|---|---|
+| **Each step is** | An Action class with `execute()` | A Pipe class with `handle(data, next)` or inline function |
+| **Step control** | Each step runs fully, output feeds into next | Each step can halt, skip, or modify before/after `next()` |
+| **Typing** | Output of step N must match input of step N+1 | All steps share the same type `T` |
+| **Best for** | Typed transformations: CSV → rows → users | Processing with guards: validate → discount → tax → charge |
+| **Hooks** | Before/after hooks on each action | Error handler via `onCatch()` |
+
+**Use ChainableAction** when each step transforms data into a different shape (type changes at each step).
+
+**Use Pipeline** when each step processes/modifies the same data shape (type stays the same throughout).
+
+```typescript
+// ChainableAction — types change at each step
+// string → string[][] → ValidatedRow[] → ImportResult
+new ParseCsv().then(new ValidateRows()).then(new ImportUsers());
+
+// Pipeline — same type throughout
+// OrderData → OrderData → OrderData → OrderData
+Pipeline.send(order).through([ValidateStock, ApplyDiscount, CalculateTax, ChargePayment]);
+```
+
+## Pipelines
+
+Pipelines implement the Chain of Responsibility pattern — data flows through a sequence of pipes where each pipe can transform, validate, or halt the chain. See [Architecture & Module Communication](./20-architecture.md#pipelines-chain-of-responsibility) for full documentation.
+
+```typescript
+import { Pipeline } from '@beeblock/svelar/support';
+
+// Process an order through multiple steps
+const processedOrder = await Pipeline.send(order)
+  .through([ValidateStock, ApplyDiscount, CalculateTax, ChargePayment])
+  .thenReturn();
+
+// With a final destination callback
+const invoice = await Pipeline.send(order)
+  .through([ValidateStock, ApplyDiscount, CalculateTax, ChargePayment])
+  .then(async (order) => {
+    return Invoice.create({ user_id: order.userId, total: order.total });
+  });
+
+// With error handling
+const result = await Pipeline.send(order)
+  .through([ValidateStock, ApplyDiscount, CalculateTax, ChargePayment])
+  .onCatch(async (error, order) => {
+    order.status = 'failed';
+    order.error = error.message;
+    return order;
+  })
+  .thenReturn();
+```
+
+### Creating Pipes
+
+```typescript
+import type { Pipe } from '@beeblock/svelar/support';
+
+class ValidateStock implements Pipe<OrderData> {
+  async handle(order: OrderData, next: (order: OrderData) => Promise<OrderData>) {
+    for (const item of order.items) {
+      const product = await Product.find(item.productId);
+      if (product.getAttribute('stock') < item.quantity) {
+        throw new Error(`Insufficient stock for product ${item.productId}`);
+      }
+    }
+    return next(order); // Pass to next pipe
+  }
+}
+
+class ApplyDiscount implements Pipe<OrderData> {
+  async handle(order: OrderData, next: (order: OrderData) => Promise<OrderData>) {
+    if (order.couponCode) {
+      const coupon = await Coupon.where('code', order.couponCode).first();
+      if (coupon) {
+        order.discount = coupon.getAttribute('percentage') / 100;
+      }
+    }
+    return next(order);
+  }
+}
+```
+
+### Inline Pipes
+
+```typescript
+const result = await Pipeline.send(data)
+  .through([
+    async (data, next) => {
+      data.email = data.email.trim().toLowerCase();
+      return next(data);
+    },
+    ValidateUnique,
+    async (data, next) => {
+      data.password = await Hash.make(data.password);
+      return next(data);
+    },
+  ])
+  .thenReturn();
+```
+
+### Real-World Pipeline Examples
+
+**Content publishing:**
+
+```typescript
+await Pipeline.send(post)
+  .through([SanitizeHtml, ParseMarkdown, GenerateSlug, OptimizeImages, UpdateSearchIndex])
+  .thenReturn();
+```
+
+**User onboarding:**
+
+```typescript
+await Pipeline.send(registrationData)
+  .through([ValidateEmail, HashPassword, CreateUser, AssignRole, CreateWorkspace, SendWelcome])
+  .thenReturn();
+```
+
+**Data import:**
+
+```typescript
+await Pipeline.send(csvRows)
+  .through([ValidateHeaders, NormalizeData, Deduplicate, ValidateRules, InsertBatches])
+  .thenReturn();
+```
+
+### Pipelines + Events Together
+
+Use pipelines for sequential processing, then fire an event when done:
+
+```typescript
+const order = await Pipeline.send(orderData)
+  .through([ValidateStock, ApplyDiscount, CalculateTax, ChargePayment])
+  .thenReturn();
+
+// Notify other modules
+await Event.dispatch(new OrderCompleted(order));
 ```
 
 ## Controller → Service → Action → Repository → Model Flow

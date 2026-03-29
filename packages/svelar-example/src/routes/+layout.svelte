@@ -113,11 +113,12 @@
         {/if}
 
         <a href={localizeHref('/')} class="flex items-center gap-2">
-          <div class="w-8 h-8 bg-[var(--color-brand)] rounded-md flex items-center justify-center">
+          <div class="w-8 h-8 bg-brand rounded-md flex items-center justify-center">
             <span class="text-white font-bold text-sm">S</span>
           </div>
           <span class="font-bold text-lg hidden sm:inline">{m.app_name()}</span>
         </a>
+        <a href="/docs" class="hidden sm:inline text-gray-600 hover:text-gray-900 text-sm font-medium">Docs</a>
         {#if data.user}
           <a href={localizeHref('/dashboard')} class="hidden sm:inline text-gray-600 hover:text-gray-900 text-sm font-medium"
             >{m.nav_dashboard()}</a
@@ -177,7 +178,7 @@
                       href={localizeHref(link.href)}
                       onclick={() => (sidebarOpen = false)}
                       class="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors {isActive(link.href, link.exact)
-                        ? 'bg-[var(--color-brand)] text-white'
+                        ? 'bg-brand text-white'
                         : 'text-gray-700 hover:bg-gray-100'}"
                     >
                       <Icon icon={link.icon} size={18} />
@@ -199,7 +200,7 @@
                       href={localizeHref(link.href)}
                       onclick={() => (sidebarOpen = false)}
                       class="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors {tabParam === currentTab
-                        ? 'bg-[var(--color-brand)] text-white'
+                        ? 'bg-brand text-white'
                         : 'text-gray-700 hover:bg-gray-100'}"
                     >
                       <Icon icon={link.icon} size={18} />
@@ -244,7 +245,7 @@
                   <a
                     href={localizeHref(link.href)}
                     class="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors {isActive(link.href, link.exact)
-                      ? 'bg-[var(--color-brand)] text-white'
+                      ? 'bg-brand text-white'
                       : 'text-gray-700 hover:bg-gray-100'}"
                   >
                     <Icon icon={link.icon} size={18} />
@@ -265,7 +266,7 @@
                   <a
                     href={localizeHref(link.href)}
                     class="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors {tabParam === currentTab
-                      ? 'bg-[var(--color-brand)] text-white'
+                      ? 'bg-brand text-white'
                       : 'text-gray-700 hover:bg-gray-100'}"
                   >
                     <Icon icon={link.icon} size={18} />

@@ -14,7 +14,6 @@ export default class DailyDigestEmail extends ScheduledTask {
   }
 
   async handle(): Promise<void> {
-    console.log('[Scheduler] Dispatching daily digest job...');
     await Queue.dispatch(new DailyDigestJob());
   }
 }

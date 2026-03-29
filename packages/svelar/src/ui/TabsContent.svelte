@@ -19,7 +19,7 @@
 {#if isActive}
   <div
     role="tabpanel"
-    class="ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] focus-visible:ring-offset-2 {className}"
+    class="ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 {className}"
     {...rest}
   >
     {#if children}{@render children()}{/if}

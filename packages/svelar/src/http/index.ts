@@ -277,6 +277,64 @@ export function getCsrfToken(cookieName = 'XSRF-TOKEN'): string | null {
 }
 
 /**
+ * Fetch wrapper that signs requests with HMAC-SHA256.
+ * Use with SignatureMiddleware on the server.
+ *
+ * @example
+ * ```ts
+ * import { signedFetch } from 'svelar/http';
+ *
+ * const res = await signedFetch('/api/webhooks', {
+ *   method: 'POST',
+ *   body: JSON.stringify({ event: 'order.created' }),
+ *   signingSecret: 'your-shared-secret',
+ * });
+ * ```
+ */
+export async function signedFetch(
+  url: string,
+  options: ApiFetchOptions & {
+    signingSecret: string;
+    signatureHeader?: string;
+    timestampHeader?: string;
+  }
+): Promise<Response> {
+  const {
+    signingSecret,
+    signatureHeader = 'X-Signature',
+    timestampHeader = 'X-Timestamp',
+    ...fetchOptions
+  } = options;
+
+  const method = (fetchOptions.method || 'GET').toUpperCase();
+  const body = typeof fetchOptions.body === 'string' ? fetchOptions.body : '';
+  const timestamp = Math.floor(Date.now() / 1000);
+
+  // Parse the path from the URL
+  const parsed = new URL(url, 'http://localhost');
+  const path = parsed.pathname + parsed.search;
+
+  // Compute HMAC-SHA256 signature
+  const payload = `${timestamp}.${method}.${path}.${body}`;
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(signingSecret);
+  const msgData = encoder.encode(payload);
+
+  // Use Web Crypto API (works in browser and Node.js)
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw', keyData, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+  );
+  const sig = await crypto.subtle.sign('HMAC', cryptoKey, msgData);
+  const signature = Array.from(new Uint8Array(sig), (b) => b.toString(16).padStart(2, '0')).join('');
+
+  const headers = new Headers(fetchOptions.headers);
+  headers.set(signatureHeader, signature);
+  headers.set(timestampHeader, String(timestamp));
+
+  return apiFetch(url, { ...fetchOptions, headers, method });
+}
+
+/**
  * Build a URL with query parameters.
  *
  * @example

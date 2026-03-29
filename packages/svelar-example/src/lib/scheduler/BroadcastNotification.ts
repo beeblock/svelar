@@ -2,7 +2,10 @@ import { ScheduledTask } from 'svelar/scheduler';
 
 /**
  * Broadcast a toast notification to all connected SSE clients every minute.
- * Uses the internal HTTP bridge to reach the web server's SSE channels.
+ *
+ * When running in-process (e.g. "Run Now" from admin dashboard), uses the
+ * Broadcast singleton directly. When running from the CLI scheduler process,
+ * falls back to the internal HTTP bridge.
  */
 export default class BroadcastNotification extends ScheduledTask {
   name = 'broadcast-notification';
@@ -12,31 +15,48 @@ export default class BroadcastNotification extends ScheduledTask {
   }
 
   async handle(): Promise<void> {
-    const baseUrl = process.env.APP_URL || 'http://localhost:5179';
-    const secret = process.env.INTERNAL_SECRET || 'svelar-internal-secret';
+    const channel = 'notifications';
+    const eventName = 'toast';
+    const data = {
+      variant: 'info',
+      title: 'Scheduled Update',
+      description: `System check completed at ${new Date().toLocaleTimeString()}`,
+    };
 
-    const res = await fetch(`${baseUrl}/api/internal/broadcast`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Internal-Secret': secret,
-      },
-      body: JSON.stringify({
-        channel: 'notifications',
-        eventName: 'toast',
-        data: {
-          variant: 'info',
-          title: 'Scheduled Update',
-          description: `System check completed at ${new Date().toLocaleTimeString()}`,
-        },
-      }),
-    });
-
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Broadcast failed (${res.status}): ${body}`);
+    // Try direct broadcast first (works when running in the web server process)
+    try {
+      const { Broadcast } = await import('svelar/broadcasting');
+      if (Broadcast.totalSubscribers() > 0) {
+        await Broadcast.to(channel).send(eventName, data);
+        return;
+      }
+    } catch {
+      // Not in web server context — fall through to HTTP bridge
     }
 
-    console.log('[Scheduler] Broadcast notification sent');
+    // HTTP bridge for CLI scheduler process
+    const baseUrl = (process.env.APP_URL || 'http://localhost:5173').replace(/\/+$/, '');
+    const secret = process.env.INTERNAL_SECRET || 'svelar-internal-secret';
+
+    try {
+      const res = await fetch(`${baseUrl}/api/internal/broadcast`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Internal-Secret': secret,
+        },
+        body: JSON.stringify({ channel, eventName, data }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Broadcast failed (${res.status})`);
+      }
+
+    } catch (err: any) {
+      if (err?.cause?.code === 'ECONNREFUSED') {
+        return;
+      }
+      throw err;
+    }
   }
 }
