@@ -462,9 +462,9 @@ export const { handle, handleError } = createSvelarApp({
 
 ## Next Steps
 
-- Learn about [Auth](./07-auth.md) for authentication setup
-- Check [Middleware](./04-middleware.md) for request pipeline
-- Explore [Validation](./05-validation.md) for input validation
+- Learn about [Auth](./06-authentication.md) for authentication setup
+- Check [Middleware](./07-middleware.md) for request pipeline
+- Explore [Validation](./05-validation-dtos.md) for input validation
 - See [SaaS Guide](./17-saas-guide.md) for full application patterns
 
 ---

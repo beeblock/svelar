@@ -7,6 +7,7 @@ export {
   CsrfMiddleware,
   OriginMiddleware,
   ThrottleMiddleware,
+  SignatureMiddleware,
   type MiddlewareContext,
   type NextFunction,
   type MiddlewareHandler,

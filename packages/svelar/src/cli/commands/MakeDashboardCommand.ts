@@ -290,8 +290,8 @@ export const GET: RequestHandler = async (event) => {
   try {
     const { ScheduleMonitor } = await import('svelar/scheduler/ScheduleMonitor');
 
-    const tasks = ScheduleMonitor.listTasks();
-    const health = ScheduleMonitor.getHealth();
+    const tasks = await ScheduleMonitor.listTasks();
+    const health = await ScheduleMonitor.getHealth();
 
     return json({
       tasks,
@@ -498,7 +498,7 @@ export const GET: RequestHandler = async (event) => {
       Promise.resolve(LogViewer.getRecentErrors(10)),
     ]);
 
-    const schedulerHealth = ScheduleMonitor.getHealth();
+    const schedulerHealth = await ScheduleMonitor.getHealth();
     const logStats = LogViewer.getStats();
 
     return json({

@@ -245,7 +245,7 @@ class DashboardPlugin extends Plugin {
     if (this.dashboardConfig.sections.scheduler) {
       data.scheduler = {
         health: health.schedulerHealth,
-        tasks: ScheduleMonitor.listTasks(),
+        tasks: await ScheduleMonitor.listTasks(),
       };
     }
 

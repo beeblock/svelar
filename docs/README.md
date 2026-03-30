@@ -56,6 +56,7 @@ Svelar is a Laravel-inspired framework built on top of SvelteKit 2. It brings en
 26. [Error Handling](./19-error-handling.md) - Error pages, localization, exception handling
 27. [Architecture & Module Communication](./20-architecture.md) - DDD boundaries, events as glue, anti-patterns
 28. [SaaS Guide](./17-saas-guide.md) - Multi-tenancy, production checklist, scaling
+29. [Deployment](./29-deployment.md) - Docker, Traefik, blue-green, Swarm, CI/CD, monitoring
 
 ## Quick Start
 

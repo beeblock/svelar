@@ -440,16 +440,16 @@ export class Scheduler {
     if (this.timer) return;
 
     // Run immediately for the current minute
-    this.run();
+    this.run().catch((err) => console.error('[Scheduler] Error:', err));
 
     // Wait until the next minute boundary, then tick every 60s
     const now = Date.now();
     const msUntilNextMinute = 60_000 - (now % 60_000);
 
     this.timer = setTimeout(() => {
-      this.run();
+      this.run().catch((err) => console.error('[Scheduler] Error:', err));
       this.timer = setInterval(() => {
-        this.run();
+        this.run().catch((err) => console.error('[Scheduler] Error:', err));
       }, 60_000);
     }, msUntilNextMinute);
 

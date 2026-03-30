@@ -50,6 +50,7 @@ export default defineConfig({
     'queue/JobMonitor': 'src/queue/JobMonitor.ts',
     'scheduler/ScheduleMonitor': 'src/scheduler/ScheduleMonitor.ts',
     'logging/LogViewer': 'src/logging/LogViewer.ts',
+    'support/index': 'src/support/index.ts',
     'support/date': 'src/support/date.ts',
     'plugins/PluginRegistry': 'src/plugins/PluginRegistry.ts',
     'plugins/PluginPublisher': 'src/plugins/PluginPublisher.ts',
