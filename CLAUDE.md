@@ -2,9 +2,9 @@
 
 ## Project Structure
 
-Monorepo with two packages:
+Monorepo with packages:
 - `packages/svelar` — Core framework (Laravel-inspired on SvelteKit 2)
-- `packages/svelar-example` — Example app demonstrating all features
+- `packages/create-svelar` — `npx create-svelar` scaffolding
 
 ## Build & Run
 
@@ -12,14 +12,9 @@ Monorepo with two packages:
 # Build the core framework (must do after any change to packages/svelar)
 cd packages/svelar && npm run build
 
-# Run the example app dev server
-cd packages/svelar-example && npm run dev
-
-# Run the scheduler (separate terminal)
-cd packages/svelar-example && npx svelar schedule:run
-
-# Run migrations
-cd packages/svelar-example && npx svelar migrate
+# Test with a scaffolded app
+npx svelar new test-app
+cd test-app && npm run dev
 ```
 
 ## Svelte 5 Rules
@@ -33,17 +28,17 @@ cd packages/svelar-example && npx svelar migrate
 ## Svelar UI Components (`packages/svelar/src/ui/`)
 
 - Components are shipped as `.svelte` source (not compiled).
-- The `svelar/ui` alias in the example app points to `src/ui/index.ts`.
 - **Do NOT use `$state` runes in `.ts` files inside `packages/svelar`** — they won't be compiled by the Svelte compiler when consumed by apps. Use callback/subscriber patterns instead. `$state` in `.svelte` files is fine.
 - Icon support: use `<Icon icon={LucideComponent} />` with `lucide-svelte` or `@tabler/icons-svelte` as optional peer deps.
 - **Always import lucide icons individually**: `import Users from 'lucide-svelte/icons/users'` — never use the barrel export `from 'lucide-svelte'` (causes SSR module resolution errors).
 
-## Vite Aliases (`packages/svelar-example/vite.config.ts`)
+## Vite Aliases (Scaffolded Projects)
 
-All `svelar/*` imports are resolved via manual aliases. When adding a new svelar subpath:
-1. Add the alias in `vite.config.ts`
-2. UI/Svelte components point to `src/` (source), everything else points to `dist/` (built)
-3. Client-side modules (like `broadcasting/client`) should point to `src/` to avoid bundled `require()` shims
+Scaffolded projects resolve `@beeblock/svelar/*` imports via the `exports` field in package.json. When adding a new svelar subpath:
+1. Add the export in `packages/svelar/package.json` (`exports` field)
+2. Add the tsup entry in `packages/svelar/tsup.config.ts`
+3. Update the `viteConfig()` template in `NewCommandTemplates.ts`
+4. UI/Svelte components point to `src/` (source), everything else points to `dist/` (built)
 
 ## CLI & Scheduler (`packages/svelar/src/cli/`)
 

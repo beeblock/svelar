@@ -658,7 +658,7 @@ await Event.dispatch(new OrderCompleted(order));
 
 ## Controller → Service → Action → Repository → Model Flow
 
-Here's a complete example showing all layers from the svelar-example app:
+Here's a complete example showing all layers from a scaffolded Svelar project:
 
 ### 1. Route Handler
 

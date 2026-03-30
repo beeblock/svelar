@@ -310,7 +310,7 @@ new CsrfMiddleware({
 
 ## Custom Middleware Example
 
-Here's a custom auth middleware from the svelar-example:
+Here's a custom auth middleware from a scaffolded project:
 
 ```typescript
 // src/lib/middleware/AuthMiddleware.ts
@@ -472,7 +472,7 @@ export class AdminOnlyMiddleware extends Middleware {
 
 ## Complete Middleware Pipeline Example
 
-Here's the complete setup from the svelar-example app using `createSvelarApp`:
+Here's the complete setup from a scaffolded Svelar project using `createSvelarApp`:
 
 ```typescript
 // src/hooks.server.ts
@@ -483,7 +483,7 @@ import { auth } from './app.js';
 
 export const { handle, handleError } = createSvelarApp({
   auth,
-  secret: process.env.APP_KEY || 'svelar-example-secret-change-me',
+  secret: process.env.APP_KEY || 'change-me-in-production',
   i18n: { paraglideMiddleware, getTextDirection },
 });
 ```

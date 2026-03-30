@@ -916,7 +916,7 @@ Sessions are persisted to the database and survive restarts.
 
 ## Complete Auth Example
 
-Here's the complete authentication flow from the svelar-example app:
+Here's the complete authentication flow from a scaffolded Svelar project:
 
 ### Routes
 

@@ -185,7 +185,7 @@ npx svelar routes:list --json           # JSON output (for scripting)
 
 ## Complete Controller Example
 
-Here's a complete authentication controller from the svelar-example app:
+Here's a complete authentication controller from a scaffolded Svelar project:
 
 ```typescript
 // src/lib/controllers/AuthController.ts

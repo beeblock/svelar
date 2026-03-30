@@ -284,7 +284,7 @@ STORAGE_DISK=local
 ## Getting Help
 
 - Review the documentation for detailed guides
-- Check the [svelar-example](../packages/svelar-example) app for working examples
+- Scaffold a new project with `npx @beeblock/svelar new my-app` to explore working examples
 - Open an issue on GitHub for bugs or feature requests
 
 ---
