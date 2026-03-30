@@ -28,4 +28,4 @@ export { default as TabsList } from './TabsList.svelte';
 export { default as TabsTrigger } from './TabsTrigger.svelte';
 export { default as TabsContent } from './TabsContent.svelte';
 export { default as Toaster } from './Toaster.svelte';
-export { toast, subscribe as toastSubscribe, getToasts, dismiss, pauseToast, resumeToast, type ToastItem, type ToastVariant, type ToastOptions, type ToastState } from './toast.svelte.ts';
+export { toast, subscribe as toastSubscribe, getToasts, dismiss, pauseToast, resumeToast, type ToastItem, type ToastVariant, type ToastOptions, type ToastState } from './toast.js';
