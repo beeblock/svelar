@@ -6,9 +6,9 @@ Svelar provides a full-stack error handling system covering both API routes (JSO
 
 The error system has three layers:
 
-1. **Server-side** — Structured error classes (`svelar/errors`) thrown in load functions, actions, and API routes. The `ErrorHandler` catches them and returns proper HTTP responses.
+1. **Server-side** — Structured error classes (`@beeblock/svelar/errors`) thrown in load functions, actions, and API routes. The `ErrorHandler` catches them and returns proper HTTP responses.
 
-2. **Client-side API** — `apiFetch` and `apiFetchJson` (`svelar/http`) automatically show toast notifications on error responses. Validation errors (422) display field-level details.
+2. **Client-side API** — `apiFetch` and `apiFetchJson` (`@beeblock/svelar/http`) automatically show toast notifications on error responses. Validation errors (422) display field-level details.
 
 3. **Client-side Pages** — The `+error.svelte` page renders a polished, i18n-aware error UI for all HTTP status codes (400–504), with contextual actions (retry, go back, sign in).
 

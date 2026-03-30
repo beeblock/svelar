@@ -252,12 +252,61 @@ export class MemorySessionStore implements SessionStore {
 // ── Database Store ─────────────────────────────────────────
 
 export class DatabaseSessionStore implements SessionStore {
+  private tableEnsured = false;
+
   constructor(
     private tableName: string = 'sessions',
     private connectionName?: string
   ) {}
 
+  private async ensureTable(): Promise<void> {
+    if (this.tableEnsured) return;
+    try {
+      const { Connection } = await import('../database/Connection.js');
+      const driver = Connection.getDriver(this.connectionName);
+      switch (driver) {
+        case 'sqlite':
+          await Connection.raw(
+            `CREATE TABLE IF NOT EXISTS ${this.tableName} (
+              id TEXT PRIMARY KEY,
+              payload TEXT NOT NULL,
+              expires_at TEXT NOT NULL
+            )`,
+            [],
+            this.connectionName,
+          );
+          break;
+        case 'postgres':
+          await Connection.raw(
+            `CREATE TABLE IF NOT EXISTS ${this.tableName} (
+              id VARCHAR(255) PRIMARY KEY,
+              payload TEXT NOT NULL,
+              expires_at TIMESTAMPTZ NOT NULL
+            )`,
+            [],
+            this.connectionName,
+          );
+          break;
+        case 'mysql':
+          await Connection.raw(
+            `CREATE TABLE IF NOT EXISTS ${this.tableName} (
+              id VARCHAR(255) PRIMARY KEY,
+              payload TEXT NOT NULL,
+              expires_at DATETIME NOT NULL
+            ) ENGINE=InnoDB`,
+            [],
+            this.connectionName,
+          );
+          break;
+      }
+      this.tableEnsured = true;
+    } catch {
+      // Database not available yet
+    }
+  }
+
   async read(id: string): Promise<SessionData | null> {
+    await this.ensureTable();
     const { Connection } = await import('../database/Connection.js');
     const rows = await Connection.raw(
       `SELECT payload, expires_at FROM ${this.tableName} WHERE id = ?`,
@@ -281,6 +330,7 @@ export class DatabaseSessionStore implements SessionStore {
   }
 
   async write(id: string, data: SessionData, ttl: number): Promise<void> {
+    await this.ensureTable();
     const { Connection } = await import('../database/Connection.js');
     const payload = JSON.stringify(data);
     const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();

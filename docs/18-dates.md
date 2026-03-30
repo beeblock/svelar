@@ -1,6 +1,6 @@
 # Date Utilities
 
-Svelar provides timezone-safe date formatting, parsing, and relative time helpers through `svelar/dates`. Built on [date-fns](https://date-fns.org), it prevents the classic "off by one day" bug and provides a Laravel Carbon-inspired API.
+Svelar provides timezone-safe date formatting, parsing, and relative time helpers through `@beeblock/svelar/dates`. Built on [date-fns](https://date-fns.org), it prevents the classic "off by one day" bug and provides a Laravel Carbon-inspired API.
 
 ## Import
 
@@ -32,7 +32,7 @@ new Date('2024-01-15')  // Jan 14, 9:00 PM in UTC-3
 toDate('2024-01-15')    // Jan 15, 12:00 AM local time
 ```
 
-All formatting functions in `svelar/dates` use `toDate()` internally, so you get correct results by default.
+All formatting functions in `@beeblock/svelar/dates` use `toDate()` internally, so you get correct results by default.
 
 ## Formatting
 
@@ -178,7 +178,7 @@ const dayStart = startOfDay(new Date());
 
 ## i18n Integration
 
-See the [i18n guide](./15-i18n.md#locale-aware-dates) for wiring `svelar/dates` with paraglide to automatically follow the active locale.
+See the [i18n guide](./15-i18n.md#locale-aware-dates) for wiring `@beeblock/svelar/dates` with paraglide to automatically follow the active locale.
 
 ## Next Steps
 

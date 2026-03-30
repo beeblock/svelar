@@ -179,7 +179,7 @@ class DashboardPlugin extends Plugin {
     const cpuUsage = process.cpuUsage();
 
     const queueHealth = await JobMonitor.getHealth();
-    const schedulerHealth = ScheduleMonitor.getHealth();
+    const schedulerHealth = await ScheduleMonitor.getHealth();
     const logStats = LogViewer.getStats();
 
     // Determine overall health status

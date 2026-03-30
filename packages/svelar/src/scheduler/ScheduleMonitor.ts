@@ -26,6 +26,7 @@
  * ```
  */
 
+import { cronMatches } from './index.js';
 import type { Scheduler, ScheduledTask } from './index.js';
 import { singleton } from '../support/singleton.js';
 
@@ -83,9 +84,7 @@ export interface SchedulerHealth {
 class ScheduleMonitorService {
   private scheduler: Scheduler | null = null;
   private startTime: Date = new Date();
-  private taskHistory: Map<string, TaskRunRecord[]> = new Map();
   private taskEnabled: Map<string, boolean> = new Map();
-  private readonly maxHistoryPerTask = 100;
 
   /**
    * Configure the monitor with a scheduler instance
@@ -100,32 +99,38 @@ class ScheduleMonitorService {
         this.taskEnabled.set(task.name, true);
       }
     }
-
-    // Sync history from scheduler
-    this.syncHistory();
   }
 
   /**
-   * List all registered tasks with their current status
+   * List all registered tasks with their current status.
+   * Reads run history from the database so all processes (CLI, web) share the same data.
    */
-  listTasks(): TaskInfo[] {
+  async listTasks(): Promise<TaskInfo[]> {
     if (!this.scheduler) {
       return [];
     }
 
-    return this.scheduler.getTasks().map((task) => this.createTaskInfo(task));
+    const tasks = this.scheduler.getTasks();
+    const dbHistory = await this.loadHistoryFromDb(
+      tasks.map((t) => t.name),
+    );
+
+    return tasks.map((task) => this.createTaskInfo(task, dbHistory.get(task.name) || []));
   }
 
   /**
    * Get info for a specific task by name
    */
-  getTask(name: string): TaskInfo | null {
+  async getTask(name: string): Promise<TaskInfo | null> {
     if (!this.scheduler) {
       return null;
     }
 
     const task = this.scheduler.getTasks().find((t) => t.name === name);
-    return task ? this.createTaskInfo(task) : null;
+    if (!task) return null;
+
+    const dbHistory = await this.loadHistoryFromDb([name]);
+    return this.createTaskInfo(task, dbHistory.get(name) || []);
   }
 
   /**
@@ -143,14 +148,14 @@ class ScheduleMonitorService {
   }
 
   /**
-   * Manually trigger a task to run (if not disabled)
+   * Manually trigger a task to run (if not disabled).
+   * Persists the result to the database.
    */
   async runTask(name: string): Promise<void> {
     if (!this.scheduler) {
       throw new Error('Scheduler not configured');
     }
 
-    // Check if task is disabled
     if (this.taskEnabled.has(name) && !this.taskEnabled.get(name)) {
       throw new Error(`Task "${name}" is disabled`);
     }
@@ -162,29 +167,22 @@ class ScheduleMonitorService {
 
     const result = await task.executeTask();
 
-    // Record the execution
-    const record: TaskRunRecord = {
-      timestamp: result.timestamp,
-      success: result.success,
-      duration: result.duration,
-      error: result.error,
-    };
-
-    this.addToTaskHistory(name, record);
+    // Persist to database
+    await this.persistResult(result).catch(() => {});
   }
 
   /**
-   * Get execution history for a task
+   * Get execution history for a task from the database
    */
-  getTaskHistory(name: string, limit: number = 10): TaskRunRecord[] {
-    const history = this.taskHistory.get(name) || [];
-    return history.slice(-limit).reverse();
+  async getTaskHistory(name: string, limit: number = 10): Promise<TaskRunRecord[]> {
+    const dbHistory = await this.loadHistoryFromDb([name], limit);
+    return dbHistory.get(name) || [];
   }
 
   /**
    * Get overall scheduler health metrics
    */
-  getHealth(): SchedulerHealth {
+  async getHealth(): Promise<SchedulerHealth> {
     if (!this.scheduler) {
       return {
         totalTasks: 0,
@@ -202,20 +200,23 @@ class ScheduleMonitorService {
 
     const runningTasks = tasks.filter((t) => t.isRunning()).length;
 
-    // Collect recent errors from all task histories
+    // Load recent errors from database
     const lastErrors: Array<{ task: string; error: string; timestamp: Date }> = [];
-    for (const [taskName, history] of this.taskHistory) {
-      for (const record of history) {
-        if (record.error) {
-          lastErrors.push({
-            task: taskName,
-            error: record.error,
-            timestamp: record.timestamp,
-          });
-        }
+    try {
+      const { Connection } = await import('../database/Connection.js');
+      const rows: any[] = await Connection.raw(
+        'SELECT task, error, ran_at FROM scheduled_task_runs WHERE error IS NOT NULL ORDER BY ran_at DESC LIMIT 10',
+      );
+      for (const row of rows) {
+        lastErrors.push({
+          task: row.task,
+          error: row.error,
+          timestamp: new Date(row.ran_at),
+        });
       }
+    } catch {
+      // Table may not exist
     }
-    lastErrors.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
 
     const uptime = Date.now() - this.startTime.getTime();
 
@@ -223,7 +224,7 @@ class ScheduleMonitorService {
       totalTasks: tasks.length,
       enabledTasks,
       runningTasks,
-      lastErrors: lastErrors.slice(0, 10),
+      lastErrors,
       uptime,
     };
   }
@@ -231,12 +232,62 @@ class ScheduleMonitorService {
   // ── Internal Methods ───────────────────────────────────
 
   /**
-   * Create a TaskInfo object from a ScheduledTask
+   * Load task run history from the database.
+   * Single query fetches the latest N records per task.
    */
-  private createTaskInfo(task: ScheduledTask): TaskInfo {
+  private async loadHistoryFromDb(
+    taskNames: string[],
+    limit: number = 20,
+  ): Promise<Map<string, TaskRunRecord[]>> {
+    const result = new Map<string, TaskRunRecord[]>();
+    if (taskNames.length === 0) return result;
+
+    try {
+      const { Connection } = await import('../database/Connection.js');
+      const placeholders = taskNames.map(() => '?').join(', ');
+      const rows: any[] = await Connection.raw(
+        `SELECT task, success, duration, error, ran_at FROM scheduled_task_runs WHERE task IN (${placeholders}) ORDER BY ran_at DESC LIMIT ?`,
+        [...taskNames, taskNames.length * limit],
+      );
+
+      for (const row of rows) {
+        if (!result.has(row.task)) {
+          result.set(row.task, []);
+        }
+        const history = result.get(row.task)!;
+        if (history.length < limit) {
+          history.push({
+            timestamp: new Date(row.ran_at),
+            success: !!row.success,
+            duration: row.duration,
+            error: row.error || undefined,
+          });
+        }
+      }
+    } catch {
+      // Table may not exist — return empty
+    }
+
+    return result;
+  }
+
+  /**
+   * Persist a task result to the database
+   */
+  private async persistResult(result: { task: string; success: boolean; duration: number; error?: string; timestamp: Date }): Promise<void> {
+    const { Connection } = await import('../database/Connection.js');
+    await Connection.raw(
+      'INSERT INTO scheduled_task_runs (task, success, duration, error, ran_at) VALUES (?, ?, ?, ?, ?)',
+      [result.task, result.success, result.duration, result.error || null, result.timestamp.toISOString()],
+    );
+  }
+
+  /**
+   * Create a TaskInfo object from a ScheduledTask and its DB history
+   */
+  private createTaskInfo(task: ScheduledTask, history: TaskRunRecord[]): TaskInfo {
     const expression = task.getExpression();
-    const history = this.taskHistory.get(task.name) || [];
-    const lastRecord = history.length > 0 ? history[history.length - 1] : null;
+    const lastRecord = history.length > 0 ? history[0] : null;
 
     const enabled =
       !this.taskEnabled.has(task.name) || this.taskEnabled.get(task.name) === true;
@@ -251,46 +302,8 @@ class ScheduleMonitorService {
       lastStatus: lastRecord?.success ? 'success' : 'failed',
       enabled,
       isRunning: task.isRunning(),
-      history: history.slice(-5).reverse(),
+      history: history.slice(0, 5),
     };
-  }
-
-  /**
-   * Sync task history from scheduler's global history
-   */
-  private syncHistory(): void {
-    if (!this.scheduler) return;
-
-    const schedulerHistory = this.scheduler.getHistory();
-    for (const result of schedulerHistory) {
-      const record: TaskRunRecord = {
-        timestamp: result.timestamp,
-        success: result.success,
-        duration: result.duration,
-        error: result.error,
-      };
-      this.addToTaskHistory(result.task, record, false);
-    }
-  }
-
-  /**
-   * Add a record to a task's history
-   */
-  private addToTaskHistory(
-    taskName: string,
-    record: TaskRunRecord,
-    emitEvent: boolean = true,
-  ): void {
-    if (!this.taskHistory.has(taskName)) {
-      this.taskHistory.set(taskName, []);
-    }
-
-    const history = this.taskHistory.get(taskName)!;
-    history.push(record);
-
-    if (history.length > this.maxHistoryPerTask) {
-      history.shift();
-    }
   }
 
   /**
@@ -353,7 +366,6 @@ class ScheduleMonitorService {
     let checks = 0;
 
     while (checks < maxChecks) {
-      const { cronMatches } = require('./index.js');
       if (cronMatches(expression, next)) {
         return next;
       }

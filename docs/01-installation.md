@@ -269,12 +269,12 @@ And `src/hooks.server.ts`:
 
 ```typescript
 import { createSvelarApp } from '@beeblock/svelar/hooks';
-import { MemorySessionStore } from '@beeblock/svelar/session';
+import { DatabaseSessionStore } from '@beeblock/svelar/session';
 import './app.js';
 
 export const { handle, handleError } = createSvelarApp({
   secret: process.env.APP_KEY || 'change-me',
-  sessionStore: new MemorySessionStore(),
+  sessionStore: new DatabaseSessionStore(),  // auto-creates sessions table
 });
 ```
 

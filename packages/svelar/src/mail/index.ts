@@ -1,15 +1,30 @@
 /**
  * Svelar Mail
  *
- * Email sending abstraction with template support.
+ * Email sending abstraction with swappable drivers.
+ *
+ * Drivers:
+ * - **smtp** — SMTP via nodemailer (requires `npm install nodemailer`)
+ * - **postmark** — Postmark transactional email API (zero deps, uses fetch)
+ * - **resend** — Resend email API (zero deps, uses fetch)
+ * - **log** — Logs emails to console (development)
+ * - **null** — Silently discards emails (testing)
  *
  * @example
  * ```ts
- * import { Mailer } from 'svelar/mail';
+ * import { Mailer } from '@beeblock/svelar/mail';
  *
  * Mailer.configure({
- *   default: 'smtp',
+ *   default: 'resend',
  *   mailers: {
+ *     resend: {
+ *       driver: 'resend',
+ *       apiKey: process.env.RESEND_API_KEY,
+ *     },
+ *     postmark: {
+ *       driver: 'postmark',
+ *       apiToken: process.env.POSTMARK_API_TOKEN,
+ *     },
  *     smtp: {
  *       driver: 'smtp',
  *       host: 'smtp.example.com',
@@ -21,12 +36,15 @@
  *   from: { name: 'My App', address: 'noreply@example.com' },
  * });
  *
- * // Send
+ * // Send (uses default driver)
  * await Mailer.send({
  *   to: 'user@example.com',
  *   subject: 'Welcome!',
  *   html: '<h1>Welcome to our app!</h1>',
  * });
+ *
+ * // Send via a specific driver
+ * await Mailer.mailer('postmark').send({ ... });
  *
  * // Mailable class
  * class WelcomeEmail extends Mailable {
@@ -45,7 +63,7 @@
 
 // ── Types ──────────────────────────────────────────────────
 
-export type MailDriver = 'smtp' | 'log' | 'null';
+export type MailDriver = 'smtp' | 'postmark' | 'resend' | 'log' | 'null' | 'custom';
 
 export interface MailerConfig {
   default: string;
@@ -55,10 +73,19 @@ export interface MailerConfig {
 
 export interface MailDriverConfig {
   driver: MailDriver;
+  // SMTP
   host?: string;
   port?: number;
   secure?: boolean;
   auth?: { user: string; pass: string };
+  // Postmark
+  apiToken?: string;
+  /** Postmark message stream (default: 'outbound') */
+  messageStream?: string;
+  // Resend
+  apiKey?: string;
+  // Custom — provide your own MailTransport instance
+  transport?: MailTransport;
 }
 
 export interface MailMessage {
@@ -75,6 +102,8 @@ export interface MailMessage {
     content: string | Buffer;
     contentType?: string;
   }>;
+  /** Optional tags for analytics (supported by Postmark and Resend) */
+  tags?: Record<string, string>;
 }
 
 export interface SendResult {
@@ -89,31 +118,46 @@ interface MailTransport {
   send(message: MailMessage): Promise<SendResult>;
 }
 
-// Log Transport
+// ── Helpers ────────────────────────────────────────────────
+
+function formatFrom(from: string | { name: string; address: string }): string {
+  if (typeof from === 'string') return from;
+  return `${from.name} <${from.address}>`;
+}
+
+function toArray(value: string | string[] | undefined): string[] {
+  if (!value) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function encodeAttachment(content: string | Buffer): string {
+  if (Buffer.isBuffer(content)) return content.toString('base64');
+  return Buffer.from(content).toString('base64');
+}
+
+// ── Log Transport ──────────────────────────────────────────
+
 class LogTransport implements MailTransport {
   async send(message: MailMessage): Promise<SendResult> {
-    const to = Array.isArray(message.to) ? message.to : [message.to];
+    const to = toArray(message.to);
     console.log(`[Mail] To: ${to.join(', ')} | Subject: ${message.subject}`);
     if (message.text) console.log(`[Mail] Body: ${message.text.slice(0, 200)}`);
     return { accepted: to, rejected: [] };
   }
 }
 
-// Null Transport
+// ── Null Transport ─────────────────────────────────────────
+
 class NullTransport implements MailTransport {
   async send(message: MailMessage): Promise<SendResult> {
-    const to = Array.isArray(message.to) ? message.to : [message.to];
-    return { accepted: to, rejected: [] };
+    return { accepted: toArray(message.to), rejected: [] };
   }
 }
 
-// SMTP Transport (wraps nodemailer)
-class SmtpTransport implements MailTransport {
-  private config: MailDriverConfig;
+// ── SMTP Transport (nodemailer) ────────────────────────────
 
-  constructor(config: MailDriverConfig) {
-    this.config = config;
-  }
+class SmtpTransport implements MailTransport {
+  constructor(private config: MailDriverConfig) {}
 
   async send(message: MailMessage): Promise<SendResult> {
     try {
@@ -126,12 +170,10 @@ class SmtpTransport implements MailTransport {
       });
 
       const result = await transporter.sendMail({
-        from: typeof message.from === 'object'
-          ? `${message.from.name} <${message.from.address}>`
-          : message.from,
-        to: Array.isArray(message.to) ? message.to.join(', ') : message.to,
-        cc: message.cc ? (Array.isArray(message.cc) ? message.cc.join(', ') : message.cc) : undefined,
-        bcc: message.bcc ? (Array.isArray(message.bcc) ? message.bcc.join(', ') : message.bcc) : undefined,
+        from: message.from ? formatFrom(message.from) : undefined,
+        to: toArray(message.to).join(', '),
+        cc: toArray(message.cc).join(', ') || undefined,
+        bcc: toArray(message.bcc).join(', ') || undefined,
         replyTo: message.replyTo,
         subject: message.subject,
         text: message.text,
@@ -150,6 +192,163 @@ class SmtpTransport implements MailTransport {
       }
       throw error;
     }
+  }
+}
+
+// ── Postmark Transport ─────────────────────────────────────
+
+/**
+ * Sends email via the Postmark API.
+ * Uses fetch — zero external dependencies.
+ *
+ * API docs: https://postmarkapp.com/developer/api/email-api
+ * Endpoint: POST https://api.postmarkapp.com/email
+ * Auth: X-Postmark-Server-Token header
+ */
+class PostmarkTransport implements MailTransport {
+  constructor(private config: MailDriverConfig) {}
+
+  async send(message: MailMessage): Promise<SendResult> {
+    const token = this.config.apiToken;
+    if (!token) {
+      throw new Error(
+        'Postmark apiToken is required. Set it in your mailer config or POSTMARK_API_TOKEN env var.'
+      );
+    }
+
+    const to = toArray(message.to);
+    const cc = toArray(message.cc);
+    const bcc = toArray(message.bcc);
+
+    const body: Record<string, any> = {
+      From: message.from ? formatFrom(message.from) : undefined,
+      To: to.join(', '),
+      Subject: message.subject,
+      MessageStream: this.config.messageStream || 'outbound',
+    };
+
+    if (cc.length > 0) body.Cc = cc.join(', ');
+    if (bcc.length > 0) body.Bcc = bcc.join(', ');
+    if (message.replyTo) body.ReplyTo = message.replyTo;
+    if (message.html) body.HtmlBody = message.html;
+    if (message.text) body.TextBody = message.text;
+
+    // At least one body is required
+    if (!body.HtmlBody && !body.TextBody) {
+      body.TextBody = '';
+    }
+
+    // Tags
+    if (message.tags) {
+      body.Tag = Object.values(message.tags)[0]; // Postmark supports one tag per message
+    }
+
+    // Attachments
+    if (message.attachments?.length) {
+      body.Attachments = message.attachments.map((att) => ({
+        Name: att.filename,
+        Content: encodeAttachment(att.content),
+        ContentType: att.contentType || 'application/octet-stream',
+      }));
+    }
+
+    const response = await fetch('https://api.postmarkapp.com/email', {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'X-Postmark-Server-Token': token,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ Message: response.statusText })) as any;
+      throw new Error(`Postmark error ${response.status}: ${error.Message || JSON.stringify(error)}`);
+    }
+
+    const result = await response.json() as any;
+
+    return {
+      accepted: to,
+      rejected: [],
+      messageId: result.MessageID,
+    };
+  }
+}
+
+// ── Resend Transport ───────────────────────────────────────
+
+/**
+ * Sends email via the Resend API.
+ * Uses fetch — zero external dependencies.
+ *
+ * API docs: https://resend.com/docs/api-reference/emails/send-email
+ * Endpoint: POST https://api.resend.com/emails
+ * Auth: Authorization: Bearer <api_key>
+ */
+class ResendTransport implements MailTransport {
+  constructor(private config: MailDriverConfig) {}
+
+  async send(message: MailMessage): Promise<SendResult> {
+    const apiKey = this.config.apiKey;
+    if (!apiKey) {
+      throw new Error(
+        'Resend apiKey is required. Set it in your mailer config or RESEND_API_KEY env var.'
+      );
+    }
+
+    const to = toArray(message.to);
+    const cc = toArray(message.cc);
+    const bcc = toArray(message.bcc);
+
+    const body: Record<string, any> = {
+      from: message.from ? formatFrom(message.from) : undefined,
+      to,
+      subject: message.subject,
+    };
+
+    if (cc.length > 0) body.cc = cc;
+    if (bcc.length > 0) body.bcc = bcc;
+    if (message.replyTo) body.reply_to = [message.replyTo];
+    if (message.html) body.html = message.html;
+    if (message.text) body.text = message.text;
+
+    // Tags
+    if (message.tags) {
+      body.tags = Object.entries(message.tags).map(([name, value]) => ({ name, value }));
+    }
+
+    // Attachments
+    if (message.attachments?.length) {
+      body.attachments = message.attachments.map((att) => ({
+        filename: att.filename,
+        content: encodeAttachment(att.content),
+        content_type: att.contentType || 'application/octet-stream',
+      }));
+    }
+
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: response.statusText })) as any;
+      throw new Error(`Resend error ${response.status}: ${error.message || JSON.stringify(error)}`);
+    }
+
+    const result = await response.json() as any;
+
+    return {
+      accepted: to,
+      rejected: [],
+      messageId: result.id,
+    };
   }
 }
 
@@ -203,6 +402,12 @@ export abstract class Mailable {
   attach(filename: string, content: string | Buffer, contentType?: string): this {
     if (!this.message.attachments) this.message.attachments = [];
     this.message.attachments.push({ filename, content, contentType });
+    return this;
+  }
+
+  tag(name: string, value: string): this {
+    if (!this.message.tags) this.message.tags = {};
+    this.message.tags[name] = value;
     return this;
   }
 
@@ -263,7 +468,6 @@ class MailManager {
     }
 
     if (!this.config) {
-      // Fallback to log transport
       const transport = new LogTransport();
       this.transports.set(mailerName, transport);
       return transport;
@@ -275,9 +479,16 @@ class MailManager {
     let transport: MailTransport;
     switch (driverConfig.driver) {
       case 'smtp': transport = new SmtpTransport(driverConfig); break;
+      case 'postmark': transport = new PostmarkTransport(driverConfig); break;
+      case 'resend': transport = new ResendTransport(driverConfig); break;
       case 'log': transport = new LogTransport(); break;
       case 'null': transport = new NullTransport(); break;
-      default: throw new Error(`Unknown mail driver: ${driverConfig.driver}`);
+      case 'custom': {
+        if (!driverConfig.transport) throw new Error(`Custom mail driver "${mailerName}" requires a "transport" instance.`);
+        transport = driverConfig.transport;
+        break;
+      }
+      default: throw new Error(`Unknown mail driver: ${(driverConfig as any).driver}`);
     }
 
     this.transports.set(mailerName, transport);

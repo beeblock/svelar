@@ -247,6 +247,27 @@ class EmailTemplateManager {
       updatedAt: Date.now(),
     });
 
+    // OTP code
+    this.templates.set('otp-code', {
+      id: randomUUID(),
+      name: 'otp-code',
+      subject: 'Your {{appName}} verification code: {{code}}',
+      html: `
+        <h1>Your Verification Code</h1>
+        <p>Hi {{user.name}},</p>
+        <p>Your one-time verification code is:</p>
+        <p style="font-size: 32px; font-weight: bold; letter-spacing: 8px; text-align: center; padding: 16px; background: #f3f4f6; border-radius: 8px; font-family: monospace;">{{code}}</p>
+        <p>This code expires in {{expiresMinutes}} minutes.</p>
+        <p>If you didn't request this code, you can safely ignore this email.</p>
+      `,
+      text: `Your verification code: {{code}}\n\nThis code expires in {{expiresMinutes}} minutes.`,
+      variables: ['appName', 'user.name', 'code', 'expiresMinutes', 'purpose'],
+      category: 'auth',
+      active: true,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
     // Subscription canceled
     this.templates.set('subscription-canceled', {
       id: randomUUID(),

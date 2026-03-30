@@ -1,25 +1,22 @@
 /**
  * Svelar HTTP Utilities
  *
- * CSRF-aware fetch wrapper, automatic error toast handling, and HTTP helpers.
+ * Client-side: CSRF-aware fetch wrapper, automatic error toast handling.
+ * Server-side: Fluent HTTP client for third-party API calls (Postmark, Stripe, etc.)
  *
  * @module svelar/http
  *
  * @example
  * ```ts
- * import { apiFetch } from 'svelar/http';
+ * // Client-side (browser)
+ * import { apiFetch } from '@beeblock/svelar/http';
+ * const res = await apiFetch('/api/posts', { method: 'POST', body: JSON.stringify({ title: 'Hello' }) });
  *
- * // Basic usage — errors auto-show as toasts
- * const res = await apiFetch('/api/posts', {
- *   method: 'POST',
- *   body: JSON.stringify({ title: 'Hello' }),
- * });
- *
- * // Disable auto-toast for manual handling
- * const res = await apiFetch('/api/posts', { showToast: false });
- *
- * // Typed JSON response
- * const { data, error } = await apiFetchJson<Post[]>('/api/posts');
+ * // Server-side (third-party APIs)
+ * import { Http } from '@beeblock/svelar/http';
+ * const response = await Http.withToken(POSTMARK_TOKEN)
+ *   .baseUrl('https://api.postmarkapp.com')
+ *   .post('/email', { From: 'hi@example.com', To: 'user@example.com', Subject: 'Hello' });
  * ```
  */
 
@@ -353,3 +350,255 @@ export function buildUrl(base: string, params?: Record<string, string | number |
   }
   return url.pathname + url.search;
 }
+
+// ── Server-Side HTTP Client ─────────────────────────────────
+
+export interface HttpClientResponse<T = any> {
+  data: T;
+  status: number;
+  headers: Headers;
+  ok: boolean;
+}
+
+export interface HttpClientConfig {
+  baseUrl?: string;
+  headers?: Record<string, string>;
+  timeout?: number;
+  retries?: number;
+  retryDelay?: number;
+}
+
+export class HttpClient {
+  private _baseUrl = '';
+  private _headers: Record<string, string> = {};
+  private _timeout = 30_000;
+  private _retries = 0;
+  private _retryDelay = 1000;
+  private _query: Record<string, string> = {};
+
+  constructor(config?: HttpClientConfig) {
+    if (config?.baseUrl) this._baseUrl = config.baseUrl;
+    if (config?.headers) this._headers = { ...config.headers };
+    if (config?.timeout) this._timeout = config.timeout;
+    if (config?.retries) this._retries = config.retries;
+    if (config?.retryDelay) this._retryDelay = config.retryDelay;
+  }
+
+  private clone(): HttpClient {
+    const c = new HttpClient();
+    c._baseUrl = this._baseUrl;
+    c._headers = { ...this._headers };
+    c._timeout = this._timeout;
+    c._retries = this._retries;
+    c._retryDelay = this._retryDelay;
+    c._query = { ...this._query };
+    return c;
+  }
+
+  baseUrl(url: string): HttpClient {
+    const c = this.clone();
+    c._baseUrl = url;
+    return c;
+  }
+
+  withHeaders(headers: Record<string, string>): HttpClient {
+    const c = this.clone();
+    c._headers = { ...c._headers, ...headers };
+    return c;
+  }
+
+  withToken(token: string, type: 'Bearer' | string = 'Bearer'): HttpClient {
+    return this.withHeaders({ Authorization: `${type} ${token}` });
+  }
+
+  withBasicAuth(username: string, password: string): HttpClient {
+    const encoded = Buffer.from(`${username}:${password}`).toString('base64');
+    return this.withHeaders({ Authorization: `Basic ${encoded}` });
+  }
+
+  accept(contentType: string): HttpClient {
+    return this.withHeaders({ Accept: contentType });
+  }
+
+  contentType(type: string): HttpClient {
+    return this.withHeaders({ 'Content-Type': type });
+  }
+
+  timeout(ms: number): HttpClient {
+    const c = this.clone();
+    c._timeout = ms;
+    return c;
+  }
+
+  retry(times: number, delayMs = 1000): HttpClient {
+    const c = this.clone();
+    c._retries = times;
+    c._retryDelay = delayMs;
+    return c;
+  }
+
+  query(params: Record<string, string | number | boolean | undefined | null>): HttpClient {
+    const c = this.clone();
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== null) {
+        c._query[key] = String(value);
+      }
+    }
+    return c;
+  }
+
+  async get<T = any>(path: string): Promise<HttpClientResponse<T>> {
+    return this.request<T>('GET', path);
+  }
+
+  async post<T = any>(path: string, body?: unknown): Promise<HttpClientResponse<T>> {
+    return this.request<T>('POST', path, body);
+  }
+
+  async put<T = any>(path: string, body?: unknown): Promise<HttpClientResponse<T>> {
+    return this.request<T>('PUT', path, body);
+  }
+
+  async patch<T = any>(path: string, body?: unknown): Promise<HttpClientResponse<T>> {
+    return this.request<T>('PATCH', path, body);
+  }
+
+  async delete<T = any>(path: string, body?: unknown): Promise<HttpClientResponse<T>> {
+    return this.request<T>('DELETE', path, body);
+  }
+
+  private async request<T>(method: string, path: string, body?: unknown): Promise<HttpClientResponse<T>> {
+    const url = this.buildFullUrl(path);
+    const headers: Record<string, string> = { ...this._headers };
+
+    let fetchBody: string | undefined;
+    if (body !== undefined) {
+      if (!headers['Content-Type']) {
+        headers['Content-Type'] = 'application/json';
+      }
+      fetchBody = typeof body === 'string' ? body : JSON.stringify(body);
+    }
+
+    if (!headers['Accept']) {
+      headers['Accept'] = 'application/json';
+    }
+
+    let lastError: Error | null = null;
+    const maxAttempts = 1 + this._retries;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (attempt > 0) {
+        await new Promise((r) => setTimeout(r, this._retryDelay * attempt));
+      }
+
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), this._timeout);
+
+        const response = await fetch(url, {
+          method,
+          headers,
+          body: fetchBody,
+          signal: controller.signal,
+        });
+
+        clearTimeout(timer);
+
+        // Don't retry client errors (4xx)
+        if (!response.ok && response.status < 500 && attempt < maxAttempts - 1) {
+          // Still return — client errors aren't retryable
+        }
+
+        // Retry server errors (5xx)
+        if (!response.ok && response.status >= 500 && attempt < maxAttempts - 1) {
+          lastError = new HttpRequestError(
+            `HTTP ${response.status}: ${response.statusText}`,
+            response.status,
+            await response.text(),
+          );
+          continue;
+        }
+
+        const contentType = response.headers.get('content-type') ?? '';
+        let data: T;
+
+        if (contentType.includes('application/json')) {
+          data = await response.json() as T;
+        } else {
+          data = await response.text() as T;
+        }
+
+        if (!response.ok) {
+          throw new HttpRequestError(
+            `HTTP ${response.status}: ${typeof data === 'string' ? data : JSON.stringify(data)}`,
+            response.status,
+            data,
+          );
+        }
+
+        return { data, status: response.status, headers: response.headers, ok: true };
+      } catch (err: any) {
+        if (err instanceof HttpRequestError) throw err;
+        lastError = err;
+        if (err.name === 'AbortError') {
+          lastError = new HttpRequestError('Request timed out', 0, null);
+        }
+        if (attempt >= maxAttempts - 1) break;
+      }
+    }
+
+    throw lastError ?? new Error('HTTP request failed');
+  }
+
+  private buildFullUrl(path: string): string {
+    let url = this._baseUrl ? `${this._baseUrl.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}` : path;
+    const queryEntries = Object.entries(this._query);
+    if (queryEntries.length > 0) {
+      const parsed = new URL(url);
+      for (const [k, v] of queryEntries) {
+        parsed.searchParams.set(k, v);
+      }
+      url = parsed.toString();
+    }
+    return url;
+  }
+}
+
+export class HttpRequestError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly body: any,
+  ) {
+    super(message);
+    this.name = 'HttpRequestError';
+  }
+}
+
+/**
+ * Server-side HTTP client factory.
+ * Returns a new HttpClient instance for making authenticated API calls to third-party services.
+ *
+ * @example
+ * ```ts
+ * import { Http } from '@beeblock/svelar/http';
+ *
+ * // Postmark
+ * const res = await Http.withToken(POSTMARK_TOKEN, 'X-Postmark-Server-Token')
+ *   .baseUrl('https://api.postmarkapp.com')
+ *   .post('/email', { From: 'hi@example.com', To: 'user@example.com' });
+ *
+ * // Stripe
+ * const res = await Http.withToken(STRIPE_SECRET)
+ *   .baseUrl('https://api.stripe.com/v1')
+ *   .contentType('application/x-www-form-urlencoded')
+ *   .post('/customers', 'email=user@example.com');
+ *
+ * // Custom header auth
+ * const res = await Http.withHeaders({ 'X-API-Key': API_KEY })
+ *   .baseUrl('https://api.mailchimp.com/3.0')
+ *   .retry(3)
+ *   .get('/lists');
+ * ```
+ */
+export const Http = new HttpClient();

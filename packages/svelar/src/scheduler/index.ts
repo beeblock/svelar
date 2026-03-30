@@ -141,6 +141,9 @@ export abstract class ScheduledTask {
   /** Whether to prevent overlapping execution */
   protected withoutOverlapping = false;
 
+  /** Lock TTL in minutes for distributed locking (default: 5) */
+  protected _lockTtlMinutes: number = 5;
+
   /** The cron expression */
   private _expression: string = '* * * * *';
 
@@ -290,9 +293,15 @@ export abstract class ScheduledTask {
     return this;
   }
 
-  /** Prevent overlapping execution */
+  /** Prevent overlapping execution (uses distributed lock across processes) */
   preventOverlap(): this {
     this.withoutOverlapping = true;
+    return this;
+  }
+
+  /** Set the distributed lock TTL (default: 5 minutes). If a task takes longer, increase this. */
+  lockExpiresAfter(minutes: number): this {
+    this._lockTtlMinutes = minutes;
     return this;
   }
 
@@ -311,13 +320,23 @@ export abstract class ScheduledTask {
 
   /** @internal */
   async executeTask(): Promise<TaskResult> {
+    // Fast-path: local in-memory overlap check
     if (this.withoutOverlapping && this._running) {
-      return {
-        task: this.name,
-        success: true,
-        duration: 0,
-        timestamp: new Date(),
-      };
+      return { task: this.name, success: true, duration: 0, timestamp: new Date() };
+    }
+
+    // Distributed lock: acquire before running if preventOverlap is enabled
+    let lockAcquired = false;
+    if (this.withoutOverlapping) {
+      try {
+        const { SchedulerLock } = await import('./SchedulerLock.js');
+        lockAcquired = await SchedulerLock.acquire(this.name, this._lockTtlMinutes);
+        if (!lockAcquired) {
+          return { task: this.name, success: true, duration: 0, timestamp: new Date() };
+        }
+      } catch {
+        // Database not available — fall back to local-only overlap check
+      }
     }
 
     this._running = true;
@@ -349,6 +368,12 @@ export abstract class ScheduledTask {
       };
     } finally {
       this._running = false;
+      if (lockAcquired) {
+        try {
+          const { SchedulerLock } = await import('./SchedulerLock.js');
+          await SchedulerLock.release(this.name);
+        } catch { /* TTL will handle cleanup */ }
+      }
     }
   }
 }
@@ -360,6 +385,16 @@ export class Scheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private history: TaskResult[] = [];
   private maxHistory = 100;
+  private _persistToDb = false;
+
+  /**
+   * Enable database persistence for task run history.
+   * Requires the `scheduled_task_runs` table to exist.
+   */
+  persistToDatabase(): this {
+    this._persistToDb = true;
+    return this;
+  }
 
   /**
    * Register a scheduled task
@@ -399,7 +434,7 @@ export class Scheduler {
   }
 
   /**
-   * Start the scheduler with a 60-second interval
+   * Start the scheduler, aligned to the top of each minute like crontab.
    */
   start(): void {
     if (this.timer) return;
@@ -407,23 +442,37 @@ export class Scheduler {
     // Run immediately for the current minute
     this.run();
 
-    // Then run every 60 seconds
-    this.timer = setInterval(() => {
-      this.run();
-    }, 60_000);
+    // Wait until the next minute boundary, then tick every 60s
+    const now = Date.now();
+    const msUntilNextMinute = 60_000 - (now % 60_000);
 
-    console.log(`[Scheduler] Started with ${this.tasks.length} task(s).`);
+    this.timer = setTimeout(() => {
+      this.run();
+      this.timer = setInterval(() => {
+        this.run();
+      }, 60_000);
+    }, msUntilNextMinute);
+
+    console.log(`[Scheduler] Started with ${this.tasks.length} task(s). Next tick in ${Math.round(msUntilNextMinute / 1000)}s.`);
   }
 
   /**
-   * Stop the scheduler
+   * Stop the scheduler and release all distributed locks held by this process.
    */
-  stop(): void {
+  async stop(): Promise<void> {
     if (this.timer) {
-      clearInterval(this.timer);
+      clearTimeout(this.timer as any);
+      clearInterval(this.timer as any);
       this.timer = null;
-      console.log('[Scheduler] Stopped.');
     }
+
+    // Release all distributed locks held by this process
+    try {
+      const { SchedulerLock } = await import('./SchedulerLock.js');
+      await SchedulerLock.releaseAll();
+    } catch { /* best-effort */ }
+
+    console.log('[Scheduler] Stopped.');
   }
 
   /**
@@ -434,7 +483,7 @@ export class Scheduler {
   }
 
   /**
-   * Get task execution history
+   * Get task execution history (in-memory)
    */
   getHistory(): TaskResult[] {
     return [...this.history];
@@ -472,6 +521,72 @@ export class Scheduler {
     if (this.history.length > this.maxHistory) {
       this.history.shift();
     }
+
+    if (this._persistToDb) {
+      this.persistResult(result).catch(() => {});
+    }
+  }
+
+  private _historyTableEnsured = false;
+
+  private async ensureHistoryTable(): Promise<void> {
+    if (this._historyTableEnsured) return;
+    const { Connection } = await import('../database/Connection.js');
+    const driver = Connection.getDriver();
+
+    switch (driver) {
+      case 'sqlite':
+        await Connection.raw(
+          `CREATE TABLE IF NOT EXISTS scheduled_task_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task TEXT NOT NULL,
+            success INTEGER NOT NULL,
+            duration INTEGER NOT NULL,
+            error TEXT,
+            ran_at TEXT NOT NULL
+          )`,
+        );
+        break;
+      case 'postgres':
+        await Connection.raw(
+          `CREATE TABLE IF NOT EXISTS scheduled_task_runs (
+            id SERIAL PRIMARY KEY,
+            task VARCHAR(255) NOT NULL,
+            success BOOLEAN NOT NULL,
+            duration INTEGER NOT NULL,
+            error TEXT,
+            ran_at TIMESTAMPTZ NOT NULL
+          )`,
+        );
+        break;
+      case 'mysql':
+        await Connection.raw(
+          `CREATE TABLE IF NOT EXISTS scheduled_task_runs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            task VARCHAR(255) NOT NULL,
+            success TINYINT NOT NULL,
+            duration INT NOT NULL,
+            error TEXT,
+            ran_at DATETIME NOT NULL
+          ) ENGINE=InnoDB`,
+        );
+        break;
+    }
+
+    this._historyTableEnsured = true;
+  }
+
+  private async persistResult(result: TaskResult): Promise<void> {
+    try {
+      await this.ensureHistoryTable();
+      const { Connection } = await import('../database/Connection.js');
+      await Connection.raw(
+        'INSERT INTO scheduled_task_runs (task, success, duration, error, ran_at) VALUES (?, ?, ?, ?, ?)',
+        [result.task, result.success, result.duration, result.error || null, result.timestamp.toISOString()],
+      );
+    } catch {
+      // Database not available — silently skip
+    }
   }
 }
 
@@ -504,3 +619,4 @@ export function task(
 // ── Export cron helpers for direct use ──────────────────────
 
 export { parseCron, cronMatches };
+export { SchedulerLock } from './SchedulerLock.js';

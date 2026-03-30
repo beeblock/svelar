@@ -12,8 +12,8 @@ export const GET: RequestHandler = async (event) => {
   }
 
   try {
-    const tasks = ScheduleMonitor.listTasks();
-    const health = ScheduleMonitor.getHealth();
+    const tasks = await ScheduleMonitor.listTasks();
+    const health = await ScheduleMonitor.getHealth();
 
     return json({ tasks, health });
   } catch (error: any) {

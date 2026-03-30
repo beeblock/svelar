@@ -306,63 +306,63 @@ Svelar ships 35+ modules. Here's what each one does and when you'll use it:
 
 | Module | Import | What It Does |
 |--------|--------|--------------|
-| **ORM** | `svelar/orm` | Eloquent-style query builder, models, relationships, eager loading |
-| **Database** | `svelar/database` | Migrations, seeders, multi-driver (SQLite, PostgreSQL, MySQL) |
-| **Routing** | `svelar/routing` | Controllers, FormRequests, Resources, response objects |
-| **Validation** | `svelar/validation` | Zod-based validation with named rules |
-| **Auth** | `svelar/auth` | Session, JWT, API token auth, gates, policies |
-| **Middleware** | `svelar/middleware` | CORS, CSRF, rate limiting, origin validation, request signatures |
-| **Session** | `svelar/session` | Cookie sessions with memory, database, file, or Redis store |
-| **Hashing** | `svelar/hashing` | Password hashing (scrypt, bcrypt, argon2) |
+| **ORM** | `@beeblock/svelar/orm` | Eloquent-style query builder, models, relationships, eager loading |
+| **Database** | `@beeblock/svelar/database` | Migrations, seeders, multi-driver (SQLite, PostgreSQL, MySQL) |
+| **Routing** | `@beeblock/svelar/routing` | Controllers, FormRequests, Resources, response objects |
+| **Validation** | `@beeblock/svelar/validation` | Zod-based validation with named rules |
+| **Auth** | `@beeblock/svelar/auth` | Session, JWT, API token auth, gates, policies |
+| **Middleware** | `@beeblock/svelar/middleware` | CORS, CSRF, rate limiting, origin validation, request signatures |
+| **Session** | `@beeblock/svelar/session` | Cookie sessions with memory, database, file, or Redis store |
+| **Hashing** | `@beeblock/svelar/hashing` | Password hashing (scrypt, bcrypt, argon2) |
 
 ### You'll Use for Business Logic
 
 | Module | Import | What It Does |
 |--------|--------|--------------|
-| **Services** | `svelar/services` | Service base class with `ok()`/`fail()` result pattern |
-| **Actions** | `svelar/actions` | Single-responsibility operations with hooks and middleware |
-| **Repositories** | `svelar/repositories` | Data access layer with CRUD, pagination, scoped queries |
-| **Events** | `svelar/events` | Pub/sub event system with typed listeners and subscribers |
-| **Forms** | `svelar/forms` | SuperForms + Zod bridge for SvelteKit form actions |
+| **Services** | `@beeblock/svelar/services` | Service base class with `ok()`/`fail()` result pattern |
+| **Actions** | `@beeblock/svelar/actions` | Single-responsibility operations with hooks and middleware |
+| **Repositories** | `@beeblock/svelar/repositories` | Data access layer with CRUD, pagination, scoped queries |
+| **Events** | `@beeblock/svelar/events` | Pub/sub event system with typed listeners and subscribers |
+| **Forms** | `@beeblock/svelar/forms` | SuperForms + Zod bridge for SvelteKit form actions |
 
 ### You'll Use for Infrastructure
 
 | Module | Import | What It Does |
 |--------|--------|--------------|
-| **Queue** | `svelar/queue` | Background jobs with retry logic (sync, memory, database, Redis/BullMQ) |
-| **Scheduler** | `svelar/scheduler` | Cron tasks with helpers: `daily()`, `hourly()`, `everyMinute()` |
-| **Mail** | `svelar/mail` | Email sending with SMTP, templates, attachments |
-| **Notifications** | `svelar/notifications` | Multi-channel notifications (mail, database, custom) |
-| **Broadcasting** | `svelar/broadcasting` | Real-time SSE/WebSocket events with channel auth |
-| **Cache** | `svelar/cache` | Multi-driver cache (memory, file, Redis) with `remember()` |
-| **Storage** | `svelar/storage` | File storage (local, S3/MinIO/RustFS) with pre-signed URLs |
-| **Logging** | `svelar/logging` | Structured logging with channels (console, file) |
+| **Queue** | `@beeblock/svelar/queue` | Background jobs with retry logic (sync, memory, database, Redis/BullMQ) |
+| **Scheduler** | `@beeblock/svelar/scheduler` | Cron tasks with helpers: `daily()`, `hourly()`, `everyMinute()` |
+| **Mail** | `@beeblock/svelar/mail` | Email sending with SMTP, Postmark, Resend, log, and null drivers |
+| **Notifications** | `@beeblock/svelar/notifications` | Multi-channel notifications (mail, database, custom) |
+| **Broadcasting** | `@beeblock/svelar/broadcasting` | Real-time SSE/WebSocket events with channel auth |
+| **Cache** | `@beeblock/svelar/cache` | Multi-driver cache (memory, file, Redis) with `remember()` |
+| **Storage** | `@beeblock/svelar/storage` | File storage (local, S3/MinIO/RustFS) with pre-signed URLs |
+| **Logging** | `@beeblock/svelar/logging` | Structured logging with channels (console, file) |
 
 ### You'll Use for SaaS Features
 
 | Module | Import | What It Does |
 |--------|--------|--------------|
-| **Teams** | `svelar/teams` | Multi-tenant workspaces with members, roles, invitations |
-| **Permissions** | `svelar/permissions` | Spatie-inspired RBAC with roles, permissions, middleware |
-| **API Keys** | `svelar/api-keys` | Generate, validate, revoke scoped API keys |
-| **Audit** | `svelar/audit` | Track user actions (create, update, delete) for compliance |
-| **Webhooks** | `svelar/webhooks` | Outgoing webhooks with HMAC signing and retry logic |
-| **Uploads** | `svelar/uploads` | File upload tracking with MIME/size validation |
-| **PDF** | `svelar/pdf` | PDF generation via Gotenberg (HTML, Markdown, screenshots) |
-| **Email Templates** | `svelar/email-templates` | Reusable templates: welcome, password-reset, invoice, team-invite |
+| **Teams** | `@beeblock/svelar/teams` | Multi-tenant workspaces with members, roles, invitations |
+| **Permissions** | `@beeblock/svelar/permissions` | Spatie-inspired RBAC with roles, permissions, middleware |
+| **API Keys** | `@beeblock/svelar/api-keys` | Generate, validate, revoke scoped API keys |
+| **Audit** | `@beeblock/svelar/audit` | Track user actions (create, update, delete) for compliance |
+| **Webhooks** | `@beeblock/svelar/webhooks` | Outgoing webhooks with HMAC signing and retry logic |
+| **Uploads** | `@beeblock/svelar/uploads` | File upload tracking with MIME/size validation |
+| **PDF** | `@beeblock/svelar/pdf` | PDF generation via PDFKit (default) or Gotenberg |
+| **Email Templates** | `@beeblock/svelar/email-templates` | Reusable templates: welcome, password-reset, invoice, team-invite |
 
 ### You'll Use for Developer Experience
 
 | Module | Import | What It Does |
 |--------|--------|--------------|
-| **CLI** | `svelar/cli` | 30+ code generators, migrations, scheduler, queue worker |
-| **Container** | `svelar/container` | Dependency injection / IoC container |
-| **Config** | `svelar/config` | Type-safe environment + config management |
-| **Plugins** | `svelar/plugins` | Plugin architecture with lifecycle hooks |
-| **HTTP** | `svelar/http` | CSRF-aware fetch, signed requests, typed responses |
-| **i18n** | `svelar/i18n` | Paraglide integration for multi-language apps |
-| **Dashboard** | `svelar/dashboard` | Admin dashboard data (health, queue, scheduler, logs) |
-| **Errors** | `svelar/errors` | HTTP errors, `abort()` helpers, error handler |
+| **CLI** | `@beeblock/svelar/cli` | 30+ code generators, migrations, scheduler, queue worker |
+| **Container** | `@beeblock/svelar/container` | Dependency injection / IoC container |
+| **Config** | `@beeblock/svelar/config` | Type-safe environment + config management |
+| **Plugins** | `@beeblock/svelar/plugins` | Plugin architecture with lifecycle hooks |
+| **HTTP** | `@beeblock/svelar/http` | CSRF-aware fetch, signed requests, typed responses |
+| **i18n** | `@beeblock/svelar/i18n` | Paraglide integration for multi-language apps |
+| **Dashboard** | `@beeblock/svelar/dashboard` | Admin dashboard data (health, queue, scheduler, logs) |
+| **Errors** | `@beeblock/svelar/errors` | HTTP errors, `abort()` helpers, error handler |
 
 ---
 

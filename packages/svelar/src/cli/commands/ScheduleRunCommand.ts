@@ -19,6 +19,7 @@ export class ScheduleRunCommand extends Command {
 
     const { Scheduler } = await import('../../scheduler/index.js');
     const scheduler = new Scheduler();
+    scheduler.persistToDatabase();
 
     // Load tasks from src/lib/scheduler/
     const schedulerDir = join(process.cwd(), 'src', 'lib', 'scheduler');
@@ -53,7 +54,7 @@ export class ScheduleRunCommand extends Command {
       return;
     }
 
-    // Continuous mode — check every 60 seconds
+    // Continuous mode — aligned to the top of each minute like crontab
     this.info('Scheduler running. Press Ctrl+C to stop.');
     this.newLine();
 
@@ -69,6 +70,14 @@ export class ScheduleRunCommand extends Command {
       }
     };
 
+    // Run immediately for the current minute
+    await tick();
+
+    // Wait until the next minute boundary, then tick every 60s
+    const msUntilNextMinute = 60_000 - (Date.now() % 60_000);
+    this.info(`Next tick aligned to minute boundary in ${Math.round(msUntilNextMinute / 1000)}s.`);
+
+    await new Promise<void>((resolve) => setTimeout(resolve, msUntilNextMinute));
     await tick();
     setInterval(tick, 60_000);
 

@@ -93,7 +93,7 @@ You can customize every default:
 export const { handle, handleError } = createSvelarApp({
   auth,
   secret: process.env.APP_KEY,
-  sessionStore: new DatabaseSessionStore(),  // default: MemorySessionStore
+  sessionStore: new DatabaseSessionStore(),  // auto-creates sessions table
   sessionLifetime: 60 * 60 * 24 * 7, // 7 days
   rateLimit: 200,
   rateLimitWindow: 120_000,           // 2 minutes
@@ -112,12 +112,12 @@ For full control, use `createSvelarHooks` to compose the pipeline manually:
 
 ```typescript
 import { createSvelarHooks } from '@beeblock/svelar/hooks';
-import { SessionMiddleware, MemorySessionStore } from '@beeblock/svelar/session';
+import { SessionMiddleware, DatabaseSessionStore } from '@beeblock/svelar/session';
 import { AuthenticateMiddleware } from '@beeblock/svelar/auth';
 import { RateLimitMiddleware, LoggingMiddleware, CorsMiddleware } from '@beeblock/svelar/middleware';
 import { auth } from './app.js';
 
-const sessionStore = new MemorySessionStore();
+const sessionStore = new DatabaseSessionStore();  // auto-creates sessions table
 
 export const handle = createSvelarHooks({
   middleware: [
@@ -160,7 +160,7 @@ Manages session data via signed cookies:
 
 ```typescript
 new SessionMiddleware({
-  store: new MemorySessionStore(),  // or DatabaseSessionStore
+  store: new DatabaseSessionStore(),  // or MemorySessionStore for dev
   secret: 'your-secret-key',
   lifetime: 60 * 60 * 24,           // 24 hours
   name: 'svelar_session',           // Cookie name

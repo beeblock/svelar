@@ -8,7 +8,7 @@ Svelar includes components covering the most common UI patterns: `Button`, `Inpu
 
 ## Import
 
-All components are available from the `svelar/ui` entry point:
+All components are available from the `@beeblock/svelar/ui` entry point:
 
 ```svelte
 <script>

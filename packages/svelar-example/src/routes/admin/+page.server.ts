@@ -30,7 +30,7 @@ export async function load(event: ServerLoadEvent) {
   // Scheduler tasks from ScheduleMonitor
   let scheduledTasks: any[] = [];
   try {
-    scheduledTasks = ScheduleMonitor.listTasks();
+    scheduledTasks = await ScheduleMonitor.listTasks();
   } catch { /* scheduler not configured */ }
 
   // Recent logs from LogViewer

@@ -30,7 +30,7 @@ export async function GET(event: RequestEvent) {
       JobMonitor.getHealth(),
     ]);
 
-    const schedulerHealth = ScheduleMonitor.getHealth();
+    const schedulerHealth = await ScheduleMonitor.getHealth();
     const logStats = LogViewer.getStats();
     const recentErrors = LogViewer.getRecentErrors(10);
 

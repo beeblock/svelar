@@ -1,6 +1,6 @@
 {
   "name": "@beeblock/svelar",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Laravel-inspired framework on top of SvelteKit 2",
   "type": "module",
   "main": "./dist/index.js",
@@ -229,6 +229,14 @@
     "./uploads": {
       "types": "./dist/uploads/index.d.ts",
       "import": "./dist/uploads/index.js"
+    },
+    "./feature-flags": {
+      "types": "./dist/feature-flags/index.d.ts",
+      "import": "./dist/feature-flags/index.js"
+    },
+    "./excel": {
+      "types": "./dist/excel/index.d.ts",
+      "import": "./dist/excel/index.js"
     }
   },
   "scripts": {
@@ -249,7 +257,9 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/pdfkit": "^0.17.5",
     "better-sqlite3": "^11.0.0",
+    "exceljs": "^4.4.0",
     "tsup": "^8.3.0",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"
@@ -260,9 +270,11 @@
     "@sveltejs/kit": "^2.0.0",
     "better-sqlite3": "*",
     "bullmq": ">=5.0.0",
-    "mysql2": "*",
-    "postgres": "*",
+    "exceljs": ">=4.4.0",
     "ioredis": ">=5.0.0",
+    "mysql2": "*",
+    "pdfkit": ">=0.18.0",
+    "postgres": "*",
     "pusher-js": ">=8.0.0"
   },
   "peerDependenciesMeta": {
@@ -289,6 +301,12 @@
     },
     "pusher-js": {
       "optional": true
+    },
+    "pdfkit": {
+      "optional": true
+    },
+    "exceljs": {
+      "optional": true
     }
   },
   "keywords": [
@@ -309,7 +327,7 @@
   "author": "Raoni <alephtus@gmail.com>",
   "repository": {
     "type": "git",
-    "url": "https://github.com/alephtus/svelar.git"
+    "url": "https://github.com/beeblock/svelar.git"
   },
-  "homepage": "https://github.com/alephtus/svelar#readme"
+  "homepage": "https://github.com/beeblock/svelar#readme"
 }

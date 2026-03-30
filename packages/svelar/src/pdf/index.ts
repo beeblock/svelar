@@ -1,31 +1,30 @@
 /**
  * Svelar PDF Module
  *
- * Provides a fluent API for generating PDFs via Gotenberg — a Docker-based
- * document conversion service. Supports HTML → PDF, URL → PDF, Markdown → PDF,
- * and Office document → PDF conversions via Chromium and LibreOffice engines.
+ * Provides a fluent API for generating PDFs with swappable drivers.
+ * Ships with two drivers out of the box:
+ *
+ * - **pdfkit** (default) — Pure JavaScript, zero external dependencies.
+ *   Great for invoices, reports, tickets, and programmatic documents.
+ *   Install: `npm install pdfkit`
+ *
+ * - **gotenberg** — Docker-based service using Chromium & LibreOffice.
+ *   Great for pixel-perfect HTML→PDF, URL→PDF, and office document conversion.
+ *   Requires a running Gotenberg container.
+ *
+ * Swap drivers at any time — the `PDF` facade API stays the same.
  *
  * @example
  * ```typescript
- * import { PDF } from 'svelar/pdf';
+ * import { PDF } from '@beeblock/svelar/pdf';
  *
- * // HTML to PDF
+ * // PDFKit (default — no Docker needed)
+ * PDF.configure({ driver: 'pdfkit' });
  * const buffer = await PDF.html('<h1>Hello</h1>').generate();
  *
- * // URL to PDF with options
- * const buffer = await PDF.url('https://example.com')
- *   .landscape()
- *   .margins({ top: '1in', bottom: '1in' })
- *   .generate();
- *
- * // From a .docx, .xlsx, .pptx, etc.
- * const buffer = await PDF.office('/path/to/document.docx').generate();
- *
- * // Multiple HTML files merged into one PDF
- * const buffer = await PDF.merge()
- *   .addHtml('<h1>Page 1</h1>', 'page1.html')
- *   .addHtml('<h2>Page 2</h2>', 'page2.html')
- *   .generate();
+ * // Gotenberg (Docker service)
+ * PDF.configure({ driver: 'gotenberg', gotenberg: { url: 'http://localhost:3000' } });
+ * const buffer = await PDF.html('<h1>Hello</h1>').generate();
  * ```
  */
 
@@ -59,6 +58,28 @@ export interface GotenbergConfig {
   webhookErrorUrl?: string;
 }
 
+export interface PdfKitConfig {
+  /** Default page size (default: 'A4') */
+  pageSize?: string;
+  /** Default margins in points (72 points = 1 inch) */
+  margins?: { top?: number; bottom?: number; left?: number; right?: number };
+  /** Whether to auto-add page numbers (default: false) */
+  pageNumbers?: boolean;
+  /** Default font (default: 'Helvetica') */
+  font?: string;
+  /** Default font size in points (default: 12) */
+  fontSize?: number;
+}
+
+export interface PdfConfig {
+  /** Which driver to use: 'pdfkit' (default) or 'gotenberg' */
+  driver?: 'pdfkit' | 'gotenberg';
+  /** PDFKit-specific options */
+  pdfkit?: PdfKitConfig;
+  /** Gotenberg-specific options */
+  gotenberg?: GotenbergConfig;
+}
+
 export interface WebhookOptions {
   /** URL where the generated PDF will be POSTed on success */
   url: string;
@@ -81,9 +102,24 @@ export interface DownloadFromEntry {
   field?: 'embedded' | 'watermark' | 'stamp';
 }
 
-// ── Multipart Helper ───────────────────────────────────────
+// ── Config ─────────────────────────────────────────────────
 
-/** Simple multipart/form-data builder (no external deps) */
+let _config: PdfConfig = { driver: 'pdfkit' };
+
+function getDriver(): 'pdfkit' | 'gotenberg' {
+  return _config.driver || 'pdfkit';
+}
+
+function getGotenbergConfig(): GotenbergConfig {
+  return _config.gotenberg || {};
+}
+
+function getPdfKitConfig(): PdfKitConfig {
+  return _config.pdfkit || {};
+}
+
+// ── Multipart Helper (Gotenberg) ───────────────────────────
+
 class MultipartBuilder {
   private boundary = `----SvelarBoundary${Date.now()}${Math.random().toString(36).slice(2)}`;
   private parts: Buffer[] = [];
@@ -109,6 +145,210 @@ class MultipartBuilder {
     this.parts.push(Buffer.from(`--${this.boundary}--\r\n`));
     return Buffer.concat(this.parts);
   }
+}
+
+// ── PDFKit Engine ──────────────────────────────────────────
+
+/** Parse a CSS-style margin string ('1in', '25mm', '2cm', '72pt', '96px') to PDF points (72 pt/inch). */
+function parseMarginToPoints(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const match = value.match(/^([\d.]+)\s*(in|mm|cm|pt|px)?$/);
+  if (!match) return undefined;
+
+  const num = parseFloat(match[1]);
+  const unit = match[2] || 'pt';
+
+  switch (unit) {
+    case 'in': return num * 72;
+    case 'mm': return num * (72 / 25.4);
+    case 'cm': return num * (72 / 2.54);
+    case 'pt': return num;
+    case 'px': return num * 0.75; // 96 DPI -> 72 pt/in
+    default: return num;
+  }
+}
+
+/** Simple HTML-to-PDFKit renderer. Handles basic tags for invoices/reports. */
+async function renderHtmlToPdfKit(doc: any, html: string, config: PdfKitConfig): Promise<void> {
+  const font = config.font || 'Helvetica';
+  const fontSize = config.fontSize || 12;
+
+  doc.font(font).fontSize(fontSize);
+
+  // Strip full HTML document wrappers
+  let body = html;
+  const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+  if (bodyMatch) body = bodyMatch[1];
+
+  // Remove <style>, <script>, <head> blocks
+  body = body.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
+  body = body.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
+  body = body.replace(/<head[^>]*>[\s\S]*?<\/head>/gi, '');
+
+  // Render line by line from simplified HTML
+  const lines = body.split(/\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    // Headings
+    const h1 = line.match(/<h1[^>]*>(.*?)<\/h1>/i);
+    if (h1) {
+      doc.fontSize(28).font(`${font}-Bold`).text(stripTags(h1[1]), { paragraphGap: 8 });
+      doc.font(font).fontSize(fontSize);
+      continue;
+    }
+
+    const h2 = line.match(/<h2[^>]*>(.*?)<\/h2>/i);
+    if (h2) {
+      doc.fontSize(22).font(`${font}-Bold`).text(stripTags(h2[1]), { paragraphGap: 6 });
+      doc.font(font).fontSize(fontSize);
+      continue;
+    }
+
+    const h3 = line.match(/<h3[^>]*>(.*?)<\/h3>/i);
+    if (h3) {
+      doc.fontSize(18).font(`${font}-Bold`).text(stripTags(h3[1]), { paragraphGap: 4 });
+      doc.font(font).fontSize(fontSize);
+      continue;
+    }
+
+    const h4 = line.match(/<h4[^>]*>(.*?)<\/h4>/i);
+    if (h4) {
+      doc.fontSize(15).font(`${font}-Bold`).text(stripTags(h4[1]), { paragraphGap: 3 });
+      doc.font(font).fontSize(fontSize);
+      continue;
+    }
+
+    // Horizontal rule
+    if (/<hr\s*\/?>/i.test(line)) {
+      doc.moveDown(0.5);
+      const y = doc.y;
+      doc.moveTo(doc.page.margins.left, y)
+        .lineTo(doc.page.width - doc.page.margins.right, y)
+        .stroke('#cccccc');
+      doc.moveDown(0.5);
+      continue;
+    }
+
+    // Line break
+    if (/<br\s*\/?>/i.test(line)) {
+      doc.moveDown(0.5);
+      continue;
+    }
+
+    // List items
+    const li = line.match(/<li[^>]*>(.*?)<\/li>/i);
+    if (li) {
+      doc.text(`  \u2022  ${stripTags(li[1])}`, { paragraphGap: 2 });
+      continue;
+    }
+
+    // Paragraph or plain text
+    const p = line.match(/<p[^>]*>(.*?)<\/p>/i);
+    if (p) {
+      doc.text(stripTags(p[1]), { paragraphGap: 4 });
+      continue;
+    }
+
+    // Anything else: strip tags and render as text
+    const text = stripTags(line);
+    if (text) {
+      doc.text(text, { paragraphGap: 2 });
+    }
+  }
+}
+
+/** Strip HTML tags and decode common entities */
+function stripTags(html: string): string {
+  return html
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .trim();
+}
+
+/** Create a PDFKit document and return it as a Buffer */
+async function pdfkitGenerate(
+  callback: (doc: any) => Promise<void>,
+  options: {
+    margins?: PdfMargins;
+    pageSize?: PdfPageSize;
+    landscape?: boolean;
+    headerHtml?: string;
+    footerHtml?: string;
+  } = {},
+): Promise<Buffer> {
+  let PDFDocument: any;
+  try {
+    PDFDocument = (await import('pdfkit')).default;
+  } catch {
+    throw new Error(
+      'PDFKit is not installed. Install it with: npm install pdfkit\n' +
+      'Or switch to the Gotenberg driver: PDF.configure({ driver: \'gotenberg\' })'
+    );
+  }
+
+  const config = getPdfKitConfig();
+
+  // Build PDFKit options
+  const docOpts: any = {
+    bufferPages: true, // needed for page number injection
+  };
+
+  // Page size
+  if (options.landscape) docOpts.layout = 'landscape';
+
+  if (options.pageSize?.width && options.pageSize?.height) {
+    docOpts.size = [
+      parseMarginToPoints(options.pageSize.width) || 595.28,
+      parseMarginToPoints(options.pageSize.height) || 841.89,
+    ];
+  } else {
+    docOpts.size = config.pageSize || 'A4';
+  }
+
+  // Margins
+  const top = parseMarginToPoints(options.margins?.top) ?? config.margins?.top ?? 72;
+  const bottom = parseMarginToPoints(options.margins?.bottom) ?? config.margins?.bottom ?? 72;
+  const left = parseMarginToPoints(options.margins?.left) ?? config.margins?.left ?? 72;
+  const right = parseMarginToPoints(options.margins?.right) ?? config.margins?.right ?? 72;
+  docOpts.margins = { top, bottom, left, right };
+
+  const doc = new PDFDocument(docOpts);
+  const chunks: Buffer[] = [];
+
+  // Collect output
+  doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+
+  // Run the callback to populate the document
+  await callback(doc);
+
+  // Add page numbers if configured
+  if (config.pageNumbers) {
+    const pageCount = doc.bufferedPageRange().count;
+    for (let i = 0; i < pageCount; i++) {
+      doc.switchToPage(i);
+      doc.fontSize(9).font('Helvetica')
+        .text(
+          `Page ${i + 1} of ${pageCount}`,
+          0,
+          doc.page.height - docOpts.margins.bottom + 20,
+          { align: 'center', width: doc.page.width },
+        );
+    }
+  }
+
+  // Finalize
+  return new Promise((resolve, reject) => {
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+    doc.end();
+  });
 }
 
 // ── Base Builder ───────────────────────────────────────────
@@ -205,17 +445,7 @@ abstract class PdfBuilder {
   /**
    * Enable async webhook mode. Gotenberg will return 204 immediately
    * and POST the resulting PDF to your webhook URL when done.
-   *
-   * @example
-   * ```ts
-   * await PDF.html(content)
-   *   .webhook({
-   *     url: 'https://myapp.com/api/pdf/webhook',
-   *     errorUrl: 'https://myapp.com/api/pdf/webhook-error',
-   *     extraHeaders: { 'Authorization': 'Bearer secret' },
-   *   })
-   *   .generateAsync();
-   * ```
+   * Only available with the Gotenberg driver.
    */
   webhook(options: WebhookOptions): this {
     this._webhook = options;
@@ -224,18 +454,7 @@ abstract class PdfBuilder {
 
   /**
    * Add remote files for Gotenberg to fetch (instead of uploading them).
-   * Gotenberg downloads the file from the URL before processing.
-   * The remote server MUST return a Content-Disposition header with a filename.
-   *
-   * @example
-   * ```ts
-   * await PDF.office()
-   *   .downloadFrom([
-   *     { url: 'https://s3.example.com/report.docx' },
-   *     { url: 'https://cdn.example.com/appendix.xlsx', extraHttpHeaders: { 'X-Api-Key': '...' } },
-   *   ])
-   *   .generate();
-   * ```
+   * Only available with the Gotenberg driver.
    */
   downloadFrom(entries: DownloadFromEntry[]): this {
     this._downloadFrom = entries;
@@ -243,18 +462,18 @@ abstract class PdfBuilder {
   }
 
   /**
-   * Generate the PDF asynchronously via webhook.
-   * Gotenberg returns 204 immediately and posts the result to your webhook URL.
-   * Requires `.webhook()` to be called first (or a default webhookUrl in config).
+   * Generate the PDF asynchronously via webhook (Gotenberg only).
    */
   async generateAsync(): Promise<void> {
-    if (!this._webhook && !_config.webhookUrl) {
+    if (getDriver() !== 'gotenberg') {
+      throw new Error('generateAsync() is only available with the Gotenberg driver.');
+    }
+    const gc = getGotenbergConfig();
+    if (!this._webhook && !gc.webhookUrl) {
       throw new Error(
         'Webhook not configured. Call .webhook({ url, errorUrl }) or set webhookUrl in PDF.configure().'
       );
     }
-    // generateAsync delegates to the same generate() but the transport layer
-    // detects the webhook headers and expects 204.
     await this.generate();
   }
 
@@ -285,10 +504,11 @@ abstract class PdfBuilder {
 
   /** Build webhook headers for the HTTP request */
   protected getWebhookHeaders(): Record<string, string> {
+    const gc = getGotenbergConfig();
     const webhook = this._webhook ?? (
-      _config.webhookUrl ? {
-        url: _config.webhookUrl,
-        errorUrl: _config.webhookErrorUrl ?? _config.webhookUrl,
+      gc.webhookUrl ? {
+        url: gc.webhookUrl,
+        errorUrl: gc.webhookErrorUrl ?? gc.webhookUrl,
       } : undefined
     );
     if (!webhook) return {};
@@ -307,17 +527,13 @@ abstract class PdfBuilder {
 
   /** Whether this builder is configured for async webhook mode */
   protected get isAsync(): boolean {
-    return !!(this._webhook || _config.webhookUrl);
+    const gc = getGotenbergConfig();
+    return !!(this._webhook || gc.webhookUrl);
   }
 
   /**
    * Generate the PDF and save it to a file path.
    * Returns the Buffer for further processing.
-   *
-   * @example
-   * ```ts
-   * const buffer = await PDF.html(content).store('storage/reports/invoice.pdf');
-   * ```
    */
   async store(filePath: string): Promise<Buffer> {
     const { writeFileSync, mkdirSync } = await import('node:fs');
@@ -328,7 +544,7 @@ abstract class PdfBuilder {
     return buffer;
   }
 
-  /** Generate the PDF and return a Buffer (sync), or fire-and-forget via webhook (async) */
+  /** Generate the PDF and return a Buffer */
   abstract generate(): Promise<Buffer>;
 }
 
@@ -340,6 +556,22 @@ class HtmlPdfBuilder extends PdfBuilder {
   }
 
   async generate(): Promise<Buffer> {
+    if (getDriver() === 'pdfkit') {
+      return pdfkitGenerate(
+        async (doc) => {
+          await renderHtmlToPdfKit(doc, this.htmlContent, getPdfKitConfig());
+        },
+        {
+          margins: this._margins,
+          pageSize: this._pageSize,
+          landscape: this._landscape,
+          headerHtml: this._headerHtml,
+          footerHtml: this._footerHtml,
+        },
+      );
+    }
+
+    // Gotenberg driver
     const form = new MultipartBuilder();
     form.addFile('files', 'index.html', this.htmlContent, 'text/html');
 
@@ -363,6 +595,24 @@ class UrlPdfBuilder extends PdfBuilder {
   }
 
   async generate(): Promise<Buffer> {
+    if (getDriver() === 'pdfkit') {
+      // PDFKit can't render a URL — fetch HTML first, then render
+      const response = await fetch(this.targetUrl, { headers: this._extraHeaders });
+      if (!response.ok) throw new Error(`Failed to fetch ${this.targetUrl}: ${response.status}`);
+      const html = await response.text();
+      return pdfkitGenerate(
+        async (doc) => {
+          await renderHtmlToPdfKit(doc, html, getPdfKitConfig());
+        },
+        {
+          margins: this._margins,
+          pageSize: this._pageSize,
+          landscape: this._landscape,
+        },
+      );
+    }
+
+    // Gotenberg driver
     const form = new MultipartBuilder();
     form.addField('url', this.targetUrl);
 
@@ -401,6 +651,54 @@ class MarkdownPdfBuilder extends PdfBuilder {
   }
 
   async generate(): Promise<Buffer> {
+    if (getDriver() === 'pdfkit') {
+      // Simple markdown-to-PDF via PDFKit: render as basic formatted text
+      return pdfkitGenerate(
+        async (doc) => {
+          const config = getPdfKitConfig();
+          const font = config.font || 'Helvetica';
+          const fontSize = config.fontSize || 12;
+          doc.font(font).fontSize(fontSize);
+
+          const lines = this.markdownContent.split('\n');
+          for (const line of lines) {
+            // Headings
+            if (line.startsWith('### ')) {
+              doc.fontSize(16).font(`${font}-Bold`).text(line.slice(4), { paragraphGap: 3 });
+              doc.font(font).fontSize(fontSize);
+            } else if (line.startsWith('## ')) {
+              doc.fontSize(20).font(`${font}-Bold`).text(line.slice(3), { paragraphGap: 5 });
+              doc.font(font).fontSize(fontSize);
+            } else if (line.startsWith('# ')) {
+              doc.fontSize(26).font(`${font}-Bold`).text(line.slice(2), { paragraphGap: 7 });
+              doc.font(font).fontSize(fontSize);
+            } else if (line.startsWith('- ') || line.startsWith('* ')) {
+              doc.text(`  \u2022  ${line.slice(2)}`, { paragraphGap: 2 });
+            } else if (line.startsWith('---') || line.startsWith('***')) {
+              doc.moveDown(0.5);
+              const y = doc.y;
+              doc.moveTo(doc.page.margins.left, y)
+                .lineTo(doc.page.width - doc.page.margins.right, y)
+                .stroke('#cccccc');
+              doc.moveDown(0.5);
+            } else if (line.trim() === '') {
+              doc.moveDown(0.5);
+            } else {
+              // Handle inline bold/italic
+              let text = line.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1');
+              doc.text(text, { paragraphGap: 2 });
+            }
+          }
+        },
+        {
+          margins: this._margins,
+          pageSize: this._pageSize,
+          landscape: this._landscape,
+        },
+      );
+    }
+
+    // Gotenberg driver
     const form = new MultipartBuilder();
     form.addFile('files', 'index.html', this.wrapperHtml, 'text/html');
     form.addFile('files', 'file.md', this.markdownContent, 'text/markdown');
@@ -417,7 +715,7 @@ class MarkdownPdfBuilder extends PdfBuilder {
   }
 }
 
-// ── Office → PDF (LibreOffice) ─────────────────────────────
+// ── Office → PDF (Gotenberg-only, LibreOffice) ─────────────
 
 class OfficePdfBuilder extends PdfBuilder {
   private filePaths: string[] = [];
@@ -443,6 +741,13 @@ class OfficePdfBuilder extends PdfBuilder {
   }
 
   async generate(): Promise<Buffer> {
+    if (getDriver() === 'pdfkit') {
+      throw new Error(
+        'Office document conversion requires the Gotenberg driver.\n' +
+        'Switch with: PDF.configure({ driver: \'gotenberg\', gotenberg: { url: \'http://localhost:3000\' } })'
+      );
+    }
+
     const form = new MultipartBuilder();
 
     for (const filePath of this.filePaths) {
@@ -491,6 +796,13 @@ class MergePdfBuilder extends PdfBuilder {
   }
 
   async generate(): Promise<Buffer> {
+    if (getDriver() === 'pdfkit') {
+      throw new Error(
+        'PDF merging requires the Gotenberg driver.\n' +
+        'Switch with: PDF.configure({ driver: \'gotenberg\', gotenberg: { url: \'http://localhost:3000\' } })'
+      );
+    }
+
     // If we only have PDFs, use the merge endpoint
     if (this.htmlFiles.length === 0 && this.pdfBuffers.length > 0) {
       const form = new MultipartBuilder();
@@ -529,7 +841,7 @@ class MergePdfBuilder extends PdfBuilder {
   }
 }
 
-// ── Screenshot Builder ─────────────────────────────────────
+// ── Screenshot Builder (Gotenberg-only) ────────────────────
 
 class ScreenshotBuilder {
   private _format: 'png' | 'jpeg' | 'webp' = 'png';
@@ -565,6 +877,13 @@ class ScreenshotBuilder {
   }
 
   async generate(): Promise<Buffer> {
+    if (getDriver() === 'pdfkit') {
+      throw new Error(
+        'Screenshots require the Gotenberg driver.\n' +
+        'Switch with: PDF.configure({ driver: \'gotenberg\', gotenberg: { url: \'http://localhost:3000\' } })'
+      );
+    }
+
     const form = new MultipartBuilder();
 
     if (this.mode === 'html') {
@@ -590,12 +909,77 @@ class ScreenshotBuilder {
   }
 }
 
-// ── HTTP Transport ─────────────────────────────────────────
+// ── PDFKit Document Builder ────────────────────────────────
 
-let _config: GotenbergConfig = {};
+/**
+ * Programmatic PDF builder using PDFKit directly.
+ * Use this for full control over the document layout (tables, images, etc.)
+ * without going through HTML conversion.
+ *
+ * @example
+ * ```ts
+ * const buffer = await PDF.create()
+ *   .margins({ top: '1in', bottom: '1in' })
+ *   .build(async (doc) => {
+ *     doc.fontSize(24).text('Invoice #1234', { align: 'center' });
+ *     doc.moveDown();
+ *     doc.fontSize(12).text('Total: $99.00');
+ *     doc.addPage();
+ *     doc.text('Page 2 content');
+ *   });
+ * ```
+ */
+class PdfKitDocumentBuilder {
+  private _margins: PdfMargins = {};
+  private _pageSize: PdfPageSize = {};
+  private _landscape = false;
 
-function getBaseUrl(): string {
-  return _config.url ?? process.env.GOTENBERG_URL ?? 'http://localhost:3000';
+  margins(m: PdfMargins): this {
+    this._margins = m;
+    return this;
+  }
+
+  pageSize(size: PdfPageSize): this {
+    this._pageSize = size;
+    return this;
+  }
+
+  landscape(value = true): this {
+    this._landscape = value;
+    return this;
+  }
+
+  /**
+   * Build the PDF by providing a callback that receives the raw PDFKit document.
+   * Call any PDFKit method on `doc` — text, images, vectors, tables, etc.
+   */
+  async build(callback: (doc: any) => Promise<void> | void): Promise<Buffer> {
+    return pdfkitGenerate(
+      async (doc) => { await callback(doc); },
+      {
+        margins: this._margins,
+        pageSize: this._pageSize,
+        landscape: this._landscape,
+      },
+    );
+  }
+
+  /** Build and save to file in one call */
+  async store(filePath: string, callback: (doc: any) => Promise<void> | void): Promise<Buffer> {
+    const { writeFileSync, mkdirSync } = await import('node:fs');
+    const { dirname } = await import('node:path');
+    const buffer = await this.build(callback);
+    mkdirSync(dirname(filePath), { recursive: true });
+    writeFileSync(filePath, buffer);
+    return buffer;
+  }
+}
+
+// ── Gotenberg HTTP Transport ───────────────────────────────
+
+function getGotenbergBaseUrl(): string {
+  const gc = getGotenbergConfig();
+  return gc.url ?? process.env.GOTENBERG_URL ?? 'http://localhost:3000';
 }
 
 async function sendToGotenberg(
@@ -603,9 +987,10 @@ async function sendToGotenberg(
   form: MultipartBuilder,
   webhookHeaders?: Record<string, string>,
 ): Promise<Buffer> {
-  const url = `${getBaseUrl()}${endpoint}`;
+  const url = `${getGotenbergBaseUrl()}${endpoint}`;
   const body = form.build();
-  const timeout = _config.timeout ?? 60_000;
+  const gc = getGotenbergConfig();
+  const timeout = gc.timeout ?? 60_000;
   const isAsync = webhookHeaders && Object.keys(webhookHeaders).length > 0;
 
   const controller = new AbortController();
@@ -616,7 +1001,7 @@ async function sendToGotenberg(
       method: 'POST',
       headers: {
         'Content-Type': form.contentType,
-        ...(_config.headers ?? {}),
+        ...(gc.headers ?? {}),
         ...(webhookHeaders ?? {}),
       },
       body: new Uint8Array(body),
@@ -629,7 +1014,7 @@ async function sendToGotenberg(
         const text = await response.text().catch(() => '');
         throw new Error(`Gotenberg webhook error ${response.status}: ${text || response.statusText}`);
       }
-      return Buffer.alloc(0); // No content — result sent to webhook
+      return Buffer.alloc(0);
     }
 
     if (!response.ok) {
@@ -646,23 +1031,59 @@ async function sendToGotenberg(
 
 // ── Health Check ───────────────────────────────────────────
 
-async function checkHealth(): Promise<{ status: string; details?: any }> {
-  const url = `${getBaseUrl()}/health`;
+async function checkHealth(): Promise<{ status: string; driver: string; details?: any }> {
+  const driver = getDriver();
+
+  if (driver === 'pdfkit') {
+    try {
+      await import('pdfkit');
+      return { status: 'up', driver: 'pdfkit', details: { installed: true } };
+    } catch {
+      return { status: 'down', driver: 'pdfkit', details: { installed: false, fix: 'npm install pdfkit' } };
+    }
+  }
+
+  const url = `${getGotenbergBaseUrl()}/health`;
   try {
     const response = await fetch(url);
     const data = await response.json() as any;
-    return { status: response.ok ? 'up' : 'down', details: data };
+    return { status: response.ok ? 'up' : 'down', driver: 'gotenberg', details: data };
   } catch (err: any) {
-    return { status: 'unreachable', details: err.message };
+    return { status: 'unreachable', driver: 'gotenberg', details: err.message };
   }
 }
 
 // ── Public API (Singleton Facade) ──────────────────────────
 
 export const PDF = {
-  /** Configure the Gotenberg connection */
-  configure(config: GotenbergConfig): void {
+  /**
+   * Configure the PDF module.
+   *
+   * @example
+   * ```ts
+   * // PDFKit (default — no Docker)
+   * PDF.configure({ driver: 'pdfkit' });
+   *
+   * // PDFKit with custom defaults
+   * PDF.configure({
+   *   driver: 'pdfkit',
+   *   pdfkit: { pageSize: 'Letter', font: 'Helvetica', fontSize: 11, pageNumbers: true },
+   * });
+   *
+   * // Gotenberg (Docker service)
+   * PDF.configure({
+   *   driver: 'gotenberg',
+   *   gotenberg: { url: 'http://localhost:3000', timeout: 60000 },
+   * });
+   * ```
+   */
+  configure(config: PdfConfig): void {
     _config = { ..._config, ...config };
+  },
+
+  /** Get the current driver name */
+  get driver(): string {
+    return getDriver();
   },
 
   /** Convert HTML string to PDF */
@@ -680,54 +1101,50 @@ export const PDF = {
     return new MarkdownPdfBuilder(content, wrapperHtml);
   },
 
-  /** Convert office documents (docx, xlsx, pptx, odt, etc.) to PDF */
+  /** Convert office documents (docx, xlsx, pptx, odt, etc.) to PDF. Requires Gotenberg driver. */
   office(pathOrBuffer: string | Buffer, filename?: string): OfficePdfBuilder {
     return new OfficePdfBuilder(pathOrBuffer, filename);
   },
 
-  /** Merge multiple PDFs or HTML pages into one PDF */
+  /** Merge multiple PDFs or HTML pages into one PDF. Requires Gotenberg driver. */
   merge(): MergePdfBuilder {
     return new MergePdfBuilder();
   },
 
-  /** Take a screenshot of HTML content */
+  /**
+   * Create a programmatic PDF using the raw PDFKit API.
+   * Available regardless of the configured driver.
+   *
+   * @example
+   * ```ts
+   * const buffer = await PDF.create()
+   *   .margins({ top: '1in', bottom: '1in' })
+   *   .build(async (doc) => {
+   *     doc.fontSize(24).text('Invoice #1234', { align: 'center' });
+   *     doc.moveDown();
+   *     doc.fontSize(12).text('Total: $99.00');
+   *   });
+   * ```
+   */
+  create(): PdfKitDocumentBuilder {
+    return new PdfKitDocumentBuilder();
+  },
+
+  /** Take a screenshot of HTML content. Requires Gotenberg driver. */
   screenshotHtml(content: string): ScreenshotBuilder {
     return new ScreenshotBuilder('html', content);
   },
 
-  /** Take a screenshot of a URL */
+  /** Take a screenshot of a URL. Requires Gotenberg driver. */
   screenshotUrl(targetUrl: string): ScreenshotBuilder {
     return new ScreenshotBuilder('url', targetUrl);
   },
 
-  /** Check if Gotenberg is healthy and reachable */
+  /** Check if the configured driver is healthy and available */
   health: checkHealth,
 
   /**
    * Dispatch PDF generation as a background queue job.
-   * The job runs in a worker process, keeping your request fast.
-   *
-   * @example
-   * ```ts
-   * // Generate in background, save to disk
-   * await PDF.dispatch({
-   *   type: 'html',
-   *   content: invoiceHtml,
-   *   outputPath: `storage/invoices/inv-${id}.pdf`,
-   *   broadcastEvent: 'PdfReady',
-   *   broadcastChannel: `private-user.${userId}`,
-   * });
-   *
-   * // Generate in background with Gotenberg webhook
-   * await PDF.dispatch({
-   *   type: 'url',
-   *   content: 'https://example.com/report',
-   *   webhook: {
-   *     url: 'https://myapp.com/api/pdf/webhook',
-   *     errorUrl: 'https://myapp.com/api/pdf/webhook-error',
-   *   },
-   * });
-   * ```
    */
   async dispatch(payload: import('./GeneratePdfJob.js').PdfJobPayload): Promise<void> {
     const { GeneratePdfJob } = await import('./GeneratePdfJob.js');
@@ -737,6 +1154,6 @@ export const PDF = {
 };
 
 // Re-export types and builders
-export type { HtmlPdfBuilder, UrlPdfBuilder, MarkdownPdfBuilder, OfficePdfBuilder, MergePdfBuilder, ScreenshotBuilder };
+export type { HtmlPdfBuilder, UrlPdfBuilder, MarkdownPdfBuilder, OfficePdfBuilder, MergePdfBuilder, ScreenshotBuilder, PdfKitDocumentBuilder };
 export { GeneratePdfJob } from './GeneratePdfJob.js';
 export type { PdfJobPayload } from './GeneratePdfJob.js';

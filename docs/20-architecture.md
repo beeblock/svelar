@@ -310,7 +310,7 @@ protected listen = {
     async (event: any) => {
       const user = event.user;
       await Invoice.create({ user_id: user.id, plan: 'free' });
-      await Mail.to(user.email).send(new WelcomeEmail());
+      await Mailer.sendMailable(new WelcomeEmail(user));
       await analytics.track('signup', { email: user.email });
     },
   ],

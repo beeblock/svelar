@@ -11,12 +11,16 @@ import { AuthManager } from '@beeblock/svelar/auth';
 import { User } from './lib/models/User.js';
 
 export const auth = new AuthManager({
-  guard: 'session',  // 'session', 'jwt', 'api'
+  guard: 'session',
   model: User,
+  appUrl: process.env.APP_URL ?? 'http://localhost:5173',
+  appName: process.env.APP_NAME ?? 'My App',
 });
 
 export { AuthManager };
 ```
+
+The `appUrl` and `appName` are used for generating email links (password reset, email verification) and email template content.
 
 ## Session-Based Authentication
 
@@ -28,11 +32,11 @@ In `src/hooks.server.ts`:
 
 ```typescript
 import { createSvelarHooks } from '@beeblock/svelar/hooks';
-import { SessionMiddleware, MemorySessionStore } from '@beeblock/svelar/session';
+import { SessionMiddleware, DatabaseSessionStore } from '@beeblock/svelar/session';
 import { AuthenticateMiddleware } from '@beeblock/svelar/auth';
 import { auth } from './app.js';
 
-const sessionStore = new MemorySessionStore();
+const sessionStore = new DatabaseSessionStore();  // auto-creates sessions table
 
 export const handle = createSvelarHooks({
   middleware: [
@@ -917,20 +921,20 @@ Here's the complete authentication flow from the svelar-example app:
 ### Routes
 
 ```typescript
-// src/routes/api/auth/register/+server.ts
+// src/routes/api/auth/register/+server.ts        → POST
+// src/routes/api/auth/login/+server.ts            → POST
+// src/routes/api/auth/logout/+server.ts           → POST
+// src/routes/api/auth/me/+server.ts               → GET
+// src/routes/api/auth/forgot-password/+server.ts  → POST
+// src/routes/api/auth/reset-password/+server.ts   → POST
+// src/routes/api/auth/otp/send/+server.ts         → POST
+// src/routes/api/auth/otp/verify/+server.ts       → POST
+// src/routes/api/auth/verify-email/+server.ts     → GET
+
+// Each route follows the same pattern:
 import { AuthController } from '$lib/controllers/AuthController.js';
-
 const ctrl = new AuthController();
-export const POST = ctrl.handle('register');
-
-// src/routes/api/auth/login/+server.ts
-export const POST = ctrl.handle('login');
-
-// src/routes/api/auth/logout/+server.ts
-export const POST = ctrl.handle('logout');
-
-// src/routes/api/auth/me/+server.ts
-export const GET = ctrl.handle('me');
+export const POST = ctrl.handle('methodName');
 ```
 
 ### Controller
@@ -998,9 +1002,240 @@ export class AuthController extends Controller {
 }
 ```
 
+## Password Reset
+
+Built-in password reset flow with token generation, email sending, and token validation. All tables are auto-created on first use.
+
+### How It Works
+
+```
+1. User submits email to /api/auth/forgot-password
+2. Server generates a token, stores its hash in password_resets table
+3. Server sends the "password-reset" email template with a reset link
+4. User clicks the link, submits new password to /api/auth/reset-password
+5. Server validates the token, updates the password, revokes all refresh tokens
+```
+
+### API
+
+```typescript
+// Send reset email (always returns success to avoid leaking user existence)
+await auth.sendPasswordReset('user@example.com');
+
+// Reset password with token from email link
+const success = await auth.resetPassword(token, email, newPassword);
+```
+
+### Routes (scaffolded by `npx svelar new`)
+
+```typescript
+// POST /api/auth/forgot-password
+// Body: { email: "user@example.com" }
+// Response: { message: "If that email exists, a reset link has been sent." }
+
+// POST /api/auth/reset-password
+// Body: { token: "...", email: "user@example.com", password: "newpassword" }
+// Response: { message: "Password has been reset. You can now log in." }
+```
+
+### Configuration
+
+```typescript
+export const auth = new AuthManager({
+  guard: 'session',
+  model: User,
+  appUrl: process.env.APP_URL,
+  appName: process.env.APP_NAME,
+  passwordResets: {
+    table: 'password_resets',    // default
+    expiresIn: 3600,             // 1 hour (default)
+  },
+});
+```
+
+## Email Verification
+
+Verify user email addresses after registration. The verification token is sent via the "email-verification" email template.
+
+### API
+
+```typescript
+// Send verification email
+await auth.sendVerificationEmail(user);
+
+// Verify email with token
+const success = await auth.verifyEmail(token, userId);
+
+// Check if user has verified their email
+const verified = auth.isEmailVerified(user);
+```
+
+### Sending on Registration
+
+```typescript
+// In your register action or controller
+const user = await auth.register({
+  name: data.name,
+  email: data.email,
+  password: data.password,
+});
+
+// Send verification email
+await auth.sendVerificationEmail(user);
+```
+
+### Routes (scaffolded by `npx svelar new`)
+
+```typescript
+// GET /api/auth/verify-email?token=...&id=...
+// Response: { message: "Email verified successfully" }
+```
+
+### Requiring Verified Email
+
+```typescript
+// In a controller or middleware
+if (!auth.isEmailVerified(event.locals.user)) {
+  return new Response(JSON.stringify({ message: 'Please verify your email address' }), {
+    status: 403,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+```
+
+### Configuration
+
+```typescript
+export const auth = new AuthManager({
+  guard: 'session',
+  model: User,
+  emailVerification: {
+    table: 'email_verifications',   // default
+    expiresIn: 86400,               // 24 hours (default)
+    verifiedColumn: 'email_verified_at', // default
+  },
+});
+```
+
+Add `email_verified_at` to your users migration:
+
+```typescript
+table.dateTime('email_verified_at').nullable();
+```
+
+## OTP (One-Time Password) Login
+
+Passwordless authentication via one-time codes sent by email. Users receive a 6-digit numeric code they enter to log in.
+
+### How It Works
+
+```
+1. User enters their email on the login page
+2. POST /api/auth/otp/send → generates 6-digit code, stores hash, emails code
+3. User enters the code they received
+4. POST /api/auth/otp/verify → validates code, creates session
+```
+
+### API
+
+```typescript
+// Send OTP code
+await auth.sendOtp('user@example.com');            // purpose: 'login' (default)
+await auth.sendOtp('user@example.com', 'confirm'); // custom purpose
+
+// Verify OTP without creating session (useful for 2FA)
+const user = await auth.verifyOtp(email, code);
+
+// Verify OTP and create session in one step (OTP login)
+const user = await auth.attemptOtp(email, code, session);
+```
+
+### Routes (scaffolded by `npx svelar new`)
+
+```typescript
+// POST /api/auth/otp/send
+// Body: { email: "user@example.com" }
+// Response: { message: "If that email exists, a verification code has been sent." }
+
+// POST /api/auth/otp/verify
+// Body: { email: "user@example.com", code: "482917" }
+// Response: { message: "Login successful", user: { id, name, email } }
+```
+
+### Configuration
+
+```typescript
+export const auth = new AuthManager({
+  guard: 'session',
+  model: User,
+  otp: {
+    table: 'otp_codes',  // default
+    expiresIn: 600,       // 10 minutes (default)
+    length: 6,            // code length (default)
+  },
+});
+```
+
+### Using OTP as Two-Factor Authentication
+
+Combine password login with OTP verification for 2FA:
+
+```typescript
+// Step 1: User logs in with email+password
+const user = await auth.attempt(credentials);
+if (!user) return this.json({ message: 'Invalid credentials' }, 401);
+
+// Step 2: Send OTP for second factor
+await auth.sendOtp(user.getAttribute('email'), 'two-factor');
+
+// Don't create session yet — wait for OTP
+return this.json({ message: 'Verification code sent', requiresOtp: true });
+
+// Step 3: User submits OTP
+const verified = await auth.verifyOtp(email, code, 'two-factor');
+if (!verified) return this.json({ message: 'Invalid code' }, 401);
+
+// Now create session
+session.set('auth_user_id', verified.getAttribute('id'));
+session.regenerateId();
+```
+
+## Auth Email Templates
+
+Svelar includes 4 built-in email templates for auth flows. They're registered automatically when you call `EmailTemplates.registerDefaults()` (included in the scaffold):
+
+| Template | Variables | Used By |
+|----------|-----------|---------|
+| `welcome` | `appName`, `user.name`, `user.email`, `confirmUrl` | Registration |
+| `password-reset` | `appName`, `user.name`, `resetUrl` | `sendPasswordReset()` |
+| `email-verification` | `user.name`, `verifyUrl` | `sendVerificationEmail()` |
+| `otp-code` | `appName`, `user.name`, `code`, `expiresMinutes`, `purpose` | `sendOtp()` |
+
+Customize any template by updating it after registration:
+
+```typescript
+import { EmailTemplates } from '@beeblock/svelar/email-templates';
+
+await EmailTemplates.update('welcome', {
+  subject: 'Welcome to {{appName}}!',
+  html: '<h1>Welcome {{user.name}}</h1><p>Your custom HTML here.</p>',
+});
+```
+
+## Token Cleanup
+
+Expired tokens from password resets, email verifications, and OTP codes should be cleaned up periodically. The `cleanupExpiredTokens()` method handles all three:
+
+```typescript
+const result = await auth.cleanupExpiredTokens();
+// { passwordResets: 5, verifications: 2, otpCodes: 12 }
+```
+
+This is wired up automatically in the scaffolded `CleanupExpiredTokens` scheduled task (runs daily).
+
 ## Choosing an Auth Strategy
 
-Svelar supports three authentication methods. They can be used independently or combined — the `AuthenticateMiddleware` tries them all automatically.
+Svelar supports four authentication methods. They can be used independently or combined. They can be used independently or combined — the `AuthenticateMiddleware` tries them all automatically.
 
 ### Comparison
 

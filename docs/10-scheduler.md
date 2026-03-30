@@ -84,27 +84,35 @@ export class GenerateReport extends ScheduledTask {
 }
 ```
 
-### preventing()
+### preventOverlap()
 
-Prevent overlapping executions:
+Prevent overlapping executions with a **distributed lock**. This is safe across multiple scheduler instances — only one process can execute the task at a time. The lock is database-backed and auto-expires if a process crashes:
 
 ```typescript
-export class LongRunningTask extends ScheduledTask {
+export default class LongRunningTask extends ScheduledTask {
   name = 'long-running-task';
 
   schedule() {
-    return this.hourly();
+    return this.hourly().preventOverlap();
   }
 
   async handle(): Promise<void> {
-    // This task won't run again until previous execution completes
-  }
-
-  preventing() {
-    return true;  // Default is false
+    // This task won't run again until previous execution completes.
+    // If another scheduler instance is already running this task, it will be skipped.
   }
 }
 ```
+
+By default the lock expires after 5 minutes. For longer tasks, increase the TTL:
+
+```typescript
+schedule() {
+  // Lock expires after 30 minutes — use for long-running tasks
+  return this.hourly().preventOverlap().lockExpiresAfter(30);
+}
+```
+
+The `scheduler_locks` table is auto-created on first use — no migration required.
 
 ### onSuccess()
 
@@ -179,7 +187,7 @@ Run the scheduler in development:
 npx svelar schedule:run
 ```
 
-This auto-discovers task files from `src/lib/scheduler/`, checks which tasks are due every 60 seconds, and runs them.
+This auto-discovers task files from `src/lib/scheduler/`, aligns to the top of each minute (like crontab), and runs due tasks every 60 seconds. Task execution history is persisted to the `scheduled_task_runs` database table so the admin dashboard can display accurate run times.
 
 To run due tasks once and exit (useful for cron):
 
@@ -189,7 +197,7 @@ npx svelar schedule:run --once
 
 ### Production
 
-In production, run the scheduler as a background process. [PM2](https://pm2.keymetrics.io/) is a Node.js process manager that keeps your services alive, auto-restarts on crash, and handles log rotation:
+In production, run **one scheduler instance** per deployment. Use [PM2](https://pm2.keymetrics.io/) to keep it alive:
 
 ```bash
 # Install PM2 globally
@@ -210,12 +218,17 @@ Or trigger it from a system cron job:
 * * * * * cd /app && npx svelar schedule:run --once
 ```
 
-Create a script that calls `scheduler.runDueTasks()` and schedule it with cron:
+### Multiple Instances & Distributed Locking
 
-```bash
-# Run every minute
-* * * * * cd /app && node scripts/run-scheduler.js
+If you need to run multiple scheduler instances for high availability (e.g., across multiple servers), use `preventOverlap()` on your tasks. This acquires a database-backed distributed lock before executing, so only one instance runs each task at a time:
+
+```typescript
+schedule() {
+  return this.everyFiveMinutes().preventOverlap();
+}
 ```
+
+The lock uses the shared database (SQLite, PostgreSQL, or MySQL) — no Redis required. Locks auto-expire via TTL, so crashed processes don't block future executions. The `scheduler_locks` table is created automatically on first use.
 
 ## Task Examples
 
@@ -469,37 +482,46 @@ export const scheduler = new Scheduler()
   .schedule(() => scheduler.task('cleanup').daily());
 ```
 
+## Task Run History
+
+Task execution history is automatically persisted to the `scheduled_task_runs` database table. This is shared across all processes — the CLI scheduler writes to it, and the admin dashboard reads from it.
+
+Both the `scheduled_task_runs` and `scheduler_locks` tables are auto-created by the framework on first use — no migration required.
+
 ## Monitoring Scheduled Tasks
 
-Monitor task execution:
+The `ScheduleMonitor` provides a real-time view of all tasks for use in admin dashboards. It reads history from the database so it reflects runs from all scheduler processes:
 
 ```typescript
-export class TaskMonitoring extends ScheduledTask {
-  name = 'task-monitoring';
+import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
 
-  schedule() {
-    return this.everyMinute();
-  }
+// Configure once with your scheduler instance
+ScheduleMonitor.configure(scheduler);
 
-  async handle(): Promise<void> {
-    const tasks = this.scheduler.getTasks();
-    const nextRun = tasks[0].nextRunAt();
+// List all tasks with status, last run, next run, history
+const tasks = await ScheduleMonitor.listTasks();
 
-    console.log(`Next scheduled task: ${tasks[0].name} at ${nextRun}`);
-  }
-}
+// Get health metrics (total tasks, errors, uptime)
+const health = await ScheduleMonitor.getHealth();
+
+// Manually trigger a task from the admin panel
+await ScheduleMonitor.runTask('cleanup-expired-sessions');
+
+// Enable/disable tasks
+ScheduleMonitor.disableTask('daily-report');
+ScheduleMonitor.enableTask('daily-report');
 ```
 
 ## Best Practices
 
-1. **Keep tasks idempotent** - Tasks should be safe to run multiple times
-2. **Set appropriate intervals** - Don't run expensive tasks too frequently
-3. **Handle errors gracefully** - Use onFailure() to log and handle errors
-4. **Monitor task execution** - Track which tasks ran and when
-5. **Use preventing() for long tasks** - Avoid overlapping executions
-6. **Log task execution** - Always log when tasks start and finish
-7. **Test tasks** - Write tests for task logic
-8. **Document purposes** - Explain why each task exists
+1. **Keep tasks idempotent** — Tasks should be safe to run multiple times
+2. **Set appropriate intervals** — Don't run expensive tasks too frequently
+3. **Handle errors gracefully** — Use `onFailure()` to log and handle errors
+4. **Use `preventOverlap()` for long tasks** — Prevents duplicate execution across processes
+5. **Set `lockExpiresAfter()`** — Match the TTL to your task's expected duration
+6. **Run one scheduler instance** — Unless using `preventOverlap()` for distributed locking
+7. **Test tasks** — Write tests for task logic
+8. **Keep tasks focused** — One responsibility per task
 
 ## Next Steps
 

@@ -4,6 +4,32 @@ All notable changes to `@beeblock/svelar` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-03-29
+
+### Added
+
+- **Distributed scheduler locking** — `SchedulerLock` with database-backed distributed locks (`scheduler_locks` table, auto-created); prevents duplicate task execution across multiple scheduler instances (SQLite, PostgreSQL, MySQL)
+- **Database-backed scheduler history** — `ScheduleMonitor` now reads/writes task run history to the database (`scheduler_history` table); all processes (CLI, web) share the same data
+- **Scheduler minute-boundary alignment** — `schedule:run` now aligns ticks to the top of each minute like crontab, runs immediately on start
+- **Full DDD admin domain in scaffold** — `npx svelar new` now generates a complete admin domain: `AdminService`, `AdminController` (thin), 10 FormRequest DTOs, `adminSchema` (Zod), `RoleResource`, `PermissionResource`
+- **Rate limiting on auth endpoints** — scaffold wires `ThrottleMiddleware` on login, register, forgot-password, OTP send/verify, and reset-password API routes
+- **Event-driven auth** — scaffold wires `UserRegistered` event, `SendWelcomeEmailListener`, `WelcomeNotification` (database channel), and `EventServiceProvider` boot
+- **Auth config toggles** — scaffold exports `authConfig` with `AUTH_OTP_ENABLED` and `AUTH_EMAIL_VERIFICATION_REQUIRED` env-driven feature toggles
+- **API Resources everywhere** — scaffold uses `UserResource`, `PostResource`, `RoleResource`, `PermissionResource` for all API responses (no raw objects)
+- **Broadcasting in scaffold** — `PostService` broadcasts `post:created` on the `posts` channel; `app.ts` registers `private-user-*` and `presence-admin` channel auth
+- **Audit trail in scaffold** — `User` and `Post` models wrapped with `auditable()`, audit driver set to `'database'`, `audit_logs` and `notifications` migrations included
+
+### Changed
+
+- **ScheduleMonitor API is now async** — `listTasks()`, `getTask()`, `getTaskHistory()`, `getHealth()` return Promises (breaking for direct callers, but only used internally by Dashboard)
+- **Scaffold tasks fully implemented** — `CleanExpiredSessions`, `PruneAuditLogs`, `QueueHealthCheck` now have real implementations instead of stubs
+- **Scaffold jobs fully implemented** — `DailyDigestJob` sends digest emails with stats; `ExportDataJob` writes CSV/JSON to Storage
+- **Admin API routes use controller** — all 6 admin API routes delegate to `AdminController.handle()` instead of inline logic
+
+### Fixed
+
+- **Dashboard scheduler health** — `ScheduleMonitor.getHealth()` is now properly awaited
+
 ## [0.3.0] - 2026-03-29
 
 ### Added
@@ -17,6 +43,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Getting Started guide** — comprehensive `docs/00-getting-started.md` covering out-of-the-box features, setup, migrations, configuration, and building your first features
 - **Error Handling documentation** — `docs/19-error-handling.md` with custom error pages, error boundaries, and API error responses
 - **Architecture documentation** — `docs/20-architecture.md` covering DDD modular monolith structure
+- **Feature Flags** — database-backed feature flags with per-user, per-team, and percentage rollout support; auto-creates `feature_flags` and `feature_flag_overrides` tables; `Features.configure()`, `Features.define()`, `Features.enabledFor()`, `Features.enabledForTeam()`
+- **PDF PDFKit driver** — pure JavaScript PDF generation via PDFKit (default driver, no Docker needed); swappable with Gotenberg via `PDF.configure({ driver: 'gotenberg' })`; new `PDF.create()` for programmatic document building
+- **Teams database driver** — full database-backed Teams implementation; auto-creates `teams`, `team_members`, `team_invitations` tables; SQLite, PostgreSQL, and MySQL support
+- **NewCommand overhaul** — `npx svelar new` now scaffolds a complete SaaS application with ~75 files: auth pages, dashboard, admin panel, API routes, jobs, scheduled tasks, migrations, seeders, DDD domain layer
+- **Feature Flags documentation** — `docs/21-feature-flags.md` with setup, usage, percentage rollouts, admin API examples
+- **Postmark mail driver** — zero-dependency transactional email via Postmark REST API (`driver: 'postmark'`)
+- **Resend mail driver** — zero-dependency transactional email via Resend REST API (`driver: 'resend'`)
+- **Mail tags support** — `MailMessage.tags` and `Mailable.tag()` for analytics (Postmark and Resend)
+- **Excel import/export** — ExcelJS-based spreadsheet generation and parsing with streaming support for large datasets; `Excel.export()`, `Excel.import()`, `Excel.stream()`, `Excel.importStream()`, and `Spreadsheet` builder
+- **Server-side HTTP client** — fluent `Http` client for third-party API calls with authentication, retry, timeout, and error handling; `Http.withToken()`, `Http.withHeaders()`, `Http.withBasicAuth()`, `Http.retry()`, `Http.baseUrl()`
+- **Custom mail driver support** — `driver: 'custom'` with `transport` field to plug in any `MailTransport` implementation (e.g., Mailchimp, SendGrid)
+- **Password reset flow** — `auth.sendPasswordReset(email)`, `auth.resetPassword(token, email, password)`; auto-creates `password_resets` table; sends the built-in `password-reset` email template with a time-limited reset link
+- **Email verification flow** — `auth.sendVerificationEmail(user)`, `auth.verifyEmail(token, userId)`, `auth.isEmailVerified(user)`; auto-creates `email_verifications` table; sends the built-in `email-verification` email template
+- **OTP (one-time password) login** — `auth.sendOtp(email)`, `auth.verifyOtp(email, code)`, `auth.attemptOtp(email, code, session)`; generates 6-digit numeric codes; auto-creates `otp_codes` table; supports custom purposes for 2FA
+- **OTP email template** — built-in `otp-code` email template with styled code display and expiry notice
+- **Token cleanup** — `auth.cleanupExpiredTokens()` deletes expired records from password_resets, email_verifications, and otp_codes; wired into the scaffolded `CleanupExpiredTokens` scheduled task
+- **Scaffolded auth routes** — `npx svelar new` now includes forgot-password, reset-password, OTP send/verify, and email verification API endpoints
 
 ### Changed
 

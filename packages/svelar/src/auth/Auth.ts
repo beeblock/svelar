@@ -33,6 +33,41 @@ export interface AuthConfig {
   jwt?: JwtConfig;
   /** API token configuration */
   token?: TokenConfig;
+  /** Application URL for generating email links */
+  appUrl?: string;
+  /** Application name for email templates */
+  appName?: string;
+  /** Password reset configuration */
+  passwordResets?: PasswordResetConfig;
+  /** Email verification configuration */
+  emailVerification?: EmailVerificationConfig;
+  /** OTP (one-time password) configuration */
+  otp?: OtpConfig;
+}
+
+export interface PasswordResetConfig {
+  /** Table name (default: 'password_resets') */
+  table?: string;
+  /** Token lifetime in seconds (default: 3600 = 1 hour) */
+  expiresIn?: number;
+}
+
+export interface EmailVerificationConfig {
+  /** Table name (default: 'email_verifications') */
+  table?: string;
+  /** Token lifetime in seconds (default: 86400 = 24 hours) */
+  expiresIn?: number;
+  /** Column on user model storing verification timestamp (default: 'email_verified_at') */
+  verifiedColumn?: string;
+}
+
+export interface OtpConfig {
+  /** Table name (default: 'otp_codes') */
+  table?: string;
+  /** Code lifetime in seconds (default: 600 = 10 minutes) */
+  expiresIn?: number;
+  /** Code length (default: 6) */
+  length?: number;
 }
 
 export interface JwtConfig {
@@ -440,6 +475,388 @@ export class AuthManager {
     const user = await this.config.model.find(rows[0].user_id);
     if (user) this.currentUser = user;
     return user;
+  }
+
+  // ── Password Reset ──────────────────────────────────────
+
+  /**
+   * Send a password reset email.
+   * Generates a token, stores its hash, and sends the password-reset email template.
+   * Auto-creates the password_resets table if it doesn't exist.
+   */
+  async sendPasswordReset(email: string): Promise<boolean> {
+    const user = await this.config.model
+      .where(this.config.identifierColumn, email)
+      .first();
+
+    if (!user) return false; // Don't reveal if user exists
+
+    const { Connection } = await import('../database/Connection.js');
+    const table = this.config.passwordResets?.table ?? 'password_resets';
+    const expiresIn = this.config.passwordResets?.expiresIn ?? 3600;
+
+    await this.ensureTable(table, `
+      CREATE TABLE IF NOT EXISTS ${table} (
+        email TEXT NOT NULL,
+        token TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )
+    `);
+
+    // Delete any existing reset tokens for this email
+    await Connection.raw(`DELETE FROM ${table} WHERE email = ?`, [email]);
+
+    // Generate token
+    const token = randomBytes(32).toString('base64url');
+    const hashedToken = this.hashToken(token);
+    const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
+
+    await Connection.raw(
+      `INSERT INTO ${table} (email, token, expires_at, created_at) VALUES (?, ?, ?, ?)`,
+      [email, hashedToken, expiresAt, new Date().toISOString()]
+    );
+
+    // Send email
+    const appUrl = this.config.appUrl ?? process.env.APP_URL ?? 'http://localhost:5173';
+    const appName = this.config.appName ?? process.env.APP_NAME ?? 'Svelar';
+    const resetUrl = `${appUrl}/reset-password?token=${token}&email=${encodeURIComponent(email)}`;
+
+    await this.sendAuthEmail('password-reset', email, {
+      appName,
+      'user.name': user.getAttribute('name') ?? email,
+      resetUrl,
+    });
+
+    return true;
+  }
+
+  /**
+   * Reset a user's password using a valid reset token.
+   * Validates the token, updates the password, and revokes all refresh tokens.
+   */
+  async resetPassword(token: string, email: string, newPassword: string): Promise<boolean> {
+    const { Connection } = await import('../database/Connection.js');
+    const { Hash } = await import('../hashing/Hash.js');
+    const table = this.config.passwordResets?.table ?? 'password_resets';
+
+    const hashedToken = this.hashToken(token);
+
+    const rows = await Connection.raw(
+      `SELECT email, expires_at FROM ${table} WHERE token = ? AND email = ?`,
+      [hashedToken, email]
+    );
+
+    if (rows.length === 0) return false;
+
+    const row = rows[0];
+
+    // Check if expired
+    if (new Date(row.expires_at) < new Date()) {
+      await Connection.raw(`DELETE FROM ${table} WHERE email = ?`, [email]);
+      return false;
+    }
+
+    // Update password
+    const user = await this.config.model
+      .where(this.config.identifierColumn, email)
+      .first();
+
+    if (!user) return false;
+
+    const hashedPassword = await Hash.make(newPassword);
+    await this.config.model
+      .where('id', user.getAttribute('id'))
+      .update({ [this.config.passwordColumn]: hashedPassword });
+
+    // Delete all reset tokens for this email
+    await Connection.raw(`DELETE FROM ${table} WHERE email = ?`, [email]);
+
+    // Revoke all refresh tokens
+    await this.revokeRefreshTokens(user.getAttribute('id'));
+
+    return true;
+  }
+
+  // ── Email Verification ──────────────────────────────────
+
+  /**
+   * Send an email verification link.
+   * Generates a token, stores its hash, and sends the email-verification template.
+   * Auto-creates the email_verifications table if it doesn't exist.
+   */
+  async sendVerificationEmail(user: AuthUser): Promise<void> {
+    const { Connection } = await import('../database/Connection.js');
+    const table = this.config.emailVerification?.table ?? 'email_verifications';
+    const expiresIn = this.config.emailVerification?.expiresIn ?? 86400;
+    const email = user.getAttribute(this.config.identifierColumn);
+
+    await this.ensureTable(table, `
+      CREATE TABLE IF NOT EXISTS ${table} (
+        user_id TEXT NOT NULL,
+        token TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )
+    `);
+
+    // Delete existing tokens for this user
+    await Connection.raw(`DELETE FROM ${table} WHERE user_id = ?`, [user.getAttribute('id')]);
+
+    const token = randomBytes(32).toString('base64url');
+    const hashedToken = this.hashToken(token);
+    const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
+
+    await Connection.raw(
+      `INSERT INTO ${table} (user_id, token, expires_at, created_at) VALUES (?, ?, ?, ?)`,
+      [user.getAttribute('id'), hashedToken, expiresAt, new Date().toISOString()]
+    );
+
+    const appUrl = this.config.appUrl ?? process.env.APP_URL ?? 'http://localhost:5173';
+    const verifyUrl = `${appUrl}/verify-email?token=${token}&id=${user.getAttribute('id')}`;
+
+    await this.sendAuthEmail('email-verification', email, {
+      'user.name': user.getAttribute('name') ?? email,
+      verifyUrl,
+    });
+  }
+
+  /**
+   * Verify an email address using a valid verification token.
+   * Sets the email_verified_at column on the user.
+   */
+  async verifyEmail(token: string, userId: string | number): Promise<boolean> {
+    const { Connection } = await import('../database/Connection.js');
+    const table = this.config.emailVerification?.table ?? 'email_verifications';
+    const verifiedColumn = this.config.emailVerification?.verifiedColumn ?? 'email_verified_at';
+
+    const hashedToken = this.hashToken(token);
+
+    const rows = await Connection.raw(
+      `SELECT user_id, expires_at FROM ${table} WHERE token = ? AND user_id = ?`,
+      [hashedToken, userId]
+    );
+
+    if (rows.length === 0) return false;
+
+    if (new Date(rows[0].expires_at) < new Date()) {
+      await Connection.raw(`DELETE FROM ${table} WHERE user_id = ?`, [userId]);
+      return false;
+    }
+
+    // Mark email as verified
+    await this.config.model
+      .where('id', userId)
+      .update({ [verifiedColumn]: new Date().toISOString() });
+
+    // Delete all verification tokens for this user
+    await Connection.raw(`DELETE FROM ${table} WHERE user_id = ?`, [userId]);
+
+    return true;
+  }
+
+  /**
+   * Check if a user has verified their email.
+   */
+  isEmailVerified(user: AuthUser): boolean {
+    const verifiedColumn = this.config.emailVerification?.verifiedColumn ?? 'email_verified_at';
+    return !!user.getAttribute(verifiedColumn);
+  }
+
+  // ── OTP (One-Time Password) ─────────────────────────────
+
+  /**
+   * Send an OTP code via email.
+   * Generates a numeric code, stores its hash, and sends the otp-code email template.
+   * Auto-creates the otp_codes table if it doesn't exist.
+   *
+   * @param email - User email address
+   * @param purpose - Purpose identifier (default: 'login')
+   * @returns true if sent (user exists), false if user not found
+   */
+  async sendOtp(email: string, purpose: string = 'login'): Promise<boolean> {
+    const user = await this.config.model
+      .where(this.config.identifierColumn, email)
+      .first();
+
+    if (!user) return false;
+
+    const { Connection } = await import('../database/Connection.js');
+    const table = this.config.otp?.table ?? 'otp_codes';
+    const expiresIn = this.config.otp?.expiresIn ?? 600;
+    const length = this.config.otp?.length ?? 6;
+
+    await this.ensureTable(table, `
+      CREATE TABLE IF NOT EXISTS ${table} (
+        email TEXT NOT NULL,
+        code TEXT NOT NULL,
+        purpose TEXT NOT NULL DEFAULT 'login',
+        expires_at TEXT NOT NULL,
+        used_at TEXT,
+        created_at TEXT NOT NULL
+      )
+    `);
+
+    // Delete expired/used codes for this email+purpose
+    await Connection.raw(
+      `DELETE FROM ${table} WHERE email = ? AND purpose = ?`,
+      [email, purpose]
+    );
+
+    // Generate numeric code
+    const code = this.generateOtpCode(length);
+    const hashedCode = this.hashToken(code);
+    const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
+
+    await Connection.raw(
+      `INSERT INTO ${table} (email, code, purpose, expires_at, created_at) VALUES (?, ?, ?, ?, ?)`,
+      [email, hashedCode, purpose, expiresAt, new Date().toISOString()]
+    );
+
+    const appName = this.config.appName ?? process.env.APP_NAME ?? 'Svelar';
+    const expiresMinutes = Math.ceil(expiresIn / 60);
+
+    await this.sendAuthEmail('otp-code', email, {
+      appName,
+      'user.name': user.getAttribute('name') ?? email,
+      code,
+      purpose,
+      expiresMinutes: String(expiresMinutes),
+    });
+
+    return true;
+  }
+
+  /**
+   * Verify an OTP code without creating a session.
+   * Returns the user if valid, null otherwise.
+   */
+  async verifyOtp(email: string, code: string, purpose: string = 'login'): Promise<AuthUser | null> {
+    const { Connection } = await import('../database/Connection.js');
+    const table = this.config.otp?.table ?? 'otp_codes';
+
+    const hashedCode = this.hashToken(code);
+
+    const rows = await Connection.raw(
+      `SELECT email, expires_at, used_at FROM ${table} WHERE code = ? AND email = ? AND purpose = ? AND used_at IS NULL`,
+      [hashedCode, email, purpose]
+    );
+
+    if (rows.length === 0) return null;
+
+    if (new Date(rows[0].expires_at) < new Date()) {
+      await Connection.raw(
+        `DELETE FROM ${table} WHERE email = ? AND purpose = ?`,
+        [email, purpose]
+      );
+      return null;
+    }
+
+    // Mark as used
+    await Connection.raw(
+      `UPDATE ${table} SET used_at = ? WHERE code = ? AND email = ? AND purpose = ?`,
+      [new Date().toISOString(), hashedCode, email, purpose]
+    );
+
+    const user = await this.config.model
+      .where(this.config.identifierColumn, email)
+      .first();
+
+    if (user) this.currentUser = user;
+    return user;
+  }
+
+  /**
+   * Verify OTP and create a session (OTP login).
+   * Combines verifyOtp + session creation in one step.
+   */
+  async attemptOtp(
+    email: string,
+    code: string,
+    session?: any,
+    purpose: string = 'login'
+  ): Promise<AuthUser | null> {
+    const user = await this.verifyOtp(email, code, purpose);
+    if (!user) return null;
+
+    if (session) {
+      session.set('auth_user_id', user.getAttribute('id'));
+      session.regenerateId();
+    }
+
+    return user;
+  }
+
+  /**
+   * Delete expired tokens from password_resets, email_verifications, and otp_codes tables.
+   * Call this from a scheduled task (e.g., daily).
+   */
+  async cleanupExpiredTokens(): Promise<{ passwordResets: number; verifications: number; otpCodes: number }> {
+    const { Connection } = await import('../database/Connection.js');
+    const now = new Date().toISOString();
+    let passwordResets = 0;
+    let verifications = 0;
+    let otpCodes = 0;
+
+    const prTable = this.config.passwordResets?.table ?? 'password_resets';
+    const evTable = this.config.emailVerification?.table ?? 'email_verifications';
+    const otpTable = this.config.otp?.table ?? 'otp_codes';
+
+    try {
+      const pr = await Connection.raw(`DELETE FROM ${prTable} WHERE expires_at < ?`, [now]);
+      passwordResets = pr?.changes ?? 0;
+    } catch { /* table may not exist */ }
+
+    try {
+      const ev = await Connection.raw(`DELETE FROM ${evTable} WHERE expires_at < ?`, [now]);
+      verifications = ev?.changes ?? 0;
+    } catch { /* table may not exist */ }
+
+    try {
+      const otp = await Connection.raw(`DELETE FROM ${otpTable} WHERE expires_at < ? OR used_at IS NOT NULL`, [now]);
+      otpCodes = otp?.changes ?? 0;
+    } catch { /* table may not exist */ }
+
+    return { passwordResets, verifications, otpCodes };
+  }
+
+  // ── Private Helpers ─────────────────────────────────────
+
+  private hashToken(token: string): string {
+    const secret = this.config.jwt?.secret ?? process.env.APP_KEY ?? 'svelar-change-me';
+    return createHmac('sha256', secret).update(token).digest('hex');
+  }
+
+  private generateOtpCode(length: number): string {
+    const digits = randomBytes(length);
+    return Array.from(digits).map(b => (b % 10).toString()).join('');
+  }
+
+  private tablesEnsured = new Set<string>();
+
+  private async ensureTable(table: string, sql: string): Promise<void> {
+    if (this.tablesEnsured.has(table)) return;
+    const { Connection } = await import('../database/Connection.js');
+    await Connection.raw(sql);
+    this.tablesEnsured.add(table);
+  }
+
+  private async sendAuthEmail(templateName: string, to: string, vars: Record<string, any>): Promise<void> {
+    try {
+      const { EmailTemplates } = await import('../email-templates/index.js');
+      const { Mailer } = await import('../mail/index.js');
+
+      const rendered = await EmailTemplates.render(templateName, vars);
+      await Mailer.send({
+        to,
+        subject: rendered.subject,
+        html: rendered.html,
+        text: rendered.text,
+      });
+    } catch (err: any) {
+      // Log but don't throw — the token is still created, user can request again
+      console.error(`[Auth] Failed to send ${templateName} email to ${to}:`, err.message);
+    }
   }
 }
 

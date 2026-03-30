@@ -13,6 +13,9 @@ export {
   type JwtPayload,
   type JwtTokenPair,
   type TokenConfig,
+  type PasswordResetConfig,
+  type EmailVerificationConfig,
+  type OtpConfig,
 } from './Auth.js';
 
 export {

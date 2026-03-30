@@ -1,123 +1,89 @@
 # Svelar
 
-Laravel-inspired framework on top of SvelteKit 2. Brings the developer experience of Laravel — routing, middleware, Eloquent-style ORM, service container, auth, sessions, caching, queues, mail, and more — into the SvelteKit ecosystem.
+Laravel-inspired framework on top of SvelteKit 2. Brings the developer experience of Laravel — routing, middleware, Eloquent-style ORM, service container, auth, sessions, caching, queues, mail, broadcasting, and more — into the SvelteKit ecosystem.
+
+**Batteries included.** Authentication, dashboard, admin panel, email templates, API keys, team management, file uploads, and more — all out of the box so you can focus on building your core business features.
+
+## Documentation
+
+Full documentation is available at **[svelar.dev](https://svelar.dev)**.
 
 ## Quick Start
 
 ```bash
 # Scaffold a new project
-npm create svelar@latest my-app
+npx @beeblock/svelar new my-app
 cd my-app
 npm install
+npx svelar migrate
 npm run dev
 ```
 
 Or add to an existing SvelteKit project:
 
 ```bash
-npm install svelar
+npm install @beeblock/svelar
 ```
+
+See the [Getting Started guide](https://svelar.dev/docs/getting-started) for a complete walkthrough.
 
 ## Features
 
 | Module | Import | Description |
 |--------|--------|-------------|
-| **ORM** | `svelar/orm` | Eloquent-style models with relationships, casting, eager loading |
+| **ORM** | `svelar/orm` | Eloquent-style models with relationships, soft deletes, scopes, eager loading |
 | **Database** | `svelar/database` | Schema builder, migrations, seeders (SQLite, PostgreSQL, MySQL) |
-| **Container** | `svelar/container` | IoC container with bind/singleton/instance, service providers |
-| **Routing** | `svelar/routing` | Controllers with validation, form requests, resource routes |
-| **Middleware** | `svelar/middleware` | Middleware pipeline, CORS, rate limiting, CSRF protection |
-| **Auth** | `svelar/auth` | Session & JWT authentication, API tokens, guards |
-| **Session** | `svelar/session` | Server-side sessions with memory & database stores |
+| **Auth** | `svelar/auth` | Session, JWT (with refresh tokens), API tokens, password reset, email verification, OTP login |
+| **Middleware** | `svelar/middleware` | CORS, CSRF, rate limiting, origin validation, request signatures |
+| **Routing** | `svelar/routing` | Controllers, form requests, API resources, response helpers |
+| **Validation** | `svelar/validation` | Zod-based validation with FormRequest DTOs |
+| **Session** | `svelar/session` | Cookie, memory, Redis, and database session stores |
 | **Hashing** | `svelar/hashing` | scrypt (zero-dep), bcrypt, argon2 |
-| **Validation** | `svelar/validation` | Zod-based validation with Laravel-style rule helpers |
-| **Cache** | `svelar/cache` | Memory & file cache with remember pattern |
-| **Queue** | `svelar/queue` | Job dispatching with sync & memory drivers |
-| **Events** | `svelar/events` | Typed event dispatcher with subscribers |
-| **Mail** | `svelar/mail` | SMTP, log, null transports with Mailable classes |
-| **Notifications** | `svelar/notifications` | Multi-channel notifications (mail, database) |
-| **Broadcasting** | `svelar/broadcasting` | Server-Sent Events for real-time |
-| **Storage** | `svelar/storage` | Filesystem abstraction with local disk |
-| **Logging** | `svelar/logging` | Console, file, stack channels |
-| **Errors** | `svelar/errors` | HTTP error hierarchy, error handler |
-| **Config** | `svelar/config` | Dot-notation config with env() helper |
-| **Hooks** | `svelar/hooks` | SvelteKit hooks integration |
+| **Queue** | `svelar/queue` | Job dispatching with sync, memory, and Redis (BullMQ) drivers |
+| **Scheduler** | `svelar/scheduler` | Cron-based task scheduling with distributed locking and DB history |
+| **Events** | `svelar/events` | Typed event dispatcher with listeners and subscribers |
+| **Broadcasting** | `svelar/broadcasting` | Server-Sent Events and Pusher/Soketi WebSocket support |
+| **Cache** | `svelar/cache` | Memory and Redis cache with TTL and remember pattern |
+| **Storage** | `svelar/storage` | Local and S3-compatible file storage |
+| **Mail** | `svelar/mail` | SMTP, Postmark, Resend, log, and null transports with Mailable classes |
+| **Excel** | `svelar/excel` | Import/export Excel files with streaming support for large datasets |
+| **Notifications** | `svelar/notifications` | Multi-channel notifications (mail, database, broadcast) |
+| **Logging** | `svelar/logging` | File-based logger with levels and rotation |
+| **HTTP Client** | `svelar/http` | Client-side CSRF fetch + server-side fluent HTTP client for third-party APIs |
+| **Permissions** | `svelar/permissions` | Role-based access control with permissions and gates |
+| **i18n** | `svelar/i18n` | Paraglide-js integration with language switcher |
+| **Forms** | `svelar/forms` | SvelteKit Superforms integration helpers |
+| **UI Components** | `svelar/ui` | Button, Card, Input, Alert, Badge, Avatar, Tabs, Icon, Toaster |
+| **Hooks** | `svelar/hooks` | One-line SvelteKit hooks setup with sensible defaults |
+| **Container** | `svelar/container` | IoC container with singleton/transient bindings |
+| **Plugins** | `svelar/plugins` | Plugin discovery, publishing, and CLI management |
+| **PDF** | `svelar/pdf` | PDF generation with PDFKit (default) and Gotenberg drivers |
+| **Feature Flags** | `svelar/feature-flags` | Per-user, per-team, and percentage rollout feature flags |
+| **Audit** | `svelar/audit` | Model change tracking |
+| **API Keys** | `svelar/api-keys` | API key generation, validation, and management |
+| **Webhooks** | `svelar/webhooks` | Webhook dispatch and signature verification |
+| **Teams** | `svelar/teams` | Multi-tenant team management with database-backed storage |
+| **Email Templates** | `svelar/email-templates` | Database-stored templates with variable interpolation |
+| **Uploads** | `svelar/uploads` | File upload handling with validation (local + S3) |
+| **Dashboard** | `svelar/dashboard` | Admin dashboard with job/scheduler monitoring and log viewer |
 
-## Usage
-
-### Bootstrap (`src/hooks.server.ts`)
-
-```ts
-import { createSvelarHooks } from 'svelar/hooks';
-import { CorsMiddleware } from 'svelar/middleware';
-import { SessionMiddleware, MemorySessionStore } from 'svelar/session';
-
-export const handle = createSvelarHooks({
-  providers: [],
-  middleware: [
-    new CorsMiddleware(),
-    new SessionMiddleware({ store: new MemorySessionStore() }),
-  ],
-});
-```
-
-### Models
-
-```ts
-import { Model } from 'svelar/orm';
-
-class User extends Model {
-  static table = 'users';
-  static fillable = ['name', 'email', 'password'];
-  static hidden = ['password'];
-  static casts = { created_at: 'date' };
-
-  posts() {
-    return this.hasMany(Post, 'user_id');
-  }
-}
-
-// Query
-const users = await User.where('active', true).with('posts').orderBy('name').get();
-const user = await User.find(1);
-```
-
-### Controllers
-
-```ts
-import { Controller } from 'svelar/routing';
-import { z } from 'svelar/validation';
-
-class UserController extends Controller {
-  async index(event) {
-    const users = await User.all();
-    return this.json(users);
-  }
-
-  async store(event) {
-    const data = await this.validate(event, z.object({
-      name: z.string().min(2),
-      email: z.string().email(),
-    }));
-    const user = await User.create(data);
-    return this.created(user);
-  }
-}
-```
-
-### CLI
+## CLI
 
 ```bash
-npx svelar make:model Post -m -c     # model + migration + controller
-npx svelar make:middleware Auth
+npx svelar new my-app                  # scaffold a new project
+npx svelar make:model Post -m -c       # model + migration + controller
+npx svelar make:service PaymentService # service class
+npx svelar make:job SendEmail          # queue job
+npx svelar make:task CleanupTokens     # scheduled task
 npx svelar migrate                     # run migrations
-npx svelar migrate:rollback
+npx svelar schedule:run                # start the scheduler
+npx svelar queue:work                  # process queue jobs
 npx svelar tinker                      # interactive REPL
 ```
 
-## Database Support
+30+ code generation commands available. Run `npx svelar` to see all commands.
 
-Install the driver for your database:
+## Database Support
 
 ```bash
 # SQLite (recommended for development)

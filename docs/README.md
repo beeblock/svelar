@@ -39,15 +39,23 @@ Svelar is a Laravel-inspired framework built on top of SvelteKit 2. It brings en
 9. [Plugins](./09-plugins.md) - Extend Svelar with custom plugins
 10. [Scheduler](./10-scheduler.md) - Schedule periodic tasks
 11. [Job Queue](./11-queue-jobs.md) - Background job processing
-12. [Additional Features](./12-additional-features.md) - Events, logging, mail, notifications, broadcasting, storage, and more
-13. [UI Components](./13-ui-components.md) - Component library with theming and extension guide
-14. [HTTP Utilities](./14-http.md) - CSRF-aware fetch, signed requests
-15. [Internationalization](./15-i18n.md) - Paraglide-js integration for multi-language apps
-16. [Forms](./16-forms.md) - Superforms + Zod bridge for validated form actions
-17. [SaaS Guide](./17-saas-guide.md) - Multi-tenancy, production checklist, scaling
-18. [Dates](./18-dates.md) - Date utilities and formatting
-19. [Error Handling](./19-error-handling.md) - Error pages, localization, exception handling
-20. [Architecture & Module Communication](./20-architecture.md) - DDD boundaries, events as glue, anti-patterns
+12. [Sessions](./22-sessions.md) - Session stores (database, file, Redis, memory)
+13. [Events & Listeners](./23-events.md) - Pub/sub event system with typed listeners
+14. [Mail](./24-mail.md) - SMTP, Postmark, Resend drivers with Mailable classes
+15. [Broadcasting](./25-broadcasting.md) - Real-time SSE and Pusher/Soketi WebSocket
+16. [Storage](./26-storage.md) - Local and S3-compatible file storage
+17. [PDF Generation](./27-pdf.md) - PDFKit (default) and Gotenberg drivers
+18. [Excel Import/Export](./28-excel.md) - Streaming Excel with ExcelJS
+19. [Feature Flags](./21-feature-flags.md) - Per-user, per-team, and percentage rollout
+20. [More Features](./12-additional-features.md) - Hashing, caching, logging, notifications, config, CLI, audit, and more
+21. [UI Components](./13-ui-components.md) - Component library with theming and extension guide
+22. [HTTP & Integrations](./14-http.md) - Server-side HTTP client, third-party API patterns, custom drivers
+23. [Internationalization](./15-i18n.md) - Paraglide-js integration for multi-language apps
+24. [Forms](./16-forms.md) - Superforms + Zod bridge for validated form actions
+25. [Dates](./18-dates.md) - Date utilities and formatting
+26. [Error Handling](./19-error-handling.md) - Error pages, localization, exception handling
+27. [Architecture & Module Communication](./20-architecture.md) - DDD boundaries, events as glue, anti-patterns
+28. [SaaS Guide](./17-saas-guide.md) - Multi-tenancy, production checklist, scaling
 
 ## Quick Start
 
@@ -218,7 +226,7 @@ For full control, use `createSvelarHooks` to compose the pipeline manually:
 
 ```typescript
 import { createSvelarHooks } from '@beeblock/svelar/hooks';
-import { SessionMiddleware, MemorySessionStore } from '@beeblock/svelar/session';
+import { SessionMiddleware, DatabaseSessionStore } from '@beeblock/svelar/session';
 import { AuthenticateMiddleware } from '@beeblock/svelar/auth';
 import { RateLimitMiddleware, CsrfMiddleware, OriginMiddleware } from '@beeblock/svelar/middleware';
 import { auth } from './app.js';
@@ -229,7 +237,7 @@ export const handle = createSvelarHooks({
     new RateLimitMiddleware({ maxRequests: 100, windowMs: 60_000 }),
     new CsrfMiddleware({ onlyPaths: ['/api/'] }),
     new SessionMiddleware({
-      store: new MemorySessionStore(),
+      store: new DatabaseSessionStore(),  // auto-creates sessions table
       secret: process.env.APP_KEY || 'change-me',
       lifetime: 60 * 60 * 24,
     }),
