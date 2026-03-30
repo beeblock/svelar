@@ -1,4 +1,8 @@
-# Svelar
+<p align="center">
+  <img src="https://raw.githubusercontent.com/beeblock/svelar/main/docs/assets/svelar-full-logo.svg" alt="Svelar" width="180" />
+</p>
+
+<h1 align="center">Svelar</h1>
 
 Laravel-inspired framework on top of SvelteKit 2. Brings the developer experience of Laravel — routing, middleware, Eloquent-style ORM, service container, auth, sessions, caching, queues, mail, broadcasting, and more — into the SvelteKit ecosystem.
 
