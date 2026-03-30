@@ -4,6 +4,27 @@ All notable changes to `@beeblock/svelar` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-03-30
+
+### Added
+
+- **Deployment documentation** — comprehensive `docs/29-deployment.md` covering Docker, PM2, Traefik reverse proxy, SSL/TLS, horizontal scaling, blue-green deployments (Docker Compose and Docker Swarm), database backups, monitoring, CI/CD pipelines (GitHub Actions, GitLab CI), security best practices, and troubleshooting
+- **`SignatureMiddleware` export** — now properly exported from `@beeblock/svelar/middleware` (was implemented but inaccessible)
+- **`support/index` build entry** — `@beeblock/svelar/support` now builds correctly via tsup
+
+### Fixed
+
+- **Dashboard `listTasks()` not awaited** — `getDashboardData()` now properly awaits `ScheduleMonitor.listTasks()` instead of returning a Promise object
+- **Scheduler `start()` fire-and-forget** — `this.run()` calls in `start()` now have `.catch()` handlers so errors are logged instead of silently swallowed
+- **`MakeDashboardCommand` async mismatch** — generated scheduler/stats routes now properly `await` `ScheduleMonitor.listTasks()` and `getHealth()`
+- **Broken doc links** — fixed 3 incorrect internal links in `docs/19-error-handling.md` (`07-auth.md` → `06-authentication.md`, `04-middleware.md` → `07-middleware.md`, `05-validation.md` → `05-validation-dtos.md`)
+
+### Changed
+
+- **Removed `svelar-example` package** — the scaffold (`npx svelar new`) is now the canonical example; docs updated to reference "scaffolded Svelar project" instead
+- **Updated monorepo workspaces** — `svelar-example` removed from root `package.json`
+- **Development workflow updated** — `CLAUDE.md` now references scaffolded apps for testing instead of the example package
+
 ## [0.3.1] - 2026-03-29
 
 ### Added
