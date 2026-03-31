@@ -104,14 +104,12 @@ export class StripeService {
     immediately: boolean = false,
   ): Promise<Stripe.Subscription> {
     const client = await this.getClient();
+    if (immediately) {
+      return client.subscriptions.cancel(subscriptionId);
+    }
     return client.subscriptions.update(subscriptionId, {
-      cancel_at_period_end: !immediately,
+      cancel_at_period_end: true,
     });
-  }
-
-  async deleteSubscription(subscriptionId: string): Promise<Stripe.Subscription> {
-    const client = await this.getClient();
-    return client.subscriptions.cancel(subscriptionId);
   }
 
   async resumeSubscription(subscriptionId: string): Promise<Stripe.Subscription> {

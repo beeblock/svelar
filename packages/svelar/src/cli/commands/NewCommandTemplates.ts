@@ -6035,7 +6035,7 @@ export const load: PageServerLoad = async ({ locals }) => {
   const user = locals.user as any;
   let subscription: any = null;
   let invoices: any[] = [];
-  let plans: any[] = [];
+  const plans: any[] = [];
 
   try {
     const service = Stripe.service();
