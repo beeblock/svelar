@@ -10,19 +10,26 @@ export class MakeEventCommand extends Command {
   name = 'make:event';
   description = 'Create a new event class';
   arguments = ['name'];
-  flags = [];
+  flags = [
+    { name: 'module', description: 'Module name (e.g. auth, billing)', type: 'string' as const },
+  ];
 
-  async handle(args: string[], _flags: Record<string, any>): Promise<void> {
+  async handle(args: string[], flags: Record<string, any>): Promise<void> {
     const name = args[0];
     if (!name) {
       this.error('Please provide an event name (e.g. UserRegistered).');
       return;
     }
 
-    const eventsDir = join(process.cwd(), 'src', 'lib', 'events');
-    mkdirSync(eventsDir, { recursive: true });
+    const moduleName = flags.module || name.replace(/([A-Z])/g, ' $1').trim().split(' ')[0].toLowerCase();
+    if (!flags.module) {
+      this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
+    }
 
-    const filePath = join(eventsDir, `${name}.ts`);
+    const moduleDir = join(process.cwd(), 'src', 'lib', 'modules', moduleName);
+    mkdirSync(moduleDir, { recursive: true });
+
+    const filePath = join(moduleDir, `${name}.ts`);
     if (existsSync(filePath)) {
       this.warn(`Event ${name} already exists at ${filePath}`);
       return;
@@ -49,6 +56,6 @@ export class ${name} {
 `;
 
     writeFileSync(filePath, content);
-    this.success(`Event created: src/lib/events/${name}.ts`);
+    this.success(`Event created: src/lib/modules/${moduleName}/${name}.ts`);
   }
 }

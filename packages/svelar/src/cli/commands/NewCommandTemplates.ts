@@ -307,9 +307,9 @@ import { PDF } from '@beeblock/svelar/pdf';
 import { configureDashboard } from '@beeblock/svelar/dashboard';
 import { Broadcast } from '@beeblock/svelar/broadcasting';
 import { Notifier } from '@beeblock/svelar/notifications';
-import { User } from './lib/models/User.js';
+import { User } from './lib/modules/auth/User.js';
 import { EventServiceProvider } from './lib/shared/providers/EventServiceProvider.js';
-import './lib/auth/gates.js';
+import './lib/modules/auth/gates.js';
 
 // ── Database (SQLite) ─────────────────────────────────────
 Connection.configure({
@@ -588,7 +588,7 @@ export class User extends HasRoles(Model) {
 // Enable audit logging for User model (tracks create/update/delete)
 auditable(User);
 
-import { Post } from './Post.js';
+import { Post } from '$lib/modules/posts/Post.js';
 `;
   }
 
@@ -624,13 +624,13 @@ export class Post extends Model {
 // Enable audit logging for Post model (tracks create/update/delete)
 auditable(Post);
 
-import { User } from './User.js';
+import { User } from '$lib/modules/auth/User.js';
 `;
   }
 
   static userRepository(): string {
     return `import { Repository } from '@beeblock/svelar/repositories';
-import { User } from '../models/User.js';
+import { User } from './User.js';
 
 export class UserRepository extends Repository<User> {
   model() {
@@ -650,7 +650,7 @@ export class UserRepository extends Repository<User> {
 
   static postRepository(): string {
     return `import { Repository } from '@beeblock/svelar/repositories';
-import { Post } from '../models/Post.js';
+import { Post } from './Post.js';
 
 export class PostRepository extends Repository<Post> {
   model() {
@@ -682,8 +682,8 @@ export class PostRepository extends Repository<Post> {
     return `import { Service } from '@beeblock/svelar/services';
 import { Hash } from '@beeblock/svelar/hashing';
 import { Event } from '@beeblock/svelar/events';
-import { UserRepository } from '../repositories/UserRepository.js';
-import { UserRegistered } from '../events/UserRegistered.js';
+import { UserRepository } from './UserRepository.js';
+import { UserRegistered } from './UserRegistered.js';
 
 const userRepo = new UserRepository();
 
@@ -754,8 +754,8 @@ export class AuthService extends Service {
     return `import { CrudService } from '@beeblock/svelar/services';
 import { Repository } from '@beeblock/svelar/repositories';
 import { Broadcast } from '@beeblock/svelar/broadcasting';
-import { PostRepository } from '../repositories/PostRepository.js';
-import type { Post } from '../models/Post.js';
+import { PostRepository } from './PostRepository.js';
+import type { Post } from './Post.js';
 
 const postRepo = new PostRepository();
 
@@ -797,11 +797,15 @@ export class PostService extends CrudService<Post> {
 
   static authController(): string {
     return `import { Controller } from '@beeblock/svelar/routing';
-import { RegisterRequest } from '../dtos/RegisterRequest.js';
-import { LoginRequest } from '../dtos/LoginRequest.js';
-import { RegisterUserAction } from '../actions/RegisterUserAction.js';
-import { AuthService } from '../services/AuthService.js';
-import { UserResource } from '../resources/UserResource.js';
+import { RegisterRequest } from './RegisterRequest.js';
+import { LoginRequest } from './LoginRequest.js';
+import { ForgotPasswordRequest } from './ForgotPasswordRequest.js';
+import { ResetPasswordRequest } from './ResetPasswordRequest.js';
+import { OtpSendRequest } from './OtpSendRequest.js';
+import { OtpVerifyRequest } from './OtpVerifyRequest.js';
+import { RegisterUserAction } from './RegisterUserAction.js';
+import { AuthService } from './AuthService.js';
+import { UserResource } from './UserResource.js';
 
 const registerAction = new RegisterUserAction();
 const authService = new AuthService();
@@ -865,21 +869,15 @@ export class AuthController extends Controller {
 
   /** POST /api/auth/forgot-password */
   async forgotPassword(event: any) {
-    const { email } = await event.request.json();
-    if (!email) return this.json({ message: 'Email is required' }, 422);
-
-    const result = await authService.forgotPassword(email, event.locals.auth);
+    const data = await ForgotPasswordRequest.validate(event);
+    const result = await authService.forgotPassword(data.email, event.locals.auth);
     return this.json(result.data);
   }
 
   /** POST /api/auth/reset-password */
   async resetPassword(event: any) {
-    const { token, email, password } = await event.request.json();
-    if (!token || !email || !password) {
-      return this.json({ message: 'Token, email, and password are required' }, 422);
-    }
-
-    const result = await authService.resetPassword(token, email, password, event.locals.auth);
+    const data = await ResetPasswordRequest.validate(event);
+    const result = await authService.resetPassword(data.token, data.email, data.password, event.locals.auth);
     if (!result.success) {
       return this.json({ message: result.error }, 400);
     }
@@ -888,19 +886,15 @@ export class AuthController extends Controller {
 
   /** POST /api/auth/otp/send */
   async sendOtp(event: any) {
-    const { email } = await event.request.json();
-    if (!email) return this.json({ message: 'Email is required' }, 422);
-
-    const result = await authService.sendOtp(email, event.locals.auth);
+    const data = await OtpSendRequest.validate(event);
+    const result = await authService.sendOtp(data.email, event.locals.auth);
     return this.json(result.data);
   }
 
   /** POST /api/auth/otp/verify */
   async verifyOtp(event: any) {
-    const { email, code } = await event.request.json();
-    if (!email || !code) return this.json({ message: 'Email and code are required' }, 422);
-
-    const result = await authService.verifyOtp(email, code, event.locals.auth, event.locals.session);
+    const data = await OtpVerifyRequest.validate(event);
+    const result = await authService.verifyOtp(data.email, data.code, event.locals.auth, event.locals.session);
     if (!result.success) {
       return this.json({ message: result.error }, 401);
     }
@@ -930,11 +924,11 @@ export class AuthController extends Controller {
 
   static postController(): string {
     return `import { Controller } from '@beeblock/svelar/routing';
-import { CreatePostRequest } from '../dtos/CreatePostRequest.js';
-import { UpdatePostRequest } from '../dtos/UpdatePostRequest.js';
-import { PostService } from '../services/PostService.js';
-import { CreatePostAction } from '../actions/CreatePostAction.js';
-import { PostResource } from '../resources/PostResource.js';
+import { CreatePostRequest } from './CreatePostRequest.js';
+import { UpdatePostRequest } from './UpdatePostRequest.js';
+import { PostService } from './PostService.js';
+import { CreatePostAction } from './CreatePostAction.js';
+import { PostResource } from './PostResource.js';
 
 const postService = new PostService();
 const createPostAction = new CreatePostAction();
@@ -1009,20 +1003,20 @@ export class PostController extends Controller {
   static adminController(): string {
     return `import { Controller } from '@beeblock/svelar/routing';
 import { Gate } from '@beeblock/svelar/auth';
-import { AdminService } from '../services/AdminService.js';
-import { UserResource } from '../resources/UserResource.js';
-import { RoleResource } from '../resources/RoleResource.js';
-import { PermissionResource } from '../resources/PermissionResource.js';
-import { UpdateUserRoleRequest } from '../dtos/UpdateUserRoleRequest.js';
-import { DeleteUserRequest } from '../dtos/DeleteUserRequest.js';
-import { CreateRoleRequest } from '../dtos/CreateRoleRequest.js';
-import { DeleteRoleRequest } from '../dtos/DeleteRoleRequest.js';
-import { CreatePermissionRequest } from '../dtos/CreatePermissionRequest.js';
-import { DeletePermissionRequest } from '../dtos/DeletePermissionRequest.js';
-import { RolePermissionRequest } from '../dtos/RolePermissionRequest.js';
-import { UserRoleRequest } from '../dtos/UserRoleRequest.js';
-import { UserPermissionRequest } from '../dtos/UserPermissionRequest.js';
-import { ExportDataRequest } from '../dtos/ExportDataRequest.js';
+import { AdminService } from './AdminService.js';
+import { UserResource } from '$lib/modules/auth/UserResource.js';
+import { RoleResource } from './RoleResource.js';
+import { PermissionResource } from './PermissionResource.js';
+import { UpdateUserRoleRequest } from './UpdateUserRoleRequest.js';
+import { DeleteUserRequest } from './DeleteUserRequest.js';
+import { CreateRoleRequest } from './CreateRoleRequest.js';
+import { DeleteRoleRequest } from './DeleteRoleRequest.js';
+import { CreatePermissionRequest } from './CreatePermissionRequest.js';
+import { DeletePermissionRequest } from './DeletePermissionRequest.js';
+import { RolePermissionRequest } from './RolePermissionRequest.js';
+import { UserRoleRequest } from './UserRoleRequest.js';
+import { UserPermissionRequest } from './UserPermissionRequest.js';
+import { ExportDataRequest } from './ExportDataRequest.js';
 
 const adminService = new AdminService();
 
@@ -1186,7 +1180,7 @@ export class AdminController extends Controller {
 
   static registerRequest(): string {
     return `import { FormRequest } from '@beeblock/svelar/forms';
-import { registerSchema } from '../schemas/auth.js';
+import { registerSchema } from './schemas.js';
 
 export class RegisterRequest extends FormRequest {
   rules() {
@@ -1198,7 +1192,7 @@ export class RegisterRequest extends FormRequest {
 
   static loginRequest(): string {
     return `import { FormRequest } from '@beeblock/svelar/forms';
-import { loginSchema } from '../schemas/auth.js';
+import { loginSchema } from './schemas.js';
 
 export class LoginRequest extends FormRequest {
   rules() {
@@ -1208,9 +1202,57 @@ export class LoginRequest extends FormRequest {
 `;
   }
 
+  static forgotPasswordRequest(): string {
+    return `import { FormRequest } from '@beeblock/svelar/forms';
+import { forgotPasswordSchema } from './schemas.js';
+
+export class ForgotPasswordRequest extends FormRequest {
+  rules() {
+    return forgotPasswordSchema;
+  }
+}
+`;
+  }
+
+  static resetPasswordRequest(): string {
+    return `import { FormRequest } from '@beeblock/svelar/forms';
+import { resetPasswordSchema } from './schemas.js';
+
+export class ResetPasswordRequest extends FormRequest {
+  rules() {
+    return resetPasswordSchema;
+  }
+}
+`;
+  }
+
+  static otpSendRequest(): string {
+    return `import { FormRequest } from '@beeblock/svelar/forms';
+import { otpRequestSchema } from './schemas.js';
+
+export class OtpSendRequest extends FormRequest {
+  rules() {
+    return otpRequestSchema;
+  }
+}
+`;
+  }
+
+  static otpVerifyRequest(): string {
+    return `import { FormRequest } from '@beeblock/svelar/forms';
+import { otpVerifySchema } from './schemas.js';
+
+export class OtpVerifyRequest extends FormRequest {
+  rules() {
+    return otpVerifySchema;
+  }
+}
+`;
+  }
+
   static createPostRequest(): string {
     return `import { FormRequest } from '@beeblock/svelar/forms';
-import { createPostSchema } from '../schemas/post.js';
+import { createPostSchema } from './schemas.js';
 
 export class CreatePostRequest extends FormRequest {
   rules() {
@@ -1236,7 +1278,7 @@ export class CreatePostRequest extends FormRequest {
 
   static updatePostRequest(): string {
     return `import { FormRequest } from '@beeblock/svelar/forms';
-import { updatePostSchema } from '../schemas/post.js';
+import { updatePostSchema } from './schemas.js';
 
 export class UpdatePostRequest extends FormRequest {
   rules() {
@@ -1252,8 +1294,8 @@ export class UpdatePostRequest extends FormRequest {
 
   static registerUserAction(): string {
     return `import { Action } from '@beeblock/svelar/actions';
-import { AuthService } from '../services/AuthService.js';
-import type { User } from '../models/User.js';
+import { AuthService } from './AuthService.js';
+import type { User } from './User.js';
 
 interface RegisterInput {
   name: string;
@@ -1279,8 +1321,8 @@ export class RegisterUserAction extends Action<RegisterInput, ServiceResult<User
 
   static createPostAction(): string {
     return `import { Action } from '@beeblock/svelar/actions';
-import { PostService } from '../services/PostService.js';
-import type { Post } from '../models/Post.js';
+import { PostService } from './PostService.js';
+import type { Post } from './Post.js';
 
 interface CreatePostInput {
   userId: number;
@@ -1312,15 +1354,16 @@ export class CreatePostAction extends Action<CreatePostInput, Post> {
 
   static userResource(): string {
     return `import { Resource } from '@beeblock/svelar/routing';
+import type { UserResponse } from './schemas.js';
 
 export class UserResource extends Resource {
-  toJSON() {
+  toJSON(): UserResponse {
     return {
       id: this.data.id,
       name: this.data.name,
       email: this.data.email,
       role: this.data.role ?? 'user',
-      created_at: this.data.created_at,
+      created_at: this.data.created_at ?? null,
     };
   }
 }
@@ -1329,18 +1372,19 @@ export class UserResource extends Resource {
 
   static postResource(): string {
     return `import { Resource } from '@beeblock/svelar/routing';
+import type { PostResponse } from './schemas.js';
 
 export class PostResource extends Resource {
-  toJSON() {
+  toJSON(): PostResponse {
     return {
       id: this.data.id,
       title: this.data.title,
       slug: this.data.slug,
       body: this.data.body,
-      published: this.data.published,
+      published: !!this.data.published,
       user_id: this.data.user_id,
-      created_at: this.data.created_at,
-      updated_at: this.data.updated_at,
+      created_at: this.data.created_at ?? null,
+      updated_at: this.data.updated_at ?? null,
     };
   }
 }
@@ -1399,6 +1443,38 @@ export const userPermissionSchema = z.object({
 export const exportDataSchema = z.object({
   format: z.enum(['csv', 'json']).default('csv'),
 });
+
+// ── Inferred Types ───────────────────────────────────────
+
+export type UpdateUserRoleInput = z.infer<typeof updateUserRoleSchema>;
+export type DeleteUserInput = z.infer<typeof deleteUserSchema>;
+export type CreateRoleInput = z.infer<typeof createRoleSchema>;
+export type DeleteRoleInput = z.infer<typeof deleteRoleSchema>;
+export type CreatePermissionInput = z.infer<typeof createPermissionSchema>;
+export type DeletePermissionInput = z.infer<typeof deletePermissionSchema>;
+export type RolePermissionInput = z.infer<typeof rolePermissionSchema>;
+export type UserRoleInput = z.infer<typeof userRoleSchema>;
+export type UserPermissionInput = z.infer<typeof userPermissionSchema>;
+export type ExportDataInput = z.infer<typeof exportDataSchema>;
+
+// ── Response Schemas ─────────────────────────────────────
+
+export const roleResponseSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  guard: z.string(),
+  description: z.string().nullable(),
+});
+
+export const permissionResponseSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  guard: z.string(),
+  description: z.string().nullable(),
+});
+
+export type RoleResponse = z.infer<typeof roleResponseSchema>;
+export type PermissionResponse = z.infer<typeof permissionResponseSchema>;
 `;
   }
 
@@ -1406,7 +1482,7 @@ export const exportDataSchema = z.object({
 
   static updateUserRoleRequest(): string {
     return `import { FormRequest } from '@beeblock/svelar/forms';
-import { updateUserRoleSchema } from '../schemas/admin.js';
+import { updateUserRoleSchema } from './schemas.js';
 
 export class UpdateUserRoleRequest extends FormRequest {
   rules() {
@@ -1422,7 +1498,7 @@ export class UpdateUserRoleRequest extends FormRequest {
 
   static deleteUserRequest(): string {
     return `import { FormRequest } from '@beeblock/svelar/forms';
-import { deleteUserSchema } from '../schemas/admin.js';
+import { deleteUserSchema } from './schemas.js';
 
 export class DeleteUserRequest extends FormRequest {
   rules() {
@@ -1438,7 +1514,7 @@ export class DeleteUserRequest extends FormRequest {
 
   static createRoleRequest(): string {
     return `import { FormRequest } from '@beeblock/svelar/forms';
-import { createRoleSchema } from '../schemas/admin.js';
+import { createRoleSchema } from './schemas.js';
 
 export class CreateRoleRequest extends FormRequest {
   rules() {
@@ -1454,7 +1530,7 @@ export class CreateRoleRequest extends FormRequest {
 
   static deleteRoleRequest(): string {
     return `import { FormRequest } from '@beeblock/svelar/forms';
-import { deleteRoleSchema } from '../schemas/admin.js';
+import { deleteRoleSchema } from './schemas.js';
 
 export class DeleteRoleRequest extends FormRequest {
   rules() {
@@ -1470,7 +1546,7 @@ export class DeleteRoleRequest extends FormRequest {
 
   static createPermissionRequest(): string {
     return `import { FormRequest } from '@beeblock/svelar/forms';
-import { createPermissionSchema } from '../schemas/admin.js';
+import { createPermissionSchema } from './schemas.js';
 
 export class CreatePermissionRequest extends FormRequest {
   rules() {
@@ -1486,7 +1562,7 @@ export class CreatePermissionRequest extends FormRequest {
 
   static deletePermissionRequest(): string {
     return `import { FormRequest } from '@beeblock/svelar/forms';
-import { deletePermissionSchema } from '../schemas/admin.js';
+import { deletePermissionSchema } from './schemas.js';
 
 export class DeletePermissionRequest extends FormRequest {
   rules() {
@@ -1502,7 +1578,7 @@ export class DeletePermissionRequest extends FormRequest {
 
   static rolePermissionRequest(): string {
     return `import { FormRequest } from '@beeblock/svelar/forms';
-import { rolePermissionSchema } from '../schemas/admin.js';
+import { rolePermissionSchema } from './schemas.js';
 
 export class RolePermissionRequest extends FormRequest {
   rules() {
@@ -1518,7 +1594,7 @@ export class RolePermissionRequest extends FormRequest {
 
   static userRoleRequest(): string {
     return `import { FormRequest } from '@beeblock/svelar/forms';
-import { userRoleSchema } from '../schemas/admin.js';
+import { userRoleSchema } from './schemas.js';
 
 export class UserRoleRequest extends FormRequest {
   rules() {
@@ -1534,7 +1610,7 @@ export class UserRoleRequest extends FormRequest {
 
   static userPermissionRequest(): string {
     return `import { FormRequest } from '@beeblock/svelar/forms';
-import { userPermissionSchema } from '../schemas/admin.js';
+import { userPermissionSchema } from './schemas.js';
 
 export class UserPermissionRequest extends FormRequest {
   rules() {
@@ -1550,7 +1626,7 @@ export class UserPermissionRequest extends FormRequest {
 
   static exportDataRequest(): string {
     return `import { FormRequest } from '@beeblock/svelar/forms';
-import { exportDataSchema } from '../schemas/admin.js';
+import { exportDataSchema } from './schemas.js';
 
 export class ExportDataRequest extends FormRequest {
   rules() {
@@ -1568,9 +1644,10 @@ export class ExportDataRequest extends FormRequest {
 
   static roleResource(): string {
     return `import { Resource } from '@beeblock/svelar/routing';
+import type { RoleResponse } from './schemas.js';
 
 export class RoleResource extends Resource {
-  toJSON() {
+  toJSON(): RoleResponse {
     return {
       id: this.data.id,
       name: this.data.name,
@@ -1584,9 +1661,10 @@ export class RoleResource extends Resource {
 
   static permissionResource(): string {
     return `import { Resource } from '@beeblock/svelar/routing';
+import type { PermissionResponse } from './schemas.js';
 
 export class PermissionResource extends Resource {
-  toJSON() {
+  toJSON(): PermissionResponse {
     return {
       id: this.data.id,
       name: this.data.name,
@@ -1604,10 +1682,10 @@ export class PermissionResource extends Resource {
     return `import { Service } from '@beeblock/svelar/services';
 import { Permissions } from '@beeblock/svelar/permissions';
 import { Queue } from '@beeblock/svelar/queue';
-import { UserRepository } from '../repositories/UserRepository.js';
-import { Post } from '../models/Post.js';
-import { User } from '../models/User.js';
-import { ExportDataJob } from '../shared/jobs/ExportDataJob.js';
+import { UserRepository } from '$lib/modules/auth/UserRepository.js';
+import { Post } from '$lib/modules/posts/Post.js';
+import { User } from '$lib/modules/auth/User.js';
+import { ExportDataJob } from '$lib/shared/jobs/ExportDataJob.js';
 
 const userRepo = new UserRepository();
 
@@ -1745,6 +1823,8 @@ Gate.defineSuperUser((user) => user?.role === 'admin');
   static authSchema(): string {
     return `import { z } from 'zod';
 
+// ── Input Schemas (DTOs + UI validation) ─────────────────
+
 export const loginSchema = z.object({
   email: z.string().email('Please enter a valid email address'),
   password: z.string().min(1, 'Password is required'),
@@ -1782,11 +1862,34 @@ export const otpVerifySchema = z.object({
   email: z.string().email(),
   code: z.string().length(6, 'Code must be 6 digits'),
 });
+
+// ── Inferred Types ───────────────────────────────────────
+
+export type LoginInput = z.infer<typeof loginSchema>;
+export type RegisterInput = z.infer<typeof registerSchema>;
+export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
+export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+export type OtpRequestInput = z.infer<typeof otpRequestSchema>;
+export type OtpVerifyInput = z.infer<typeof otpVerifySchema>;
+
+// ── Response Schemas (Resources + API contracts) ─────────
+
+export const userResponseSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  email: z.string().email(),
+  role: z.string(),
+  created_at: z.string().nullable(),
+});
+
+export type UserResponse = z.infer<typeof userResponseSchema>;
 `;
   }
 
   static postSchema(): string {
     return `import { z } from 'zod';
+
+// ── Input Schemas ────────────────────────────────────────
 
 export const createPostSchema = z.object({
   title: z.string().min(3, 'Title must be at least 3 characters').max(255),
@@ -1801,6 +1904,26 @@ export const updatePostSchema = z.object({
   body: z.string().min(10).optional(),
   published: z.boolean().optional(),
 });
+
+// ── Inferred Types ───────────────────────────────────────
+
+export type CreatePostInput = z.infer<typeof createPostSchema>;
+export type UpdatePostInput = z.infer<typeof updatePostSchema>;
+
+// ── Response Schema (Resources + API contracts) ──────────
+
+export const postResponseSchema = z.object({
+  id: z.number(),
+  title: z.string(),
+  slug: z.string(),
+  body: z.string(),
+  published: z.boolean(),
+  user_id: z.number(),
+  created_at: z.string().nullable(),
+  updated_at: z.string().nullable(),
+});
+
+export type PostResponse = z.infer<typeof postResponseSchema>;
 `;
   }
 
@@ -2013,8 +2136,8 @@ export default class CreateFailedJobsTable extends Migration {
     return `import { Seeder } from '@beeblock/svelar/database';
 import { Hash } from '@beeblock/svelar/hashing';
 import { Permissions } from '@beeblock/svelar/permissions';
-import { User } from '../../models/User.js';
-import { Post } from '../../models/Post.js';
+import { User } from '$lib/modules/auth/User.js';
+import { Post } from '$lib/modules/posts/Post.js';
 
 export class DatabaseSeeder extends Seeder {
   async run(): Promise<void> {
@@ -2111,8 +2234,8 @@ export class DatabaseSeeder extends Seeder {
 import { fail, redirect } from '@sveltejs/kit';
 import { superValidate, message } from 'sveltekit-superforms';
 import { zod } from 'sveltekit-superforms/adapters';
-import { loginSchema } from '$lib/schemas/auth';
-import { AuthService } from '$lib/services/AuthService';
+import { loginSchema } from '$lib/modules/auth/schemas';
+import { AuthService } from '$lib/modules/auth/AuthService';
 import { authConfig } from '../../app.js';
 
 const authService = new AuthService();
@@ -2249,8 +2372,8 @@ export const actions: Actions = {
 import { fail, redirect } from '@sveltejs/kit';
 import { superValidate, message, setError } from 'sveltekit-superforms';
 import { zod } from 'sveltekit-superforms/adapters';
-import { registerSchema } from '$lib/schemas/auth';
-import { AuthService } from '$lib/services/AuthService';
+import { registerSchema } from '$lib/modules/auth/schemas';
+import { AuthService } from '$lib/modules/auth/AuthService';
 import { auth, authConfig } from '../../app.js';
 
 const authService = new AuthService();
@@ -2429,7 +2552,7 @@ export const actions: Actions = {
 import { fail } from '@sveltejs/kit';
 import { superValidate, message } from 'sveltekit-superforms';
 import { zod } from 'sveltekit-superforms/adapters';
-import { forgotPasswordSchema } from '$lib/schemas/auth';
+import { forgotPasswordSchema } from '$lib/modules/auth/schemas';
 import { auth } from '../../app.js';
 
 export const load: PageServerLoad = async () => {
@@ -2527,7 +2650,7 @@ export const actions: Actions = {
 import { fail, redirect } from '@sveltejs/kit';
 import { superValidate, message } from 'sveltekit-superforms';
 import { zod } from 'sveltekit-superforms/adapters';
-import { resetPasswordSchema } from '$lib/schemas/auth';
+import { resetPasswordSchema } from '$lib/modules/auth/schemas';
 import { auth } from '../../app.js';
 
 export const load: PageServerLoad = async ({ url }) => {
@@ -2643,7 +2766,7 @@ export const actions: Actions = {
 import { fail, redirect } from '@sveltejs/kit';
 import { superValidate, message } from 'sveltekit-superforms';
 import { zod } from 'sveltekit-superforms/adapters';
-import { otpRequestSchema, otpVerifySchema } from '$lib/schemas/auth';
+import { otpRequestSchema, otpVerifySchema } from '$lib/modules/auth/schemas';
 import { auth, authConfig } from '../../app.js';
 
 export const load: PageServerLoad = async ({ locals }) => {
@@ -3630,8 +3753,8 @@ export const load = guardAuth('/dashboard', { role: 'admin' });
 
   static adminPageServer(): string {
     return `import type { ServerLoadEvent } from '@sveltejs/kit';
-import { User } from '$lib/models/User.js';
-import { Post } from '$lib/models/Post.js';
+import { User } from '$lib/modules/auth/User.js';
+import { Post } from '$lib/modules/posts/Post.js';
 import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
 import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
 import { LogViewer } from '@beeblock/svelar/logging/LogViewer';
@@ -4748,7 +4871,7 @@ export const GET: RequestHandler = async () => {
 
   static apiAuthRegister(): string {
     return `import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
-import { AuthController } from '$lib/controllers/AuthController.js';
+import { AuthController } from '$lib/modules/auth/AuthController.js';
 
 const throttle = new ThrottleMiddleware({ maxAttempts: 5, decayMinutes: 2 });
 const ctrl = new AuthController();
@@ -4763,7 +4886,7 @@ export async function POST(event: any) {
 
   static apiAuthLogin(): string {
     return `import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
-import { AuthController } from '$lib/controllers/AuthController.js';
+import { AuthController } from '$lib/modules/auth/AuthController.js';
 
 const throttle = new ThrottleMiddleware({ maxAttempts: 5, decayMinutes: 1 });
 const ctrl = new AuthController();
@@ -4777,7 +4900,7 @@ export async function POST(event: any) {
   }
 
   static apiAuthLogout(): string {
-    return `import { AuthController } from '$lib/controllers/AuthController.js';
+    return `import { AuthController } from '$lib/modules/auth/AuthController.js';
 
 const ctrl = new AuthController();
 export const POST = ctrl.handle('logout');
@@ -4785,7 +4908,7 @@ export const POST = ctrl.handle('logout');
   }
 
   static apiAuthMe(): string {
-    return `import { AuthController } from '$lib/controllers/AuthController.js';
+    return `import { AuthController } from '$lib/modules/auth/AuthController.js';
 
 const ctrl = new AuthController();
 export const GET = ctrl.handle('me');
@@ -4794,7 +4917,7 @@ export const GET = ctrl.handle('me');
 
   static apiAuthForgotPassword(): string {
     return `import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
-import { AuthController } from '$lib/controllers/AuthController.js';
+import { AuthController } from '$lib/modules/auth/AuthController.js';
 
 const throttle = new ThrottleMiddleware({ maxAttempts: 3, decayMinutes: 5 });
 const ctrl = new AuthController();
@@ -4809,7 +4932,7 @@ export async function POST(event: any) {
 
   static apiAuthResetPassword(): string {
     return `import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
-import { AuthController } from '$lib/controllers/AuthController.js';
+import { AuthController } from '$lib/modules/auth/AuthController.js';
 
 const throttle = new ThrottleMiddleware({ maxAttempts: 5, decayMinutes: 5 });
 const ctrl = new AuthController();
@@ -4824,7 +4947,7 @@ export async function POST(event: any) {
 
   static apiAuthOtpSend(): string {
     return `import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
-import { AuthController } from '$lib/controllers/AuthController.js';
+import { AuthController } from '$lib/modules/auth/AuthController.js';
 
 const throttle = new ThrottleMiddleware({ maxAttempts: 3, decayMinutes: 2 });
 const ctrl = new AuthController();
@@ -4839,7 +4962,7 @@ export async function POST(event: any) {
 
   static apiAuthOtpVerify(): string {
     return `import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
-import { AuthController } from '$lib/controllers/AuthController.js';
+import { AuthController } from '$lib/modules/auth/AuthController.js';
 
 const throttle = new ThrottleMiddleware({ maxAttempts: 5, decayMinutes: 5 });
 const ctrl = new AuthController();
@@ -4853,7 +4976,7 @@ export async function POST(event: any) {
   }
 
   static apiAuthVerifyEmail(): string {
-    return `import { AuthController } from '$lib/controllers/AuthController.js';
+    return `import { AuthController } from '$lib/modules/auth/AuthController.js';
 
 const ctrl = new AuthController();
 export const GET = ctrl.handle('verifyEmail');
@@ -4861,7 +4984,7 @@ export const GET = ctrl.handle('verifyEmail');
   }
 
   static apiPosts(): string {
-    return `import { PostController } from '$lib/controllers/PostController.js';
+    return `import { PostController } from '$lib/modules/posts/PostController.js';
 
 const ctrl = new PostController();
 export const GET = ctrl.handle('index');
@@ -4870,7 +4993,7 @@ export const POST = ctrl.handle('store');
   }
 
   static apiPostsSingle(): string {
-    return `import { PostController } from '$lib/controllers/PostController.js';
+    return `import { PostController } from '$lib/modules/posts/PostController.js';
 
 const ctrl = new PostController();
 export const GET = ctrl.handle('show');
@@ -4880,7 +5003,7 @@ export const DELETE = ctrl.handle('destroy');
   }
 
   static apiPostsMine(): string {
-    return `import { PostController } from '$lib/controllers/PostController.js';
+    return `import { PostController } from '$lib/modules/posts/PostController.js';
 
 const ctrl = new PostController();
 export const GET = ctrl.handle('mine');
@@ -4953,7 +5076,7 @@ export const POST: RequestHandler = async (event) => {
   }
 
   static apiAdminUsers(): string {
-    return `import { AdminController } from '$lib/controllers/AdminController.js';
+    return `import { AdminController } from '$lib/modules/admin/AdminController.js';
 
 const ctrl = new AdminController();
 export const GET = ctrl.handle('listUsers');
@@ -4963,7 +5086,7 @@ export const DELETE = ctrl.handle('deleteUser');
   }
 
   static apiAdminRoles(): string {
-    return `import { AdminController } from '$lib/controllers/AdminController.js';
+    return `import { AdminController } from '$lib/modules/admin/AdminController.js';
 
 const ctrl = new AdminController();
 export const POST = ctrl.handle('createRole');
@@ -4972,7 +5095,7 @@ export const DELETE = ctrl.handle('deleteRole');
   }
 
   static apiAdminPermissions(): string {
-    return `import { AdminController } from '$lib/controllers/AdminController.js';
+    return `import { AdminController } from '$lib/modules/admin/AdminController.js';
 
 const ctrl = new AdminController();
 export const POST = ctrl.handle('createPermission');
@@ -4981,7 +5104,7 @@ export const DELETE = ctrl.handle('deletePermission');
   }
 
   static apiAdminRolePermissions(): string {
-    return `import { AdminController } from '$lib/controllers/AdminController.js';
+    return `import { AdminController } from '$lib/modules/admin/AdminController.js';
 
 const ctrl = new AdminController();
 export const POST = ctrl.handle('attachRolePermission');
@@ -4990,7 +5113,7 @@ export const DELETE = ctrl.handle('detachRolePermission');
   }
 
   static apiAdminUserRoles(): string {
-    return `import { AdminController } from '$lib/controllers/AdminController.js';
+    return `import { AdminController } from '$lib/modules/admin/AdminController.js';
 
 const ctrl = new AdminController();
 export const POST = ctrl.handle('assignUserRole');
@@ -4999,7 +5122,7 @@ export const DELETE = ctrl.handle('removeUserRole');
   }
 
   static apiAdminUserPermissions(): string {
-    return `import { AdminController } from '$lib/controllers/AdminController.js';
+    return `import { AdminController } from '$lib/modules/admin/AdminController.js';
 
 const ctrl = new AdminController();
 export const POST = ctrl.handle('grantUserPermission');
@@ -5008,7 +5131,7 @@ export const DELETE = ctrl.handle('revokeUserPermission');
   }
 
   static apiAdminExport(): string {
-    return `import { AdminController } from '$lib/controllers/AdminController.js';
+    return `import { AdminController } from '$lib/modules/admin/AdminController.js';
 
 const ctrl = new AdminController();
 export const POST = ctrl.handle('exportData');
@@ -5259,8 +5382,8 @@ export class SendWelcomeEmail extends Job {
   static dailyDigestJob(): string {
     return `import { Job } from '@beeblock/svelar/queue';
 import { Mailer } from '@beeblock/svelar/mail';
-import { User } from '../../models/User.js';
-import { Post } from '../../models/Post.js';
+import { User } from '$lib/modules/auth/User.js';
+import { Post } from '$lib/modules/posts/Post.js';
 
 export class DailyDigestJob extends Job {
   maxAttempts = 3;
@@ -5329,8 +5452,8 @@ export class DailyDigestJob extends Job {
   static exportDataJob(): string {
     return `import { Job } from '@beeblock/svelar/queue';
 import { Storage } from '@beeblock/svelar/storage';
-import { User } from '../../models/User.js';
-import { Post } from '../../models/Post.js';
+import { User } from '$lib/modules/auth/User.js';
+import { Post } from '$lib/modules/posts/Post.js';
 
 export class ExportDataJob extends Job {
   maxAttempts = 2;
@@ -5452,7 +5575,7 @@ export default class CleanExpiredSessions extends ScheduledTask {
   static dailyDigestEmail(): string {
     return `import { ScheduledTask } from '@beeblock/svelar/scheduler';
 import { Queue } from '@beeblock/svelar/queue';
-import { DailyDigestJob } from '../jobs/DailyDigestJob.js';
+import { DailyDigestJob } from '$lib/shared/jobs/DailyDigestJob.js';
 
 export default class DailyDigestEmail extends ScheduledTask {
   name = 'daily-digest-email';
@@ -5651,8 +5774,8 @@ export async function load(event: ServerLoadEvent) {
   static sendWelcomeEmailListener(): string {
     return `import { Queue } from '@beeblock/svelar/queue';
 import { Notifier } from '@beeblock/svelar/notifications';
-import { SendWelcomeEmail } from '../shared/jobs/SendWelcomeEmail.js';
-import { WelcomeNotification } from '../notifications/WelcomeNotification.js';
+import { SendWelcomeEmail } from '$lib/shared/jobs/SendWelcomeEmail.js';
+import { WelcomeNotification } from './WelcomeNotification.js';
 
 export class SendWelcomeEmailListener {
   async handle(event: any): Promise<void> {
@@ -5695,8 +5818,8 @@ export class WelcomeNotification extends Notification {
 
   static eventServiceProvider(): string {
     return `import { EventServiceProvider as BaseProvider } from '@beeblock/svelar/events';
-import { UserRegistered } from '../../events/UserRegistered.js';
-import { SendWelcomeEmailListener } from '../../listeners/SendWelcomeEmailListener.js';
+import { UserRegistered } from '$lib/modules/auth/UserRegistered.js';
+import { SendWelcomeEmailListener } from '$lib/modules/auth/SendWelcomeEmailListener.js';
 
 export class EventServiceProvider extends BaseProvider {
   protected listen = {

@@ -5,10 +5,10 @@ Svelar provides a Laravel-inspired event system for decoupling your application.
 ### Creating Events
 
 ```bash
-npx svelar make:event UserRegistered
+npx svelar make:event UserRegistered --module=auth
 ```
 
-This generates `src/lib/events/UserRegistered.ts`:
+This generates `src/lib/modules/auth/UserRegistered.ts` (or `src/lib/events/UserRegistered.ts` in flat projects):
 
 ```typescript
 export class UserRegistered {
@@ -24,14 +24,14 @@ Events are plain classes — no base class required. They carry the data that li
 ### Creating Listeners
 
 ```bash
-npx svelar make:listener SendWelcomeEmail --event UserRegistered
+npx svelar make:listener SendWelcomeEmail --event=UserRegistered --module=auth
 ```
 
-This generates `src/lib/listeners/SendWelcomeEmail.ts`:
+This generates `src/lib/modules/auth/SendWelcomeEmail.ts` (or `src/lib/listeners/SendWelcomeEmail.ts` in flat projects):
 
 ```typescript
 import { Listener } from '@beeblock/svelar/events';
-import type { UserRegistered } from '../events/UserRegistered.js';
+import type { UserRegistered } from './UserRegistered.js';
 
 export class SendWelcomeEmail extends Listener<UserRegistered> {
   async handle(event: UserRegistered): Promise<void> {
@@ -98,14 +98,14 @@ Then extend the built-in `EventServiceProvider` base:
 ```typescript
 // src/lib/shared/providers/EventServiceProvider.ts
 import { EventServiceProvider as BaseProvider } from '@beeblock/svelar/events';
-import { UserRegistered } from '../../events/UserRegistered.js';
-import { OrderPlaced } from '../../events/OrderPlaced.js';
-import { SendWelcomeEmail } from '../../listeners/SendWelcomeEmail.js';
-import { CreateUserProfile } from '../../listeners/CreateUserProfile.js';
-import { NotifyWarehouse } from '../../listeners/NotifyWarehouse.js';
-import { User } from '../../modules/users/User.js';
-import { UserObserver } from '../../modules/users/UserObserver.js';
-import { AuditObserver } from '../../modules/users/AuditObserver.js';
+import { UserRegistered } from '$lib/modules/auth/UserRegistered.js';
+import { OrderPlaced } from '$lib/modules/orders/OrderPlaced.js';
+import { SendWelcomeEmail } from '$lib/modules/auth/SendWelcomeEmail.js';
+import { CreateUserProfile } from '$lib/modules/auth/CreateUserProfile.js';
+import { NotifyWarehouse } from '$lib/modules/orders/NotifyWarehouse.js';
+import { User } from '$lib/modules/auth/User.js';
+import { UserObserver } from '$lib/modules/auth/UserObserver.js';
+import { AuditObserver } from '$lib/modules/auth/AuditObserver.js';
 
 export class EventServiceProvider extends BaseProvider {
   // Map events to their listeners

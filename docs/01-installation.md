@@ -287,7 +287,8 @@ All commands available after installation:
 
 ```bash
 # Project
-npx svelar new <name>              # Scaffold new project
+npx svelar new <name>              # Scaffold new project (DDD modular structure)
+npx svelar new <name> --flat       # Scaffold with flat folder structure
 npx svelar key:generate            # Generate a new APP_KEY
 npx svelar key:generate --show     # Display key without writing
 npx svelar key:generate --force    # Overwrite existing key
@@ -322,9 +323,9 @@ npx svelar routes:list                           # Show all routes
 npx svelar routes:list --api                     # API routes only
 npx svelar routes:list --method POST             # Filter by method
 
-# Code Generation — Events (goes into src/lib/events/ and src/lib/listeners/)
-npx svelar make:event UserRegistered             # Event class
-npx svelar make:listener SendWelcomeEmail --event=UserRegistered  # Listener class
+# Code Generation — Events (goes into src/lib/modules/<module>/)
+npx svelar make:event UserRegistered --module=auth               # Event class
+npx svelar make:listener SendWelcomeEmail --event=UserRegistered --module=auth  # Listener class
 
 # Code Generation — Shared (goes into src/lib/shared/<type>/)
 npx svelar make:middleware RateLimit  # Middleware

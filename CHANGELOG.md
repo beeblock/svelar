@@ -4,6 +4,29 @@ All notable changes to `@beeblock/svelar` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.4] - 2026-03-31
+
+### Added
+
+- **`--flat` scaffold flag** — `npx svelar new my-app --flat` generates a traditional flat folder structure (`src/lib/models/`, `src/lib/services/`, `src/lib/controllers/`, etc.) instead of DDD modules; all import paths are automatically transformed
+- **Auth FormRequest DTOs** — added `ForgotPasswordRequest`, `ResetPasswordRequest`, `OtpSendRequest`, `OtpVerifyRequest` to the scaffold; `AuthController` now validates all auth endpoints through proper `FormRequest.validate()` instead of manual `request.json()` checks
+- **Schema-typed Resources** — `UserResource`, `PostResource`, `RoleResource`, `PermissionResource` now import and return typed response schemas (`UserResponse`, `PostResponse`, etc.) from shared `schemas.ts` files
+- **Inferred types on all schemas** — auth, post, and admin schemas now export `z.infer` types (`LoginInput`, `CreatePostInput`, `UserResponse`, etc.) as a single source of truth for DTOs, UI validation, and Resources
+- **Response schemas** — `userResponseSchema`, `postResponseSchema`, `roleResponseSchema`, `permissionResponseSchema` define the API contract alongside input schemas in each module's `schemas.ts`
+- **Svelar logo favicon** — scaffolded projects now include `static/favicon.svg` with the Svelar gradient "S" logo, referenced in `app.html` as `image/svg+xml`
+
+### Changed
+
+- **Scaffold uses DDD modular folder structure by default** — `npx svelar new` now generates all domain code under `src/lib/modules/{domain}/` (auth, posts, admin) and shared infrastructure under `src/lib/shared/`, matching the architecture documentation
+- **`make:event` uses DDD module paths** — accepts `--module` flag, generates events into `src/lib/modules/{module}/` instead of flat `src/lib/events/`
+- **`make:listener` uses DDD module paths** — accepts `--module` flag, generates listeners into `src/lib/modules/{module}/` instead of flat `src/lib/listeners/`; event imports use same-module relative paths (`'./${Event}.js'`)
+- **All scaffold imports use module-relative paths** — within-module imports use `./`, cross-module imports use `$lib/modules/{other}/`, shared imports use `$lib/shared/`
+
+### Fixed
+
+- **`app.ts` template wrong DDD paths** — `User` import was `./lib/models/User.js` (flat path) instead of `./lib/modules/auth/User.js`; gates import was `./lib/auth/gates.js` instead of `./lib/modules/auth/gates.js`
+- **`DailyDigestEmail` scheduler wrong import** — was using relative `./DailyDigestJob.js` (wrong directory) instead of `$lib/shared/jobs/DailyDigestJob.js`
+
 ## [0.4.3] - 2026-03-31
 
 ### Added

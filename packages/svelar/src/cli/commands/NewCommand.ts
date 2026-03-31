@@ -4,6 +4,7 @@
  * Scaffolds a complete SvelteKit + Svelar SaaS project with auth,
  * dashboard, admin panel, jobs, tasks, and 90+ API endpoints.
  * Usage: npx svelar new my-app
+ *        npx svelar new my-app --flat
  */
 
 import { Command } from '../Command.js';
@@ -16,6 +17,7 @@ export class NewCommand extends Command {
 
   flags = [
     { name: 'no-install', alias: 'n', description: 'Skip npm install', type: 'boolean' as const, default: false },
+    { name: 'flat', description: 'Use flat folder structure instead of DDD modules', type: 'boolean' as const, default: false },
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
@@ -36,52 +38,46 @@ export class NewCommand extends Command {
       process.exit(1);
     }
 
-    this.log('');
-    this.log(`  \x1b[1m\x1b[38;5;208m</>  Svelar\x1b[0m  — Creating new project\n`);
+    const flat = flags['flat'] || false;
+    const structureLabel = flat ? 'flat' : 'DDD modular';
 
-    // Helper to write a file, creating parent dirs as needed
-    const write = (relativePath: string, content: string) => {
+    this.log('');
+    this.log(`  \x1b[1m\x1b[38;5;208m</>  Svelar\x1b[0m  — Creating new project (${structureLabel})\n`);
+
+    // Helper to write a file, creating parent dirs as needed.
+    // Templates always use DDD paths internally. When --flat is set,
+    // both the file path and import paths are transformed automatically.
+    const write = (dddPath: string, content: string) => {
+      const relativePath = flat ? toFlatPath(dddPath) : dddPath;
+      const transformedContent = flat ? toFlatImports(content, dddPath) : content;
       const fullPath = join(projectDir, relativePath);
       mkdirSync(join(fullPath, '..'), { recursive: true });
-      writeFileSync(fullPath, content);
+      writeFileSync(fullPath, transformedContent);
     };
 
-    // ── 1. Create directory structure ──────────────────────
+    // ── 1. Create directory structure ─────────────────────
     this.info('Creating project structure...');
-    const dirs = [
-      '',
-      'src',
-      'src/lib',
-      'src/lib/models',
-      'src/lib/repositories',
-      'src/lib/services',
-      'src/lib/controllers',
-      'src/lib/dtos',
-      'src/lib/actions',
-      'src/lib/auth',
-      'src/lib/schemas',
-      'src/lib/shared/jobs',
-      'src/lib/shared/scheduler',
-      'src/lib/events',
-      'src/lib/listeners',
-      'src/lib/resources',
-      'src/lib/notifications',
-      'src/lib/shared/middleware',
-      'src/lib/shared/components',
-      'src/lib/shared/stores',
-      'src/lib/shared/plugins',
-      'src/lib/shared/channels',
-      'src/lib/shared/commands',
-      'src/lib/shared/providers',
-      'src/lib/database/migrations',
-      'src/lib/database/seeders',
-      'src/routes',
-      'src/routes/api',
-      'static',
-      'storage/logs',
-      'storage/cache',
-      'storage/uploads',
-      'storage/sessions',
+    const dirs = flat ? [
+      '', 'src', 'src/lib',
+      'src/lib/models', 'src/lib/services', 'src/lib/controllers',
+      'src/lib/repositories', 'src/lib/dtos', 'src/lib/actions',
+      'src/lib/resources', 'src/lib/events', 'src/lib/listeners',
+      'src/lib/notifications', 'src/lib/schemas',
+      'src/lib/jobs', 'src/lib/scheduler', 'src/lib/middleware',
+      'src/lib/components', 'src/lib/stores', 'src/lib/plugins',
+      'src/lib/channels', 'src/lib/commands', 'src/lib/providers',
+      'src/lib/database/migrations', 'src/lib/database/seeders',
+      'src/routes', 'src/routes/api',
+      'static', 'storage/logs', 'storage/cache', 'storage/uploads', 'storage/sessions',
+    ] : [
+      '', 'src', 'src/lib',
+      'src/lib/modules/auth', 'src/lib/modules/posts', 'src/lib/modules/admin',
+      'src/lib/shared/jobs', 'src/lib/shared/scheduler', 'src/lib/shared/middleware',
+      'src/lib/shared/components', 'src/lib/shared/stores', 'src/lib/shared/plugins',
+      'src/lib/shared/channels', 'src/lib/shared/commands', 'src/lib/shared/providers',
+      'src/lib/database/migrations', 'src/lib/database/seeders',
+      'src/routes', 'src/routes/api',
+      'static', 'storage/logs', 'storage/cache', 'storage/uploads', 'storage/sessions',
     ];
     for (const dir of dirs) {
       mkdirSync(join(projectDir, dir), { recursive: true });
@@ -127,44 +123,56 @@ export class NewCommand extends Command {
 
     // ── 3. Domain layer ───────────────────────────────────
     this.info('Scaffolding domain layer...');
-    write('src/lib/models/User.ts', T.userModel());
-    write('src/lib/models/Post.ts', T.postModel());
-    write('src/lib/repositories/UserRepository.ts', T.userRepository());
-    write('src/lib/repositories/PostRepository.ts', T.postRepository());
-    write('src/lib/services/AuthService.ts', T.authService());
-    write('src/lib/services/PostService.ts', T.postService());
-    write('src/lib/controllers/AuthController.ts', T.authController());
-    write('src/lib/controllers/PostController.ts', T.postController());
-    write('src/lib/controllers/AdminController.ts', T.adminController());
-    write('src/lib/dtos/RegisterRequest.ts', T.registerRequest());
-    write('src/lib/dtos/LoginRequest.ts', T.loginRequest());
-    write('src/lib/dtos/CreatePostRequest.ts', T.createPostRequest());
-    write('src/lib/dtos/UpdatePostRequest.ts', T.updatePostRequest());
-    write('src/lib/dtos/UpdateUserRoleRequest.ts', T.updateUserRoleRequest());
-    write('src/lib/dtos/DeleteUserRequest.ts', T.deleteUserRequest());
-    write('src/lib/dtos/CreateRoleRequest.ts', T.createRoleRequest());
-    write('src/lib/dtos/DeleteRoleRequest.ts', T.deleteRoleRequest());
-    write('src/lib/dtos/CreatePermissionRequest.ts', T.createPermissionRequest());
-    write('src/lib/dtos/DeletePermissionRequest.ts', T.deletePermissionRequest());
-    write('src/lib/dtos/RolePermissionRequest.ts', T.rolePermissionRequest());
-    write('src/lib/dtos/UserRoleRequest.ts', T.userRoleRequest());
-    write('src/lib/dtos/UserPermissionRequest.ts', T.userPermissionRequest());
-    write('src/lib/dtos/ExportDataRequest.ts', T.exportDataRequest());
-    write('src/lib/actions/RegisterUserAction.ts', T.registerUserAction());
-    write('src/lib/actions/CreatePostAction.ts', T.createPostAction());
-    write('src/lib/auth/gates.ts', T.gates());
-    write('src/lib/schemas/auth.ts', T.authSchema());
-    write('src/lib/schemas/post.ts', T.postSchema());
-    write('src/lib/schemas/admin.ts', T.adminSchema());
-    write('src/lib/services/AdminService.ts', T.adminService());
-    write('src/lib/resources/RoleResource.ts', T.roleResource());
-    write('src/lib/resources/PermissionResource.ts', T.permissionResource());
+
+    // Auth module
+    write('src/lib/modules/auth/User.ts', T.userModel());
+    write('src/lib/modules/auth/UserRepository.ts', T.userRepository());
+    write('src/lib/modules/auth/AuthService.ts', T.authService());
+    write('src/lib/modules/auth/AuthController.ts', T.authController());
+    write('src/lib/modules/auth/RegisterUserAction.ts', T.registerUserAction());
+    write('src/lib/modules/auth/RegisterRequest.ts', T.registerRequest());
+    write('src/lib/modules/auth/LoginRequest.ts', T.loginRequest());
+    write('src/lib/modules/auth/ForgotPasswordRequest.ts', T.forgotPasswordRequest());
+    write('src/lib/modules/auth/ResetPasswordRequest.ts', T.resetPasswordRequest());
+    write('src/lib/modules/auth/OtpSendRequest.ts', T.otpSendRequest());
+    write('src/lib/modules/auth/OtpVerifyRequest.ts', T.otpVerifyRequest());
+    write('src/lib/modules/auth/UserResource.ts', T.userResource());
+    write('src/lib/modules/auth/gates.ts', T.gates());
+    write('src/lib/modules/auth/schemas.ts', T.authSchema());
+    write('src/lib/modules/auth/UserRegistered.ts', T.userRegisteredEvent());
+    write('src/lib/modules/auth/SendWelcomeEmailListener.ts', T.sendWelcomeEmailListener());
+    write('src/lib/modules/auth/WelcomeNotification.ts', T.welcomeNotification());
+
+    // Posts module
+    write('src/lib/modules/posts/Post.ts', T.postModel());
+    write('src/lib/modules/posts/PostRepository.ts', T.postRepository());
+    write('src/lib/modules/posts/PostService.ts', T.postService());
+    write('src/lib/modules/posts/PostController.ts', T.postController());
+    write('src/lib/modules/posts/CreatePostAction.ts', T.createPostAction());
+    write('src/lib/modules/posts/CreatePostRequest.ts', T.createPostRequest());
+    write('src/lib/modules/posts/UpdatePostRequest.ts', T.updatePostRequest());
+    write('src/lib/modules/posts/PostResource.ts', T.postResource());
+    write('src/lib/modules/posts/schemas.ts', T.postSchema());
+
+    // Admin module
+    write('src/lib/modules/admin/AdminService.ts', T.adminService());
+    write('src/lib/modules/admin/AdminController.ts', T.adminController());
+    write('src/lib/modules/admin/UpdateUserRoleRequest.ts', T.updateUserRoleRequest());
+    write('src/lib/modules/admin/DeleteUserRequest.ts', T.deleteUserRequest());
+    write('src/lib/modules/admin/CreateRoleRequest.ts', T.createRoleRequest());
+    write('src/lib/modules/admin/DeleteRoleRequest.ts', T.deleteRoleRequest());
+    write('src/lib/modules/admin/CreatePermissionRequest.ts', T.createPermissionRequest());
+    write('src/lib/modules/admin/DeletePermissionRequest.ts', T.deletePermissionRequest());
+    write('src/lib/modules/admin/RolePermissionRequest.ts', T.rolePermissionRequest());
+    write('src/lib/modules/admin/UserRoleRequest.ts', T.userRoleRequest());
+    write('src/lib/modules/admin/UserPermissionRequest.ts', T.userPermissionRequest());
+    write('src/lib/modules/admin/ExportDataRequest.ts', T.exportDataRequest());
+    write('src/lib/modules/admin/RoleResource.ts', T.roleResource());
+    write('src/lib/modules/admin/PermissionResource.ts', T.permissionResource());
+    write('src/lib/modules/admin/schemas.ts', T.adminSchema());
+
+    // Shared providers
     write('src/lib/shared/providers/EventServiceProvider.ts', T.eventServiceProvider());
-    write('src/lib/resources/UserResource.ts', T.userResource());
-    write('src/lib/resources/PostResource.ts', T.postResource());
-    write('src/lib/events/UserRegistered.ts', T.userRegisteredEvent());
-    write('src/lib/listeners/SendWelcomeEmailListener.ts', T.sendWelcomeEmailListener());
-    write('src/lib/notifications/WelcomeNotification.ts', T.welcomeNotification());
 
     // ── 4. Migrations ─────────────────────────────────────
     this.info('Creating migrations...');
@@ -269,7 +277,7 @@ export class NewCommand extends Command {
     write('src/routes/+error.svelte', T.errorSvelte());
     write('src/routes/+page.svelte', T.homePage(projectName));
 
-    this.success('Project structure created');
+    this.success(`Project structure created (${structureLabel})`);
 
     // ── 13. Install dependencies ──────────────────────────
     if (!flags['no-install']) {
@@ -325,4 +333,130 @@ export class NewCommand extends Command {
     this.log('    Demo:  demo@svelar.dev / password');
     this.log('');
   }
+}
+
+// ── Path transformation helpers (DDD → flat) ──────────────
+
+/**
+ * Determines the flat category folder for a given file name.
+ * E.g. "AuthService.ts" → "services", "User.ts" → "models"
+ */
+function fileCategory(name: string): string {
+  if (/Service\./.test(name)) return 'services';
+  if (/Controller\./.test(name)) return 'controllers';
+  if (/Repository\./.test(name)) return 'repositories';
+  if (/Request\./.test(name)) return 'dtos';
+  if (/Resource\./.test(name)) return 'resources';
+  if (/Action\./.test(name)) return 'actions';
+  if (/Listener\./.test(name)) return 'listeners';
+  if (/Notification\./.test(name)) return 'notifications';
+  // Event classes typically contain past-tense verbs
+  if (/Registered|Created|Updated|Deleted|Verified|Invited/.test(name)) return 'events';
+  // Everything else is a model
+  return 'models';
+}
+
+/**
+ * Converts a DDD file output path to the flat equivalent.
+ * E.g. "src/lib/modules/auth/User.ts" → "src/lib/models/User.ts"
+ *      "src/lib/shared/jobs/X.ts"     → "src/lib/jobs/X.ts"
+ */
+function toFlatPath(dddPath: string): string {
+  // Module files: src/lib/modules/{mod}/{File}.ts
+  const moduleMatch = dddPath.match(/^src\/lib\/modules\/(\w+)\/(.+)$/);
+  if (moduleMatch) {
+    const [, mod, fileName] = moduleMatch;
+    if (fileName === 'schemas.ts') return `src/lib/schemas/${mod}.ts`;
+    if (fileName === 'gates.ts') return `src/lib/gates.ts`;
+    return `src/lib/${fileCategory(fileName)}/${fileName}`;
+  }
+
+  // Shared files: src/lib/shared/{type}/{File}.ts → src/lib/{type}/{File}.ts
+  const sharedMatch = dddPath.match(/^src\/lib\/shared\/(.+)$/);
+  if (sharedMatch) return `src/lib/${sharedMatch[1]}`;
+
+  return dddPath;
+}
+
+/**
+ * Resolves a flat $lib/ import path for a given module + file name.
+ */
+function flatImport(mod: string, name: string, ext: string): string {
+  if (name === 'schemas') return `$lib/schemas/${mod}${ext}`;
+  if (name === 'gates') return `$lib/gates${ext}`;
+  return `$lib/${fileCategoryByName(name)}/${name}${ext}`;
+}
+
+/**
+ * Like fileCategory but works on the import name (no extension).
+ */
+function fileCategoryByName(name: string): string {
+  if (/Service$/.test(name)) return 'services';
+  if (/Controller$/.test(name)) return 'controllers';
+  if (/Repository$/.test(name)) return 'repositories';
+  if (/Request$/.test(name)) return 'dtos';
+  if (/Resource$/.test(name)) return 'resources';
+  if (/Action$/.test(name)) return 'actions';
+  if (/Listener$/.test(name)) return 'listeners';
+  if (/Notification$/.test(name)) return 'notifications';
+  if (/Registered|Created|Updated|Deleted|Verified|Invited/.test(name)) return 'events';
+  return 'models';
+}
+
+/**
+ * Transforms all import paths in template content from DDD to flat.
+ * Uses the DDD write path to determine the module context.
+ */
+function toFlatImports(content: string, dddPath: string): string {
+  // Determine which module this file is in (empty for non-module files)
+  const moduleMatch = dddPath.match(/modules\/(\w+)\//);
+  const mod = moduleMatch?.[1] || '';
+
+  // 1. Replace $lib/modules/{mod}/{Name}(.js)? with flat import paths
+  content = content.replace(
+    /\$lib\/modules\/(\w+)\/(\w+)(\.js)?/g,
+    (_match, m: string, name: string, ext: string) => flatImport(m, name, ext || ''),
+  );
+
+  // 2. Replace ./lib/modules/{mod}/{Name}(.js)? (app.ts style, relative from project root)
+  content = content.replace(
+    /\.\/lib\/modules\/(\w+)\/(\w+)(\.js)?/g,
+    (_match, m: string, name: string, ext: string) => {
+      if (name === 'schemas') return `./lib/schemas/${m}${ext || ''}`;
+      if (name === 'gates') return `./lib/gates${ext || ''}`;
+      return `./lib/${fileCategoryByName(name)}/${name}${ext || ''}`;
+    },
+  );
+
+  // 3. Replace $lib/shared/{type}/ with $lib/{type}/
+  content = content.replace(/\$lib\/shared\//g, '$lib/');
+
+  // 4. Replace ./lib/shared/ with ./lib/ (app.ts style)
+  content = content.replace(/\.\/lib\/shared\//g, './lib/');
+
+  // 5. Replace ./{Name}(.js)? relative imports within module files
+  //    Only for files that are inside a module directory
+  if (mod) {
+    content = content.replace(
+      /from '\.\/(\w+)(\.js)?'/g,
+      (match, name: string, ext: string) => {
+        // Don't transform SvelteKit $types or local non-module files
+        if (name.startsWith('$') || name === 'app') return match;
+        ext = ext || '';
+        return `from '${flatImport(mod, name, ext)}'`;
+      },
+    );
+
+    // Also handle standalone import './file.js' (no from keyword, e.g. side-effect imports)
+    content = content.replace(
+      /import '\.\/(\w+)(\.js)?'/g,
+      (match, name: string, ext: string) => {
+        if (name.startsWith('$') || name === 'app') return match;
+        ext = ext || '';
+        return `import '${flatImport(mod, name, ext)}'`;
+      },
+    );
+  }
+
+  return content;
 }

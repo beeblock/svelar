@@ -12,6 +12,12 @@ npm run dev
 
 That's it. The `new` command installs dependencies, generates `.env` with secure random `APP_KEY` and `INTERNAL_SECRET`, runs migrations, and seeds the database. You now have a complete SaaS starter with authentication, dashboard, admin panel, teams, API keys, background jobs, and more — all pre-configured and ready to go.
 
+By default, projects use a **DDD modular structure** (`src/lib/modules/{domain}/`). If you prefer a traditional flat layout, use `--flat`:
+
+```bash
+npx svelar new my-app --flat   # src/lib/models/, src/lib/services/, etc.
+```
+
 ## What You Get Out of the Box
 
 When you run `npx svelar new`, Svelar scaffolds a full-featured application. Here's everything that's included and working from day one:
@@ -245,9 +251,9 @@ npx svelar make:job GenerateInvoicePdf
 # Create a scheduled task
 npx svelar make:task SendInvoiceReminders
 
-# Create an event + listener
-npx svelar make:event InvoicePaid
-npx svelar make:listener NotifyCustomer --event=InvoicePaid
+# Create an event + listener (in the billing module)
+npx svelar make:event InvoicePaid --module=billing
+npx svelar make:listener NotifyCustomer --event=InvoicePaid --module=billing
 ```
 
 Every generator creates files in the right location following the DDD module structure. Run `npx svelar migrate` after creating migrations.
