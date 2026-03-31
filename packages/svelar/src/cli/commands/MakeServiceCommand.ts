@@ -26,11 +26,11 @@ export class MakeServiceCommand extends Command {
     const serviceName = name.endsWith('Service') ? name : `${name}Service`;
     const baseName = serviceName.replace(/Service$/, '');
     const moduleName = flags.module || baseName.toLowerCase();
-    if (!flags.module) {
+    if (!flags.module && this.isDDD()) {
       this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
     }
 
-    const moduleDir = join(process.cwd(), 'src', 'lib', 'modules', moduleName);
+    const moduleDir = this.moduleDir(moduleName, 'services');
     mkdirSync(moduleDir, { recursive: true });
 
     const filePath = join(moduleDir, `${serviceName}.ts`);
@@ -39,18 +39,23 @@ export class MakeServiceCommand extends Command {
       return;
     }
 
+    const modelImportPath = flags.model
+      ? (this.isDDD() ? `./${flags.model}.js` : `../models/${flags.model}.js`)
+      : undefined;
     const content = flags.crud
-      ? this.generateCrudService(serviceName, flags.model)
+      ? this.generateCrudService(serviceName, flags.model, modelImportPath)
       : this.generateBasicService(serviceName);
 
     writeFileSync(filePath, content);
-    this.success(`Service created: src/lib/modules/${moduleName}/${serviceName}.ts`);
+    const relDir = this.isDDD() ? `src/lib/modules/${moduleName}` : 'src/lib/services';
+    this.success(`Service created: ${relDir}/${serviceName}.ts`);
   }
 
-  private generateCrudService(name: string, model?: string): string {
+  private generateCrudService(name: string, model?: string, modelPath?: string): string {
     const modelName = model || 'Model';
+    const importPath = modelPath || `./${modelName}.js`;
     return `import { CrudService, type ServiceResult } from '@beeblock/svelar/services';
-import { ${modelName} } from './${modelName}.js';
+import { ${modelName} } from '${importPath}';
 
 export class ${name} extends CrudService<${modelName}> {
   protected model = ${modelName};

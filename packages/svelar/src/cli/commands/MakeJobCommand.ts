@@ -20,7 +20,7 @@ export class MakeJobCommand extends Command {
     }
 
     const jobName = name.endsWith('Job') ? name : name;
-    const jobsDir = join(process.cwd(), 'src', 'lib', 'shared', 'jobs');
+    const jobsDir = this.sharedDir('jobs');
     mkdirSync(jobsDir, { recursive: true });
 
     const filePath = join(jobsDir, `${jobName}.ts`);
@@ -36,8 +36,11 @@ export class ${jobName} extends Job {
   retryDelay = 60;      // Wait 60 seconds between retries
   queue = 'default';    // Queue name
 
-  constructor(private data: any) {
+  data: any;
+
+  constructor(data: any) {
     super();
+    this.data = data;
   }
 
   async handle(): Promise<void> {
@@ -56,6 +59,7 @@ export class ${jobName} extends Job {
 `;
 
     writeFileSync(filePath, content);
-    this.success(`Job created: src/lib/shared/jobs/${jobName}.ts`);
+    const relPath = this.isDDD() ? `src/lib/shared/jobs/${jobName}.ts` : `src/lib/jobs/${jobName}.ts`;
+    this.success(`Job created: ${relPath}`);
   }
 }

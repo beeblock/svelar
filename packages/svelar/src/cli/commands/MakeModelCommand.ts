@@ -27,11 +27,11 @@ export class MakeModelCommand extends Command {
 
     const tableName = this.toSnakeCase(this.pluralize(name));
     const moduleName = flags.module || this.toSnakeCase(this.pluralize(name));
-    if (!flags.module) {
+    if (!flags.module && this.isDDD()) {
       this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
     }
 
-    const modelsDir = join(process.cwd(), 'src', 'lib', 'modules', moduleName);
+    const modelsDir = this.moduleDir(moduleName, 'models');
     mkdirSync(modelsDir, { recursive: true });
 
     const filePath = join(modelsDir, `${name}.ts`);
@@ -60,7 +60,8 @@ export class ${name} extends Model {
 `;
 
     writeFileSync(filePath, content);
-    this.success(`Model created: src/lib/modules/${moduleName}/${name}.ts`);
+    const relDir = this.isDDD() ? `src/lib/modules/${moduleName}` : 'src/lib/models';
+    this.success(`Model created: ${relDir}/${name}.ts`);
 
     // Create migration if requested
     if (flags.migration || flags.all) {
@@ -95,23 +96,25 @@ export default class Create${name}sTable extends Migration {
     // Create controller if requested
     if (flags.controller || flags.resource || flags.all) {
       const controllerName = `${name}Controller`;
-      const controllerDir = join(process.cwd(), 'src', 'lib', 'modules', moduleName);
+      const controllerDir = this.moduleDir(moduleName, 'controllers');
       mkdirSync(controllerDir, { recursive: true });
 
       const isResource = flags.resource || flags.all;
+      const modelImportPath = this.isDDD() ? `./${name}.js` : `../models/${name}.js`;
       const controllerContent = isResource
-        ? this.generateResourceController(name, controllerName)
-        : this.generateBasicController(name, controllerName);
+        ? this.generateResourceController(name, controllerName, modelImportPath)
+        : this.generateBasicController(name, controllerName, modelImportPath);
 
       writeFileSync(join(controllerDir, `${controllerName}.ts`), controllerContent);
-      this.success(`Controller created: src/lib/modules/${moduleName}/${controllerName}.ts`);
+      const ctrlRelDir = this.isDDD() ? `src/lib/modules/${moduleName}` : 'src/lib/controllers';
+      this.success(`Controller created: ${ctrlRelDir}/${controllerName}.ts`);
     }
   }
 
-  private generateResourceController(modelName: string, controllerName: string): string {
+  private generateResourceController(modelName: string, controllerName: string, modelImportPath: string = `./${modelName}.js`): string {
     return `import { Controller, type RequestEvent } from '@beeblock/svelar/routing';
 import { z } from '@beeblock/svelar/validation';
-import { ${modelName} } from './${modelName}.js';
+import { ${modelName} } from '${modelImportPath}';
 
 export class ${controllerName} extends Controller {
   /** GET /api/${this.toSnakeCase(this.pluralize(modelName))} */
@@ -155,9 +158,9 @@ export class ${controllerName} extends Controller {
 `;
   }
 
-  private generateBasicController(modelName: string, controllerName: string): string {
+  private generateBasicController(modelName: string, controllerName: string, modelImportPath: string = `./${modelName}.js`): string {
     return `import { Controller, type RequestEvent } from '@beeblock/svelar/routing';
-import { ${modelName} } from './${modelName}.js';
+import { ${modelName} } from '${modelImportPath}';
 
 export class ${controllerName} extends Controller {
   async index(event: RequestEvent) {

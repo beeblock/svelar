@@ -49,7 +49,28 @@ export async function resolve(specifier, context, nextResolve) {
     }
   }
 
-  // 2. Handle relative .js → .ts resolution
+  // 2. Resolve $lib/ alias (SvelteKit convention) to src/lib/ in the project
+  if (specifier.startsWith('$lib/')) {
+    const subpath = specifier.slice('$lib/'.length);
+    const projectRoot = process.cwd();
+    // Try .ts extension (most common in dev)
+    const withTs = pathResolve(projectRoot, 'src', 'lib', subpath.replace(/\.js$/, '.ts'));
+    if (existsSync(withTs)) {
+      return { url: pathToFileURL(withTs).href, shortCircuit: true };
+    }
+    // Try exact path (.js or extensionless)
+    const exact = pathResolve(projectRoot, 'src', 'lib', subpath);
+    if (existsSync(exact)) {
+      return { url: pathToFileURL(exact).href, shortCircuit: true };
+    }
+    // Try adding .ts (for imports without extension like '$lib/modules/auth/schemas')
+    const addTs = pathResolve(projectRoot, 'src', 'lib', subpath + '.ts');
+    if (existsSync(addTs)) {
+      return { url: pathToFileURL(addTs).href, shortCircuit: true };
+    }
+  }
+
+  // 3. Handle relative .js → .ts resolution
   if (specifier.startsWith('.') && specifier.endsWith('.js')) {
     try {
       const parentPath = context.parentURL ? fileURLToPath(context.parentURL) : process.cwd();

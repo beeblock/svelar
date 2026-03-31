@@ -47,10 +47,32 @@ export class TinkerCommand extends Command {
       const { join } = await import('node:path');
       const { pathToFileURL } = await import('node:url');
 
-      const modelsDir = join(process.cwd(), 'src', 'lib', 'models');
-      const modelFiles = readdirSync(modelsDir).filter(
-        (f) => f.endsWith('.ts') || f.endsWith('.js')
-      );
+      const { existsSync } = await import('node:fs');
+      const flatDir = join(process.cwd(), 'src', 'lib', 'models');
+      const dddDir = join(process.cwd(), 'src', 'lib', 'modules');
+      let modelFiles: string[] = [];
+      let modelsDir = flatDir;
+
+      if (existsSync(flatDir)) {
+        // Flat structure: src/lib/models/*.ts
+        modelsDir = flatDir;
+        modelFiles = readdirSync(flatDir).filter(
+          (f) => (f.endsWith('.ts') || f.endsWith('.js')) && !f.startsWith('index')
+        );
+      } else if (existsSync(dddDir)) {
+        // DDD structure: scan src/lib/modules/*/  for model-like files
+        modelsDir = dddDir;
+        for (const mod of readdirSync(dddDir, { withFileTypes: true })) {
+          if (!mod.isDirectory()) continue;
+          const moduleDir = join(dddDir, mod.name);
+          for (const f of readdirSync(moduleDir)) {
+            if (!(f.endsWith('.ts') || f.endsWith('.js'))) continue;
+            if (f.startsWith('index') || f.includes('Controller') || f.includes('Service') || f.includes('Repository') || f.includes('Request') || f.includes('Resource') || f.includes('schema') || f.includes('gates')) continue;
+            // Remaining files are likely models (User.ts, Post.ts, etc.)
+            modelFiles.push(join(mod.name, f));
+          }
+        }
+      }
 
       for (const file of modelFiles) {
         try {

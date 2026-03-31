@@ -24,11 +24,11 @@ export class MakeRequestCommand extends Command {
     const requestName = name.endsWith('Request') ? name : `${name}Request`;
     const baseName = requestName.replace(/Request$/, '');
     const moduleName = flags.module || baseName.toLowerCase();
-    if (!flags.module) {
+    if (!flags.module && this.isDDD()) {
       this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
     }
 
-    const moduleDir = join(process.cwd(), 'src', 'lib', 'modules', moduleName);
+    const moduleDir = this.moduleDir(moduleName, 'dtos');
     mkdirSync(moduleDir, { recursive: true });
 
     const filePath = join(moduleDir, `${requestName}.ts`);
@@ -69,6 +69,7 @@ export class ${requestName} extends FormRequest {
 `;
 
     writeFileSync(filePath, content);
-    this.success(`Request created: src/lib/modules/${moduleName}/${requestName}.ts`);
+    const relDir = this.isDDD() ? `src/lib/modules/${moduleName}` : 'src/lib/dtos';
+    this.success(`Request created: ${relDir}/${requestName}.ts`);
   }
 }

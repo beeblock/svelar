@@ -26,11 +26,11 @@ export class MakeControllerCommand extends Command {
     const controllerName = name.endsWith('Controller') ? name : `${name}Controller`;
     const baseName = controllerName.replace(/Controller$/, '');
     const moduleName = flags.module || baseName.toLowerCase();
-    if (!flags.module) {
+    if (!flags.module && this.isDDD()) {
       this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
     }
 
-    const moduleDir = join(process.cwd(), 'src', 'lib', 'modules', moduleName);
+    const moduleDir = this.moduleDir(moduleName, 'controllers');
     mkdirSync(moduleDir, { recursive: true });
 
     const filePath = join(moduleDir, `${controllerName}.ts`);
@@ -39,17 +39,21 @@ export class MakeControllerCommand extends Command {
       return;
     }
 
+    const modelImportPath = flags.model
+      ? (this.isDDD() ? `./${flags.model}.js` : `../models/${flags.model}.js`)
+      : undefined;
     const content = flags.resource
-      ? this.generateResourceController(controllerName, flags.model)
+      ? this.generateResourceController(controllerName, flags.model, modelImportPath)
       : this.generateBasicController(controllerName);
 
     writeFileSync(filePath, content);
-    this.success(`Controller created: src/lib/modules/${moduleName}/${controllerName}.ts`);
+    const relDir = this.isDDD() ? `src/lib/modules/${moduleName}` : 'src/lib/controllers';
+    this.success(`Controller created: ${relDir}/${controllerName}.ts`);
   }
 
-  private generateResourceController(name: string, model?: string): string {
-    const modelImport = model
-      ? `import { ${model} } from './${model}.js';\n`
+  private generateResourceController(name: string, model?: string, modelPath?: string): string {
+    const modelImport = model && modelPath
+      ? `import { ${model} } from '${modelPath}';\n`
       : '';
 
     return `import { Controller, type RequestEvent } from '@beeblock/svelar/routing';

@@ -20,7 +20,7 @@ export class MakeMiddlewareCommand extends Command {
     }
 
     const middlewareName = name.endsWith('Middleware') ? name : `${name}Middleware`;
-    const middlewareDir = join(process.cwd(), 'src', 'lib', 'shared', 'middleware');
+    const middlewareDir = this.sharedDir('middleware');
     mkdirSync(middlewareDir, { recursive: true });
 
     const filePath = join(middlewareDir, `${middlewareName}.ts`);
@@ -45,6 +45,7 @@ export class ${middlewareName} extends Middleware {
 `;
 
     writeFileSync(filePath, content);
-    this.success(`Middleware created: src/lib/shared/middleware/${middlewareName}.ts`);
+    const relPath = this.isDDD() ? `src/lib/shared/middleware/${middlewareName}.ts` : `src/lib/middleware/${middlewareName}.ts`;
+    this.success(`Middleware created: ${relPath}`);
   }
 }

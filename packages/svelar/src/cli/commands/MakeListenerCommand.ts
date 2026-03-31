@@ -23,11 +23,11 @@ export class MakeListenerCommand extends Command {
     }
 
     const moduleName = flags.module || name.replace(/([A-Z])/g, ' $1').trim().split(' ')[0].toLowerCase();
-    if (!flags.module) {
+    if (!flags.module && this.isDDD()) {
       this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
     }
 
-    const moduleDir = join(process.cwd(), 'src', 'lib', 'modules', moduleName);
+    const moduleDir = this.moduleDir(moduleName, 'listeners');
     mkdirSync(moduleDir, { recursive: true });
 
     const filePath = join(moduleDir, `${name}.ts`);
@@ -37,8 +37,11 @@ export class MakeListenerCommand extends Command {
     }
 
     const eventName = flags.event || 'any';
+    const eventImportPath = flags.event
+      ? (this.isDDD() ? `./${flags.event}.js` : `../events/${flags.event}.js`)
+      : '';
     const eventImport = flags.event
-      ? `import type { ${flags.event} } from './${flags.event}.js';\n\n`
+      ? `import type { ${flags.event} } from '${eventImportPath}';\n\n`
       : '';
     const eventType = flags.event || 'any';
 
@@ -57,7 +60,8 @@ ${eventImport}export class ${name} extends Listener<${eventType}> {
 `;
 
     writeFileSync(filePath, content);
-    this.success(`Listener created: src/lib/modules/${moduleName}/${name}.ts`);
+    const relDir = this.isDDD() ? `src/lib/modules/${moduleName}` : 'src/lib/listeners';
+    this.success(`Listener created: ${relDir}/${name}.ts`);
     if (flags.event) {
       this.info(`Don't forget to register it in your EventServiceProvider:`);
       this.info(`  [${flags.event}.name]: [${name}]`);

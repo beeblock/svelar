@@ -22,11 +22,11 @@ export class MakeEventCommand extends Command {
     }
 
     const moduleName = flags.module || name.replace(/([A-Z])/g, ' $1').trim().split(' ')[0].toLowerCase();
-    if (!flags.module) {
+    if (!flags.module && this.isDDD()) {
       this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
     }
 
-    const moduleDir = join(process.cwd(), 'src', 'lib', 'modules', moduleName);
+    const moduleDir = this.moduleDir(moduleName, 'events');
     mkdirSync(moduleDir, { recursive: true });
 
     const filePath = join(moduleDir, `${name}.ts`);
@@ -56,6 +56,7 @@ export class ${name} {
 `;
 
     writeFileSync(filePath, content);
-    this.success(`Event created: src/lib/modules/${moduleName}/${name}.ts`);
+    const relDir = this.isDDD() ? `src/lib/modules/${moduleName}` : 'src/lib/events';
+    this.success(`Event created: ${relDir}/${name}.ts`);
   }
 }

@@ -3,7 +3,7 @@
  */
 
 import { Command } from '../Command.js';
-import { readdirSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -21,12 +21,14 @@ export class ScheduleRunCommand extends Command {
     const scheduler = new Scheduler();
     scheduler.persistToDatabase();
 
-    // Load tasks from src/lib/scheduler/
-    const schedulerDir = join(process.cwd(), 'src', 'lib', 'scheduler');
+    // Load tasks from src/lib/shared/scheduler/ (DDD) or src/lib/scheduler/ (flat)
+    const dddDir = join(process.cwd(), 'src', 'lib', 'shared', 'scheduler');
+    const flatDir = join(process.cwd(), 'src', 'lib', 'scheduler');
+    const schedulerDir = existsSync(dddDir) ? dddDir : flatDir;
     const tasks = await this.loadTasks(schedulerDir);
 
     if (tasks.length === 0) {
-      this.warn('No scheduled tasks found in src/lib/scheduler/');
+      this.warn('No scheduled tasks found in src/lib/shared/scheduler/ or src/lib/scheduler/');
       return;
     }
 

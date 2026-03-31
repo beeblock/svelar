@@ -20,7 +20,7 @@ export class MakeTaskCommand extends Command {
     }
 
     const taskName = name.endsWith('Task') ? name : name;
-    const schedulerDir = join(process.cwd(), 'src', 'lib', 'shared', 'scheduler');
+    const schedulerDir = this.sharedDir('scheduler');
     mkdirSync(schedulerDir, { recursive: true });
 
     const filePath = join(schedulerDir, `${taskName}.ts`);
@@ -65,7 +65,8 @@ export class ${taskName} extends ScheduledTask {
 `;
 
     writeFileSync(filePath, content);
-    this.success(`Scheduled task created: src/lib/shared/scheduler/${taskName}.ts`);
+    const relPath = this.isDDD() ? `src/lib/shared/scheduler/${taskName}.ts` : `src/lib/scheduler/${taskName}.ts`;
+    this.success(`Scheduled task created: ${relPath}`);
   }
 
   private toKebabCase(str: string): string {

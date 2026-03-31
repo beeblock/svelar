@@ -24,11 +24,11 @@ export class MakeActionCommand extends Command {
     const actionName = name.endsWith('Action') ? name : `${name}Action`;
     const baseName = actionName.replace(/Action$/, '');
     const moduleName = flags.module || baseName.toLowerCase();
-    if (!flags.module) {
+    if (!flags.module && this.isDDD()) {
       this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
     }
 
-    const moduleDir = join(process.cwd(), 'src', 'lib', 'modules', moduleName);
+    const moduleDir = this.moduleDir(moduleName, 'actions');
     mkdirSync(moduleDir, { recursive: true });
 
     const filePath = join(moduleDir, `${actionName}.ts`);
@@ -56,6 +56,7 @@ export class ${actionName} extends Action<${actionName}Input, ${actionName}Outpu
 `;
 
     writeFileSync(filePath, content);
-    this.success(`Action created: src/lib/modules/${moduleName}/${actionName}.ts`);
+    const relDir = this.isDDD() ? `src/lib/modules/${moduleName}` : 'src/lib/actions';
+    this.success(`Action created: ${relDir}/${actionName}.ts`);
   }
 }

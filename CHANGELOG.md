@@ -24,8 +24,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- **CLI `$lib` resolution** — `ts-resolve-hook.mjs` now resolves `$lib/` imports to `src/lib/` so seeders, jobs, and scheduler tasks work when run through the CLI (`npx svelar seed:run`, `npx svelar schedule:run`, `npx svelar queue:work`)
+- **`schedule:run` path discovery** — now checks both `src/lib/shared/scheduler/` (DDD) and `src/lib/scheduler/` (flat) for scheduled tasks instead of hardcoding the flat path
+- **All `make:*` commands support both DDD and flat structures** — `make:job`, `make:task`, `make:middleware`, `make:channel`, `make:command`, `make:provider`, `make:plugin` auto-detect project structure and place files in `src/lib/shared/{type}/` (DDD) or `src/lib/{type}/` (flat); module commands (`make:model`, `make:controller`, `make:service`, `make:repository`, `make:resource`, `make:request`, `make:action`, `make:observer`, `make:schema`, `make:event`, `make:listener`) place files in `src/lib/modules/{module}/` (DDD) or `src/lib/{type}/` (flat)
+- **`tinker` model discovery** — now scans `src/lib/modules/*/` in DDD projects instead of only looking at `src/lib/models/`
+- **`--module` warning suppressed in flat projects** — `make:*` commands no longer warn about missing `--module` flag when the project uses flat structure
 - **`app.ts` template wrong DDD paths** — `User` import was `./lib/models/User.js` (flat path) instead of `./lib/modules/auth/User.js`; gates import was `./lib/auth/gates.js` instead of `./lib/modules/auth/gates.js`
 - **`DailyDigestEmail` scheduler wrong import** — was using relative `./DailyDigestJob.js` (wrong directory) instead of `$lib/shared/jobs/DailyDigestJob.js`
+- **`make:route` controller import path** — now generates `$lib/controllers/` in flat mode instead of hardcoded `$lib/modules/`
+- **Cross-type import paths in `make:*` commands** — `make:controller`, `make:service`, `make:repository`, `make:resource`, `make:observer` generate correct model imports (`../models/Model.js`) in flat mode; `make:listener` generates correct event imports (`../events/Event.js`) in flat mode
+- **TypeScript parameter properties in templates** — removed `private`/`public`/`readonly` parameter properties from `SendWelcomeEmail`, `UserRegistered`, and `WelcomeNotification` templates; Node's `--strip-only` TS mode does not support parameter properties
+- **Flat mode relative path depth** — shared file templates (`CleanupExpiredTokens`, etc.) had `../../../app.js` assuming 4-level DDD paths; flat mode correctly adjusts to `../../app.js`
 
 ## [0.4.3] - 2026-03-31
 

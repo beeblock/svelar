@@ -47,5 +47,10 @@ coverage/
 # TypeScript
 *.tsbuildinfo
 
+# Test/scaffolded apps (created by `npx svelar new` during development)
+test-*/
+hook-test/
+my-app/
+
 # Claude
 .claude/

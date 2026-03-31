@@ -26,11 +26,11 @@ export class MakeResourceCommand extends Command {
     const resourceName = name.endsWith('Resource') ? name : `${name}Resource`;
     const moduleName = flags.module || this.deriveModuleName(resourceName);
 
-    if (!flags.module) {
+    if (!flags.module && this.isDDD()) {
       this.warn(`No --module specified, using "${moduleName}". Use --module=<name> to target a specific module.`);
     }
 
-    const moduleDir = join(process.cwd(), 'src', 'lib', 'modules', moduleName);
+    const moduleDir = this.moduleDir(moduleName, 'resources');
     mkdirSync(moduleDir, { recursive: true });
 
     const filePath = join(moduleDir, `${resourceName}.ts`);
@@ -40,10 +40,12 @@ export class MakeResourceCommand extends Command {
     }
 
     const modelName = flags.model || this.inferModelName(resourceName);
-    const content = this.generateResource(resourceName, modelName);
+    const modelImportPath = this.isDDD() ? `./${modelName}.js` : `../models/${modelName}.js`;
+    const content = this.generateResource(resourceName, modelName, modelImportPath);
 
     writeFileSync(filePath, content);
-    this.success(`Resource created: src/lib/modules/${moduleName}/${resourceName}.ts`);
+    const relDir = this.isDDD() ? `src/lib/modules/${moduleName}` : 'src/lib/resources';
+    this.success(`Resource created: ${relDir}/${resourceName}.ts`);
 
     // Optionally create a collection resource
     if (flags.collection) {
@@ -51,17 +53,19 @@ export class MakeResourceCommand extends Command {
       const collectionPath = join(moduleDir, `${collectionName}.ts`);
 
       if (!existsSync(collectionPath)) {
-        const collectionContent = this.generateCollectionResource(collectionName, resourceName, modelName);
+        const collModelPath = this.isDDD() ? `./${modelName}.js` : `../models/${modelName}.js`;
+        const collectionContent = this.generateCollectionResource(collectionName, resourceName, modelName, collModelPath);
         writeFileSync(collectionPath, collectionContent);
-        this.success(`Collection resource created: src/lib/modules/${moduleName}/${collectionName}.ts`);
+        const collRelDir = this.isDDD() ? `src/lib/modules/${moduleName}` : 'src/lib/resources';
+        this.success(`Collection resource created: ${collRelDir}/${collectionName}.ts`);
       }
     }
   }
 
-  private generateResource(resourceName: string, modelName: string): string {
+  private generateResource(resourceName: string, modelName: string, modelPath: string = `./${modelName}.js`): string {
     const shapeName = `${modelName}Data`;
     return `import { Resource } from '@beeblock/svelar/routing';
-import type { ${modelName} } from './${modelName}.js';
+import type { ${modelName} } from '${modelPath}';
 
 // ── API Contract ────────────────────────────────────────────
 // Define the shape once — import this type on the frontend.
@@ -109,10 +113,10 @@ export class ${resourceName} extends Resource<${modelName}, ${shapeName}> {
 `;
   }
 
-  private generateCollectionResource(collectionName: string, resourceName: string, modelName: string): string {
+  private generateCollectionResource(collectionName: string, resourceName: string, modelName: string, modelPath: string = `./${modelName}.js`): string {
     return `import { Resource } from '@beeblock/svelar/routing';
 import { ${resourceName} } from './${resourceName}.js';
-import type { ${modelName} } from './${modelName}.js';
+import type { ${modelName} } from '${modelPath}';
 
 /**
  * ${collectionName}

@@ -2,6 +2,9 @@
  * Svelar CLI Command Base
  */
 
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+
 export interface CommandFlag {
   name: string;
   alias?: string;
@@ -121,5 +124,34 @@ export abstract class Command {
 
   protected newLine(): void {
     console.log();
+  }
+
+  // ── Project Structure Helpers ──
+
+  /**
+   * Detect whether the project uses DDD (src/lib/modules/) or flat structure.
+   */
+  protected isDDD(): boolean {
+    return existsSync(join(process.cwd(), 'src', 'lib', 'modules'));
+  }
+
+  /**
+   * Resolve a "shared" directory path (jobs, scheduler, middleware, etc.)
+   * DDD: src/lib/shared/{type}/  |  Flat: src/lib/{type}/
+   */
+  protected sharedDir(type: string): string {
+    return this.isDDD()
+      ? join(process.cwd(), 'src', 'lib', 'shared', type)
+      : join(process.cwd(), 'src', 'lib', type);
+  }
+
+  /**
+   * Resolve a module directory path (models, controllers, services, etc.)
+   * DDD: src/lib/modules/{module}/  |  Flat: src/lib/{type}/
+   */
+  protected moduleDir(moduleName: string, flatType: string): string {
+    return this.isDDD()
+      ? join(process.cwd(), 'src', 'lib', 'modules', moduleName)
+      : join(process.cwd(), 'src', 'lib', flatType);
   }
 }

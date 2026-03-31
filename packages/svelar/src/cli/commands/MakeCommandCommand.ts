@@ -22,7 +22,7 @@ export class MakeCommandCommand extends Command {
     }
 
     const className = name.endsWith('Command') ? name : `${name}Command`;
-    const commandsDir = join(process.cwd(), 'src', 'lib', 'shared', 'commands');
+    const commandsDir = this.sharedDir('commands');
     mkdirSync(commandsDir, { recursive: true });
 
     const filePath = join(commandsDir, `${className}.ts`);
@@ -61,7 +61,8 @@ export class ${className} extends Command {
 `;
 
     writeFileSync(filePath, content);
-    this.success(`Command created: src/lib/shared/commands/${className}.ts`);
+    const relPath = this.isDDD() ? `src/lib/shared/commands/${className}.ts` : `src/lib/commands/${className}.ts`;
+    this.success(`Command created: ${relPath}`);
     this.info(`Command name: ${commandName}`);
     this.newLine();
     this.info('Your command will be auto-discovered. Run it with:');

@@ -103,7 +103,9 @@ export class MakeRouteCommand extends Command {
       return;
     }
 
-    const importPath = `$lib/modules/${moduleName}/${controllerName}.js`;
+    const importPath = this.isDDD()
+      ? `$lib/modules/${moduleName}/${controllerName}.js`
+      : `$lib/controllers/${controllerName}.js`;
 
     const exports = bindings
       .map((b) => `export const ${b.method} = ctrl.handle('${b.handler}');`)

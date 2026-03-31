@@ -25,11 +25,11 @@ export class MakeRepositoryCommand extends Command {
     const repoName = name.endsWith('Repository') ? name : `${name}Repository`;
     const baseName = repoName.replace(/Repository$/, '');
     const moduleName = flags.module || baseName.toLowerCase();
-    if (!flags.module) {
+    if (!flags.module && this.isDDD()) {
       this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
     }
 
-    const moduleDir = join(process.cwd(), 'src', 'lib', 'modules', moduleName);
+    const moduleDir = this.moduleDir(moduleName, 'repositories');
     mkdirSync(moduleDir, { recursive: true });
 
     const filePath = join(moduleDir, `${repoName}.ts`);
@@ -39,8 +39,9 @@ export class MakeRepositoryCommand extends Command {
     }
 
     const modelName = flags.model || this.inferModelName(repoName);
+    const modelImportPath = this.isDDD() ? `./${modelName}.js` : `../models/${modelName}.js`;
     const content = `import { Repository } from '@beeblock/svelar/repositories';
-import { ${modelName} } from './${modelName}.js';
+import { ${modelName} } from '${modelImportPath}';
 
 export class ${repoName} extends Repository<${modelName}> {
   model() {
@@ -59,7 +60,8 @@ export class ${repoName} extends Repository<${modelName}> {
 `;
 
     writeFileSync(filePath, content);
-    this.success(`Repository created: src/lib/modules/${moduleName}/${repoName}.ts`);
+    const relDir = this.isDDD() ? `src/lib/modules/${moduleName}` : 'src/lib/repositories';
+    this.success(`Repository created: ${relDir}/${repoName}.ts`);
   }
 
   private inferModelName(repoName: string): string {

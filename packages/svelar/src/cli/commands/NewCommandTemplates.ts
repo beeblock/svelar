@@ -5349,8 +5349,15 @@ export class SendWelcomeEmail extends Job {
   maxAttempts = 3;
   retryDelay = 30;
 
-  constructor(private userId: number, private email: string, private name: string) {
+  userId: number;
+  email: string;
+  name: string;
+
+  constructor(userId: number, email: string, name: string) {
     super();
+    this.userId = userId;
+    this.email = email;
+    this.name = name;
   }
 
   async handle(): Promise<void> {
@@ -5766,7 +5773,10 @@ export async function load(event: ServerLoadEvent) {
 
   static userRegisteredEvent(): string {
     return `export class UserRegistered {
-  constructor(public readonly user: any) {}
+  readonly user: any;
+  constructor(user: any) {
+    this.user = user;
+  }
 }
 `;
   }
@@ -5795,8 +5805,11 @@ export class SendWelcomeEmailListener {
     return `import { Notification } from '@beeblock/svelar/notifications';
 
 export class WelcomeNotification extends Notification {
-  constructor(private user: any) {
+  user: any;
+
+  constructor(user: any) {
     super();
+    this.user = user;
   }
 
   via() {

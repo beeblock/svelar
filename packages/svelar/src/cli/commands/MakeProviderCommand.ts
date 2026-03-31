@@ -20,7 +20,7 @@ export class MakeProviderCommand extends Command {
     }
 
     const providerName = name.endsWith('ServiceProvider') ? name : `${name}ServiceProvider`;
-    const providersDir = join(process.cwd(), 'src', 'lib', 'shared', 'providers');
+    const providersDir = this.sharedDir('providers');
     mkdirSync(providersDir, { recursive: true });
 
     const filePath = join(providersDir, `${providerName}.ts`);
@@ -53,6 +53,7 @@ export class ${providerName} extends ServiceProvider {
 `;
 
     writeFileSync(filePath, content);
-    this.success(`Provider created: src/lib/shared/providers/${providerName}.ts`);
+    const relPath = this.isDDD() ? `src/lib/shared/providers/${providerName}.ts` : `src/lib/providers/${providerName}.ts`;
+    this.success(`Provider created: ${relPath}`);
   }
 }

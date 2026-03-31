@@ -20,7 +20,7 @@ export class MakePluginCommand extends Command {
     }
 
     const pluginName = name.endsWith('Plugin') ? name : `${name}Plugin`;
-    const pluginsDir = join(process.cwd(), 'src', 'lib', 'shared', 'plugins');
+    const pluginsDir = this.sharedDir('plugins');
     mkdirSync(pluginsDir, { recursive: true });
 
     const filePath = join(pluginsDir, `${pluginName}.ts`);
@@ -59,6 +59,7 @@ export class ${pluginName} extends Plugin {
 `;
 
     writeFileSync(filePath, content);
-    this.success(`Plugin created: src/lib/shared/plugins/${pluginName}.ts`);
+    const relPath = this.isDDD() ? `src/lib/shared/plugins/${pluginName}.ts` : `src/lib/plugins/${pluginName}.ts`;
+    this.success(`Plugin created: ${relPath}`);
   }
 }

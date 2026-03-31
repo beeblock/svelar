@@ -434,7 +434,14 @@ function toFlatImports(content: string, dddPath: string): string {
   // 4. Replace ./lib/shared/ with ./lib/ (app.ts style)
   content = content.replace(/\.\/lib\/shared\//g, './lib/');
 
-  // 5. Replace ./{Name}(.js)? relative imports within module files
+  // 5. Fix relative depth for shared files (shared/ removed = one fewer ../)
+  //    ../../../ in shared/{type}/ → ../../ in {type}/
+  if (dddPath.includes('shared/')) {
+    content = content.replace(/'\.\.\/(\.\.\/\.\.\/)'/g, "'$1'");
+    content = content.replace(/'\.\.\/\.\.\/\.\.\//g, "'../../");
+  }
+
+  // 6. Replace ./{Name}(.js)? relative imports within module files
   //    Only for files that are inside a module directory
   if (mod) {
     content = content.replace(
