@@ -391,6 +391,15 @@ Features.configure({ driver: 'database' });
 // ── PDF (PDFKit — no Docker needed) ─────────────────────
 PDF.configure({ driver: 'pdfkit' });
 
+// ── Stripe (billing — uncomment and npm install stripe) ──
+// import { Stripe } from '@beeblock/svelar/stripe';
+// Stripe.configure({
+//   secretKey: process.env.STRIPE_SECRET_KEY ?? '',
+//   publishableKey: process.env.STRIPE_PUBLISHABLE_KEY ?? '',
+//   webhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? '',
+//   currency: 'usd',
+// });
+
 // ── Dashboard ─────────────────────────────────────────────
 configureDashboard({ enabled: true, prefix: '/admin' });
 
@@ -5903,6 +5912,115 @@ export class EventServiceProvider extends BaseProvider {
     </Card>
   </div>
 </div>
+`;
+  }
+
+  // ── Stripe Migrations ────────────────────────────────────
+
+  static addStripeToUsers(): string {
+    return `import { Migration } from '@beeblock/svelar/database';
+
+export default class AddStripeToUsers extends Migration {
+  async up() {
+    await this.schema.alterTable('users', (table) => {
+      table.string('stripe_customer_id').nullable();
+    });
+  }
+
+  async down() {
+    await this.schema.alterTable('users', (table) => {
+      table.dropColumn('stripe_customer_id');
+    });
+  }
+}
+`;
+  }
+
+  static createSubscriptionPlansTable(): string {
+    return `import { Migration } from '@beeblock/svelar/database';
+
+export default class CreateSubscriptionPlansTable extends Migration {
+  async up() {
+    await this.schema.createTable('subscription_plans', (table) => {
+      table.increments('id').primary();
+      table.string('name');
+      table.string('stripe_price_id').unique();
+      table.string('stripe_product_id');
+      table.integer('price');
+      table.string('currency').defaultTo('usd');
+      table.string('interval').defaultTo('month');
+      table.integer('interval_count').defaultTo(1);
+      table.integer('trial_days').defaultTo(0);
+      table.text('features').defaultTo('[]');
+      table.integer('sort_order').defaultTo(0);
+      table.integer('active').defaultTo(1);
+      table.string('created_at');
+      table.string('updated_at');
+    });
+  }
+
+  async down() {
+    await this.schema.dropTable('subscription_plans');
+  }
+}
+`;
+  }
+
+  static createSubscriptionsTable(): string {
+    return `import { Migration } from '@beeblock/svelar/database';
+
+export default class CreateSubscriptionsTable extends Migration {
+  async up() {
+    await this.schema.createTable('subscriptions', (table) => {
+      table.increments('id').primary();
+      table.integer('user_id');
+      table.string('stripe_subscription_id').unique();
+      table.string('stripe_customer_id');
+      table.integer('plan_id');
+      table.string('status').defaultTo('active');
+      table.string('current_period_start');
+      table.string('current_period_end');
+      table.integer('cancel_at_period_end').defaultTo(0);
+      table.string('trial_ends_at').nullable();
+      table.string('canceled_at').nullable();
+      table.string('created_at');
+      table.string('updated_at');
+    });
+  }
+
+  async down() {
+    await this.schema.dropTable('subscriptions');
+  }
+}
+`;
+  }
+
+  static createInvoicesTable(): string {
+    return `import { Migration } from '@beeblock/svelar/database';
+
+export default class CreateInvoicesTable extends Migration {
+  async up() {
+    await this.schema.createTable('invoices', (table) => {
+      table.increments('id').primary();
+      table.integer('user_id');
+      table.integer('subscription_id').nullable();
+      table.string('stripe_invoice_id').unique();
+      table.integer('amount_due');
+      table.integer('amount_paid');
+      table.string('currency').defaultTo('usd');
+      table.string('status').defaultTo('open');
+      table.string('paid_at').nullable();
+      table.string('due_date').nullable();
+      table.text('invoice_pdf').nullable();
+      table.string('created_at');
+      table.string('updated_at').nullable();
+    });
+  }
+
+  async down() {
+    await this.schema.dropTable('invoices');
+  }
+}
 `;
   }
 

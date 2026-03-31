@@ -184,6 +184,10 @@ export class NewCommand extends Command {
     write('src/lib/database/migrations/00000006_create_audit_logs_table.ts', T.createAuditLogsTable());
     write('src/lib/database/migrations/00000007_create_notifications_table.ts', T.createNotificationsTable());
     write('src/lib/database/migrations/00000008_create_failed_jobs_table.ts', T.createFailedJobsTable());
+    write('src/lib/database/migrations/00000009_add_stripe_to_users.ts', T.addStripeToUsers());
+    write('src/lib/database/migrations/00000010_create_subscription_plans.ts', T.createSubscriptionPlansTable());
+    write('src/lib/database/migrations/00000011_create_subscriptions.ts', T.createSubscriptionsTable());
+    write('src/lib/database/migrations/00000012_create_invoices.ts', T.createInvoicesTable());
 
     // ── 5. Seeder ─────────────────────────────────────────
     write('src/lib/database/seeders/DatabaseSeeder.ts', T.databaseSeeder());
