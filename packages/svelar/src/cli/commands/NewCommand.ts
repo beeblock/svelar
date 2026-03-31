@@ -198,6 +198,7 @@ export class NewCommand extends Command {
     // ── 7. Dashboard pages ────────────────────────────────
     this.info('Creating dashboard...');
     write('src/routes/dashboard/+layout.server.ts', T.dashboardLayoutServer());
+    write('src/routes/dashboard/+layout.svelte', T.dashboardLayoutSvelte());
     write('src/routes/dashboard/+page.server.ts', T.dashboardPageServer());
     write('src/routes/dashboard/+page.svelte', T.dashboardPageSvelte());
     write('src/routes/dashboard/api-keys/+page.server.ts', T.apiKeysPageServer());
@@ -208,6 +209,7 @@ export class NewCommand extends Command {
     // ── 8. Admin pages ────────────────────────────────────
     this.info('Creating admin panel...');
     write('src/routes/admin/+layout.server.ts', T.adminLayoutServer());
+    write('src/routes/admin/+layout.svelte', T.adminLayoutSvelte());
     write('src/routes/admin/+page.server.ts', T.adminPageServer());
     write('src/routes/admin/+page.svelte', T.adminPageSvelte());
 
@@ -235,6 +237,15 @@ export class NewCommand extends Command {
     write('src/routes/api/admin/user-roles/+server.ts', T.apiAdminUserRoles());
     write('src/routes/api/admin/user-permissions/+server.ts', T.apiAdminUserPermissions());
     write('src/routes/api/admin/export/+server.ts', T.apiAdminExport());
+    write('src/routes/api/admin/health/+server.ts', T.apiAdminHealth());
+    write('src/routes/api/admin/queue/+server.ts', T.apiAdminQueue());
+    write('src/routes/api/admin/queue/[id]/retry/+server.ts', T.apiAdminQueueRetry());
+    write('src/routes/api/admin/queue/[id]/+server.ts', T.apiAdminQueueDelete());
+    write('src/routes/api/admin/scheduler/+server.ts', T.apiAdminScheduler());
+    write('src/routes/api/admin/scheduler/[name]/run/+server.ts', T.apiAdminSchedulerRun());
+    write('src/routes/api/admin/scheduler/[name]/toggle/+server.ts', T.apiAdminSchedulerToggle());
+    write('src/routes/api/admin/logs/+server.ts', T.apiAdminLogs());
+    write('src/routes/api/admin/stats/+server.ts', T.apiAdminStats());
 
     // ── 10. Jobs ──────────────────────────────────────────
     this.info('Creating background jobs...');

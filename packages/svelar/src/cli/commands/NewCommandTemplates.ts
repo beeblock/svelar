@@ -199,6 +199,7 @@ export default defineConfig({
 
   static appCss(): string {
     return `@import "tailwindcss";
+@source "../node_modules/@beeblock/svelar/src/ui";
 
 @theme {
   --color-brand: #ff3e00;
@@ -358,14 +359,14 @@ export { Connection, Hash, Broadcast };
 
 import { createSvelarApp } from '@beeblock/svelar/hooks';
 import { DatabaseSessionStore } from '@beeblock/svelar/session';
+import { env } from '\$env/dynamic/private';
 
 // Import app.ts to trigger database + hashing + auth configuration
 import { auth } from './app.js';
 
 export const { handle, handleError } = createSvelarApp({
   auth,
-  // WARNING: Set APP_KEY to a random 32+ char string in production
-  secret: process.env.APP_KEY || 'change-me-in-production',
+  secret: env.APP_KEY,
   sessionStore: new DatabaseSessionStore(),
   csrfExcludePaths: ['/api/webhooks', '/api/internal/'],
 });
@@ -2807,6 +2808,70 @@ export const load = guardAuth();
 `;
   }
 
+  static dashboardLayoutSvelte(): string {
+    return `<script lang="ts">
+  import { page } from '\$app/stores';
+  import type { Snippet } from 'svelte';
+  import { Icon } from '@beeblock/svelar/ui';
+  import LayoutDashboard from 'lucide-svelte/icons/layout-dashboard';
+  import KeyRound from 'lucide-svelte/icons/key-round';
+  import Users from 'lucide-svelte/icons/users';
+  import Settings from 'lucide-svelte/icons/settings';
+
+  interface Props {
+    data: any;
+    children: Snippet;
+  }
+
+  let { data, children }: Props = \$props();
+
+  const navItems = [
+    { href: '/dashboard', label: 'Overview', exact: true, icon: LayoutDashboard },
+    { href: '/dashboard/api-keys', label: 'API Keys', exact: false, icon: KeyRound },
+    { href: '/dashboard/team', label: 'Team', exact: false, icon: Users },
+  ];
+
+  function isActive(href: string, exact: boolean, pathname: string): boolean {
+    return exact ? pathname === href : pathname.startsWith(href);
+  }
+</script>
+
+<div class="flex min-h-[calc(100vh-130px)]">
+  <aside class="w-64 border-r border-gray-200 bg-gray-50 hidden md:block">
+    <nav class="p-4 space-y-1">
+      {#each navItems as item}
+        {@const active = isActive(item.href, item.exact, \$page.url.pathname)}
+        <a
+          href={item.href}
+          class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors {active ? 'bg-brand/10 text-brand' : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'}"
+        >
+          <Icon icon={item.icon} size={20} class={active ? 'text-brand' : 'text-gray-400'} />
+          {item.label}
+        </a>
+      {/each}
+    </nav>
+
+    {#if data.user?.role === 'admin'}
+      <div class="border-t border-gray-200 mx-4 my-2"></div>
+      <div class="p-4 pt-0">
+        <a
+          href="/admin"
+          class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors"
+        >
+          <Icon icon={Settings} size={20} class="text-gray-400" />
+          Admin Panel
+        </a>
+      </div>
+    {/if}
+  </aside>
+
+  <div class="flex-1 p-6 md:p-8">
+    {@render children()}
+  </div>
+</div>
+`;
+  }
+
   static dashboardPageServer(): string {
     return `import type { PageServerLoad } from './$types';
 import { ApiKeys } from '@beeblock/svelar/api-keys';
@@ -3409,16 +3474,96 @@ export const load = guardAuth('/dashboard', { role: 'admin' });
 `;
   }
 
+  static adminLayoutSvelte(): string {
+    return `<script lang="ts">
+  import { page } from '\$app/stores';
+  import type { Snippet } from 'svelte';
+  import { Icon } from '@beeblock/svelar/ui';
+  import LayoutDashboard from 'lucide-svelte/icons/layout-dashboard';
+  import Users from 'lucide-svelte/icons/users';
+  import ShieldCheck from 'lucide-svelte/icons/shield-check';
+  import Lock from 'lucide-svelte/icons/lock';
+  import ListTodo from 'lucide-svelte/icons/list-todo';
+  import Clock from 'lucide-svelte/icons/clock';
+  import FileText from 'lucide-svelte/icons/file-text';
+  import ArrowLeft from 'lucide-svelte/icons/arrow-left';
+
+  interface Props {
+    data: any;
+    children: Snippet;
+  }
+
+  let { data, children }: Props = \$props();
+
+  const navItems = [
+    { tab: 'overview', label: 'Overview', icon: LayoutDashboard },
+    { tab: 'users', label: 'Users', icon: Users },
+    { tab: 'roles', label: 'Roles', icon: ShieldCheck },
+    { tab: 'permissions', label: 'Permissions', icon: Lock },
+    { tab: 'queue', label: 'Queue', icon: ListTodo },
+    { tab: 'scheduler', label: 'Scheduler', icon: Clock },
+    { tab: 'logs', label: 'Logs', icon: FileText },
+  ];
+
+  function isActive(tab: string, currentUrl: URL): boolean {
+    const activeTab = currentUrl.searchParams.get('tab') ?? 'overview';
+    return activeTab === tab;
+  }
+</script>
+
+<div class="flex min-h-[calc(100vh-130px)]">
+  <aside class="w-64 border-r border-gray-200 bg-gray-50 hidden md:block">
+    <div class="p-4 border-b border-gray-200">
+      <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Administration</p>
+    </div>
+    <nav class="p-4 space-y-1">
+      {#each navItems as item}
+        {@const active = isActive(item.tab, \$page.url)}
+        <a
+          href="/admin?tab={item.tab}"
+          class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors {active ? 'bg-brand/10 text-brand' : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'}"
+        >
+          <Icon icon={item.icon} size={20} class={active ? 'text-brand' : 'text-gray-400'} />
+          {item.label}
+        </a>
+      {/each}
+    </nav>
+
+    <div class="border-t border-gray-200 mx-4 my-2"></div>
+    <div class="p-4 pt-0">
+      <a
+        href="/dashboard"
+        class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors"
+      >
+        <Icon icon={ArrowLeft} size={20} class="text-gray-400" />
+        Back to Dashboard
+      </a>
+    </div>
+  </aside>
+
+  <div class="flex-1 p-6 md:p-8">
+    {@render children()}
+  </div>
+</div>
+`;
+  }
+
   static adminPageServer(): string {
     return `import type { ServerLoadEvent } from '@sveltejs/kit';
 import { User } from '$lib/models/User.js';
 import { Post } from '$lib/models/Post.js';
+import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
+import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
+import { LogViewer } from '@beeblock/svelar/logging/LogViewer';
 import { Permissions } from '@beeblock/svelar/permissions';
 
 export async function load(event: ServerLoadEvent) {
   const user = event.locals.user;
 
+  // Fetch all users
   const users = await User.query().get();
+
+  // Fetch stats
   const userCount = users.length;
   const postCount = await Post.count();
 
@@ -3427,15 +3572,66 @@ export async function load(event: ServerLoadEvent) {
     user: users.filter((u: any) => u.role === 'user').length,
   };
 
+  // Queue stats from JobMonitor
+  let queueCounts = { waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0, total: 0 };
+  try {
+    queueCounts = await JobMonitor.getCounts('default');
+  } catch { /* sync/memory driver — no counts available */ }
+
+  // Scheduler tasks from ScheduleMonitor
+  let scheduledTasks: any[] = [];
+  try {
+    scheduledTasks = await ScheduleMonitor.listTasks();
+  } catch { /* scheduler not configured */ }
+
+  // Recent logs from LogViewer
+  let recentLogs: any[] = [];
+  let logStats = { totalEntries: 0, byLevel: {} as Record<string, number>, byChannel: {} };
+  try {
+    recentLogs = LogViewer.query({ limit: 50 });
+    logStats = LogViewer.getStats();
+  } catch { /* no logs yet */ }
+
+  // System health
+  const memUsage = process.memoryUsage();
+  const health = {
+    status: 'ok',
+    uptime: process.uptime(),
+    memoryUsedMB: Math.round(memUsage.heapUsed / 1024 / 1024),
+    memoryTotalMB: Math.round(memUsage.heapTotal / 1024 / 1024),
+    memoryPercent: Math.round((memUsage.heapUsed / memUsage.heapTotal) * 100),
+  };
+
+  // Roles & Permissions
   let roles: any[] = [];
   let permissions: any[] = [];
+  let rolePermissionsMap: Record<number, number[]> = {};
+  let userRolesMap: Record<number, any[]> = {};
+  let userDirectPermsMap: Record<number, any[]> = {};
   try {
     roles = await Permissions.allRoles();
     permissions = await Permissions.allPermissions();
-  } catch {}
+
+    // Load permissions for each role
+    for (const role of roles) {
+      const rolePerms = await Permissions.getRolePermissions(role.id);
+      rolePermissionsMap[role.id] = rolePerms.map((p: any) => p.id);
+    }
+
+    // Load roles and direct permissions for each user
+    for (const u of users) {
+      userRolesMap[u.id] = await Permissions.getModelRoles('User', u.id);
+      userDirectPermsMap[u.id] = await Permissions.getModelDirectPermissions('User', u.id);
+    }
+  } catch { /* permissions tables may not exist yet */ }
 
   return {
-    user: { id: user.id, name: user.name, email: user.email, role: user.role },
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+    },
     users: users.map((u: any) => ({
       id: u.id,
       name: u.name,
@@ -3443,9 +3639,57 @@ export async function load(event: ServerLoadEvent) {
       role: u.role,
       created_at: u.created_at,
     })),
-    stats: { userCount, postCount, roleDistribution },
-    roles: roles.map((r: any) => ({ id: r.id, name: r.name, guard: r.guard, description: r.description })),
-    permissions: permissions.map((p: any) => ({ id: p.id, name: p.name, guard: p.guard, description: p.description })),
+    stats: {
+      userCount,
+      postCount,
+      roleDistribution,
+    },
+    queueCounts,
+    scheduledTasks: scheduledTasks.map((t: any) => ({
+      name: t.name,
+      expression: t.expression,
+      humanReadable: t.humanReadable,
+      enabled: t.enabled,
+      isRunning: t.isRunning,
+      lastRun: t.lastRun?.toISOString() ?? null,
+      lastStatus: t.lastStatus ?? null,
+      nextRun: t.nextRun?.toISOString() ?? null,
+    })),
+    recentLogs: recentLogs.map((l: any) => ({
+      timestamp: l.timestamp,
+      level: l.level,
+      channel: l.channel,
+      message: l.message,
+    })),
+    logStats,
+    health,
+    roles: roles.map((r: any) => ({
+      id: r.id,
+      name: r.name,
+      guard: r.guard,
+      description: r.description,
+      created_at: r.created_at,
+    })),
+    permissions: permissions.map((p: any) => ({
+      id: p.id,
+      name: p.name,
+      guard: p.guard,
+      description: p.description,
+      created_at: p.created_at,
+    })),
+    rolePermissionsMap,
+    userRolesMap: Object.fromEntries(
+      Object.entries(userRolesMap).map(([uid, roles]) => [
+        uid,
+        roles.map((r: any) => ({ id: r.id, name: r.name })),
+      ]),
+    ),
+    userDirectPermsMap: Object.fromEntries(
+      Object.entries(userDirectPermsMap).map(([uid, perms]) => [
+        uid,
+        perms.map((p: any) => ({ id: p.id, name: p.name })),
+      ]),
+    ),
   };
 }
 `;
@@ -3453,157 +3697,955 @@ export async function load(event: ServerLoadEvent) {
 
   static adminPageSvelte(): string {
     return `<script lang="ts">
-  import { Button, Badge, Card, CardHeader, CardTitle, CardDescription, CardContent } from '@beeblock/svelar/ui';
+  import { page } from '\$app/stores';
+  import { Button, Badge, Card, CardHeader, CardTitle, CardDescription, CardContent, Alert, Input, Label } from '@beeblock/svelar/ui';
 
-  let { data } = $props();
-  let users = $state(data.users);
+  let { data } = \$props();
+  let users = \$state(data.users);
+  let message = \$state('');
+  let messageType = \$state<'success' | 'error'>('success');
 
-  async function updateRole(userId: number, role: string) {
-    const res = await fetch('/api/admin/users', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId, role }),
-    });
-    if (res.ok) {
-      users = users.map((u: any) => u.id === userId ? { ...u, role } : u);
+  // Real data from server
+  let queueCounts = \$state(data.queueCounts);
+  let scheduledTasks = \$state(data.scheduledTasks);
+  let recentLogs = \$state(data.recentLogs);
+  let logStats = \$state(data.logStats);
+  let health = \$state(data.health);
+
+  // Roles & Permissions
+  let roles = \$state(data.roles ?? []);
+  let permissions = \$state(data.permissions ?? []);
+  let rolePermissionsMap = \$state<Record<number, number[]>>(data.rolePermissionsMap ?? {});
+  let userRolesMap = \$state<Record<number, { id: number; name: string }[]>>(data.userRolesMap ?? {});
+  let userDirectPermsMap = \$state<Record<number, { id: number; name: string }[]>>(data.userDirectPermsMap ?? {});
+
+  // Form state
+  let newRoleName = \$state('');
+  let newRoleDesc = \$state('');
+  let newPermName = \$state('');
+  let newPermDesc = \$state('');
+  let showRoleForm = \$state(false);
+  let showPermForm = \$state(false);
+
+  let logFilter = \$state<'all' | 'info' | 'warn' | 'error'>('all');
+
+  const activeTab = \$derived(\$page.url.searchParams.get('tab') ?? 'overview');
+
+  const filteredLogs = \$derived(
+    logFilter === 'all' ? recentLogs : recentLogs.filter((log: any) => log.level === logFilter)
+  );
+
+  function flash(msg: string, type: 'success' | 'error' = 'success') {
+    message = msg;
+    messageType = type;
+  }
+
+  async function refreshDashboard() {
+    try {
+      const res = await fetch('/api/admin/stats');
+      if (res.ok) {
+        const stats = await res.json();
+        if (stats.queue) {
+          queueCounts = stats.queue.queues?.default ?? queueCounts;
+        }
+      }
+    } catch { /* ignore refresh errors */ }
+  }
+
+  async function updateUserRole(userId: number, newRole: string) {
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, role: newRole }),
+      });
+
+      if (res.ok) {
+        flash('User role updated successfully!');
+        await refreshUsers();
+      } else {
+        const error = await res.json();
+        flash(error.message || 'Failed to update user role', 'error');
+      }
+    } catch {
+      flash('Network error', 'error');
     }
   }
 
-  async function deleteUser(userId: number) {
-    if (!confirm('Are you sure you want to delete this user?')) return;
-    const res = await fetch('/api/admin/users', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId }),
-    });
-    if (res.ok) {
-      users = users.filter((u: any) => u.id !== userId);
+  async function deleteUser(userId: number, userName: string) {
+    if (!confirm(\`Are you sure you want to delete \${userName}? This cannot be undone.\`)) {
+      return;
     }
+
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId }),
+      });
+
+      if (res.ok) {
+        flash('User deleted successfully!');
+        await refreshUsers();
+      } else {
+        const error = await res.json();
+        flash(error.message || 'Failed to delete user', 'error');
+      }
+    } catch {
+      flash('Network error', 'error');
+    }
+  }
+
+  async function refreshUsers() {
+    const res = await fetch('/api/admin/users');
+    if (res.ok) {
+      const data = await res.json();
+      users = data;
+    }
+  }
+
+  async function retryJob(jobId: string) {
+    try {
+      const res = await fetch(\`/api/admin/queue/\${jobId}/retry\`, { method: 'POST' });
+      if (res.ok) {
+        flash('Job queued for retry');
+        await refreshQueue();
+      }
+    } catch {
+      flash('Failed to retry job', 'error');
+    }
+  }
+
+  async function refreshQueue() {
+    try {
+      const res = await fetch('/api/admin/queue');
+      if (res.ok) {
+        const data = await res.json();
+        queueCounts = data.counts;
+      }
+    } catch { /* ignore */ }
+  }
+
+  async function runTask(taskName: string) {
+    try {
+      const res = await fetch(\`/api/admin/scheduler/\${taskName}/run\`, { method: 'POST' });
+      if (res.ok) {
+        flash(\`Task '\${taskName}' triggered\`);
+      } else {
+        const err = await res.json();
+        flash(err.error || 'Failed to run task', 'error');
+      }
+    } catch {
+      flash('Failed to run task', 'error');
+    }
+  }
+
+  async function toggleTask(taskName: string, enabled: boolean) {
+    try {
+      const res = await fetch(\`/api/admin/scheduler/\${taskName}/toggle\`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+      if (res.ok) {
+        scheduledTasks = scheduledTasks.map((t: any) =>
+          t.name === taskName ? { ...t, enabled } : t
+        );
+        flash(\`Task '\${taskName}' \${enabled ? 'enabled' : 'disabled'}\`);
+      }
+    } catch {
+      flash('Failed to toggle task', 'error');
+    }
+  }
+
+  // -- Roles CRUD --
+
+  async function createRole() {
+    if (!newRoleName.trim()) return;
+    try {
+      const res = await fetch('/api/admin/roles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newRoleName.trim(), description: newRoleDesc.trim() || undefined }),
+      });
+      if (res.ok) {
+        const role = await res.json();
+        roles = [...roles, role];
+        rolePermissionsMap[role.id] = [];
+        newRoleName = '';
+        newRoleDesc = '';
+        showRoleForm = false;
+        flash('Role created');
+      } else {
+        const err = await res.json();
+        flash(err.message || 'Failed to create role', 'error');
+      }
+    } catch {
+      flash('Network error', 'error');
+    }
+  }
+
+  async function deleteRole(name: string) {
+    if (!confirm(\`Delete role "\${name}"? This will remove it from all users.\`)) return;
+    try {
+      const res = await fetch('/api/admin/roles', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      if (res.ok) {
+        const deleted = roles.find((r: any) => r.name === name);
+        roles = roles.filter((r: any) => r.name !== name);
+        if (deleted) delete rolePermissionsMap[deleted.id];
+        for (const uid of Object.keys(userRolesMap)) {
+          userRolesMap[uid as any] = userRolesMap[uid as any].filter((r: any) => r.name !== name);
+        }
+        flash('Role deleted');
+      } else {
+        const err = await res.json();
+        flash(err.message || 'Failed to delete role', 'error');
+      }
+    } catch {
+      flash('Network error', 'error');
+    }
+  }
+
+  // -- Permissions CRUD --
+
+  async function createPermission() {
+    if (!newPermName.trim()) return;
+    try {
+      const res = await fetch('/api/admin/permissions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newPermName.trim(), description: newPermDesc.trim() || undefined }),
+      });
+      if (res.ok) {
+        const perm = await res.json();
+        permissions = [...permissions, perm];
+        newPermName = '';
+        newPermDesc = '';
+        showPermForm = false;
+        flash('Permission created');
+      } else {
+        const err = await res.json();
+        flash(err.message || 'Failed to create permission', 'error');
+      }
+    } catch {
+      flash('Network error', 'error');
+    }
+  }
+
+  async function deletePermission(name: string) {
+    if (!confirm(\`Delete permission "\${name}"? This will revoke it from all roles and users.\`)) return;
+    try {
+      const res = await fetch('/api/admin/permissions', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      if (res.ok) {
+        const deleted = permissions.find((p: any) => p.name === name);
+        permissions = permissions.filter((p: any) => p.name !== name);
+        if (deleted) {
+          for (const rid of Object.keys(rolePermissionsMap)) {
+            rolePermissionsMap[rid as any] = rolePermissionsMap[rid as any].filter((pid: number) => pid !== deleted.id);
+          }
+        }
+        flash('Permission deleted');
+      } else {
+        const err = await res.json();
+        flash(err.message || 'Failed to delete permission', 'error');
+      }
+    } catch {
+      flash('Network error', 'error');
+    }
+  }
+
+  // -- Role <-> Permission --
+
+  async function toggleRolePermission(roleId: number, permissionId: number) {
+    const current = rolePermissionsMap[roleId] ?? [];
+    const has = current.includes(permissionId);
+
+    try {
+      const res = await fetch('/api/admin/role-permissions', {
+        method: has ? 'DELETE' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roleId, permissionId }),
+      });
+      if (res.ok) {
+        if (has) {
+          rolePermissionsMap[roleId] = current.filter((id: number) => id !== permissionId);
+        } else {
+          rolePermissionsMap[roleId] = [...current, permissionId];
+        }
+        rolePermissionsMap = { ...rolePermissionsMap };
+      } else {
+        const err = await res.json();
+        flash(err.message || 'Failed to update', 'error');
+      }
+    } catch {
+      flash('Network error', 'error');
+    }
+  }
+
+  // -- User <-> Role --
+
+  async function assignRoleToUser(userId: number, roleId: number) {
+    try {
+      const res = await fetch('/api/admin/user-roles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, roleId }),
+      });
+      if (res.ok) {
+        const role = roles.find((r: any) => r.id === roleId);
+        if (role) {
+          const current = userRolesMap[userId] ?? [];
+          if (!current.some((r: any) => r.id === roleId)) {
+            userRolesMap[userId] = [...current, { id: role.id, name: role.name }];
+            userRolesMap = { ...userRolesMap };
+          }
+        }
+        flash('Role assigned');
+      } else {
+        const err = await res.json();
+        flash(err.message || 'Failed to assign role', 'error');
+      }
+    } catch {
+      flash('Network error', 'error');
+    }
+  }
+
+  async function removeRoleFromUser(userId: number, roleId: number) {
+    try {
+      const res = await fetch('/api/admin/user-roles', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, roleId }),
+      });
+      if (res.ok) {
+        userRolesMap[userId] = (userRolesMap[userId] ?? []).filter((r: any) => r.id !== roleId);
+        userRolesMap = { ...userRolesMap };
+        flash('Role removed');
+      } else {
+        const err = await res.json();
+        flash(err.message || 'Failed to remove role', 'error');
+      }
+    } catch {
+      flash('Network error', 'error');
+    }
+  }
+
+  // -- User <-> Direct Permission --
+
+  async function grantPermToUser(userId: number, permissionId: number) {
+    try {
+      const res = await fetch('/api/admin/user-permissions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, permissionId }),
+      });
+      if (res.ok) {
+        const perm = permissions.find((p: any) => p.id === permissionId);
+        if (perm) {
+          const current = userDirectPermsMap[userId] ?? [];
+          if (!current.some((p: any) => p.id === permissionId)) {
+            userDirectPermsMap[userId] = [...current, { id: perm.id, name: perm.name }];
+            userDirectPermsMap = { ...userDirectPermsMap };
+          }
+        }
+        flash('Permission granted');
+      } else {
+        const err = await res.json();
+        flash(err.message || 'Failed to grant permission', 'error');
+      }
+    } catch {
+      flash('Network error', 'error');
+    }
+  }
+
+  async function revokePermFromUser(userId: number, permissionId: number) {
+    try {
+      const res = await fetch('/api/admin/user-permissions', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, permissionId }),
+      });
+      if (res.ok) {
+        userDirectPermsMap[userId] = (userDirectPermsMap[userId] ?? []).filter((p: any) => p.id !== permissionId);
+        userDirectPermsMap = { ...userDirectPermsMap };
+        flash('Permission revoked');
+      } else {
+        const err = await res.json();
+        flash(err.message || 'Failed to revoke permission', 'error');
+      }
+    } catch {
+      flash('Network error', 'error');
+    }
+  }
+
+  function formatDate(date: string | null): string {
+    if (!date) return 'Never';
+    try {
+      return new Date(date).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+    } catch {
+      return date;
+    }
+  }
+
+  function formatUptime(seconds: number): string {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    return h > 0 ? \`\${h}h \${m}m\` : \`\${m}m\`;
+  }
+
+  function getLogBadgeVariant(level: string): 'default' | 'secondary' | 'destructive' {
+    return level === 'error' || level === 'fatal' ? 'destructive' : level === 'warn' ? 'secondary' : 'default';
   }
 </script>
 
 <svelte:head>
-  <title>Admin Panel</title>
+  <title>Admin Dashboard</title>
 </svelte:head>
 
 <div class="space-y-8">
-  <div>
-    <h1 class="text-3xl font-bold text-gray-900 mb-2">Admin Panel</h1>
-    <p class="text-gray-600">Manage users, roles, and permissions</p>
+  <div class="flex justify-between items-center">
+    <div>
+      <h1 class="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
+      <p class="text-gray-600 mt-1">System health, queue monitoring, and task management</p>
+    </div>
+    <Button variant="outline" onclick={refreshDashboard}>Refresh</Button>
   </div>
 
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-    <Card>
-      <CardContent class="pt-6">
-        <p class="text-sm text-gray-600">Total Users</p>
-        <p class="text-3xl font-bold text-brand mt-2">{data.stats.userCount}</p>
-        <p class="text-xs text-gray-500 mt-1">{data.stats.roleDistribution.admin} admin, {data.stats.roleDistribution.user} user</p>
-      </CardContent>
-    </Card>
-    <Card>
-      <CardContent class="pt-6">
-        <p class="text-sm text-gray-600">Total Posts</p>
-        <p class="text-3xl font-bold text-brand mt-2">{data.stats.postCount}</p>
-      </CardContent>
-    </Card>
-    <Card>
-      <CardContent class="pt-6">
-        <p class="text-sm text-gray-600">Roles</p>
-        <p class="text-3xl font-bold text-brand mt-2">{data.roles.length}</p>
-        <p class="text-xs text-gray-500 mt-1">{data.permissions.length} permissions</p>
-      </CardContent>
-    </Card>
-  </div>
+  {#if message}
+    <Alert variant={messageType === 'error' ? 'destructive' : 'success'}>
+      <span class="text-sm">{message}</span>
+    </Alert>
+  {/if}
 
-  <Card>
-    <CardHeader>
-      <CardTitle>Users</CardTitle>
-      <CardDescription>{users.length} registered users</CardDescription>
-    </CardHeader>
-    <CardContent>
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="border-b border-gray-200">
-              <th class="text-left py-3 px-2 font-medium text-gray-600">ID</th>
-              <th class="text-left py-3 px-2 font-medium text-gray-600">Name</th>
-              <th class="text-left py-3 px-2 font-medium text-gray-600">Email</th>
-              <th class="text-left py-3 px-2 font-medium text-gray-600">Role</th>
-              <th class="text-right py-3 px-2 font-medium text-gray-600">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each users as u (u.id)}
-              <tr class="border-b border-gray-100 hover:bg-gray-50">
-                <td class="py-3 px-2">{u.id}</td>
-                <td class="py-3 px-2 font-medium">{u.name}</td>
-                <td class="py-3 px-2 text-gray-600">{u.email}</td>
-                <td class="py-3 px-2">
-                  <select
-                    class="px-2 py-1 border border-gray-300 rounded text-sm"
-                    value={u.role}
-                    onchange={(e) => updateRole(u.id, e.currentTarget.value)}
-                  >
-                    <option value="user">User</option>
-                    <option value="admin">Admin</option>
-                  </select>
-                </td>
-                <td class="py-3 px-2 text-right">
-                  {#if u.id !== data.user.id}
-                    <Button size="sm" variant="destructive" onclick={() => deleteUser(u.id)}>Delete</Button>
-                  {/if}
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-    </CardContent>
-  </Card>
-
-  {#if data.roles.length > 0}
-    <Card>
-      <CardHeader>
-        <CardTitle>Roles</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div class="flex flex-wrap gap-2">
-          {#each data.roles as role}
-            <div class="flex items-center gap-2 p-3 border border-gray-200 rounded-lg">
-              <Badge variant="default">{role.name}</Badge>
-              {#if role.description}
-                <span class="text-sm text-gray-600">{role.description}</span>
-              {/if}
+  <!-- Overview -->
+  {#if activeTab === 'overview'}
+    <div class="space-y-6">
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <Card>
+          <CardContent class="pt-6">
+            <div>
+              <p class="text-sm text-gray-600">Total Users</p>
+              <p class="text-3xl font-bold text-[var(--color-brand)] mt-2">{data.stats.userCount}</p>
             </div>
-          {/each}
-        </div>
-      </CardContent>
-    </Card>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent class="pt-6">
+            <div>
+              <p class="text-sm text-gray-600">Total Posts</p>
+              <p class="text-3xl font-bold text-[var(--color-brand)] mt-2">{data.stats.postCount}</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent class="pt-6">
+            <div>
+              <p class="text-sm text-gray-600">Queue Pending</p>
+              <p class="text-3xl font-bold text-yellow-600 mt-2">{queueCounts.waiting}</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent class="pt-6">
+            <div>
+              <p class="text-sm text-gray-600">Failed Jobs</p>
+              <p class="text-3xl font-bold text-red-600 mt-2">{queueCounts.failed}</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>System Health</CardTitle>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <div class="flex justify-between text-sm">
+            <span>Status</span>
+            <Badge variant="default">{health.status}</Badge>
+          </div>
+          <div class="flex justify-between text-sm">
+            <span>Uptime</span>
+            <span class="font-medium">{formatUptime(health.uptime)}</span>
+          </div>
+          <div class="space-y-2">
+            <div class="flex justify-between text-sm">
+              <span>Memory Usage</span>
+              <Badge variant={health.memoryPercent > 90 ? 'destructive' : health.memoryPercent > 70 ? 'secondary' : 'default'}>
+                {health.memoryUsedMB} MB / {health.memoryTotalMB} MB ({health.memoryPercent}%)
+              </Badge>
+            </div>
+            <div class="h-2 bg-gray-200 rounded-full overflow-hidden">
+              <div
+                class="h-full transition-all"
+                class:bg-green-500={health.memoryPercent <= 70}
+                class:bg-yellow-500={health.memoryPercent > 70 && health.memoryPercent <= 90}
+                class:bg-red-500={health.memoryPercent > 90}
+                style="width: {health.memoryPercent}%"
+              ></div>
+            </div>
+          </div>
+          <div class="flex justify-between text-sm">
+            <span>Queue Throughput</span>
+            <span class="font-medium">{queueCounts.total} total jobs</span>
+          </div>
+          <div class="flex justify-between text-sm">
+            <span>Log Entries</span>
+            <span class="font-medium">{logStats.totalEntries} entries ({logStats.byLevel?.error ?? 0} errors)</span>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   {/if}
 
-  {#if data.permissions.length > 0}
+  <!-- Users -->
+  {#if activeTab === 'users'}
     <Card>
       <CardHeader>
-        <CardTitle>Permissions</CardTitle>
+        <CardTitle>User Management</CardTitle>
+        <CardDescription>Manage user roles and permissions ({data.stats.userCount} users)</CardDescription>
       </CardHeader>
       <CardContent>
-        <div class="flex flex-wrap gap-2">
-          {#each data.permissions as perm}
-            <Badge variant="secondary">{perm.name}</Badge>
-          {/each}
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-gray-200">
+                <th class="text-left py-3 px-4 font-semibold text-gray-900">Name</th>
+                <th class="text-left py-3 px-4 font-semibold text-gray-900">Email</th>
+                <th class="text-left py-3 px-4 font-semibold text-gray-900">Column Role</th>
+                <th class="text-left py-3 px-4 font-semibold text-gray-900">Assigned Roles</th>
+                <th class="text-left py-3 px-4 font-semibold text-gray-900">Direct Permissions</th>
+                <th class="text-left py-3 px-4 font-semibold text-gray-900">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each users as user (user.id)}
+                <tr class="border-b border-gray-100 hover:bg-gray-50">
+                  <td class="py-3 px-4 font-medium text-gray-900">{user.name}</td>
+                  <td class="py-3 px-4 text-gray-600">{user.email}</td>
+                  <td class="py-3 px-4">
+                    <Badge variant={user.role === 'admin' ? 'default' : 'secondary'}>
+                      {user.role}
+                    </Badge>
+                  </td>
+                  <td class="py-3 px-4">
+                    <div class="flex flex-wrap gap-1">
+                      {#each (userRolesMap[user.id] ?? []) as role (role.id)}
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-800">
+                          {role.name}
+                          <button
+                            type="button"
+                            class="hover:text-red-600 font-bold"
+                            onclick={() => removeRoleFromUser(user.id, role.id)}
+                          >&times;</button>
+                        </span>
+                      {/each}
+                      {#if roles.length > 0}
+                        <select
+                          class="text-xs border border-gray-200 rounded px-1 py-0.5"
+                          onchange={(e) => {
+                            const val = Number((e.target as HTMLSelectElement).value);
+                            if (val) { assignRoleToUser(user.id, val); (e.target as HTMLSelectElement).value = ''; }
+                          }}
+                        >
+                          <option value="">+ role</option>
+                          {#each roles.filter((r) => !(userRolesMap[user.id] ?? []).some((ur) => ur.id === r.id)) as role (role.id)}
+                            <option value={role.id}>{role.name}</option>
+                          {/each}
+                        </select>
+                      {/if}
+                    </div>
+                  </td>
+                  <td class="py-3 px-4">
+                    <div class="flex flex-wrap gap-1">
+                      {#each (userDirectPermsMap[user.id] ?? []) as perm (perm.id)}
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-purple-100 text-purple-800">
+                          {perm.name}
+                          <button
+                            type="button"
+                            class="hover:text-red-600 font-bold"
+                            onclick={() => revokePermFromUser(user.id, perm.id)}
+                          >&times;</button>
+                        </span>
+                      {/each}
+                      {#if permissions.length > 0}
+                        <select
+                          class="text-xs border border-gray-200 rounded px-1 py-0.5"
+                          onchange={(e) => {
+                            const val = Number((e.target as HTMLSelectElement).value);
+                            if (val) { grantPermToUser(user.id, val); (e.target as HTMLSelectElement).value = ''; }
+                          }}
+                        >
+                          <option value="">+ perm</option>
+                          {#each permissions.filter((p) => !(userDirectPermsMap[user.id] ?? []).some((up) => up.id === p.id)) as perm (perm.id)}
+                            <option value={perm.id}>{perm.name}</option>
+                          {/each}
+                        </select>
+                      {/if}
+                    </div>
+                  </td>
+                  <td class="py-3 px-4">
+                    <div class="flex gap-2">
+                      {#if user.role === 'user'}
+                        <Button size="sm" variant="outline" onclick={() => updateUserRole(user.id, 'admin')}>
+                          Make Admin
+                        </Button>
+                      {:else if data.stats.roleDistribution.admin > 1}
+                        <Button size="sm" variant="outline" onclick={() => updateUserRole(user.id, 'user')}>
+                          Demote
+                        </Button>
+                      {/if}
+                      {#if user.id !== data.user.id}
+                        <Button size="sm" variant="destructive" onclick={() => deleteUser(user.id, user.name)}>
+                          Delete
+                        </Button>
+                      {/if}
+                    </div>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
         </div>
       </CardContent>
     </Card>
   {/if}
 
-  <Card>
-    <CardContent class="pt-6">
-      <p class="text-sm text-gray-600">
-        Need full monitoring with queue, scheduler, and log views?
-        Run <code class="bg-gray-100 px-1.5 py-0.5 rounded text-sm">npx svelar make:dashboard</code> to generate the complete admin dashboard.
-      </p>
-    </CardContent>
-  </Card>
+  <!-- Roles -->
+  {#if activeTab === 'roles'}
+    <div class="space-y-6">
+      <Card>
+        <CardHeader>
+          <div class="flex justify-between items-start">
+            <div>
+              <CardTitle>Roles</CardTitle>
+              <CardDescription>{roles.length} roles defined</CardDescription>
+            </div>
+            <Button size="sm" onclick={() => (showRoleForm = !showRoleForm)}>
+              {showRoleForm ? 'Cancel' : 'Create Role'}
+            </Button>
+          </div>
+        </CardHeader>
+        {#if showRoleForm}
+          <CardContent>
+            <form
+              class="flex flex-wrap gap-3 items-end border-b border-gray-100 pb-4 mb-4"
+              onsubmit={(e) => { e.preventDefault(); createRole(); }}
+            >
+              <div class="flex-1 min-w-[200px]">
+                <Label for="role-name">Name</Label>
+                <Input id="role-name" bind:value={newRoleName} placeholder="e.g. editor" />
+              </div>
+              <div class="flex-1 min-w-[200px]">
+                <Label for="role-desc">Description (optional)</Label>
+                <Input id="role-desc" bind:value={newRoleDesc} placeholder="Can edit content" />
+              </div>
+              <Button type="submit" size="sm">Create</Button>
+            </form>
+          </CardContent>
+        {/if}
+        <CardContent>
+          {#if roles.length > 0}
+            <div class="space-y-4">
+              {#each roles as role (role.id)}
+                <div class="border border-gray-200 rounded-lg p-4">
+                  <div class="flex items-center justify-between mb-3">
+                    <div>
+                      <span class="font-medium text-gray-900">{role.name}</span>
+                      <Badge variant="secondary" class="ml-2">{role.guard}</Badge>
+                      {#if role.description}
+                        <p class="text-xs text-gray-500 mt-1">{role.description}</p>
+                      {/if}
+                    </div>
+                    <Button size="sm" variant="destructive" onclick={() => deleteRole(role.name)}>Delete</Button>
+                  </div>
+                  <div>
+                    <p class="text-xs font-semibold text-gray-500 uppercase mb-2">Permissions</p>
+                    <div class="flex flex-wrap gap-2">
+                      {#each permissions as perm (perm.id)}
+                        {@const has = (rolePermissionsMap[role.id] ?? []).includes(perm.id)}
+                        <button
+                          type="button"
+                          class="px-2 py-1 rounded text-xs border transition-colors {has
+                            ? 'bg-[var(--color-brand)] text-white border-[var(--color-brand)]'
+                            : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400'}"
+                          onclick={() => toggleRolePermission(role.id, perm.id)}
+                        >
+                          {perm.name}
+                        </button>
+                      {/each}
+                      {#if permissions.length === 0}
+                        <span class="text-xs text-gray-400">No permissions defined yet</span>
+                      {/if}
+                    </div>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <p class="text-sm text-gray-500 py-4 text-center">
+              No roles defined. Create one to start assigning permissions.
+            </p>
+          {/if}
+        </CardContent>
+      </Card>
+    </div>
+  {/if}
+
+  <!-- Permissions -->
+  {#if activeTab === 'permissions'}
+    <div class="space-y-6">
+      <Card>
+        <CardHeader>
+          <div class="flex justify-between items-start">
+            <div>
+              <CardTitle>Permissions</CardTitle>
+              <CardDescription>{permissions.length} permissions defined</CardDescription>
+            </div>
+            <Button size="sm" onclick={() => (showPermForm = !showPermForm)}>
+              {showPermForm ? 'Cancel' : 'Create Permission'}
+            </Button>
+          </div>
+        </CardHeader>
+        {#if showPermForm}
+          <CardContent>
+            <form
+              class="flex flex-wrap gap-3 items-end border-b border-gray-100 pb-4 mb-4"
+              onsubmit={(e) => { e.preventDefault(); createPermission(); }}
+            >
+              <div class="flex-1 min-w-[200px]">
+                <Label for="perm-name">Name</Label>
+                <Input id="perm-name" bind:value={newPermName} placeholder="e.g. manage-users" />
+              </div>
+              <div class="flex-1 min-w-[200px]">
+                <Label for="perm-desc">Description (optional)</Label>
+                <Input id="perm-desc" bind:value={newPermDesc} placeholder="Can manage user accounts" />
+              </div>
+              <Button type="submit" size="sm">Create</Button>
+            </form>
+          </CardContent>
+        {/if}
+        <CardContent>
+          {#if permissions.length > 0}
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="border-b border-gray-200">
+                    <th class="text-left py-3 px-4 font-semibold text-gray-900">Name</th>
+                    <th class="text-left py-3 px-4 font-semibold text-gray-900">Guard</th>
+                    <th class="text-left py-3 px-4 font-semibold text-gray-900">Description</th>
+                    <th class="text-left py-3 px-4 font-semibold text-gray-900">Used by Roles</th>
+                    <th class="text-left py-3 px-4 font-semibold text-gray-900">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each permissions as perm (perm.id)}
+                    {@const usedBy = roles.filter((r) => (rolePermissionsMap[r.id] ?? []).includes(perm.id))}
+                    <tr class="border-b border-gray-100 hover:bg-gray-50">
+                      <td class="py-3 px-4 font-medium text-gray-900">{perm.name}</td>
+                      <td class="py-3 px-4">
+                        <Badge variant="secondary">{perm.guard}</Badge>
+                      </td>
+                      <td class="py-3 px-4 text-gray-600">{perm.description || '---'}</td>
+                      <td class="py-3 px-4">
+                        <div class="flex flex-wrap gap-1">
+                          {#each usedBy as role (role.id)}
+                            <Badge variant="outline">{role.name}</Badge>
+                          {/each}
+                          {#if usedBy.length === 0}
+                            <span class="text-xs text-gray-400">None</span>
+                          {/if}
+                        </div>
+                      </td>
+                      <td class="py-3 px-4">
+                        <Button size="sm" variant="destructive" onclick={() => deletePermission(perm.name)}>Delete</Button>
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {:else}
+            <p class="text-sm text-gray-500 py-4 text-center">
+              No permissions defined. Create one to start building your authorization system.
+            </p>
+          {/if}
+        </CardContent>
+      </Card>
+    </div>
+  {/if}
+
+  <!-- Queue -->
+  {#if activeTab === 'queue'}
+    <div class="space-y-6">
+      <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <Card>
+          <CardContent class="pt-6">
+            <div>
+              <p class="text-sm text-gray-600">Waiting</p>
+              <p class="text-3xl font-bold text-yellow-600 mt-2">{queueCounts.waiting}</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent class="pt-6">
+            <div>
+              <p class="text-sm text-gray-600">Active</p>
+              <p class="text-3xl font-bold text-blue-600 mt-2">{queueCounts.active}</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent class="pt-6">
+            <div>
+              <p class="text-sm text-gray-600">Failed</p>
+              <p class="text-3xl font-bold text-red-600 mt-2">{queueCounts.failed}</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent class="pt-6">
+            <div>
+              <p class="text-sm text-gray-600">Completed</p>
+              <p class="text-3xl font-bold text-green-600 mt-2">{queueCounts.completed}</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent class="pt-6">
+            <div>
+              <p class="text-sm text-gray-600">Delayed</p>
+              <p class="text-3xl font-bold text-gray-600 mt-2">{queueCounts.delayed}</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>Queue Actions</CardTitle>
+          <CardDescription>Manage job queue</CardDescription>
+        </CardHeader>
+        <CardContent class="flex gap-3">
+          <Button variant="outline" onclick={refreshQueue}>Refresh Counts</Button>
+        </CardContent>
+      </Card>
+    </div>
+  {/if}
+
+  <!-- Scheduler -->
+  {#if activeTab === 'scheduler'}
+    <Card>
+      <CardHeader>
+        <CardTitle>Scheduled Tasks</CardTitle>
+        <CardDescription>
+          {scheduledTasks.length > 0
+            ? \`\${scheduledTasks.length} registered tasks\`
+            : 'No tasks registered. Configure your scheduler to see tasks here.'}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {#if scheduledTasks.length > 0}
+          <div class="space-y-3">
+            {#each scheduledTasks as task (task.name)}
+              <div class="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50">
+                <div class="flex-1">
+                  <p class="font-medium text-gray-900">{task.name}</p>
+                  <p class="text-sm text-gray-600">Schedule: {task.humanReadable}</p>
+                  <p class="text-xs text-gray-500 mt-1">Last run: {formatDate(task.lastRun)}</p>
+                  <p class="text-xs text-gray-500">Next run: {formatDate(task.nextRun)}</p>
+                </div>
+                <div class="flex items-center gap-3">
+                  {#if task.lastStatus}
+                    <Badge variant={task.lastStatus === 'success' ? 'default' : 'destructive'}>
+                      {task.lastStatus}
+                    </Badge>
+                  {/if}
+                  <Badge variant={task.enabled ? 'default' : 'secondary'}>
+                    {task.enabled ? 'enabled' : 'disabled'}
+                  </Badge>
+                  <Button size="sm" variant="outline" onclick={() => runTask(task.name)}>Run Now</Button>
+                  <Button size="sm" variant="outline" onclick={() => toggleTask(task.name, !task.enabled)}>
+                    {task.enabled ? 'Disable' : 'Enable'}
+                  </Button>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <p class="text-sm text-gray-500 py-4 text-center">
+            No scheduled tasks found. Configure the Scheduler in your app.ts to register tasks.
+          </p>
+        {/if}
+      </CardContent>
+    </Card>
+  {/if}
+
+  <!-- Logs -->
+  {#if activeTab === 'logs'}
+    <Card>
+      <CardHeader>
+        <CardTitle>Application Logs</CardTitle>
+        <CardDescription>
+          {logStats.totalEntries} total entries
+          {#if logStats.byLevel?.error}
+            ({logStats.byLevel.error} errors)
+          {/if}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div class="flex gap-2 mb-4">
+          <Button size="sm" variant={logFilter === 'all' ? 'default' : 'outline'} onclick={() => (logFilter = 'all')}>
+            All ({logStats.totalEntries})
+          </Button>
+          <Button size="sm" variant={logFilter === 'info' ? 'default' : 'outline'} onclick={() => (logFilter = 'info')}>
+            Info ({logStats.byLevel?.info ?? 0})
+          </Button>
+          <Button size="sm" variant={logFilter === 'warn' ? 'default' : 'outline'} onclick={() => (logFilter = 'warn')}>
+            Warning ({logStats.byLevel?.warn ?? 0})
+          </Button>
+          <Button size="sm" variant={logFilter === 'error' ? 'default' : 'outline'} onclick={() => (logFilter = 'error')}>
+            Error ({logStats.byLevel?.error ?? 0})
+          </Button>
+        </div>
+
+        {#if filteredLogs.length > 0}
+          <div class="space-y-2 max-h-96 overflow-y-auto">
+            {#each filteredLogs as log, i (i)}
+              <div class="flex items-start gap-3 p-3 border border-gray-200 rounded bg-gray-50 text-sm">
+                <Badge variant={getLogBadgeVariant(log.level)} class="mt-0.5">
+                  {log.level.toUpperCase()}
+                </Badge>
+                <div class="flex-1">
+                  <p class="text-gray-900">{log.message}</p>
+                  <p class="text-xs text-gray-500 mt-1">
+                    {formatDate(log.timestamp)}
+                    {#if log.channel && log.channel !== 'default'}
+                      <span class="ml-2 text-gray-400">[{log.channel}]</span>
+                    {/if}
+                  </p>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <p class="text-sm text-gray-500 py-4 text-center">
+            No log entries found. Logs appear here as your application runs.
+          </p>
+        {/if}
+      </CardContent>
+    </Card>
+  {/if}
 </div>
 `;
   }
@@ -3890,6 +4932,206 @@ export const DELETE = ctrl.handle('revokeUserPermission');
 
 const ctrl = new AdminController();
 export const POST = ctrl.handle('exportData');
+`;
+  }
+
+  // ─── Admin Dashboard API Routes ──────────────────────────
+
+  static apiAdminHealth(): string {
+    return `import { json } from '@sveltejs/kit';
+import type { RequestHandler } from '@sveltejs/kit';
+
+export const GET: RequestHandler = async () => {
+  const health = {
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    memory: process.memoryUsage(),
+    version: '0.1.0',
+  };
+
+  return json(health);
+};
+`;
+  }
+
+  static apiAdminQueue(): string {
+    return `import { json } from '@sveltejs/kit';
+import type { RequestHandler } from '@sveltejs/kit';
+import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
+
+export const GET: RequestHandler = async (event) => {
+  const { searchParams } = event.url;
+  const status = searchParams.get('status') || 'all';
+  const queueName = searchParams.get('queue') || 'default';
+  const limit = parseInt(searchParams.get('limit') || '50');
+  const offset = parseInt(searchParams.get('offset') || '0');
+
+  try {
+    const jobs = await JobMonitor.listJobs({
+      queue: queueName,
+      status: status === 'all' ? undefined : status as any,
+      limit,
+      offset,
+    });
+    const counts = await JobMonitor.getCounts(queueName);
+    return json({ jobs, counts, queueName });
+  } catch (error: any) {
+    return json({ error: error.message || 'Failed to fetch queue jobs' }, { status: 500 });
+  }
+};
+`;
+  }
+
+  static apiAdminQueueRetry(): string {
+    return `import { json } from '@sveltejs/kit';
+import type { RequestHandler } from '@sveltejs/kit';
+import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
+
+export const POST: RequestHandler = async (event) => {
+  const { id } = event.params;
+  try {
+    await JobMonitor.retryJob(id);
+    return json({ success: true, message: 'Job queued for retry' });
+  } catch (error: any) {
+    return json({ error: error.message || 'Failed to retry job' }, { status: 500 });
+  }
+};
+`;
+  }
+
+  static apiAdminQueueDelete(): string {
+    return `import { json } from '@sveltejs/kit';
+import type { RequestHandler } from '@sveltejs/kit';
+import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
+
+export const DELETE: RequestHandler = async (event) => {
+  const { id } = event.params;
+  try {
+    await JobMonitor.deleteJob(id);
+    return json({ success: true, message: 'Job removed' });
+  } catch (error: any) {
+    return json({ error: error.message || 'Failed to remove job' }, { status: 500 });
+  }
+};
+`;
+  }
+
+  static apiAdminScheduler(): string {
+    return `import { json } from '@sveltejs/kit';
+import type { RequestHandler } from '@sveltejs/kit';
+import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
+
+export const GET: RequestHandler = async () => {
+  try {
+    const tasks = await ScheduleMonitor.listTasks();
+    const health = await ScheduleMonitor.getHealth();
+    return json({ tasks, health });
+  } catch (error: any) {
+    return json({ error: error.message || 'Failed to fetch scheduled tasks' }, { status: 500 });
+  }
+};
+`;
+  }
+
+  static apiAdminSchedulerRun(): string {
+    return `import { json } from '@sveltejs/kit';
+import type { RequestHandler } from '@sveltejs/kit';
+import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
+
+export const POST: RequestHandler = async (event) => {
+  const { name } = event.params;
+  try {
+    await ScheduleMonitor.runTask(name);
+    return json({ success: true, message: \`Task '\${name}' triggered\` });
+  } catch (error: any) {
+    return json({ error: error.message || 'Failed to run task' }, { status: 500 });
+  }
+};
+`;
+  }
+
+  static apiAdminSchedulerToggle(): string {
+    return `import { json } from '@sveltejs/kit';
+import type { RequestHandler } from '@sveltejs/kit';
+import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
+
+export const POST: RequestHandler = async (event) => {
+  const { name } = event.params;
+  const body = await event.request.json();
+  const enabled = body.enabled ?? true;
+
+  try {
+    if (enabled) {
+      ScheduleMonitor.enableTask(name);
+    } else {
+      ScheduleMonitor.disableTask(name);
+    }
+    return json({ success: true, message: \`Task '\${name}' \${enabled ? 'enabled' : 'disabled'}\` });
+  } catch (error: any) {
+    return json({ error: error.message || 'Failed to toggle task' }, { status: 500 });
+  }
+};
+`;
+  }
+
+  static apiAdminLogs(): string {
+    return `import { json } from '@sveltejs/kit';
+import type { RequestHandler } from '@sveltejs/kit';
+import { LogViewer } from '@beeblock/svelar/logging/LogViewer';
+
+export const GET: RequestHandler = async (event) => {
+  const { searchParams } = event.url;
+  const level = searchParams.get('level');
+  const channel = searchParams.get('channel');
+  const search = searchParams.get('search');
+  const limit = parseInt(searchParams.get('limit') || '100');
+  const offset = parseInt(searchParams.get('offset') || '0');
+
+  try {
+    const logs = LogViewer.query({
+      level: level as any,
+      channel: channel ?? undefined,
+      search: search ?? undefined,
+      limit,
+      offset,
+    });
+    const stats = LogViewer.getStats();
+    return json({ logs, total: stats.totalEntries, limit, offset });
+  } catch (error: any) {
+    return json({ error: error.message || 'Failed to fetch logs' }, { status: 500 });
+  }
+};
+`;
+  }
+
+  static apiAdminStats(): string {
+    return `import { json } from '@sveltejs/kit';
+import type { RequestHandler } from '@sveltejs/kit';
+import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
+import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
+import { LogViewer } from '@beeblock/svelar/logging/LogViewer';
+
+export const GET: RequestHandler = async () => {
+  try {
+    const [queueHealth, recentErrors] = await Promise.all([
+      JobMonitor.getHealth(),
+      Promise.resolve(LogViewer.getRecentErrors(10)),
+    ]);
+    const schedulerHealth = await ScheduleMonitor.getHealth();
+    const logStats = LogViewer.getStats();
+
+    return json({
+      queue: queueHealth,
+      scheduler: schedulerHealth,
+      logs: logStats,
+      recentErrors,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error: any) {
+    return json({ error: error.message || 'Failed to fetch stats' }, { status: 500 });
+  }
+};
 `;
   }
 

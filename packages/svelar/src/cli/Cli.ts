@@ -52,6 +52,12 @@ export class Cli {
       process.exit(1);
     }
 
+    // Show per-command help
+    if (rest.includes('--help') || rest.includes('-h')) {
+      this.showCommandHelp(command);
+      return;
+    }
+
     // Parse flags and args
     const { args, flags } = this.parseArgs(rest, command);
 
@@ -120,6 +126,24 @@ export class Cli {
     }
 
     return { args, flags };
+  }
+
+  private showCommandHelp(command: Command): void {
+    console.log(`\n\x1b[33mDescription:\x1b[0m`);
+    console.log(`  ${command.description}\n`);
+    console.log(`\x1b[33mUsage:\x1b[0m`);
+    console.log(`  svelar ${command.name} [options]\n`);
+
+    if (command.flags.length > 0) {
+      console.log(`\x1b[33mOptions:\x1b[0m`);
+      for (const flag of command.flags) {
+        const alias = (flag as any).alias ? `-${(flag as any).alias}, ` : '    ';
+        const name = `--${flag.name}`;
+        const padding = 24 - alias.length - name.length;
+        console.log(`  ${alias}${name}${' '.repeat(Math.max(1, padding))}${flag.description}`);
+      }
+      console.log();
+    }
   }
 
   private showHelp(): void {

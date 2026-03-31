@@ -11,6 +11,9 @@ export class TinkerCommand extends Command {
   flags = [];
 
   async handle(): Promise<void> {
+    // Bootstrap database connection
+    await this.bootstrap();
+
     this.info('Starting Svelar Tinker...');
     this.log('Type .exit to quit. All Svelar modules are available.\n');
 

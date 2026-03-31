@@ -536,7 +536,7 @@ export class SessionMiddleware extends Middleware {
     this.config = {
       cookieName: 'svelar_session',
       lifetime: 7200,
-      secret: process.env.APP_KEY ?? (() => { throw new Error('APP_KEY is not set. Set it in your .env file before using sessions.'); })(),
+      secret: '',
       path: '/',
       domain: '',
       secure: process.env.NODE_ENV === 'production',
@@ -544,6 +544,9 @@ export class SessionMiddleware extends Middleware {
       sameSite: 'lax',
       ...userConfig,
     };
+    if (!this.config.secret) {
+      throw new Error('APP_KEY is not set. Pass `secret` to createSvelarApp() — e.g. secret: env.APP_KEY (from $env/dynamic/private).');
+    }
   }
 
   async handle(ctx: MiddlewareContext, next: NextFunction): Promise<Response | void> {

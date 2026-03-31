@@ -57,7 +57,7 @@ import { MakeConfigCommand } from './commands/MakeConfigCommand.js';
 import { MakeChannelCommand } from './commands/MakeChannelCommand.js';
 import { MakeDockerCommand } from './commands/MakeDockerCommand.js';
 import { MakeBroadcastingCommand } from './commands/MakeBroadcastingCommand.js';
-import { MakeDashboardCommand } from './commands/MakeDashboardCommand.js';
+
 import { MakeResourceCommand } from './commands/MakeResourceCommand.js';
 import { MakeSchemaCommand } from './commands/MakeSchemaCommand.js';
 import { MakeObserverCommand } from './commands/MakeObserverCommand.js';
@@ -120,7 +120,7 @@ cli.register(MakeConfigCommand);
 cli.register(MakeChannelCommand);
 cli.register(MakeDockerCommand);
 cli.register(MakeBroadcastingCommand);
-cli.register(MakeDashboardCommand);
+
 cli.register(MakeObserverCommand);
 cli.register(MakeEventCommand);
 cli.register(MakeListenerCommand);
