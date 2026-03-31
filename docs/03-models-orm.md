@@ -1696,12 +1696,78 @@ const users = await User.query()
 7. **Use `toSQL()`** to debug complex queries — it shows the generated SQL without executing it.
 8. **Keep models thin** — move business logic to services, actions, or repositories.
 
+## Model Mixins
+
+Svelar models support composable mixins that add functionality:
+
+### Searchable (Meilisearch)
+
+Add full-text search to any model with the `Searchable` mixin. Indexes stay in sync automatically on create, update, and delete.
+
+```typescript
+import { Model } from '@beeblock/svelar/orm';
+import { Searchable } from '@beeblock/svelar/search';
+
+class Post extends Searchable(Model) {
+  static table = 'posts';
+
+  shouldBeSearchable(): boolean {
+    return this.getAttribute('status') === 'published';
+  }
+
+  toSearchableObject() {
+    return {
+      id: this.getAttribute('id'),
+      title: this.getAttribute('title'),
+      content: this.getAttribute('content'),
+    };
+  }
+}
+
+// Search
+const results = await Post.search('hello world');
+
+// Skip syncing for bulk operations
+await Search.withoutSyncing(async () => { /* bulk inserts */ });
+await Post.makeAllSearchable(); // re-index after
+```
+
+See [Full-Text Search](./31-search.md) for the complete guide.
+
+### HasRoles (Permissions)
+
+Add role-based access control to models:
+
+```typescript
+import { HasRoles } from '@beeblock/svelar/permissions';
+
+class User extends HasRoles(Model) {
+  static table = 'users';
+}
+
+await user.assignRole('editor');
+await user.hasPermission('manage-posts'); // true if role has that permission
+```
+
+See [Permissions](./07-middleware.md) for the complete guide.
+
+### Composing Multiple Mixins
+
+Stack mixins as needed:
+
+```typescript
+class User extends Searchable(HasRoles(Model)) {
+  static table = 'users';
+}
+```
+
 ## Next Steps
 
 - [Validation & DTOs](./05-validation-dtos.md) — validate data before saving
 - [Controllers & Routing](./04-controllers-routing.md) — use models in request handlers
 - [Services & Repositories](./08-services-actions-repositories.md) — data access patterns
 - [Database & Migrations](./02-database.md) — schema management
+- [Full-Text Search](./31-search.md) — Meilisearch integration with Searchable mixin
 
 ---
 

@@ -233,8 +233,7 @@ app:
 postgres:
   image: postgres:16-alpine
   restart: unless-stopped
-  ports:
-    - "${DB_PORT:-5432}:5432"
+  # No ports exposed — only reachable by app via Docker network
   environment:
     POSTGRES_DB: ${DB_NAME:-svelar}
     POSTGRES_USER: ${DB_USER:-svelar}
@@ -254,12 +253,12 @@ postgres:
 redis:
   image: redis:7-alpine
   restart: unless-stopped
-  ports:
-    - "${REDIS_PORT:-6379}:6379"
+  # No ports exposed — only reachable by app via Docker network
+  command: redis-server --requirepass ${REDIS_PASSWORD:-svelarsecret}
   volumes:
     - redisdata:/data
   healthcheck:
-    test: ["CMD", "redis-cli", "ping"]
+    test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-svelarsecret}", "ping"]
     interval: 5s
     timeout: 3s
     retries: 5
@@ -271,9 +270,10 @@ redis:
 soketi:
   image: quay.io/soketi/soketi:1.6-16-debian
   restart: unless-stopped
-  ports:
-    - "${SOKETI_PORT:-6001}:6001"
-    - "9601:9601"  # Metrics
+  # No ports exposed — only reachable by app via Docker network
+  # Uncomment below if browser clients connect directly to Soketi
+  # ports:
+  #   - "${SOKETI_PORT:-6001}:6001"
   environment:
     SOKETI_DEFAULT_APP_ID: ${PUSHER_APP_ID:-svelar-app}
     SOKETI_DEFAULT_APP_KEY: ${PUSHER_KEY:-svelar-key}
@@ -288,8 +288,7 @@ soketi:
 gotenberg:
   image: gotenberg/gotenberg:8
   restart: unless-stopped
-  ports:
-    - "${GOTENBERG_PORT:-3001}:3000"
+  # No ports exposed — only reachable by app via Docker network
   environment:
     CHROMIUM_DISABLE_JAVASCRIPT: "false"
     API_TIMEOUT: ${GOTENBERG_TIMEOUT:-60s}
@@ -302,8 +301,7 @@ rustfs:
   image: rustfs/rustfs:latest
   restart: unless-stopped
   ports:
-    - "${RUSTFS_API_PORT:-9000}:9000"
-    - "${RUSTFS_CONSOLE_PORT:-9001}:9001"
+    - "${RUSTFS_CONSOLE_PORT:-9001}:9001"   # Admin console (protect with firewall)
   environment:
     RUSTFS_ROOT_USER: ${RUSTFS_ROOT_USER:-svelar}
     RUSTFS_ROOT_PASSWORD: ${RUSTFS_ROOT_PASSWORD:-svelarsecret}
@@ -313,6 +311,56 @@ rustfs:
 ```
 
 RustFS web console is available at `http://localhost:9001` for browsing buckets and managing files.
+
+### Meilisearch (Full-Text Search)
+
+Opt-in with `npx svelar make:docker --meilisearch`:
+
+```yaml
+meilisearch:
+  image: getmeili/meilisearch:v1.13
+  restart: unless-stopped
+  # No ports exposed — only reachable by app via Docker network
+  # Uncomment below to access the dashboard from the host
+  # ports:
+  #   - "${MEILI_PORT:-7700}:7700"
+  environment:
+    MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-svelar-meili-master-key}
+    MEILI_ENV: production
+    MEILI_DB_PATH: /meili_data
+    MEILI_NO_ANALYTICS: "true"
+  volumes:
+    - meili_data:/meili_data
+  healthcheck:
+    test: ["CMD", "wget", "--no-verbose", "--spider", "http://localhost:7700/health"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+```
+
+The app connects via the Docker network using `MEILISEARCH_HOST=http://meilisearch:7700`. Install the JS SDK in your project:
+
+```bash
+npm install meilisearch
+```
+
+Basic usage:
+
+```typescript
+import { MeiliSearch } from 'meilisearch';
+
+const client = new MeiliSearch({
+  host: process.env.MEILISEARCH_HOST ?? 'http://localhost:7700',
+  apiKey: process.env.MEILISEARCH_KEY,
+});
+
+// Index documents
+const index = client.index('posts');
+await index.addDocuments(posts);
+
+// Search
+const results = await index.search('query');
+```
 
 ---
 
@@ -418,6 +466,7 @@ docker compose exec app pm2 scale worker 4
 |----------|---------|-------------|
 | `REDIS_HOST` | `redis` | Redis hostname (auto-set in Docker) |
 | `REDIS_PORT` | `6379` | Redis port |
+| `REDIS_PASSWORD` | `svelarsecret` | Redis authentication password |
 | `QUEUE_DRIVER` | `redis` | Queue driver (`redis`, `memory`, `sync`) |
 
 ### WebSockets (Soketi)
@@ -453,6 +502,14 @@ docker compose exec app pm2 scale worker 4
 | `STORAGE_DISK` | `s3` | Default storage disk |
 | `RUSTFS_ROOT_USER` | `svelar` | RustFS admin user |
 | `RUSTFS_ROOT_PASSWORD` | `svelarsecret` | RustFS admin password |
+
+### Search (Meilisearch)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MEILISEARCH_HOST` | `http://meilisearch:7700` | Meilisearch host URL (auto-set in Docker) |
+| `MEILISEARCH_KEY` | `svelar-meili-master-key` | Meilisearch API key (must match `MEILI_MASTER_KEY`) |
+| `MEILI_MASTER_KEY` | `svelar-meili-master-key` | Meilisearch master key (container config) |
 
 ### Auth
 

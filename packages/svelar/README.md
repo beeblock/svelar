@@ -70,6 +70,7 @@ See the [Getting Started guide](https://svelar.dev/docs/getting-started) for a c
 | **Email Templates** | `svelar/email-templates` | Database-stored templates with variable interpolation |
 | **Uploads** | `svelar/uploads` | File upload handling with validation (local + S3) |
 | **Dashboard** | `svelar/dashboard` | Admin dashboard with job/scheduler monitoring and log viewer |
+| **Search** | `svelar/search` | Meilisearch integration with auto-syncing `Searchable` mixin |
 
 ## CLI
 

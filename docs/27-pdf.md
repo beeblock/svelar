@@ -6,16 +6,12 @@ Svelar ships with two swappable PDF drivers. The API is the same — switch driv
 
 | Driver | Install | Best For | Limitations |
 |--------|---------|----------|-------------|
-| **pdfkit** (default) | `npm install pdfkit` | Invoices, reports, tickets, programmatic docs | No pixel-perfect HTML rendering, no office docs |
+| **pdfkit** (default) | Included in scaffold | Invoices, reports, tickets, programmatic docs | No pixel-perfect HTML rendering, no office docs |
 | **gotenberg** | Docker container | Pixel-perfect HTML/CSS, URL→PDF, office docs (docx, xlsx, pptx) | Requires running Docker |
 
 ### Setup — PDFKit (Default)
 
-PDFKit is a pure JavaScript PDF library. No Docker, no external services. Install it and go:
-
-```bash
-npm install pdfkit
-```
+PDFKit is included in scaffolded projects (`npx svelar new`). No Docker, no external services — it works out of the box:
 
 ```typescript
 // src/app.ts

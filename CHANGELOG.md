@@ -4,6 +4,31 @@ All notable changes to `@beeblock/svelar` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2026-03-31
+
+### Added
+
+- **Full-text search module (`@beeblock/svelar/search`)** — Meilisearch integration with `Searchable` mixin for automatic index syncing on create/update/delete, `Search.withoutSyncing()` for bulk operations, `Model.search()`, `Model.makeAllSearchable()`, `Model.configureSearchIndex()`, and conditional indexing via `shouldBeSearchable()`
+- **Meilisearch Docker support** — `npx svelar make:docker --meilisearch` adds a Meilisearch service (v1.13, no ports exposed, persistent volume, health check)
+- **Security documentation** (`docs/30-security.md`) — secrets management, session security, password hashing, middleware pipeline, Docker hardening, port exposure guide, and production checklist
+- **Per-command `--help`** — `npx svelar <command> --help` now shows all available flags and descriptions for that command
+- **Tinker database bootstrap** — `npx svelar tinker` now calls `bootstrap()` to configure the database connection before starting the REPL
+
+### Security
+
+- **Docker: removed all unnecessary port exposures** — PostgreSQL, MySQL, Redis, Soketi, Gotenberg, and RustFS S3 API no longer expose ports to the host; only the app (3000) and RustFS console (9001) are exposed
+- **Docker: Redis requires authentication** — Redis now starts with `--requirepass` and the password is passed to the app container via `REDIS_PASSWORD`
+- **Docker: Meilisearch internal only** — no ports exposed by default, requires `MEILI_MASTER_KEY`
+
+### Fixed
+
+- **`ScheduleMonitor.listTasks()` missing `await`** — admin page server loader was not awaiting the async call, causing `scheduledTasks.map is not a function` error
+- **Docs: removed incorrect `npm install` for bundled packages** — `pdfkit`, `exceljs`, `sveltekit-superforms`, and `zod` are included in scaffolded projects and don't need manual installation
+
+### Removed
+
+- **`make:dashboard` CLI command** — the full admin panel (7 tabs: overview, users, roles, permissions, queue, scheduler, logs) is now included in the scaffold by default
+
 ## [0.4.0] - 2026-03-31
 
 ### Security

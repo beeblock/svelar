@@ -24,6 +24,7 @@ Svelar is a Laravel-inspired framework built on top of SvelteKit 2. It brings en
 - **Events & Listeners**: Pub/sub event system
 - **Storage**: File storage abstraction layer
 - **Logging & Caching**: Built-in logging and caching drivers
+- **Full-Text Search**: Meilisearch integration with auto-syncing `Searchable` mixin
 
 ## Table of Contents
 
@@ -57,6 +58,8 @@ Svelar is a Laravel-inspired framework built on top of SvelteKit 2. It brings en
 27. [Architecture & Module Communication](./20-architecture.md) - DDD boundaries, events as glue, anti-patterns
 28. [SaaS Guide](./17-saas-guide.md) - Multi-tenancy, production checklist, scaling
 29. [Deployment](./29-deployment.md) - Docker, Traefik, blue-green, Swarm, CI/CD, monitoring
+30. [Security](./30-security.md) - Authentication, CSRF, rate limiting, Docker hardening, production checklist
+31. [Full-Text Search](./31-search.md) - Meilisearch integration with Searchable mixin, auto-sync, bulk indexing
 
 ## Quick Start
 

@@ -414,10 +414,16 @@ DB_PATH=database.db
 # RESEND_API_KEY=re_your-resend-api-key
 
 # Redis (optional — needed for BullMQ queue and Redis cache/session)
-# REDIS_URL=redis://localhost:6379
+# REDIS_HOST=localhost
+# REDIS_PORT=6379
+# REDIS_PASSWORD=
 
 # Queue driver (sync = immediate, redis = background via BullMQ)
 # QUEUE_DRIVER=sync
+
+# Meilisearch (optional — full-text search engine)
+# MEILISEARCH_HOST=http://localhost:7700
+# MEILISEARCH_KEY=
 
 # PDF (default driver is pdfkit — no config needed)
 # Switch to Gotenberg for pixel-perfect HTML rendering:

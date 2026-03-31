@@ -1,6 +1,6 @@
 {
   "name": "@beeblock/svelar",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Laravel-inspired framework on top of SvelteKit 2",
   "type": "module",
   "main": "./dist/index.js",
@@ -150,6 +150,10 @@
       "types": "./dist/permissions/index.d.ts",
       "import": "./dist/permissions/index.js"
     },
+    "./search": {
+      "types": "./dist/search/index.d.ts",
+      "import": "./dist/search/index.js"
+    },
     "./support": {
       "types": "./dist/support/index.d.ts",
       "import": "./dist/support/index.js"
@@ -277,7 +281,8 @@
     "pdfkit": ">=0.18.0",
     "postgres": "*",
     "pusher-js": ">=8.0.0",
-    "sveltekit-superforms": ">=2.0.0"
+    "sveltekit-superforms": ">=2.0.0",
+    "meilisearch": ">=0.44.0"
   },
   "peerDependenciesMeta": {
     "@aws-sdk/client-s3": {
@@ -311,6 +316,9 @@
       "optional": true
     },
     "sveltekit-superforms": {
+      "optional": true
+    },
+    "meilisearch": {
       "optional": true
     }
   },

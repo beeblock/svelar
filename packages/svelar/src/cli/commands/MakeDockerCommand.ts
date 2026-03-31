@@ -18,6 +18,7 @@ export class MakeDockerCommand extends Command {
     { name: 'redis', alias: 'r', description: 'Include Redis service', type: 'boolean' as const },
     { name: 'gotenberg', alias: 'g', description: 'Include Gotenberg PDF service (default: true)', type: 'boolean' as const },
     { name: 'rustfs', description: 'Include RustFS S3-compatible object storage (default: true)', type: 'boolean' as const },
+    { name: 'meilisearch', alias: 'm', description: 'Include Meilisearch full-text search engine', type: 'boolean' as const },
     { name: 'force', alias: 'f', description: 'Overwrite existing files', type: 'boolean' as const },
   ];
 
@@ -28,6 +29,7 @@ export class MakeDockerCommand extends Command {
     const includeRedis = flags.redis ?? true; // default: include Redis (BullMQ queues)
     const includeGotenberg = flags.gotenberg ?? true; // default: include Gotenberg
     const includeRustFS = flags.rustfs ?? true; // default: include RustFS object storage
+    const includeMeilisearch = flags.meilisearch ?? false; // default: not included (opt-in)
     const force = flags.force ?? false;
 
     const validDbs = ['postgres', 'mysql', 'sqlite'];
@@ -44,7 +46,7 @@ export class MakeDockerCommand extends Command {
       },
       {
         path: join(cwd, 'docker-compose.yml'),
-        content: this.composeTemplate(db, includeSoketi, includeRedis, includeGotenberg, includeRustFS),
+        content: this.composeTemplate(db, includeSoketi, includeRedis, includeGotenberg, includeRustFS, includeMeilisearch),
         label: 'docker-compose.yml',
       },
       {
@@ -162,7 +164,7 @@ CMD ["pm2-runtime", "ecosystem.config.cjs"]
 `;
   }
 
-  private composeTemplate(db: string, soketi: boolean, redis: boolean, gotenberg: boolean, rustfs: boolean = true): string {
+  private composeTemplate(db: string, soketi: boolean, redis: boolean, gotenberg: boolean, rustfs: boolean = true, meilisearch: boolean = false): string {
     const lines: string[] = [];
 
     lines.push('# ── Svelar Docker Compose ─────────────────────────────────');
@@ -197,6 +199,7 @@ CMD ["pm2-runtime", "ecosystem.config.cjs"]
     if (redis) {
       lines.push('      - REDIS_HOST=redis');
       lines.push('      - REDIS_PORT=6379');
+      lines.push('      - REDIS_PASSWORD=${REDIS_PASSWORD:-svelarsecret}');
       lines.push('      - QUEUE_DRIVER=redis');
     }
 
@@ -218,6 +221,11 @@ CMD ["pm2-runtime", "ecosystem.config.cjs"]
       lines.push('      - STORAGE_DISK=s3');
     }
 
+    if (meilisearch) {
+      lines.push('      - MEILISEARCH_HOST=http://meilisearch:7700');
+      lines.push('      - MEILISEARCH_KEY=${MEILI_MASTER_KEY:-svelar-meili-master-key}');
+    }
+
     // depends_on with health checks
     const deps: string[] = [];
     if (db === 'postgres') deps.push('postgres');
@@ -226,6 +234,7 @@ CMD ["pm2-runtime", "ecosystem.config.cjs"]
     if (soketi) deps.push('soketi');
     if (gotenberg) deps.push('gotenberg');
     if (rustfs) deps.push('rustfs');
+    if (meilisearch) deps.push('meilisearch');
 
     if (deps.length > 0) {
       lines.push('    depends_on:');
@@ -244,8 +253,7 @@ CMD ["pm2-runtime", "ecosystem.config.cjs"]
       lines.push('  postgres:');
       lines.push('    image: postgres:16-alpine');
       lines.push('    restart: unless-stopped');
-      lines.push('    ports:');
-      lines.push('      - "${DB_PORT:-5432}:5432"');
+      lines.push('    # No ports exposed — only reachable by app via Docker network');
       lines.push('    environment:');
       lines.push('      POSTGRES_DB: ${DB_NAME:-svelar}');
       lines.push('      POSTGRES_USER: ${DB_USER:-svelar}');
@@ -265,8 +273,7 @@ CMD ["pm2-runtime", "ecosystem.config.cjs"]
       lines.push('  mysql:');
       lines.push('    image: mysql:8.0');
       lines.push('    restart: unless-stopped');
-      lines.push('    ports:');
-      lines.push('      - "${DB_PORT:-3306}:3306"');
+      lines.push('    # No ports exposed — only reachable by app via Docker network');
       lines.push('    environment:');
       lines.push('      MYSQL_DATABASE: ${DB_NAME:-svelar}');
       lines.push('      MYSQL_USER: ${DB_USER:-svelar}');
@@ -287,12 +294,12 @@ CMD ["pm2-runtime", "ecosystem.config.cjs"]
       lines.push('  redis:');
       lines.push('    image: redis:7-alpine');
       lines.push('    restart: unless-stopped');
-      lines.push('    ports:');
-      lines.push('      - "${REDIS_PORT:-6379}:6379"');
+      lines.push('    # No ports exposed — only reachable by app via Docker network');
+      lines.push('    command: redis-server --requirepass ${REDIS_PASSWORD:-svelarsecret}');
       lines.push('    volumes:');
       lines.push('      - redisdata:/data');
       lines.push('    healthcheck:');
-      lines.push('      test: ["CMD", "redis-cli", "ping"]');
+      lines.push('      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-svelarsecret}", "ping"]');
       lines.push('      interval: 10s');
       lines.push('      timeout: 5s');
       lines.push('      retries: 5');
@@ -304,9 +311,10 @@ CMD ["pm2-runtime", "ecosystem.config.cjs"]
       lines.push('  soketi:');
       lines.push('    image: quay.io/soketi/soketi:1.6-16-debian');
       lines.push('    restart: unless-stopped');
-      lines.push('    ports:');
-      lines.push('      - "${SOKETI_PORT:-6001}:6001"');
-      lines.push('      - "9601:9601"   # Metrics');
+      lines.push('    # No ports exposed — only reachable by app via Docker network');
+      lines.push('    # Expose 6001 to host only if clients connect directly (uncomment below)');
+      lines.push('    # ports:');
+      lines.push('    #   - "${SOKETI_PORT:-6001}:6001"');
       lines.push('    environment:');
       lines.push('      SOKETI_DEBUG: "${SOKETI_DEBUG:-0}"');
       lines.push('      SOKETI_DEFAULT_APP_ID: ${PUSHER_APP_ID}');
@@ -328,8 +336,7 @@ CMD ["pm2-runtime", "ecosystem.config.cjs"]
       lines.push('  gotenberg:');
       lines.push('    image: gotenberg/gotenberg:8');
       lines.push('    restart: unless-stopped');
-      lines.push('    ports:');
-      lines.push('      - "${GOTENBERG_PORT:-3001}:3000"');
+      lines.push('    # No ports exposed — only reachable by app via Docker network');
       lines.push('    environment:');
       lines.push('      CHROMIUM_DISABLE_JAVASCRIPT: "false"');
       lines.push('      CHROMIUM_ALLOW_LIST: "file:///tmp/.*"');
@@ -349,8 +356,7 @@ CMD ["pm2-runtime", "ecosystem.config.cjs"]
       lines.push('    image: rustfs/rustfs:latest');
       lines.push('    restart: unless-stopped');
       lines.push('    ports:');
-      lines.push('      - "${RUSTFS_API_PORT:-9000}:9000"   # S3 API');
-      lines.push('      - "${RUSTFS_CONSOLE_PORT:-9001}:9001"   # Web Console');
+      lines.push('      - "${RUSTFS_CONSOLE_PORT:-9001}:9001"   # Admin console (protect with firewall)');
       lines.push('    environment:');
       lines.push('      RUSTFS_ROOT_USER: ${RUSTFS_ROOT_USER:-svelar}');
       lines.push('      RUSTFS_ROOT_PASSWORD: ${RUSTFS_ROOT_PASSWORD:-svelarsecret}');
@@ -364,6 +370,30 @@ CMD ["pm2-runtime", "ecosystem.config.cjs"]
       lines.push('      retries: 5');
     }
 
+    // ── Meilisearch ──
+    if (meilisearch) {
+      lines.push('');
+      lines.push('  meilisearch:');
+      lines.push('    image: getmeili/meilisearch:v1.13');
+      lines.push('    restart: unless-stopped');
+      lines.push('    # No ports exposed — only reachable by app via Docker network');
+      lines.push('    # Uncomment below to access the dashboard from the host');
+      lines.push('    # ports:');
+      lines.push('    #   - "${MEILI_PORT:-7700}:7700"');
+      lines.push('    environment:');
+      lines.push('      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-svelar-meili-master-key}');
+      lines.push('      MEILI_ENV: production');
+      lines.push('      MEILI_DB_PATH: /meili_data');
+      lines.push('      MEILI_NO_ANALYTICS: "true"');
+      lines.push('    volumes:');
+      lines.push('      - meili_data:/meili_data');
+      lines.push('    healthcheck:');
+      lines.push('      test: ["CMD", "wget", "--no-verbose", "--spider", "http://localhost:7700/health"]');
+      lines.push('      interval: 10s');
+      lines.push('      timeout: 5s');
+      lines.push('      retries: 5');
+    }
+
     // ── Volumes ──
     lines.push('');
     lines.push('volumes:');
@@ -372,6 +402,7 @@ CMD ["pm2-runtime", "ecosystem.config.cjs"]
     if (db === 'mysql') lines.push('  mysqldata:');
     if (redis) lines.push('  redisdata:');
     if (rustfs) lines.push('  rustfs_data:');
+    if (meilisearch) lines.push('  meili_data:');
 
     lines.push('');
     return lines.join('\n');

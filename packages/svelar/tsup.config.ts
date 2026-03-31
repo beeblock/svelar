@@ -33,6 +33,7 @@ export default defineConfig({
     'plugins/index': 'src/plugins/index.ts',
     'scheduler/index': 'src/scheduler/index.ts',
     'permissions/index': 'src/permissions/index.ts',
+    'search/index': 'src/search/index.ts',
     'http/index': 'src/http/index.ts',
     'i18n/index': 'src/i18n/index.ts',
     'forms/index': 'src/forms/index.ts',

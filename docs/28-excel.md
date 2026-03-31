@@ -1,6 +1,6 @@
 # Excel Import/Export
 
-Import and export Excel files with streaming support for large datasets. Requires `npm install exceljs`.
+Import and export Excel files with streaming support for large datasets. Included in scaffolded projects (`npx svelar new`) — works out of the box.
 
 ### Quick Export
 

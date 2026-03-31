@@ -4,11 +4,7 @@ Svelar bridges [sveltekit-superforms](https://superforms.rocks) with Zod validat
 
 ## Setup
 
-Install superforms and its Zod adapter:
-
-```bash
-npm install sveltekit-superforms zod
-```
+Both `sveltekit-superforms` and `zod` are included in scaffolded projects (`npx svelar new`) — no extra install needed.
 
 ## Quick Example
 
