@@ -1,6 +1,6 @@
 # create-svelar
 
-Scaffold a new [Svelar](https://github.com/alephtus/svelar) project — Laravel-inspired SvelteKit.
+Scaffold a new [Svelar](https://svelar.dev) project — Laravel-inspired SvelteKit.
 
 ## Usage
 
@@ -12,25 +12,28 @@ You'll be prompted to choose:
 
 - **Project name** — directory name for your new project
 - **Database driver** — SQLite, PostgreSQL, or MySQL
-- **Auth scaffolding** — optional pre-built User model, migration, and auth middleware
 - **Package manager** — npm, pnpm, or yarn
+
+Auth scaffolding (login, register, password reset, dashboard, admin panel) is included by default.
 
 ## What gets generated
 
 ```
 my-app/
 ├── src/
-│   ├── app.ts                 # Svelar bootstrap (providers, config)
-│   ├── hooks.server.ts        # SvelteKit hooks with middleware pipeline
-│   ├── models/                # Eloquent-style models
-│   ├── controllers/           # Request controllers
-│   ├── middleware/             # Custom middleware
-│   └── routes/                # SvelteKit routes
-├── database/
-│   ├── migrations/            # Database migrations
-│   └── seeders/               # Database seeders
-├── .env                       # Environment variables
-├── svelar.config.ts           # Framework configuration
+│   ├── app.ts                 # Svelar bootstrap (database, auth, queue, etc.)
+│   ├── hooks.server.ts        # Middleware pipeline (createSvelarApp)
+│   ├── lib/
+│   │   ├── models/            # Eloquent-style models
+│   │   ├── controllers/       # Request controllers
+│   │   ├── services/          # Business logic
+│   │   ├── dtos/              # FormRequest validation
+│   │   ├── schemas/           # Zod contract schemas
+│   │   ├── shared/            # Jobs, scheduler, middleware, providers
+│   │   └── database/          # Migrations and seeders
+│   └── routes/                # SvelteKit routes (auth, dashboard, admin, API)
+├── .env                       # Auto-generated with secure random secrets
+├── svelar.database.json       # Database configuration
 └── package.json
 ```
 

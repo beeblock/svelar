@@ -4,6 +4,40 @@ All notable changes to `@beeblock/svelar` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-03-31
+
+### Security
+
+- **Removed all hardcoded fallback secrets** — `APP_KEY` is now required; the framework throws a clear error if it's missing instead of silently using a known string (`'svelar-change-me'`, `'svelar-default-secret-change-me'`) for HMAC signing, sessions, and token hashing
+- **Build output is now minified** — `tsup` builds with `minify: true` so compiled JS is obfuscated
+- **Source maps disabled** — `sourcemap: false` in both tsup and tsconfig; no `.map` files are published to npm
+- **Removed hardcoded Soketi defaults** — Docker template no longer falls back to `svelar-key`/`svelar-secret`; requires explicit `PUSHER_KEY`/`PUSHER_SECRET` env vars
+- **INTERNAL_SECRET fallback removed** — scaffold broadcast bridge now throws if `INTERNAL_SECRET` is not set instead of using a known default
+
+### Added
+
+- **`key:generate` CLI command** — `npx svelar key:generate` generates a cryptographically random APP_KEY and writes it to `.env`; supports `--show` (display only) and `--force` (overwrite existing)
+- **Auto-generated `.env` on scaffold** — `npx svelar new` now creates `.env` with unique random `APP_KEY` and `INTERNAL_SECRET` so projects work immediately without manual secret setup
+- **Failed jobs system** — jobs that exhaust all retries are persisted to `svelar_failed_jobs` database table for later inspection and retry (like Laravel's `failed_jobs`)
+- **`queue:failed` CLI command** — list all failed jobs with job class, queue, date, and error
+- **`queue:retry` CLI command** — retry a specific failed job by ID, or `--all` to retry all
+- **`queue:flush` CLI command** — delete all failed job records
+- **Programmatic failed jobs API** — `Queue.failed()`, `Queue.retry(id)`, `Queue.retryAll()`, `Queue.forgetFailed(id)`, `Queue.flushFailed()`
+- **`svelar_failed_jobs` migration** — auto-included in scaffolded projects (migration 00000008)
+
+### Fixed
+
+- **Documentation: all `npx @beeblock/svelar` references updated to `npx svelar`** — 113 occurrences across 7 doc files + README
+- **Documentation: removed all fallback secret examples** — `|| 'dev-secret'`, `|| 'change-me'`, `|| 'svelar-internal-secret'` replaced with `process.env.APP_KEY!` across 10 doc files
+- **Documentation: `weekly()` scheduler** — corrected from "Monday" to "Sunday" (cron day 0)
+- **Documentation: `weeklyOn()` signature** — corrected from string day name to number (0-6)
+- **Documentation: inline tasks API** — fixed example to use `task()` function + `scheduler.register()`
+- **Documentation: duplicate `createTable`** — removed erroneous duplicate in queue migration example
+- **Documentation: stale Quick Start** — removed unnecessary `cp .env.example .env` and manual `npx svelar migrate` steps (both auto-handled by `npx svelar new`)
+- **Documentation: non-existent routes removed** — removed `/api/admin/stats`, `/queue`, `/scheduler`, `/logs`, `/health` and `/dashboard/billing` from getting-started (not scaffolded)
+- **Documentation: added missing CLI commands** — `key:generate`, `queue:failed`, `queue:retry`, `queue:flush` added to installation docs
+- **Seeder template warnings** — added production warnings to default admin/demo user credentials in scaffold
+
 ## [0.3.2] - 2026-03-30
 
 ### Added

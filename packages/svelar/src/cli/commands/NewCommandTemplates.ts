@@ -9,7 +9,7 @@ export class NewCommandTemplates {
 
   // ─── Config ─────────────────────────────────────────────────
 
-  static packageJson(name: string): string {
+  static packageJson(name: string, svelarVersion: string = '0.4.0'): string {
     return JSON.stringify(
       {
         name,
@@ -40,7 +40,7 @@ export class NewCommandTemplates {
         dependencies: {
           'better-sqlite3': '^11.0.0',
           'drizzle-orm': '^0.38.0',
-          '@beeblock/svelar': '^0.3.5',
+          '@beeblock/svelar': `^${svelarVersion}`,
           exceljs: '^4.4.0',
           pdfkit: '^0.18.0',
           'sveltekit-superforms': '^2.22.0',

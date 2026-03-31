@@ -507,7 +507,7 @@ svelar-analytics/
     ".": "./dist/index.js"
   },
   "peerDependencies": {
-    "@beeblock/svelar": ">=0.3.0"
+    "@beeblock/svelar": ">=0.4.0"
   }
 }
 ```
