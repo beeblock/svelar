@@ -93,7 +93,7 @@ export class NewCommand extends Command {
     // Read our own version so scaffolded projects depend on the correct release
     const { dirname: dn } = await import('node:path');
     const { fileURLToPath: ftu } = await import('node:url');
-    const ownPkgPath = join(dn(dn(ftu(import.meta.url))), 'package.json');
+    const ownPkgPath = join(dn(dn(dn(ftu(import.meta.url)))), 'package.json');
     const ownPkg = JSON.parse((await import('node:fs')).readFileSync(ownPkgPath, 'utf-8'));
     const svelarVersion = ownPkg.version ?? '0.4.0';
 
