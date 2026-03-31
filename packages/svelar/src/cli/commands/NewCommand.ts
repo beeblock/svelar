@@ -214,6 +214,8 @@ export class NewCommand extends Command {
     write('src/routes/dashboard/api-keys/+page.svelte', T.apiKeysPageSvelte());
     write('src/routes/dashboard/team/+page.server.ts', T.teamPageServer());
     write('src/routes/dashboard/team/+page.svelte', T.teamPageSvelte());
+    write('src/routes/dashboard/billing/+page.server.ts', T.billingPageServer());
+    write('src/routes/dashboard/billing/+page.svelte', T.billingPageSvelte());
 
     // ── 8. Admin pages ────────────────────────────────────
     this.info('Creating admin panel...');
@@ -255,6 +257,10 @@ export class NewCommand extends Command {
     write('src/routes/api/admin/scheduler/[name]/toggle/+server.ts', T.apiAdminSchedulerToggle());
     write('src/routes/api/admin/logs/+server.ts', T.apiAdminLogs());
     write('src/routes/api/admin/stats/+server.ts', T.apiAdminStats());
+    write('src/routes/api/admin/billing/subscriptions/+server.ts', T.apiAdminBillingSubscriptions());
+    write('src/routes/api/admin/billing/refund/+server.ts', T.apiAdminBillingRefund());
+    write('src/routes/api/admin/billing/cancel/+server.ts', T.apiAdminBillingCancel());
+    write('src/routes/api/webhooks/stripe/+server.ts', T.stripeWebhookRoute());
 
     // ── 10. Jobs ──────────────────────────────────────────
     this.info('Creating background jobs...');

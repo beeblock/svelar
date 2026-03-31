@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Stripe billing module (`@beeblock/svelar/stripe`)** — moved from separate `svelar-stripe` plugin into core; includes `StripeService` (customers, subscriptions, checkout, invoices, refunds, portal), `SubscriptionManager` (subscribe, upgrade, downgrade, cancel, resume, sync), `StripeWebhookHandler` (event-based webhook processing), `Subscription`/`SubscriptionPlan`/`Invoice` models, `SyncStripeCustomerJob`; uses `singleton()` pattern via `Stripe.configure()` / `Stripe.service()` / `Stripe.webhooks()`; Stripe SDK is a lazy-loaded optional peer dependency
 - **Stripe env vars in scaffold** — `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET` added to `.env.example` template
+- **User billing page** (`/dashboard/billing`) — view current plan, cancel/resume subscription, manage payment method via Stripe Portal, invoice history with PDF links
+- **Admin billing API** — `/api/admin/billing/subscriptions` (list all), `/api/admin/billing/refund` (refund invoice), `/api/admin/billing/cancel` (cancel user subscription)
+- **Stripe webhook route** — `/api/webhooks/stripe` scaffolded with signature verification and event dispatching via `Stripe.webhooks().handle()`
+- **Billing nav link** — dashboard sidebar now includes "Billing" with CreditCard icon
 
 ### Removed
 
