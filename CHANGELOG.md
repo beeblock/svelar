@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [0.4.5] - 2026-03-31
 
+### Added
+
+- **Stripe billing module (`@beeblock/svelar/stripe`)** — moved from separate `svelar-stripe` plugin into core; includes `StripeService` (customers, subscriptions, checkout, invoices, refunds, portal), `SubscriptionManager` (subscribe, upgrade, downgrade, cancel, resume, sync), `StripeWebhookHandler` (event-based webhook processing), `Subscription`/`SubscriptionPlan`/`Invoice` models, `SyncStripeCustomerJob`; uses `singleton()` pattern via `Stripe.configure()` / `Stripe.service()` / `Stripe.webhooks()`; Stripe SDK is a lazy-loaded optional peer dependency
+- **Stripe env vars in scaffold** — `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET` added to `.env.example` template
+
+### Removed
+
+- **`svelar-stripe` plugin package** — absorbed into core as `@beeblock/svelar/stripe`
+- **`svelar-postmark` plugin package** — redundant; Postmark transport already in core mail module
+- **`svelar-resend` plugin package** — redundant; Resend transport already in core mail module
+
 ### Fixed
 
 - **README logo** — restored GitHub raw URL for logo image (will resolve once repo is public)

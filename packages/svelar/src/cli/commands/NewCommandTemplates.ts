@@ -132,6 +132,7 @@ export default defineConfig({
       '@beeblock/svelar/services': resolve(svelarRoot, 'dist/services/index.js'),
       '@beeblock/svelar/session': resolve(svelarRoot, 'dist/session/index.js'),
       '@beeblock/svelar/storage': resolve(svelarRoot, 'dist/storage/index.js'),
+      '@beeblock/svelar/stripe': resolve(svelarRoot, 'dist/stripe/index.js'),
       '@beeblock/svelar/support': resolve(svelarRoot, 'dist/support/index.js'),
       '@beeblock/svelar/teams': resolve(svelarRoot, 'dist/teams/index.js'),
       '@beeblock/svelar/uploads': resolve(svelarRoot, 'dist/uploads/index.js'),
@@ -498,6 +499,11 @@ DB_PATH=database.db
 # Meilisearch (optional — full-text search engine)
 # MEILISEARCH_HOST=http://localhost:7700
 # MEILISEARCH_KEY=
+
+# Stripe (billing and subscriptions — npm install stripe)
+# STRIPE_SECRET_KEY=sk_test_...
+# STRIPE_PUBLISHABLE_KEY=pk_test_...
+# STRIPE_WEBHOOK_SECRET=whsec_...
 
 # PDF (default driver is pdfkit — no config needed)
 # Switch to Gotenberg for pixel-perfect HTML rendering:

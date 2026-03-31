@@ -241,6 +241,10 @@
     "./excel": {
       "types": "./dist/excel/index.d.ts",
       "import": "./dist/excel/index.js"
+    },
+    "./stripe": {
+      "types": "./dist/stripe/index.d.ts",
+      "import": "./dist/stripe/index.js"
     }
   },
   "scripts": {
@@ -265,6 +269,7 @@
     "@vitest/coverage-v8": "^2.1.9",
     "better-sqlite3": "^11.0.0",
     "exceljs": "^4.4.0",
+    "stripe": "^21.0.1",
     "sveltekit-superforms": "^2.30.1",
     "tsup": "^8.3.0",
     "typescript": "^5.7.0",
@@ -283,6 +288,7 @@
     "pdfkit": ">=0.18.0",
     "postgres": "*",
     "pusher-js": ">=8.0.0",
+    "stripe": ">=14.0.0",
     "sveltekit-superforms": ">=2.0.0"
   },
   "peerDependenciesMeta": {
@@ -321,6 +327,9 @@
     },
     "meilisearch": {
       "optional": true
+    },
+    "stripe": {
+      "optional": true
     }
   },
   "keywords": [
@@ -335,7 +344,10 @@
     "session",
     "cache",
     "queue",
-    "mail"
+    "mail",
+    "stripe",
+    "billing",
+    "subscriptions"
   ],
   "license": "MIT",
   "author": "Raoni <alephtus@gmail.com>",
