@@ -93,7 +93,7 @@ import { PluginInstallCommand } from './commands/PluginInstallCommand.js';
 
 // Read version from package.json so we never hardcode it
 const __binDir = dirname(fileURLToPath(import.meta.url));
-const pkgPath = join(__binDir, '..', 'package.json');
+const pkgPath = join(__binDir, '..', '..', 'package.json');
 const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
 const cli = new Cli(pkg.version);
 
