@@ -40,7 +40,7 @@ export class NewCommandTemplates {
         dependencies: {
           'better-sqlite3': '^11.0.0',
           'drizzle-orm': '^0.38.0',
-          '@beeblock/svelar': '^0.3.2',
+          '@beeblock/svelar': '^0.3.5',
           exceljs: '^4.4.0',
           pdfkit: '^0.18.0',
           'sveltekit-superforms': '^2.22.0',
@@ -91,7 +91,7 @@ export default defineConfig({
       '@beeblock/svelar/api-keys': resolve(svelarRoot, 'dist/api-keys/index.js'),
       '@beeblock/svelar/audit': resolve(svelarRoot, 'dist/audit/index.js'),
       '@beeblock/svelar/auth': resolve(svelarRoot, 'dist/auth/index.js'),
-      '@beeblock/svelar/broadcasting/client': resolve(svelarRoot, 'src/broadcasting/client.ts'),
+      '@beeblock/svelar/broadcasting/client': resolve(svelarRoot, 'dist/broadcasting/client.js'),
       '@beeblock/svelar/broadcasting': resolve(svelarRoot, 'dist/broadcasting/index.js'),
       '@beeblock/svelar/cache': resolve(svelarRoot, 'dist/cache/index.js'),
       '@beeblock/svelar/cli': resolve(svelarRoot, 'dist/cli/index.js'),
@@ -109,6 +109,7 @@ export default defineConfig({
       '@beeblock/svelar/hashing': resolve(svelarRoot, 'dist/hashing/index.js'),
       '@beeblock/svelar/hooks': resolve(svelarRoot, 'dist/hooks/index.js'),
       '@beeblock/svelar/http': resolve(svelarRoot, 'dist/http/index.js'),
+      '@beeblock/svelar/logging/LogViewer': resolve(svelarRoot, 'dist/logging/LogViewer.js'),
       '@beeblock/svelar/logging': resolve(svelarRoot, 'dist/logging/index.js'),
       '@beeblock/svelar/mail': resolve(svelarRoot, 'dist/mail/index.js'),
       '@beeblock/svelar/middleware': resolve(svelarRoot, 'dist/middleware/index.js'),
@@ -118,11 +119,15 @@ export default defineConfig({
       '@beeblock/svelar/pdf': resolve(svelarRoot, 'dist/pdf/index.js'),
       '@beeblock/svelar/pdf/GeneratePdfJob': resolve(svelarRoot, 'dist/pdf/GeneratePdfJob.js'),
       '@beeblock/svelar/permissions': resolve(svelarRoot, 'dist/permissions/index.js'),
+      '@beeblock/svelar/plugins/PluginInstaller': resolve(svelarRoot, 'dist/plugins/PluginInstaller.js'),
+      '@beeblock/svelar/plugins/PluginPublisher': resolve(svelarRoot, 'dist/plugins/PluginPublisher.js'),
+      '@beeblock/svelar/plugins/PluginRegistry': resolve(svelarRoot, 'dist/plugins/PluginRegistry.js'),
       '@beeblock/svelar/plugins': resolve(svelarRoot, 'dist/plugins/index.js'),
       '@beeblock/svelar/queue': resolve(svelarRoot, 'dist/queue/index.js'),
       '@beeblock/svelar/queue/JobMonitor': resolve(svelarRoot, 'dist/queue/JobMonitor.js'),
       '@beeblock/svelar/repositories': resolve(svelarRoot, 'dist/repositories/index.js'),
       '@beeblock/svelar/routing': resolve(svelarRoot, 'dist/routing/index.js'),
+      '@beeblock/svelar/scheduler/ScheduleMonitor': resolve(svelarRoot, 'dist/scheduler/ScheduleMonitor.js'),
       '@beeblock/svelar/scheduler': resolve(svelarRoot, 'dist/scheduler/index.js'),
       '@beeblock/svelar/services': resolve(svelarRoot, 'dist/services/index.js'),
       '@beeblock/svelar/session': resolve(svelarRoot, 'dist/session/index.js'),
@@ -314,9 +319,9 @@ PDF.configure({ driver: 'pdfkit' });
 configureDashboard({ enabled: true, prefix: '/admin' });
 
 // ── Job Registration ──────────────────────────────────────
-import { SendWelcomeEmail } from './lib/jobs/SendWelcomeEmail.js';
-import { DailyDigestJob } from './lib/jobs/DailyDigestJob.js';
-import { ExportDataJob } from './lib/jobs/ExportDataJob.js';
+import { SendWelcomeEmail } from './lib/shared/jobs/SendWelcomeEmail.js';
+import { DailyDigestJob } from './lib/shared/jobs/DailyDigestJob.js';
+import { ExportDataJob } from './lib/shared/jobs/ExportDataJob.js';
 
 Queue.registerAll([SendWelcomeEmail, DailyDigestJob, ExportDataJob]);
 
@@ -376,7 +381,7 @@ APP_NAME=My App
 APP_URL=http://localhost:5173
 
 # Internal secret (scheduler <-> web server bridge)
-INTERNAL_SECRET=svelar-internal-secret
+INTERNAL_SECRET=change-me-to-a-random-string
 
 # Database (SQLite by default, no extra config needed)
 DB_DRIVER=sqlite
@@ -1521,7 +1526,7 @@ import { Queue } from '@beeblock/svelar/queue';
 import { UserRepository } from '../repositories/UserRepository.js';
 import { Post } from '../models/Post.js';
 import { User } from '../models/User.js';
-import { ExportDataJob } from '../jobs/ExportDataJob.js';
+import { ExportDataJob } from '../shared/jobs/ExportDataJob.js';
 
 const userRepo = new UserRepository();
 
@@ -1899,6 +1904,28 @@ export default class CreateNotificationsTable extends Migration {
 `;
   }
 
+  static createFailedJobsTable(): string {
+    return `import { Migration } from '@beeblock/svelar/database';
+
+export default class CreateFailedJobsTable extends Migration {
+  async up() {
+    await this.schema.createTable('svelar_failed_jobs', (table) => {
+      table.string('id').primary();
+      table.string('queue');
+      table.string('job_class');
+      table.text('payload');
+      table.text('exception');
+      table.integer('failed_at');
+    });
+  }
+
+  async down() {
+    await this.schema.dropTable('svelar_failed_jobs');
+  }
+}
+`;
+  }
+
   // ─── Seeders ───────────────────────────────────────────────
 
   static databaseSeeder(): string {
@@ -1942,6 +1969,7 @@ export class DatabaseSeeder extends Seeder {
     }
 
     // ── Create Admin User ────────────────────────────────
+    // WARNING: Change these credentials before deploying to production!
     const adminPassword = await Hash.make('admin123');
     const admin = await User.create({
       name: 'Admin',
@@ -1952,6 +1980,7 @@ export class DatabaseSeeder extends Seeder {
     await Permissions.assignRole('User', (admin as any).id, adminRole.id);
 
     // ── Create Demo User ─────────────────────────────────
+    // WARNING: Remove this user before deploying to production!
     const demoPassword = await Hash.make('password');
     const demo = await User.create({
       name: 'Demo User',
@@ -2003,7 +2032,7 @@ import { superValidate, message } from 'sveltekit-superforms';
 import { zod } from 'sveltekit-superforms/adapters';
 import { loginSchema } from '$lib/schemas/auth';
 import { AuthService } from '$lib/services/AuthService';
-import { authConfig } from '../../app';
+import { authConfig } from '../../app.js';
 
 const authService = new AuthService();
 
@@ -2141,7 +2170,7 @@ import { superValidate, message, setError } from 'sveltekit-superforms';
 import { zod } from 'sveltekit-superforms/adapters';
 import { registerSchema } from '$lib/schemas/auth';
 import { AuthService } from '$lib/services/AuthService';
-import { auth, authConfig } from '../../app';
+import { auth, authConfig } from '../../app.js';
 
 const authService = new AuthService();
 
@@ -2320,7 +2349,7 @@ import { fail } from '@sveltejs/kit';
 import { superValidate, message } from 'sveltekit-superforms';
 import { zod } from 'sveltekit-superforms/adapters';
 import { forgotPasswordSchema } from '$lib/schemas/auth';
-import { auth } from '../../app';
+import { auth } from '../../app.js';
 
 export const load: PageServerLoad = async () => {
   const form = await superValidate(zod(forgotPasswordSchema));
@@ -2418,7 +2447,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import { superValidate, message } from 'sveltekit-superforms';
 import { zod } from 'sveltekit-superforms/adapters';
 import { resetPasswordSchema } from '$lib/schemas/auth';
-import { auth } from '../../app';
+import { auth } from '../../app.js';
 
 export const load: PageServerLoad = async ({ url }) => {
   const token = url.searchParams.get('token') ?? '';
@@ -2534,7 +2563,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import { superValidate, message } from 'sveltekit-superforms';
 import { zod } from 'sveltekit-superforms/adapters';
 import { otpRequestSchema, otpVerifySchema } from '$lib/schemas/auth';
-import { auth, authConfig } from '../../app';
+import { auth, authConfig } from '../../app.js';
 
 export const load: PageServerLoad = async ({ locals }) => {
   if (!authConfig.otpEnabled) throw redirect(302, '/login');
@@ -2701,7 +2730,7 @@ export const actions: Actions = {
 
   static verifyEmailPageServer(): string {
     return `import type { PageServerLoad } from './$types';
-import { auth } from '../../app';
+import { auth } from '../../app.js';
 
 export const load: PageServerLoad = async ({ url }) => {
   const token = url.searchParams.get('token');
@@ -3774,7 +3803,8 @@ import { Broadcast } from '@beeblock/svelar/broadcasting';
 
 export const POST: RequestHandler = async (event) => {
   const secret = event.request.headers.get('x-internal-secret');
-  const expected = process.env.INTERNAL_SECRET || 'svelar-internal-secret';
+  const expected = process.env.INTERNAL_SECRET;
+  if (!expected) return json({ message: 'INTERNAL_SECRET not set' }, { status: 500 });
 
   if (secret !== expected) {
     return json({ message: 'Unauthorized' }, { status: 401 });
@@ -3907,8 +3937,8 @@ export class SendWelcomeEmail extends Job {
   static dailyDigestJob(): string {
     return `import { Job } from '@beeblock/svelar/queue';
 import { Mailer } from '@beeblock/svelar/mail';
-import { User } from '../models/User.js';
-import { Post } from '../models/Post.js';
+import { User } from '../../models/User.js';
+import { Post } from '../../models/Post.js';
 
 export class DailyDigestJob extends Job {
   maxAttempts = 3;
@@ -3977,8 +4007,8 @@ export class DailyDigestJob extends Job {
   static exportDataJob(): string {
     return `import { Job } from '@beeblock/svelar/queue';
 import { Storage } from '@beeblock/svelar/storage';
-import { User } from '../models/User.js';
-import { Post } from '../models/Post.js';
+import { User } from '../../models/User.js';
+import { Post } from '../../models/Post.js';
 
 export class ExportDataJob extends Job {
   maxAttempts = 2;
@@ -4100,7 +4130,7 @@ export default class CleanExpiredSessions extends ScheduledTask {
   static dailyDigestEmail(): string {
     return `import { ScheduledTask } from '@beeblock/svelar/scheduler';
 import { Queue } from '@beeblock/svelar/queue';
-import { DailyDigestJob } from '../jobs/DailyDigestJob.ts';
+import { DailyDigestJob } from '../jobs/DailyDigestJob.js';
 
 export default class DailyDigestEmail extends ScheduledTask {
   name = 'daily-digest-email';
@@ -4299,7 +4329,7 @@ export async function load(event: ServerLoadEvent) {
   static sendWelcomeEmailListener(): string {
     return `import { Queue } from '@beeblock/svelar/queue';
 import { Notifier } from '@beeblock/svelar/notifications';
-import { SendWelcomeEmail } from '../jobs/SendWelcomeEmail.js';
+import { SendWelcomeEmail } from '../shared/jobs/SendWelcomeEmail.js';
 import { WelcomeNotification } from '../notifications/WelcomeNotification.js';
 
 export class SendWelcomeEmailListener {
@@ -4343,8 +4373,8 @@ export class WelcomeNotification extends Notification {
 
   static eventServiceProvider(): string {
     return `import { EventServiceProvider as BaseProvider } from '@beeblock/svelar/events';
-import { UserRegistered } from '../events/UserRegistered.js';
-import { SendWelcomeEmailListener } from '../listeners/SendWelcomeEmailListener.js';
+import { UserRegistered } from '../../events/UserRegistered.js';
+import { SendWelcomeEmailListener } from '../../listeners/SendWelcomeEmailListener.js';
 
 export class EventServiceProvider extends BaseProvider {
   protected listen = {

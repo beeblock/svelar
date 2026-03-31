@@ -142,7 +142,7 @@ export interface SvelarAppConfig {
 export function createSvelarApp(appConfig: SvelarAppConfig = {}) {
   const {
     auth,
-    secret = process.env.APP_KEY || 'svelar-change-me-in-production',
+    secret = process.env.APP_KEY || (() => { throw new Error('APP_KEY is not set. Set it in your .env file.'); })(),
     sessionStore,
     sessionLifetime = 86400,
     rateLimit = 100,

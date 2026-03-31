@@ -54,8 +54,8 @@ export class MyTask extends ScheduledTask {
     return this.everyTenMinutes();            // Every 10 minutes
     return this.everyFifteenMinutes();        // Every 15 minutes
     return this.everyThirtyMinutes();         // Every 30 minutes
-    return this.weekly();                     // Every Monday at midnight
-    return this.weeklyOn('wednesday', '09:00'); // Every Wednesday at 9:00 AM
+    return this.weekly();                     // Every Sunday at midnight
+    return this.weeklyOn(3, '09:00');         // Every Wednesday at 9:00 AM (0=Sun, 3=Wed)
     return this.monthly();                    // First day of month at midnight
     return this.monthlyOn(15, '09:00');       // 15th of month at 9:00 AM
     return this.yearly();                     // January 1st at midnight
@@ -425,7 +425,7 @@ export default class BroadcastNotification extends ScheduledTask {
 
   async handle(): Promise<void> {
     const baseUrl = process.env.APP_URL || 'http://localhost:5173';
-    const secret = process.env.INTERNAL_SECRET || 'svelar-internal-secret';
+    const secret = process.env.INTERNAL_SECRET!;
 
     const res = await fetch(`${baseUrl}/api/internal/broadcast`, {
       method: 'POST',
@@ -458,7 +458,7 @@ import { json, error } from '@sveltejs/kit';
 
 export async function POST({ request }) {
   const secret = request.headers.get('X-Internal-Secret');
-  if (secret !== (process.env.INTERNAL_SECRET || 'svelar-internal-secret')) {
+  if (!process.env.INTERNAL_SECRET || secret !== process.env.INTERNAL_SECRET) {
     throw error(403, 'Forbidden');
   }
 
@@ -473,13 +473,15 @@ export async function POST({ request }) {
 For simple cases, use inline tasks without creating separate classes:
 
 ```typescript
-import { task } from '@beeblock/svelar/scheduler';
+import { task, Scheduler } from '@beeblock/svelar/scheduler';
 
-export const scheduler = new Scheduler()
-  .task('cleanup', async () => {
-    console.log('Cleaning up...');
-  })
-  .schedule(() => scheduler.task('cleanup').daily());
+const scheduler = new Scheduler();
+
+const cleanupTask = task('cleanup', async () => {
+  console.log('Cleaning up...');
+}, (t) => t.daily());
+
+scheduler.register(cleanupTask);
 ```
 
 ## Task Run History

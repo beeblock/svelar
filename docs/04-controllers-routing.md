@@ -544,8 +544,8 @@ Resources control the shape of your API responses — like Laravel's `JsonResour
 ### Creating a Resource
 
 ```bash
-npx @beeblock/svelar make:resource User --module=auth
-npx @beeblock/svelar make:resource User --module=auth --collection  # also creates UserCollectionResource
+npx svelar make:resource User --module=auth
+npx svelar make:resource User --module=auth --collection  # also creates UserCollectionResource
 ```
 
 This creates `src/lib/modules/auth/UserResource.ts` with a typed API contract:
@@ -585,7 +585,7 @@ export class UserResource extends Resource<User, UserData> {
 Instead of defining types separately in resources, DTOs, validation, and frontend components, use a **contract schema** as the single source of truth. Zod schemas give you both validation and TypeScript types via `z.infer<>`.
 
 ```bash
-npx @beeblock/svelar make:schema User --module=auth
+npx svelar make:schema User --module=auth
 ```
 
 This creates `src/lib/modules/auth/user.schema.ts`:

@@ -49,7 +49,7 @@ Generate the Docker files, then run only the **infrastructure services** while k
 
 ```bash
 # Generate Docker files
-npx @beeblock/svelar make:docker
+npx svelar make:docker
 
 # Start only infrastructure (not the app container)
 docker compose up -d postgres redis soketi gotenberg rustfs
@@ -102,16 +102,16 @@ You can also deploy without Docker (bare Node.js + PM2 + systemd), but Docker gi
 
 ```bash
 # Generate Docker deployment files
-npx @beeblock/svelar make:docker
+npx svelar make:docker
 
 # Build and start all services
 docker compose up -d --build
 
 # Run migrations
-docker compose exec app npx @beeblock/svelar migrate
+docker compose exec app npx svelar migrate
 
 # Seed the database
-docker compose exec app npx @beeblock/svelar seed:run
+docker compose exec app npx svelar seed:run
 
 # View logs
 docker compose logs -f app
@@ -126,7 +126,7 @@ Your app is now running at `http://localhost:3000` with PostgreSQL, Redis, queue
 
 ## Generated Files
 
-Running `npx @beeblock/svelar make:docker` generates four files:
+Running `npx svelar make:docker` generates four files:
 
 | File | Purpose |
 |------|---------|
@@ -139,21 +139,21 @@ Running `npx @beeblock/svelar make:docker` generates four files:
 
 ```bash
 # Database driver (default: postgres)
-npx @beeblock/svelar make:docker --db=postgres
-npx @beeblock/svelar make:docker --db=mysql
-npx @beeblock/svelar make:docker --db=sqlite
+npx svelar make:docker --db=postgres
+npx svelar make:docker --db=mysql
+npx svelar make:docker --db=sqlite
 
 # Exclude optional services
-npx @beeblock/svelar make:docker --no-redis       # No Redis (uses in-memory queue)
-npx @beeblock/svelar make:docker --no-soketi       # No WebSocket server
-npx @beeblock/svelar make:docker --no-gotenberg    # No PDF service
-npx @beeblock/svelar make:docker --no-rustfs       # No S3 storage
+npx svelar make:docker --no-redis       # No Redis (uses in-memory queue)
+npx svelar make:docker --no-soketi       # No WebSocket server
+npx svelar make:docker --no-gotenberg    # No PDF service
+npx svelar make:docker --no-rustfs       # No S3 storage
 
 # Minimal setup (just app + database)
-npx @beeblock/svelar make:docker --no-redis --no-soketi --no-gotenberg --no-rustfs
+npx svelar make:docker --no-redis --no-soketi --no-gotenberg --no-rustfs
 
 # Overwrite existing files
-npx @beeblock/svelar make:docker --force
+npx svelar make:docker --force
 ```
 
 ---
@@ -857,7 +857,7 @@ done
 # 4. Run migrations on the new environment
 echo "==> Running migrations on $NEXT..."
 docker compose -f docker-compose.yml -f docker-compose.${NEXT}.yml \
-  exec app-${NEXT} npx @beeblock/svelar migrate
+  exec app-${NEXT} npx svelar migrate
 
 # 5. Increase priority so Traefik routes to the new environment
 echo "==> Switching traffic to $NEXT..."
@@ -1087,7 +1087,7 @@ docker push ${REGISTRY}/svelar-app:v1.0.0
 TAG=v1.0.0 docker stack deploy -c docker-stack.yml svelar
 
 # Run migrations (on any running app container)
-docker exec $(docker ps -q -f name=svelar_app | head -1) npx @beeblock/svelar migrate
+docker exec $(docker ps -q -f name=svelar_app | head -1) npx svelar migrate
 
 # Check status
 docker stack services svelar
@@ -1193,7 +1193,7 @@ done
 # 4. Run migrations
 echo "==> Running migrations on $NEXT..."
 CONTAINER=$(docker ps -q -f name=svelar_app-${NEXT} | head -1)
-docker exec "$CONTAINER" npx @beeblock/svelar migrate
+docker exec "$CONTAINER" npx svelar migrate
 
 # 5. Switch Traefik labels to the new service
 echo "==> Switching traffic to $NEXT..."
@@ -1245,10 +1245,10 @@ Always run migrations before starting the new version:
 
 ```bash
 # Docker Compose
-docker compose exec app npx @beeblock/svelar migrate
+docker compose exec app npx svelar migrate
 
 # Docker Swarm
-docker exec $(docker ps -q -f name=svelar_app | head -1) npx @beeblock/svelar migrate
+docker exec $(docker ps -q -f name=svelar_app | head -1) npx svelar migrate
 ```
 
 ### Backups
@@ -1318,7 +1318,7 @@ ls storage/logs/
 Svelar's built-in log viewer is available through the admin dashboard. You can also access logs programmatically:
 
 ```typescript
-import { LogViewer } from '@beeblock/svelar/logging';
+import { LogViewer } from '@beeblock/svelar/logging/LogViewer';
 
 const stats = LogViewer.getStats();
 const errors = LogViewer.search({ level: 'error', limit: 50 });
@@ -1514,7 +1514,7 @@ jobs:
             docker pull ${REGISTRY}:${TAG}
             docker service update --image ${REGISTRY}:${TAG} svelar_app
             docker exec $(docker ps -q -f name=svelar_app | head -1) \
-              npx @beeblock/svelar migrate
+              npx svelar migrate
 ```
 
 ### GitLab CI Example
@@ -1548,7 +1548,7 @@ deploy:
         cd /opt/svelar &&
         docker pull $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA &&
         docker service update --image $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA svelar_app &&
-        docker exec \$(docker ps -q -f name=svelar_app | head -1) npx @beeblock/svelar migrate
+        docker exec \$(docker ps -q -f name=svelar_app | head -1) npx svelar migrate
       "
 ```
 

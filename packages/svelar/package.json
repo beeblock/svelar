@@ -171,7 +171,7 @@
       "import": "./dist/http/index.js"
     },
     "./i18n": {
-      "types": "./src/i18n/index.ts",
+      "types": "./dist/i18n/index.d.ts",
       "svelte": "./src/i18n/index.ts",
       "import": "./dist/i18n/index.js"
     },

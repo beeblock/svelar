@@ -529,7 +529,7 @@ npx svelar plugin:publish svelar-stripe
 ```
 
 ```typescript
-import { Stripe } from '@beeblock/svelar/stripe';
+import { Stripe } from 'svelar-stripe';
 
 const subscription = await Stripe.createSubscription(user, {
   plan: 'pro',

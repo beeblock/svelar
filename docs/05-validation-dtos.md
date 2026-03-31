@@ -7,7 +7,7 @@ Learn how to validate incoming data with FormRequest classes, Zod schemas, and c
 Instead of defining Zod schemas inline in FormRequests and types separately on the frontend, define them once in a **contract schema** file. Every layer imports from it.
 
 ```bash
-npx @beeblock/svelar make:schema Post --module=posts
+npx svelar make:schema Post --module=posts
 ```
 
 This creates `src/lib/modules/posts/post.schema.ts`:

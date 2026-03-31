@@ -5,15 +5,16 @@ Everything you need to go from zero to a running SaaS app in under 5 minutes.
 ## Create Your App
 
 ```bash
-npx @beeblock/svelar new my-app
+npx svelar new my-app
 cd my-app
+npm run dev
 ```
 
-That's it. You now have a complete SaaS starter with authentication, dashboard, admin panel, teams, API keys, background jobs, and more — all pre-configured and ready to go.
+That's it. The `new` command installs dependencies, generates `.env` with secure random `APP_KEY` and `INTERNAL_SECRET`, runs migrations, and seeds the database. You now have a complete SaaS starter with authentication, dashboard, admin panel, teams, API keys, background jobs, and more — all pre-configured and ready to go.
 
 ## What You Get Out of the Box
 
-When you run `npx @beeblock/svelar new`, Svelar scaffolds a full-featured application. Here's everything that's included and working from day one:
+When you run `npx svelar new`, Svelar scaffolds a full-featured application. Here's everything that's included and working from day one:
 
 ### Authentication (Ready to Use)
 
@@ -34,7 +35,6 @@ All auth pages are pre-built with styled forms and validation. Passwords are has
 | Overview | `/dashboard` | Stats, recent activity, getting started checklist |
 | API Keys | `/dashboard/api-keys` | Create, copy, revoke API keys with scoped permissions |
 | Team | `/dashboard/team` | Create team, invite members, assign roles, manage invitations |
-| Billing | `/dashboard/billing` | Stripe integration placeholder (add your keys and go) |
 
 ### Admin Panel (Ready to Use)
 
@@ -69,20 +69,17 @@ Content (example):
   GET  /api/posts/mine         — Current user's posts
 
 Admin:
-  GET  /api/admin/stats        — System statistics
   GET  /api/admin/users        — List users
   PUT  /api/admin/users        — Update user role
   DELETE /api/admin/users      — Delete user
-  GET  /api/admin/roles        — List roles
   POST /api/admin/roles        — Create role
-  GET  /api/admin/permissions  — List permissions
+  DELETE /api/admin/roles      — Delete role
   POST /api/admin/permissions  — Create permission
+  DELETE /api/admin/permissions — Delete permission
   POST /api/admin/role-permissions    — Assign permission to role
   POST /api/admin/user-roles         — Assign role to user
-  GET  /api/admin/queue        — Queue job status
-  GET  /api/admin/scheduler    — Scheduled task status
-  GET  /api/admin/logs         — Application logs
-  GET  /api/admin/health       — System health
+  POST /api/admin/user-permissions   — Grant direct user permission
+  GET  /api/admin/export       — Export data
 
 Real-time:
   GET  /api/broadcasting/:channel — SSE subscription
@@ -142,69 +139,41 @@ SSE-based real-time events. The layout already subscribes to a notifications cha
 
 ### 1. Environment Variables
 
+`npx svelar new` automatically generates a `.env` file with secure random `APP_KEY` and `INTERNAL_SECRET`. No manual setup needed.
+
+To regenerate your app key at any time:
+
+```bash
+npx svelar key:generate
+```
+
+For existing projects or if you need to recreate `.env`:
+
 ```bash
 cp .env.example .env
+npx svelar key:generate
 ```
-
-Edit `.env` with your values:
-
-```bash
-# Required — generate with: openssl rand -hex 32
-APP_KEY=your-random-secret-key-here
-
-# Database (SQLite works out of the box, no extra setup)
-DB_DRIVER=sqlite
-DB_PATH=database.db
-
-# Optional — uncomment for PostgreSQL in production
-# DB_DRIVER=postgresql
-# DB_HOST=localhost
-# DB_PORT=5432
-# DB_NAME=myapp
-# DB_USER=postgres
-# DB_PASSWORD=secret
-
-# Optional — for JWT auth (mobile apps, APIs)
-# JWT_SECRET=your-jwt-secret
-
-# Optional — for email sending
-# MAIL_DRIVER=smtp
-# MAIL_HOST=smtp.postmarkapp.com
-# MAIL_PORT=587
-# MAIL_USER=your-api-token
-# MAIL_FROM=hello@myapp.com
-
-# Optional — for Redis (cache, queue, sessions)
-# REDIS_URL=redis://localhost:6379
-
-# Optional — for real-time WebSockets (Pusher/Soketi)
-# PUSHER_KEY=app-key
-# PUSHER_SECRET=app-secret
-# PUSHER_APP_ID=app-id
-# PUSHER_HOST=localhost
-# PUSHER_PORT=6001
-```
-
-> For development, only `APP_KEY` matters. Everything else has sensible defaults.
 
 ### 2. Run Migrations
 
+If you used `npx svelar new`, migrations and seeding already ran automatically. For manual setup:
+
 ```bash
-npx @beeblock/svelar migrate
+npx svelar migrate
 ```
 
-This creates the database tables: users, posts, sessions, roles, permissions, and all pivot tables.
+This creates the database tables: users, posts, sessions, roles, permissions, audit logs, notifications, failed jobs, and all pivot tables.
 
 Check what migrations ran:
 
 ```bash
-npx @beeblock/svelar migrate --status
+npx svelar migrate --status
 ```
 
 ### 3. Seed Sample Data (Optional)
 
 ```bash
-npx @beeblock/svelar seed:run
+npx svelar seed:run
 ```
 
 ### 4. Start the Dev Server
@@ -218,7 +187,7 @@ Visit `http://localhost:5173`. You'll see the landing page. Click **Register** t
 ### 5. Start the Scheduler (Separate Terminal)
 
 ```bash
-npx @beeblock/svelar schedule:run
+npx svelar schedule:run
 ```
 
 This starts the cron task runner. It checks every minute for tasks that need to run.
@@ -226,7 +195,7 @@ This starts the cron task runner. It checks every minute for tasks that need to 
 ### 6. Start the Queue Worker (Separate Terminal)
 
 ```bash
-npx @beeblock/svelar queue:work
+npx svelar queue:work
 ```
 
 This processes background jobs (welcome emails, data exports, etc.).
@@ -260,28 +229,28 @@ Svelar handles the repetitive SaaS infrastructure. You focus on your core busine
 
 ```bash
 # Create a new domain module (e.g., invoices)
-npx @beeblock/svelar make:model Invoice --module=billing
-npx @beeblock/svelar make:controller Invoice --module=billing
-npx @beeblock/svelar make:service Billing --module=billing --crud
-npx @beeblock/svelar make:repository Invoice --module=billing --model=Invoice
-npx @beeblock/svelar make:schema Invoice --module=billing
-npx @beeblock/svelar make:migration CreateInvoicesTable
+npx svelar make:model Invoice --module=billing
+npx svelar make:controller Invoice --module=billing
+npx svelar make:service Billing --module=billing --crud
+npx svelar make:repository Invoice --module=billing --model=Invoice
+npx svelar make:schema Invoice --module=billing
+npx svelar make:migration CreateInvoicesTable
 
 # Create API routes
-npx @beeblock/svelar make:route invoices --api --resource -c InvoiceController
+npx svelar make:route invoices --api --resource -c InvoiceController
 
 # Create a background job
-npx @beeblock/svelar make:job GenerateInvoicePdf
+npx svelar make:job GenerateInvoicePdf
 
 # Create a scheduled task
-npx @beeblock/svelar make:task SendInvoiceReminders
+npx svelar make:task SendInvoiceReminders
 
 # Create an event + listener
-npx @beeblock/svelar make:event InvoicePaid
-npx @beeblock/svelar make:listener NotifyCustomer --event=InvoicePaid
+npx svelar make:event InvoicePaid
+npx svelar make:listener NotifyCustomer --event=InvoicePaid
 ```
 
-Every generator creates files in the right location following the DDD module structure. Run `npx @beeblock/svelar migrate` after creating migrations.
+Every generator creates files in the right location following the DDD module structure. Run `npx svelar migrate` after creating migrations.
 
 ### The Pattern
 
@@ -405,16 +374,16 @@ When you're ready to deploy:
 
 ```bash
 # Generate Docker files
-npx @beeblock/svelar make:docker
+npx svelar make:docker
 
 # Build and start
 docker compose up -d --build
 
 # Run migrations in the container
-docker compose exec app npx @beeblock/svelar migrate
+docker compose exec app npx svelar migrate
 
 # Seed data
-docker compose exec app npx @beeblock/svelar seed:run
+docker compose exec app npx svelar seed:run
 ```
 
 This sets up: your app (clustered via PM2), PostgreSQL, Redis, queue workers, scheduler, and optionally Soketi (WebSockets), Gotenberg (PDFs), and RustFS (S3-compatible storage).

@@ -309,9 +309,9 @@ CMD ["pm2-runtime", "ecosystem.config.cjs"]
       lines.push('      - "9601:9601"   # Metrics');
       lines.push('    environment:');
       lines.push('      SOKETI_DEBUG: "${SOKETI_DEBUG:-0}"');
-      lines.push('      SOKETI_DEFAULT_APP_ID: ${PUSHER_APP_ID:-svelar-app}');
-      lines.push('      SOKETI_DEFAULT_APP_KEY: ${PUSHER_KEY:-svelar-key}');
-      lines.push('      SOKETI_DEFAULT_APP_SECRET: ${PUSHER_SECRET:-svelar-secret}');
+      lines.push('      SOKETI_DEFAULT_APP_ID: ${PUSHER_APP_ID}');
+      lines.push('      SOKETI_DEFAULT_APP_KEY: ${PUSHER_KEY}');
+      lines.push('      SOKETI_DEFAULT_APP_SECRET: ${PUSHER_SECRET}');
       lines.push('      SOKETI_DEFAULT_APP_MAX_CONNS: "${SOKETI_MAX_CONNS:-1000}"');
       lines.push('      SOKETI_DEFAULT_APP_ENABLE_CLIENT_MESSAGES: "true"');
       lines.push('      SOKETI_DEFAULT_APP_MAX_BACKEND_EVENTS_PER_SEC: "-1"');

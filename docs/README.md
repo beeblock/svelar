@@ -61,14 +61,12 @@ Svelar is a Laravel-inspired framework built on top of SvelteKit 2. It brings en
 ## Quick Start
 
 ```bash
-npx @beeblock/svelar new my-app
+npx svelar new my-app
 cd my-app
-cp .env.example .env
-npx @beeblock/svelar migrate
 npm run dev
 ```
 
-Your app is now running at `http://localhost:5173` with auth, dashboard, admin panel, teams, API keys, and more — all working out of the box.
+The `new` command installs dependencies, generates `.env` with secure random secrets, runs migrations, and seeds the database. Your app is ready at `http://localhost:5173` with auth, dashboard, admin panel, teams, API keys, and more — all working out of the box.
 
 > **New to Svelar?** Read the [Getting Started](./00-getting-started.md) guide for a complete walkthrough of what you get and how to set everything up.
 
@@ -239,7 +237,7 @@ export const handle = createSvelarHooks({
     new CsrfMiddleware({ onlyPaths: ['/api/'] }),
     new SessionMiddleware({
       store: new DatabaseSessionStore(),  // auto-creates sessions table
-      secret: process.env.APP_KEY || 'change-me',
+      secret: process.env.APP_KEY!,
       lifetime: 60 * 60 * 24,
     }),
     new AuthenticateMiddleware(auth),
@@ -284,7 +282,7 @@ STORAGE_DISK=local
 ## Getting Help
 
 - Review the documentation for detailed guides
-- Scaffold a new project with `npx @beeblock/svelar new my-app` to explore working examples
+- Scaffold a new project with `npx svelar new my-app` to explore working examples
 - Open an issue on GitHub for bugs or feature requests
 
 ---

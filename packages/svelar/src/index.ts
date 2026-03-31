@@ -21,7 +21,7 @@ export { ServiceProvider } from './container/ServiceProvider.js';
 export { Application } from './container/Application.js';
 
 // Middleware
-export { Middleware, MiddlewareStack, CorsMiddleware, RateLimitMiddleware, LoggingMiddleware, CsrfMiddleware, OriginMiddleware, ThrottleMiddleware } from './middleware/Middleware.js';
+export { Middleware, MiddlewareStack, CorsMiddleware, RateLimitMiddleware, LoggingMiddleware, CsrfMiddleware, OriginMiddleware, ThrottleMiddleware, SignatureMiddleware } from './middleware/Middleware.js';
 export type { MiddlewareContext, NextFunction, MiddlewareHandler } from './middleware/Middleware.js';
 
 // Routing & Controllers
@@ -46,7 +46,7 @@ export { Hash } from './hashing/Hash.js';
 export type { HashDriver, HashConfig } from './hashing/Hash.js';
 
 // Session
-export { Session, SessionMiddleware, MemorySessionStore, DatabaseSessionStore } from './session/Session.js';
+export { Session, SessionMiddleware, MemorySessionStore, DatabaseSessionStore, FileSessionStore, RedisSessionStore } from './session/Session.js';
 export type { SessionStore, SessionConfig, SessionData } from './session/Session.js';
 
 // Errors

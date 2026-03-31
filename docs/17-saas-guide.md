@@ -4,15 +4,15 @@ A complete guide to building production SaaS applications with Svelar. Covers wh
 
 ## What You Get
 
-Running `npx @beeblock/svelar new my-saas` scaffolds a fully working SaaS application:
+Running `npx svelar new my-saas` scaffolds a fully working SaaS application:
 
 ```bash
-npx @beeblock/svelar new my-saas
+npx svelar new my-saas
 cd my-saas
 npm run dev
 ```
 
-The `new` command installs dependencies, runs all migrations, and seeds the database automatically. You get:
+The `new` command generates `.env` with secure random `APP_KEY` and `INTERNAL_SECRET`, installs dependencies, runs all migrations, and seeds the database automatically. You get:
 
 ### Authentication (ready to use)
 - `/register` — Account creation with form validation (superforms + Zod)
@@ -528,7 +528,7 @@ const res = await fetch('http://localhost:5173/api/internal/broadcast', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
-    'X-Internal-Secret': process.env.INTERNAL_SECRET || 'svelar-internal-secret',
+    'X-Internal-Secret': process.env.INTERNAL_SECRET!,
   },
   body: JSON.stringify({ channel: 'notifications', eventName: 'toast', data: { title: 'Update' } }),
 });
@@ -649,7 +649,7 @@ export async function GET() {
 }
 ```
 
-For large datasets, use `Excel.stream()` with async generators to keep memory low. See [Additional Features](./12-additional-features.md#excel-importexport) for streaming examples.
+For large datasets, use `Excel.stream()` with async generators to keep memory low. See [Excel](./28-excel.md) for streaming examples.
 
 ## File Uploads
 
@@ -771,7 +771,7 @@ import { getTextDirection } from '$lib/paraglide/runtime';
 
 export const { handle, handleError } = createSvelarApp({
   auth,
-  secret: process.env.APP_KEY || 'change-me-in-production',
+  secret: process.env.APP_KEY!,
   sessionStore: new DatabaseSessionStore(),
   csrfExcludePaths: ['/api/webhooks', '/api/internal/'],
   i18n: { paraglideMiddleware, getTextDirection },

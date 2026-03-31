@@ -443,7 +443,9 @@ export class AuthManager {
    */
   async generateApiToken(user: AuthUser, name: string = 'default'): Promise<string> {
     const token = randomBytes(32).toString('hex');
-    const hashedToken = createHmac('sha256', this.config.jwt?.secret ?? process.env.APP_KEY ?? 'svelar-change-me').update(token).digest('hex');
+    const secret = this.config.jwt?.secret ?? process.env.APP_KEY;
+    if (!secret) throw new Error('APP_KEY is not set. Set it in your .env file or pass jwt.secret in auth config.');
+    const hashedToken = createHmac('sha256', secret).update(token).digest('hex');
 
     const { Connection } = await import('../database/Connection.js');
     const table = this.config.token?.table ?? 'personal_access_tokens';
@@ -463,7 +465,9 @@ export class AuthManager {
     const { Connection } = await import('../database/Connection.js');
     const table = this.config.token?.table ?? 'personal_access_tokens';
 
-    const hashedToken = createHmac('sha256', this.config.jwt?.secret ?? process.env.APP_KEY ?? 'svelar-change-me').update(plainToken).digest('hex');
+    const secret = this.config.jwt?.secret ?? process.env.APP_KEY;
+    if (!secret) throw new Error('APP_KEY is not set. Set it in your .env file or pass jwt.secret in auth config.');
+    const hashedToken = createHmac('sha256', secret).update(plainToken).digest('hex');
 
     const rows = await Connection.raw(
       `SELECT user_id FROM ${table} WHERE token = ?`,
@@ -823,7 +827,8 @@ export class AuthManager {
   // ── Private Helpers ─────────────────────────────────────
 
   private hashToken(token: string): string {
-    const secret = this.config.jwt?.secret ?? process.env.APP_KEY ?? 'svelar-change-me';
+    const secret = this.config.jwt?.secret ?? process.env.APP_KEY;
+    if (!secret) throw new Error('APP_KEY is not set. Set it in your .env file or pass jwt.secret in auth config.');
     return createHmac('sha256', secret).update(token).digest('hex');
   }
 

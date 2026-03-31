@@ -443,7 +443,6 @@ export default class CreateSvelarJobsTable extends Migration {
       table.integer('created_at');
     });
 
-    await this.schema.createTable('svelar_jobs', (t) => {});
   }
 
   async down() {
@@ -563,6 +562,93 @@ console.log(`${pending} jobs waiting`);
 // Clear all jobs from a queue
 await Queue.clear('default');
 ```
+
+## Failed Jobs
+
+When a job exceeds its `maxAttempts`, Svelar persists it to a `svelar_failed_jobs` database table so you can inspect, retry, or discard it later. This works with all queue drivers (sync, memory, database, redis).
+
+### Migration
+
+Projects scaffolded with `npx svelar new` include the migration automatically. For existing projects, create it manually:
+
+```bash
+npx svelar make:migration CreateFailedJobsTable
+```
+
+```typescript
+import { Migration } from '@beeblock/svelar/database';
+
+export default class CreateFailedJobsTable extends Migration {
+  async up() {
+    await this.schema.createTable('svelar_failed_jobs', (table) => {
+      table.string('id').primary();
+      table.string('queue');
+      table.string('job_class');
+      table.text('payload');
+      table.text('exception');
+      table.integer('failed_at');
+    });
+  }
+
+  async down() {
+    await this.schema.dropTable('svelar_failed_jobs');
+  }
+}
+```
+
+Then run `npx svelar migrate`.
+
+> If the `svelar_failed_jobs` table doesn't exist, Svelar falls back to logging failures to the console instead of crashing.
+
+### CLI Commands
+
+```bash
+# List all failed jobs
+npx svelar queue:failed
+
+# Retry a specific failed job by ID
+npx svelar queue:retry abc123
+
+# Retry all failed jobs
+npx svelar queue:retry --all
+
+# Delete all failed job records
+npx svelar queue:flush
+```
+
+### Programmatic API
+
+You can also manage failed jobs from your application code:
+
+```typescript
+import { Queue } from '@beeblock/svelar/queue';
+
+// Get all failed jobs
+const failures = await Queue.failed();
+// => FailedJobRecord[] { id, queue, jobClass, payload, exception, failedAt }
+
+// Retry a specific job (removes from failed_jobs, re-dispatches to queue)
+const retried = await Queue.retry('abc123');
+
+// Retry all failed jobs
+const count = await Queue.retryAll();
+
+// Delete a single failed job record
+await Queue.forgetFailed('abc123');
+
+// Delete all failed job records
+await Queue.flushFailed();
+```
+
+### How It Works
+
+When a job fails after exhausting all retry attempts:
+
+1. The `failed()` method on the job class is called (if defined)
+2. The job payload, exception, queue name, and timestamp are saved to `svelar_failed_jobs`
+3. The record stays there until you retry or flush it
+
+When you retry a failed job, Svelar deserializes the original payload, creates a new job instance, dispatches it back onto the same queue, and deletes the failed record.
 
 ## Job Examples
 
@@ -744,7 +830,7 @@ Queue.registerAll([
 3. **Handle failures gracefully** - Always implement `failed()` to log or alert
 4. **Use redis or database driver in production** - Memory queue is lost on restart. Redis (BullMQ) is recommended for high-throughput apps
 5. **Register all job classes** - Even if not using database driver yet (makes switching easy)
-6. **Monitor your queue** - Check failed jobs and queue size regularly
+6. **Monitor your queue** - Use `npx svelar queue:failed` to inspect failures and `queue:retry` to re-process them
 7. **Keep jobs focused** - One job, one responsibility. Complex logic belongs in services
 8. **Pass IDs, not objects** - Don't serialize entire models, pass IDs and fetch fresh data in `handle()`
 9. **Use `dispatchSync()` in tests** - No worker needed, jobs complete immediately

@@ -465,6 +465,7 @@ class RedisDriver implements QueueDriverInterface {
   async createWorker(
     queueName: string,
     registry: JobRegistry,
+    failedStore: FailedJobStore,
     options?: { concurrency?: number },
   ): Promise<any> {
     const bullmq = await this.getBullMQ();
@@ -491,9 +492,20 @@ class RedisDriver implements QueueDriverInterface {
       if (data) {
         try {
           const jobInstance = registry.resolve(data.jobClass, data.payload);
-          // Only call failed() if all retries are exhausted
+          // Only call failed() and persist if all retries are exhausted
           if (bullJob.attemptsMade >= (bullJob.opts?.attempts ?? 3)) {
             jobInstance.failed(err);
+            await failedStore.store({
+              id: bullJob.id,
+              jobClass: data.jobClass,
+              payload: data.payload,
+              queue: queueName,
+              attempts: bullJob.attemptsMade,
+              maxAttempts: bullJob.opts?.attempts ?? 3,
+              availableAt: Date.now(),
+              createdAt: bullJob.timestamp ?? Date.now(),
+              job: jobInstance,
+            }, err);
           }
         } catch {
           console.error(`[Queue] Failed to resolve job for failure handler:`, err.message);
@@ -502,6 +514,95 @@ class RedisDriver implements QueueDriverInterface {
     });
 
     return worker;
+  }
+}
+
+// ── Failed Job Store ──────────────────────────────────────
+
+export interface FailedJobRecord {
+  id: string;
+  queue: string;
+  jobClass: string;
+  payload: string;
+  exception: string;
+  failedAt: number;
+}
+
+class FailedJobStore {
+  private table = 'svelar_failed_jobs';
+
+  private async getConnection() {
+    const { Connection } = await import('../database/Connection.js');
+    return Connection;
+  }
+
+  async store(job: QueuedJob, error: Error): Promise<void> {
+    try {
+      const conn = await this.getConnection();
+      await conn.raw(
+        `INSERT INTO ${this.table} (id, queue, job_class, payload, exception, failed_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          crypto.randomUUID(),
+          job.queue,
+          job.jobClass,
+          job.payload,
+          error.stack ?? error.message,
+          Math.floor(Date.now() / 1000),
+        ]
+      );
+    } catch {
+      // If the failed_jobs table doesn't exist, fall back to console logging
+      console.error(`[Queue] Could not persist failed job (run migration to create svelar_failed_jobs table)`);
+    }
+  }
+
+  async all(): Promise<FailedJobRecord[]> {
+    const conn = await this.getConnection();
+    const rows = await conn.raw(
+      `SELECT * FROM ${this.table} ORDER BY failed_at DESC`,
+      []
+    );
+    return (rows ?? []).map((r: any) => ({
+      id: r.id,
+      queue: r.queue,
+      jobClass: r.job_class,
+      payload: r.payload,
+      exception: r.exception,
+      failedAt: r.failed_at,
+    }));
+  }
+
+  async find(id: string): Promise<FailedJobRecord | null> {
+    const conn = await this.getConnection();
+    const rows = await conn.raw(
+      `SELECT * FROM ${this.table} WHERE id = ? LIMIT 1`,
+      [id]
+    );
+    if (!rows || rows.length === 0) return null;
+    const r = rows[0];
+    return {
+      id: r.id,
+      queue: r.queue,
+      jobClass: r.job_class,
+      payload: r.payload,
+      exception: r.exception,
+      failedAt: r.failed_at,
+    };
+  }
+
+  async forget(id: string): Promise<boolean> {
+    const conn = await this.getConnection();
+    await conn.raw(`DELETE FROM ${this.table} WHERE id = ?`, [id]);
+    return true;
+  }
+
+  async flush(): Promise<number> {
+    const conn = await this.getConnection();
+    const rows = await conn.raw(`SELECT COUNT(*) as count FROM ${this.table}`, []);
+    const count = rows?.[0]?.count ?? 0;
+    await conn.raw(`DELETE FROM ${this.table}`, []);
+    return count;
   }
 }
 
@@ -578,6 +679,7 @@ class QueueManager {
   private drivers = new Map<string, QueueDriverInterface>();
   private processing = false;
   private jobRegistry = new JobRegistry();
+  private failedStore = new FailedJobStore();
   private _activeWorker: any = null;
 
   configure(config: QueueConfig): void {
@@ -739,7 +841,7 @@ class QueueManager {
 
     // ── Redis / BullMQ path ──────────────────────────────────
     if (driver instanceof RedisDriver) {
-      const worker = await driver.createWorker(queue, this.jobRegistry, {
+      const worker = await driver.createWorker(queue, this.jobRegistry, this.failedStore, {
         concurrency: options?.concurrency ?? 1,
       });
 
@@ -808,6 +910,9 @@ class QueueManager {
           // Permanently failed
           queuedJob.job.failed(error as Error);
 
+          // Persist to failed_jobs table
+          await this.failedStore.store(queuedJob, error as Error);
+
           // Clean up from database
           if (driver instanceof DatabaseDriver) {
             await (driver as DatabaseDriver).delete(queuedJob.id);
@@ -842,6 +947,84 @@ class QueueManager {
    */
   async clear(queue?: string): Promise<void> {
     return this.resolveDriver(this.config.default).clear(queue);
+  }
+
+  // ── Failed Jobs API ─────────────────────────────────────
+
+  /**
+   * List all failed jobs.
+   *
+   * @example
+   * const failures = await Queue.failed();
+   * for (const f of failures) {
+   *   console.log(f.jobClass, f.exception);
+   * }
+   */
+  async failed(): Promise<FailedJobRecord[]> {
+    return this.failedStore.all();
+  }
+
+  /**
+   * Retry a failed job by its ID.
+   * The job is re-dispatched to the queue and removed from the failed_jobs table.
+   *
+   * @example
+   * await Queue.retry('some-uuid');
+   */
+  async retry(failedJobId: string): Promise<boolean> {
+    const record = await this.failedStore.find(failedJobId);
+    if (!record) return false;
+
+    const jobInstance = this.jobRegistry.resolve(record.jobClass, record.payload);
+    jobInstance.queue = record.queue;
+
+    await this.dispatch(jobInstance, { queue: record.queue });
+    await this.failedStore.forget(failedJobId);
+    return true;
+  }
+
+  /**
+   * Retry all failed jobs.
+   *
+   * @example
+   * const count = await Queue.retryAll();
+   * console.log(`Retried ${count} jobs`);
+   */
+  async retryAll(): Promise<number> {
+    const records = await this.failedStore.all();
+    let count = 0;
+    for (const record of records) {
+      try {
+        const jobInstance = this.jobRegistry.resolve(record.jobClass, record.payload);
+        jobInstance.queue = record.queue;
+        await this.dispatch(jobInstance, { queue: record.queue });
+        await this.failedStore.forget(record.id);
+        count++;
+      } catch {
+        // Skip unresolvable jobs
+      }
+    }
+    return count;
+  }
+
+  /**
+   * Remove a single failed job record.
+   *
+   * @example
+   * await Queue.forgetFailed('some-uuid');
+   */
+  async forgetFailed(failedJobId: string): Promise<boolean> {
+    return this.failedStore.forget(failedJobId);
+  }
+
+  /**
+   * Remove all failed job records.
+   *
+   * @example
+   * const count = await Queue.flushFailed();
+   */
+  async flushFailed(): Promise<number> {
+    return this.failedStore.flush();
   }
 
   private resolveDriver(name: string): QueueDriverInterface {

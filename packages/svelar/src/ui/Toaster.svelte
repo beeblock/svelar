@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getToasts, subscribe, dismiss, pauseToast, resumeToast, type ToastVariant, type ToastState } from './toast.js';
+  import { getToasts, subscribe, dismiss, pauseToast, resumeToast, type ToastVariant, type ToastState } from './toast.ts';
   import { onMount } from 'svelte';
   import type { Component } from 'svelte';
 

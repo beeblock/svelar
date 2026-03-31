@@ -60,8 +60,8 @@ export class NewCommand extends Command {
       'src/lib/actions',
       'src/lib/auth',
       'src/lib/schemas',
-      'src/lib/jobs',
-      'src/lib/scheduler',
+      'src/lib/shared/jobs',
+      'src/lib/shared/scheduler',
       'src/lib/events',
       'src/lib/listeners',
       'src/lib/resources',
@@ -98,6 +98,16 @@ export class NewCommand extends Command {
     write('src/app.ts', T.appTs());
     write('src/hooks.server.ts', T.hooksServerTs());
     write('.env.example', T.envExample());
+
+    // Generate .env with unique secrets so the app works immediately
+    const { randomBytes } = await import('node:crypto');
+    const appKey = randomBytes(32).toString('hex');
+    const internalSecret = randomBytes(16).toString('hex');
+    const envContent = T.envExample()
+      .replace('APP_KEY=change-me-to-a-random-string', `APP_KEY=${appKey}`)
+      .replace('INTERNAL_SECRET=change-me-to-a-random-string', `INTERNAL_SECRET=${internalSecret}`);
+    write('.env', envContent);
+
     write('.gitignore', T.gitignore());
     write('svelar.database.json', T.svelarDatabaseJson());
 
@@ -156,6 +166,7 @@ export class NewCommand extends Command {
     write('src/lib/database/migrations/00000005_create_sessions_table.ts', T.createSessionsTable());
     write('src/lib/database/migrations/00000006_create_audit_logs_table.ts', T.createAuditLogsTable());
     write('src/lib/database/migrations/00000007_create_notifications_table.ts', T.createNotificationsTable());
+    write('src/lib/database/migrations/00000008_create_failed_jobs_table.ts', T.createFailedJobsTable());
 
     // ── 5. Seeder ─────────────────────────────────────────
     write('src/lib/database/seeders/DatabaseSeeder.ts', T.databaseSeeder());
@@ -219,17 +230,17 @@ export class NewCommand extends Command {
 
     // ── 10. Jobs ──────────────────────────────────────────
     this.info('Creating background jobs...');
-    write('src/lib/jobs/SendWelcomeEmail.ts', T.sendWelcomeEmail());
-    write('src/lib/jobs/DailyDigestJob.ts', T.dailyDigestJob());
-    write('src/lib/jobs/ExportDataJob.ts', T.exportDataJob());
+    write('src/lib/shared/jobs/SendWelcomeEmail.ts', T.sendWelcomeEmail());
+    write('src/lib/shared/jobs/DailyDigestJob.ts', T.dailyDigestJob());
+    write('src/lib/shared/jobs/ExportDataJob.ts', T.exportDataJob());
 
     // ── 11. Scheduled tasks ───────────────────────────────
     this.info('Creating scheduled tasks...');
-    write('src/lib/scheduler/CleanupExpiredTokens.ts', T.cleanupExpiredTokens());
-    write('src/lib/scheduler/CleanExpiredSessions.ts', T.cleanExpiredSessions());
-    write('src/lib/scheduler/DailyDigestEmail.ts', T.dailyDigestEmail());
-    write('src/lib/scheduler/PruneAuditLogs.ts', T.pruneAuditLogs());
-    write('src/lib/scheduler/QueueHealthCheck.ts', T.queueHealthCheck());
+    write('src/lib/shared/scheduler/CleanupExpiredTokens.ts', T.cleanupExpiredTokens());
+    write('src/lib/shared/scheduler/CleanExpiredSessions.ts', T.cleanExpiredSessions());
+    write('src/lib/shared/scheduler/DailyDigestEmail.ts', T.dailyDigestEmail());
+    write('src/lib/shared/scheduler/PruneAuditLogs.ts', T.pruneAuditLogs());
+    write('src/lib/shared/scheduler/QueueHealthCheck.ts', T.queueHealthCheck());
 
     // ── 12. Layout & pages ────────────────────────────────
     this.info('Creating layouts...');

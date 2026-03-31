@@ -594,7 +594,7 @@ await Event.dispatch(new OrderCompleted(order));
 
 ## Next Steps
 
-- [Events & Listeners](./12-additional-features.md#events--listeners) — full event system reference
+- [Events & Listeners](./23-events.md) — full event system reference
 - [Model Observers](./03-models-orm.md#model-observers) — observer lifecycle and custom events
 - [Services & Actions](./08-services-actions-repositories.md) — where business logic lives
 

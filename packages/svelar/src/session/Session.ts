@@ -536,7 +536,7 @@ export class SessionMiddleware extends Middleware {
     this.config = {
       cookieName: 'svelar_session',
       lifetime: 7200,
-      secret: process.env.APP_KEY ?? 'svelar-default-secret-change-me',
+      secret: process.env.APP_KEY ?? (() => { throw new Error('APP_KEY is not set. Set it in your .env file before using sessions.'); })(),
       path: '/',
       domain: '',
       secure: process.env.NODE_ENV === 'production',

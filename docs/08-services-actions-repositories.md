@@ -324,7 +324,7 @@ Event.listen('user:registered', async (user) => {
 });
 ```
 
-For the full events system including typed event classes, listeners, and the EventServiceProvider, see [Events & Listeners](./12-additional-features.md#events--listeners).
+For the full events system including typed event classes, listeners, and the EventServiceProvider, see [Events & Listeners](./23-events.md).
 
 ## Actions
 

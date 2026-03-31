@@ -42,7 +42,7 @@ export const handle = createSvelarHooks({
   middleware: [
     new SessionMiddleware({
       store: sessionStore,
-      secret: process.env.APP_KEY || 'dev-secret',
+      secret: process.env.APP_KEY!,
       lifetime: 60 * 60 * 24, // 24 hours
     }),
     new AuthenticateMiddleware(auth),
@@ -236,7 +236,7 @@ export const auth = new AuthManager({
   guard: 'jwt',
   model: User,
   jwt: {
-    secret: process.env.JWT_SECRET || 'dev-secret',
+    secret: process.env.JWT_SECRET!,
     expiresIn: '24h',
     algorithm: 'HS256',
   },
@@ -275,7 +275,7 @@ export class AuthController extends Controller {
       sub: (user as any).id,
       email: (user as any).email,
       name: (user as any).name,
-    }, process.env.JWT_SECRET || 'dev-secret');
+    }, process.env.JWT_SECRET!);
 
     return this.json({
       message: 'Login successful',
@@ -776,7 +776,7 @@ export const { handle, handleError } = createSvelarApp({
 // Using SessionMiddleware directly
 new SessionMiddleware({
   store: new DatabaseSessionStore('sessions'),
-  secret: process.env.APP_KEY || 'dev-secret',
+  secret: process.env.APP_KEY!,
   lifetime: 60 * 60 * 24 * 7,  // 7 days
   name: 'my_app_session',       // Custom cookie name
 })
@@ -885,7 +885,7 @@ export const handle = createSvelarHooks({
   middleware: [
     new SessionMiddleware({
       store: sessionStore,
-      secret: process.env.APP_KEY || 'dev-secret',
+      secret: process.env.APP_KEY!,
       lifetime: 60 * 60 * 24,
     }),
   ],
@@ -905,7 +905,7 @@ export const handle = createSvelarHooks({
   middleware: [
     new SessionMiddleware({
       store: sessionStore,
-      secret: process.env.APP_KEY || 'dev-secret',
+      secret: process.env.APP_KEY!,
       lifetime: 60 * 60 * 24,
     }),
   ],

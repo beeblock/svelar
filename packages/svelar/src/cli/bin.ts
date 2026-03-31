@@ -73,12 +73,18 @@ import { SeedCommand } from './commands/SeedCommand.js';
 // Scheduler & Queue
 import { ScheduleRunCommand } from './commands/ScheduleRunCommand.js';
 import { QueueWorkCommand } from './commands/QueueWorkCommand.js';
+import { QueueFailedCommand } from './commands/QueueFailedCommand.js';
+import { QueueRetryCommand } from './commands/QueueRetryCommand.js';
+import { QueueFlushCommand } from './commands/QueueFlushCommand.js';
 
 // Utilities
 import { TinkerCommand } from './commands/TinkerCommand.js';
 
 // Project scaffolding
 import { NewCommand } from './commands/NewCommand.js';
+
+// Key generation
+import { KeyGenerateCommand } from './commands/KeyGenerateCommand.js';
 
 // Plugins
 import { PluginListCommand } from './commands/PluginListCommand.js';
@@ -89,6 +95,7 @@ const cli = new Cli('0.1.0');
 
 // Register all built-in commands
 cli.register(NewCommand);
+cli.register(KeyGenerateCommand);
 cli.register(MakeModelCommand);
 cli.register(MakeMigrationCommand);
 cli.register(MakeControllerCommand);
@@ -119,6 +126,9 @@ cli.register(MigrateCommand);
 cli.register(SeedCommand);
 cli.register(ScheduleRunCommand);
 cli.register(QueueWorkCommand);
+cli.register(QueueFailedCommand);
+cli.register(QueueRetryCommand);
+cli.register(QueueFlushCommand);
 cli.register(TinkerCommand);
 cli.register(PluginListCommand);
 cli.register(PluginPublishCommand);

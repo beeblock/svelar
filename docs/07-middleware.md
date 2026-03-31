@@ -134,7 +134,7 @@ export const handle = createSvelarHooks({
     // 3. Session (read/write session cookies)
     new SessionMiddleware({
       store: sessionStore,
-      secret: process.env.APP_KEY || 'dev-secret',
+      secret: process.env.APP_KEY!,
       lifetime: 60 * 60 * 24,
     }),
 
@@ -483,7 +483,7 @@ import { auth } from './app.js';
 
 export const { handle, handleError } = createSvelarApp({
   auth,
-  secret: process.env.APP_KEY || 'change-me-in-production',
+  secret: process.env.APP_KEY!,
   i18n: { paraglideMiddleware, getTextDirection },
 });
 ```

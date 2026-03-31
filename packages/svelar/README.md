@@ -16,7 +16,7 @@ Full documentation is available at **[svelar.dev](https://svelar.dev)**.
 
 ```bash
 # Scaffold a new project
-npx @beeblock/svelar new my-app
+npx svelar new my-app
 cd my-app
 npm install
 npx svelar migrate

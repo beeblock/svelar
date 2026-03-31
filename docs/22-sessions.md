@@ -25,7 +25,7 @@ export const handle = createSvelarHooks({
   middleware: [
     new SessionMiddleware({
       store: new DatabaseSessionStore(),  // auto-creates sessions table
-      secret: process.env.APP_KEY || 'dev-secret',
+      secret: process.env.APP_KEY!,
       lifetime: 60 * 60 * 24,  // 24 hours
       name: 'svelar_session',   // Cookie name
     }),
