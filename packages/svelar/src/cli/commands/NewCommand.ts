@@ -102,6 +102,7 @@ export class NewCommand extends Command {
     write('vite.config.ts', T.viteConfig());
     write('tsconfig.json', T.tsConfig());
     write('src/app.html', T.appHtml());
+    write('static/favicon.svg', T.faviconSvg());
     write('src/app.css', T.appCss());
     write('src/app.ts', T.appTs());
     write('src/hooks.server.ts', T.hooksServerTs());
