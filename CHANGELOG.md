@@ -36,6 +36,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **TypeScript parameter properties in templates** — removed `private`/`public`/`readonly` parameter properties from `SendWelcomeEmail`, `UserRegistered`, and `WelcomeNotification` templates; Node's `--strip-only` TS mode does not support parameter properties
 - **Flat mode relative path depth** — shared file templates (`CleanupExpiredTokens`, etc.) had `../../../app.js` assuming 4-level DDD paths; flat mode correctly adjusts to `../../app.js`
 
+### Testing
+
+- **29 test suites, 687 tests** covering CLI commands, middleware, routing, auth, ORM, container, services, actions, support utilities, and more
+- **CLI command tests** — `Command` base class (`isDDD()`, `sharedDir()`, `moduleDir()`, output helpers), all 18 `make:*` commands in both flat and DDD structures, cross-type import path generation
+- **Middleware tests** — `MiddlewareStack` ordering/short-circuit/named, `CorsMiddleware`, `RateLimitMiddleware`, `ThrottleMiddleware`, `OriginMiddleware`, `CsrfMiddleware` (double-submit cookie, Bearer exemption, path filtering), `SignatureMiddleware` (HMAC verification, timestamp tolerance, custom headers)
+- **Routing tests** — `Controller` response helpers and error handling, `Resource` transformers (`make`, `collection`, `paginate`), `JsonResponse`/`RedirectResponse`/`DownloadResponse`/`StreamedResponse`, `FormRequest` validation and data merging
+- **Auth tests** — JWT `signJwt`/`verifyJwt` (HS256/384/512, expiry, tamper detection), `GateResponse`, `AuthorizationError`, `Policy` CRUD methods
+- **Support tests** — `Pipeline` (class/function pipes, error recovery), `uuidv7`/`ulid` (format, uniqueness, time-sortability, validation), date utilities, `singleton()` helper
+- **Domain tests** — `Action`/`ChainableAction`/`inlineAction` (hooks, middleware, `runSafe`), `Service` (ok/fail/attempt, event dispatching), `ServiceProvider` lifecycle, `ModelObserver` events
+
 ## [0.4.3] - 2026-03-31
 
 ### Added
