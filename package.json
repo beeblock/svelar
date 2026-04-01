@@ -3,7 +3,8 @@
   "private": true,
   "workspaces": [
     "packages/svelar",
-    "packages/create-svelar"
+    "packages/create-svelar",
+    "packages/svelar-datatable"
   ],
   "scripts": {
     "build": "npm run build -w packages/svelar -w packages/create-svelar",

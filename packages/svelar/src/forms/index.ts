@@ -28,6 +28,9 @@
 
 import { z } from 'zod';
 
+// Re-export FormRequest so `import { FormRequest } from 'svelar/forms'` works
+export { FormRequest, FormValidationError, FormAuthorizationError } from '../routing/FormRequest.js';
+
 // ── Types ──────────────────────────────────────────────────
 
 export type { z };

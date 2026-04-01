@@ -68,9 +68,18 @@ Scaffolded projects resolve `@beeblock/svelar/*` imports via the `exports` field
 - Three locales: `en`, `pt`, `es`. Message files in `messages/*.json`.
 - Always add translations to all three locale files when adding new messages.
 
+## CSRF
+
+- Svelar uses double-submit cookie pattern: cookie `XSRF-TOKEN` (readable by JS) + header `X-CSRF-Token`.
+- **NEVER disable CSRF by adding paths to `csrfExcludePaths`** as a fix. That is a security hole, not a solution.
+- Use `apiFetch()` from `@beeblock/svelar/http` for client-side API calls — it reads the CSRF cookie and sets the header automatically.
+- Alternatively, read the token manually: `getCsrfToken()` from `@beeblock/svelar/http` and set `X-CSRF-Token` header.
+- Requests with `Authorization: Bearer ...` header are exempt from CSRF (API key/JWT auth).
+
 ## Code Style
 
 - No emojis in code unless explicitly requested.
 - No trailing summaries after completing work.
+- **ALWAYS propose production-grade fixes. Never take shortcuts that weaken security, disable protections, or bypass validation.**
 - Keep solutions simple — no over-engineering.
 - Prefer editing existing files over creating new ones.

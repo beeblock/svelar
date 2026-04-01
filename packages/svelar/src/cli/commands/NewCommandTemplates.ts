@@ -5651,12 +5651,12 @@ export class DailyDigestJob extends Job {
     console.error(\`[DailyDigestJob] Failed to generate digest for \${this.date}:\`, error.message);
   }
 
-  serialize(): Record<string, unknown> {
-    return { date: this.date };
+  serialize(): string {
+    return JSON.stringify({ date: this.date });
   }
 
-  static restore(data: Record<string, unknown>): DailyDigestJob {
-    return new DailyDigestJob(data.date as string);
+  restore(data: Record<string, any>): void {
+    this.date = data.date;
   }
 }
 `;
@@ -5724,12 +5724,13 @@ export class ExportDataJob extends Job {
     console.error(\`[ExportDataJob] Failed for user #\${this.userId}:\`, error.message);
   }
 
-  serialize(): Record<string, unknown> {
-    return { userId: this.userId, format: this.format };
+  serialize(): string {
+    return JSON.stringify({ userId: this.userId, format: this.format });
   }
 
-  static restore(data: Record<string, unknown>): ExportDataJob {
-    return new ExportDataJob(data.userId as number, (data.format as 'csv' | 'json') ?? 'csv');
+  restore(data: Record<string, any>): void {
+    this.userId = data.userId;
+    this.format = data.format ?? 'csv';
   }
 }
 `;

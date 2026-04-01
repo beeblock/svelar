@@ -51,6 +51,7 @@ coverage/
 test-*/
 hook-test/
 my-app/
+svelar-datatable/
 
 # Claude
 .claude/
