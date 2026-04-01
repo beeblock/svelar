@@ -60,6 +60,7 @@ Svelar is a Laravel-inspired framework built on top of SvelteKit 2. It brings en
 29. [Deployment](./29-deployment.md) - Docker, Traefik, blue-green, Swarm, CI/CD, monitoring
 30. [Security](./30-security.md) - Authentication, CSRF, rate limiting, Docker hardening, production checklist
 31. [Full-Text Search](./31-search.md) - Meilisearch integration with Searchable mixin, auto-sync, bulk indexing
+32. [Stripe Billing](./32-stripe.md) - Subscriptions, checkout, invoices, refunds, webhooks, customer portal
 
 ## Quick Start
 

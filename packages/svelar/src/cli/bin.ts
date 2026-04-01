@@ -82,6 +82,7 @@ import { TinkerCommand } from './commands/TinkerCommand.js';
 
 // Project scaffolding
 import { NewCommand } from './commands/NewCommand.js';
+import { UpdateCommand } from './commands/UpdateCommand.js';
 
 // Key generation
 import { KeyGenerateCommand } from './commands/KeyGenerateCommand.js';
@@ -99,6 +100,7 @@ const cli = new Cli(pkg.version);
 
 // Register all built-in commands
 cli.register(NewCommand);
+cli.register(UpdateCommand);
 cli.register(KeyGenerateCommand);
 cli.register(MakeModelCommand);
 cli.register(MakeMigrationCommand);

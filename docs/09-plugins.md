@@ -465,10 +465,12 @@ Discovers installed plugins (packages matching `svelar-*` or with `svelar-plugin
 ### Install a Plugin
 
 ```bash
-npx svelar plugin:install svelar-stripe
+npx svelar plugin:install svelar-analytics
 ```
 
 Runs `npm install`, discovers the plugin, registers it, and optionally publishes config/migrations. Use `--no-publish` to skip asset publishing.
+
+> **Note:** Stripe billing is built into the core as `@beeblock/svelar/stripe` — no plugin needed. See [Stripe Billing](./32-stripe.md).
 
 ### Publish Plugin Assets
 

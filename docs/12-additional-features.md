@@ -521,20 +521,44 @@ const url = await upload.url({ expiresIn: 3600 });
 
 ## Billing with Stripe
 
-Add subscription billing via the `svelar-stripe` plugin:
+Stripe billing is built into the core — no plugins needed. Install the Stripe SDK and configure:
 
 ```bash
-npm install svelar-stripe
-npx svelar plugin:publish svelar-stripe
+npm install stripe
 ```
 
 ```typescript
-import { Stripe } from 'svelar-stripe';
+// src/app.ts
+import { Stripe } from '@beeblock/svelar/stripe';
 
-const subscription = await Stripe.createSubscription(user, {
-  plan: 'pro',
-  paymentMethod: pmId,
+Stripe.configure({
+  secretKey: process.env.STRIPE_SECRET_KEY ?? '',
+  publishableKey: process.env.STRIPE_PUBLISHABLE_KEY ?? '',
+  webhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? '',
+  currency: 'usd',
 });
 ```
+
+```typescript
+// Create a subscription
+const subscription = await Stripe.service().createSubscription(
+  user.stripe_customer_id,
+  'price_xxxxx',
+  { trialDays: 14 },
+);
+
+// Cancel at end of billing period
+await Stripe.service().cancelSubscription(subscription.id, false);
+
+// Handle webhooks
+Stripe.webhooks()
+  .on('invoice.payment_succeeded', async (event) => {
+    // Record payment
+  });
+```
+
+The scaffold includes a billing page at `/dashboard/billing`, admin billing management, and a webhook route at `/api/webhooks/stripe`.
+
+See [Stripe Billing](./32-stripe.md) for the full guide: products, prices, currencies, checkout, portal, invoices, refunds, and webhook events.
 
 ---

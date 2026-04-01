@@ -26,13 +26,15 @@ The `new` command generates `.env` with secure random `APP_KEY` and `INTERNAL_SE
 - `/dashboard` — Stats overview (API keys, teams, account role)
 - `/dashboard/api-keys` — Create, list, copy, and revoke API keys
 - `/dashboard/team` — Team management with invitations, role assignment, member removal
+- `/dashboard/billing` — Subscription management, cancel/resume, payment method (Stripe Portal), invoice history
 - Auth guard — unauthenticated users redirected to `/login`
 
 ### Admin Panel
 - `/admin` — User management with inline role changes, user deletion
+- Billing tab — list all subscriptions, cancel, issue refunds
 - Roles and permissions display with seeded data
 - Admin guard — non-admin users redirected to `/dashboard`
-- Admin API routes for full CRUD on users, roles, permissions, role-permissions, user-roles, user-permissions
+- Admin API routes for full CRUD on users, roles, permissions, role-permissions, user-roles, user-permissions, billing
 - Run `npx svelar make:dashboard` for the full monitoring UI (queue, scheduler, logs, system health)
 
 ### API Routes (16 endpoints)
@@ -57,13 +59,19 @@ The `new` command generates `.env` with secure random `APP_KEY` and `INTERNAL_SE
 - Actions: `RegisterUserAction`, `CreatePostAction`
 - Schemas: `auth.ts`, `post.ts` (Zod validation)
 
+### Stripe Billing (opt-in)
+- Install `stripe`, uncomment `Stripe.configure()` in `app.ts`, add env vars
+- Subscriptions, checkout sessions, customer portal, invoices, refunds
+- Webhook handler at `/api/webhooks/stripe` with signature verification
+- See [Stripe Billing](./32-stripe.md) for the full setup guide
+
 ### Database
-- 5 migrations: users, posts, permissions tables, role column, sessions
+- 12 migrations: users, posts, permissions, role column, sessions, audit logs, notifications, failed jobs, stripe customer ID, subscription plans, subscriptions, invoices
 - `DatabaseSeeder` with admin user, demo user, roles, permissions, sample posts
 - Default accounts: `admin@svelar.dev` / `admin123`, `demo@svelar.dev` / `password`
 
 ### Infrastructure
-- Full `app.ts` bootstrap: Database, Hash, Auth, Queue, Audit, ApiKeys, Webhooks, Teams, Uploads, EmailTemplates, Broadcast, Dashboard
+- Full `app.ts` bootstrap: Database, Hash, Auth, Queue, Audit, ApiKeys, Webhooks, Teams, Uploads, EmailTemplates, Broadcast, Dashboard, Stripe (commented out — uncomment to enable)
 - Tailwind CSS v4 with brand theme tokens
 - Auth-aware navigation layout
 - Error page with status-specific messaging
@@ -88,7 +96,7 @@ my-saas/
 │   │   ├── jobs/                           # SendWelcomeEmail.ts, DailyDigestJob.ts, ExportDataJob.ts
 │   │   ├── scheduler/                      # CleanupExpiredTokens.ts, DailyDigestEmail.ts, etc.
 │   │   ├── database/
-│   │   │   ├── migrations/                 # 5 migration files
+│   │   │   ├── migrations/                 # 12 migration files
 │   │   │   └── seeders/                    # DatabaseSeeder.ts
 │   │   └── shared/
 │   │       └── providers/                  # EventServiceProvider.ts
@@ -102,7 +110,8 @@ my-saas/
 │       ├── logout/                         # Logout action
 │       ├── dashboard/                      # User dashboard
 │       │   ├── api-keys/                   # API key management
-│       │   └── team/                       # Team management
+│       │   ├── team/                       # Team management
+│       │   └── billing/                    # Subscription & invoices
 │       ├── admin/                          # Admin panel
 │       └── api/
 │           ├── health/                     # Health check
@@ -110,7 +119,8 @@ my-saas/
 │           ├── posts/                      # Posts CRUD
 │           ├── broadcasting/[channel]/     # SSE
 │           ├── internal/broadcast/         # Scheduler bridge
-│           └── admin/                      # Admin API (users, roles, permissions)
+│           ├── webhooks/stripe/           # Stripe webhook
+│           └── admin/                      # Admin API (users, roles, permissions, billing)
 ├── storage/                                # logs, cache, uploads, sessions
 ├── .env.example
 ├── svelar.database.json
@@ -556,6 +566,50 @@ await Webhooks.create({
 await Webhooks.dispatch('invoice.paid', { invoiceId: 123, amount: 99.99 });
 ```
 
+## Stripe Billing
+
+Stripe is built into the core — no plugins required. Set it up in three steps:
+
+### 1. Install & Configure
+
+```bash
+npm install stripe
+```
+
+```typescript
+// src/app.ts — uncomment the Stripe block
+import { Stripe } from '@beeblock/svelar/stripe';
+
+Stripe.configure({
+  secretKey: process.env.STRIPE_SECRET_KEY ?? '',
+  publishableKey: process.env.STRIPE_PUBLISHABLE_KEY ?? '',
+  webhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? '',
+  currency: 'usd',
+});
+```
+
+### 2. Create Products in Stripe Dashboard
+
+Go to [Stripe Products](https://dashboard.stripe.com/products), create your plans (e.g., Free, Pro at $29/mo, Enterprise at $99/mo), and copy each Price ID (`price_xxx`).
+
+### 3. Handle Webhooks
+
+Register event handlers in `app.ts`:
+
+```typescript
+Stripe.webhooks()
+  .on('customer.subscription.created', async (event) => {
+    // Sync subscription to your database
+  })
+  .on('invoice.payment_failed', async (event) => {
+    // Notify user about failed payment
+  });
+```
+
+The webhook endpoint at `/api/webhooks/stripe` is already scaffolded with signature verification.
+
+For the full guide including checkout sessions, customer portal, refunds, subscription management, and testing — see [Stripe Billing](./32-stripe.md).
+
 ## Audit Logging
 
 Track user actions:
@@ -674,6 +728,12 @@ Uploads.configure({ driver: 'memory', maxFileSize: 10 * 1024 * 1024 }); // 10MB
 - [ ] Set `NODE_ENV=production`
 - [ ] Use environment secrets (not `.env` file in production)
 - [ ] Configure CORS for your domain
+
+### Stripe (if using billing)
+- [ ] Switch to live mode keys (`sk_live_`, `pk_live_`)
+- [ ] Set `STRIPE_WEBHOOK_SECRET` for production webhook endpoint
+- [ ] Register webhook URL in Stripe Dashboard: `https://yourdomain.com/api/webhooks/stripe`
+- [ ] Test the webhook with `stripe trigger customer.subscription.created`
 
 ### Sessions & Cache
 - [ ] Already using `DatabaseSessionStore` (persistent across restarts)
