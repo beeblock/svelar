@@ -4,6 +4,17 @@ All notable changes to `@beeblock/svelar` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.6] - 2026-03-31
+
+### Added
+
+- **Admin billing UI** — new "Billing" tab in admin panel with subscriptions table (customer, plan, price, status), cancel/cancel-now buttons, and refund action per subscription
+
+### Fixed
+
+- **`cancelSubscription()` bug** — `StripeService.cancelSubscription(id, true)` was clearing the cancel flag instead of actually canceling; now correctly calls `subscriptions.cancel()` for immediate cancellation
+- **Billing page crash** — double-escaped `$` in template (`\\$props()`, `\\$app/forms`) produced invalid Svelte syntax; fixed to output correct `$props()` and `$app/forms`
+
 ## [0.4.5] - 2026-03-31
 
 ### Added

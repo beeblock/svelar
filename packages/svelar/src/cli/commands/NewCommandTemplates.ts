@@ -3706,6 +3706,7 @@ export const load = guardAuth('/dashboard', { role: 'admin' });
   import ListTodo from 'lucide-svelte/icons/list-todo';
   import Clock from 'lucide-svelte/icons/clock';
   import FileText from 'lucide-svelte/icons/file-text';
+  import CreditCard from 'lucide-svelte/icons/credit-card';
   import ArrowLeft from 'lucide-svelte/icons/arrow-left';
 
   interface Props {
@@ -3720,6 +3721,7 @@ export const load = guardAuth('/dashboard', { role: 'admin' });
     { tab: 'users', label: 'Users', icon: Users },
     { tab: 'roles', label: 'Roles', icon: ShieldCheck },
     { tab: 'permissions', label: 'Permissions', icon: Lock },
+    { tab: 'billing', label: 'Billing', icon: CreditCard },
     { tab: 'queue', label: 'Queue', icon: ListTodo },
     { tab: 'scheduler', label: 'Scheduler', icon: Clock },
     { tab: 'logs', label: 'Logs', icon: FileText },
@@ -3776,6 +3778,7 @@ import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
 import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
 import { LogViewer } from '@beeblock/svelar/logging/LogViewer';
 import { Permissions } from '@beeblock/svelar/permissions';
+import { Stripe } from '@beeblock/svelar/stripe';
 
 export async function load(event: ServerLoadEvent) {
   const user = event.locals.user;
@@ -3845,6 +3848,33 @@ export async function load(event: ServerLoadEvent) {
     }
   } catch { /* permissions tables may not exist yet */ }
 
+  // Billing / Stripe subscriptions
+  let billingSubscriptions: any[] = [];
+  try {
+    const client = await Stripe.service().getClient();
+    const subs = await client.subscriptions.list({
+      limit: 25,
+      expand: ['data.customer'],
+    });
+    billingSubscriptions = subs.data.map((sub: any) => ({
+      id: sub.id,
+      status: sub.status,
+      cancelAtPeriodEnd: sub.cancel_at_period_end,
+      customer: {
+        id: typeof sub.customer === 'string' ? sub.customer : sub.customer?.id,
+        email: typeof sub.customer === 'object' ? sub.customer?.email : null,
+        name: typeof sub.customer === 'object' ? sub.customer?.name : null,
+      },
+      plan: {
+        nickname: sub.items?.data?.[0]?.price?.nickname ?? 'Plan',
+        amount: sub.items?.data?.[0]?.price?.unit_amount ?? 0,
+        currency: sub.items?.data?.[0]?.price?.currency ?? 'usd',
+        interval: sub.items?.data?.[0]?.price?.recurring?.interval ?? 'month',
+      },
+      created: sub.created,
+    }));
+  } catch { /* stripe not configured or no subscriptions */ }
+
   return {
     user: {
       id: user.id,
@@ -3910,6 +3940,7 @@ export async function load(event: ServerLoadEvent) {
         perms.map((p: any) => ({ id: p.id, name: p.name })),
       ]),
     ),
+    billingSubscriptions,
   };
 }
 `;
@@ -3946,6 +3977,12 @@ export async function load(event: ServerLoadEvent) {
   let newPermDesc = \$state('');
   let showRoleForm = \$state(false);
   let showPermForm = \$state(false);
+
+  // Billing state
+  let billingSubscriptions = \$state<any[]>(data.billingSubscriptions ?? []);
+  let billingLoading = \$state(false);
+  let billingMessage = \$state('');
+  let billingMessageType = \$state<'success' | 'error'>('success');
 
   let logFilter = \$state<'all' | 'info' | 'warn' | 'error'>('all');
 
@@ -4323,6 +4360,75 @@ export async function load(event: ServerLoadEvent) {
 
   function getLogBadgeVariant(level: string): 'default' | 'secondary' | 'destructive' {
     return level === 'error' || level === 'fatal' ? 'destructive' : level === 'warn' ? 'secondary' : 'default';
+  }
+
+  function billingFlash(msg: string, type: 'success' | 'error' = 'success') {
+    billingMessage = msg;
+    billingMessageType = type;
+  }
+
+  function formatCurrency(amount: number, currency: string): string {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency.toUpperCase() }).format(amount / 100);
+  }
+
+  function billingStatusVariant(status: string): 'default' | 'secondary' | 'destructive' {
+    if (status === 'active' || status === 'trialing') return 'default';
+    if (status === 'past_due' || status === 'incomplete') return 'secondary';
+    return 'destructive';
+  }
+
+  async function refreshBilling() {
+    billingLoading = true;
+    try {
+      const res = await fetch('/api/admin/billing/subscriptions?limit=50');
+      if (res.ok) {
+        const data = await res.json();
+        billingSubscriptions = data.subscriptions;
+      }
+    } catch { /* ignore */ }
+    billingLoading = false;
+  }
+
+  async function cancelSubscription(subscriptionId: string, customerEmail: string, immediately: boolean) {
+    const mode = immediately ? 'immediately' : 'at end of billing period';
+    if (!confirm(\`Cancel subscription for \${customerEmail} \${mode}?\`)) return;
+    try {
+      const res = await fetch('/api/admin/billing/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subscriptionId, immediately }),
+      });
+      if (res.ok) {
+        billingFlash(\`Subscription \${immediately ? 'canceled' : 'set to cancel at period end'}\`);
+        await refreshBilling();
+      } else {
+        const err = await res.json();
+        billingFlash(err.error || 'Failed to cancel', 'error');
+      }
+    } catch {
+      billingFlash('Network error', 'error');
+    }
+  }
+
+  async function refundSubscription(subscriptionId: string, customerEmail: string) {
+    const invoiceId = prompt(\`Enter the Stripe Invoice ID to refund for \${customerEmail}:\`);
+    if (!invoiceId) return;
+    try {
+      const res = await fetch('/api/admin/billing/refund', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoiceId }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        billingFlash(\`Refund issued: \${data.refund.id} (\${data.refund.status})\`);
+      } else {
+        const err = await res.json();
+        billingFlash(err.error || 'Refund failed', 'error');
+      }
+    } catch {
+      billingFlash('Network error', 'error');
+    }
   }
 </script>
 
@@ -4704,6 +4810,89 @@ export async function load(event: ServerLoadEvent) {
         </CardContent>
       </Card>
     </div>
+  {/if}
+
+  <!-- Billing -->
+  {#if activeTab === 'billing'}
+    <Card>
+      <CardHeader>
+        <div class="flex items-center justify-between">
+          <div>
+            <CardTitle>Subscriptions</CardTitle>
+            <CardDescription>Manage user subscriptions, issue refunds, and cancel plans</CardDescription>
+          </div>
+          <Button variant="outline" size="sm" onclick={refreshBilling} disabled={billingLoading}>
+            {billingLoading ? 'Loading...' : 'Refresh'}
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {#if billingMessage}
+          <Alert variant={billingMessageType === 'error' ? 'destructive' : 'default'} class="mb-4">
+            <span class="text-sm">{billingMessage}</span>
+          </Alert>
+        {/if}
+
+        {#if billingSubscriptions.length === 0}
+          <p class="text-sm text-gray-500 py-8 text-center">
+            No subscriptions found. Subscriptions will appear here when users subscribe via Stripe.
+          </p>
+        {:else}
+          <div class="border rounded-lg overflow-hidden">
+            <table class="w-full text-sm">
+              <thead class="bg-gray-50 text-left">
+                <tr>
+                  <th class="px-4 py-3 text-gray-600 font-medium">Customer</th>
+                  <th class="px-4 py-3 text-gray-600 font-medium">Plan</th>
+                  <th class="px-4 py-3 text-gray-600 font-medium">Price</th>
+                  <th class="px-4 py-3 text-gray-600 font-medium">Status</th>
+                  <th class="px-4 py-3 text-gray-600 font-medium">Created</th>
+                  <th class="px-4 py-3 text-gray-600 font-medium text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y">
+                {#each billingSubscriptions as sub (sub.id)}
+                  <tr class="hover:bg-gray-50">
+                    <td class="px-4 py-3">
+                      <div>
+                        <p class="font-medium text-gray-900">{sub.customer.name ?? 'Unknown'}</p>
+                        <p class="text-xs text-gray-500">{sub.customer.email ?? sub.customer.id}</p>
+                      </div>
+                    </td>
+                    <td class="px-4 py-3 text-gray-700">{sub.plan.nickname}</td>
+                    <td class="px-4 py-3 text-gray-700">{formatCurrency(sub.plan.amount, sub.plan.currency)}/{sub.plan.interval}</td>
+                    <td class="px-4 py-3">
+                      <Badge variant={billingStatusVariant(sub.status)}>{sub.status}</Badge>
+                      {#if sub.cancelAtPeriodEnd}
+                        <Badge variant="secondary" class="ml-1">canceling</Badge>
+                      {/if}
+                    </td>
+                    <td class="px-4 py-3 text-gray-500">{formatDate(new Date(sub.created * 1000).toISOString())}</td>
+                    <td class="px-4 py-3 text-right">
+                      <div class="flex gap-1 justify-end">
+                        <Button size="sm" variant="outline" onclick={() => refundSubscription(sub.id, sub.customer.email ?? sub.customer.id)}>
+                          Refund
+                        </Button>
+                        {#if sub.status === 'active' || sub.status === 'trialing'}
+                          {#if !sub.cancelAtPeriodEnd}
+                            <Button size="sm" variant="outline" onclick={() => cancelSubscription(sub.id, sub.customer.email ?? sub.customer.id, false)}>
+                              Cancel
+                            </Button>
+                          {/if}
+                          <Button size="sm" variant="destructive" onclick={() => cancelSubscription(sub.id, sub.customer.email ?? sub.customer.id, true)}>
+                            Cancel Now
+                          </Button>
+                        {/if}
+                      </div>
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
+      </CardContent>
+    </Card>
   {/if}
 
   <!-- Queue -->
@@ -6136,10 +6325,10 @@ export const actions: Actions = {
 
   static billingPageSvelte(): string {
     return `<script lang="ts">
-  import { enhance } from '\\$app/forms';
+  import { enhance } from '$app/forms';
   import { Button, Badge, Card, CardHeader, CardTitle, CardContent, Alert } from '@beeblock/svelar/ui';
 
-  let { data, form: actionData } = \\$props();
+  let { data, form: actionData } = $props();
 
   function formatCurrency(amount: number, currency: string): string {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency.toUpperCase() }).format(amount / 100);
