@@ -77,6 +77,7 @@ See the [Getting Started guide](https://svelar.dev/docs/getting-started) for a c
 
 ```bash
 npx svelar new my-app                  # scaffold a new project
+npx svelar update                      # update scaffold files without overwriting
 npx svelar make:model Post -m -c       # model + migration + controller
 npx svelar make:service PaymentService # service class
 npx svelar make:job SendEmail          # queue job
@@ -87,7 +88,7 @@ npx svelar queue:work                  # process queue jobs
 npx svelar tinker                      # interactive REPL
 ```
 
-30+ code generation commands available. Run `npx svelar` to see all commands.
+39 code generation commands available. Run `npx svelar` to see all commands.
 
 ## Database Support
 

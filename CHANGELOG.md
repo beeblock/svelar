@@ -4,6 +4,19 @@ All notable changes to `@beeblock/svelar` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.8] - 2026-04-01
+
+### Added
+
+- **`npx svelar update` command** — updates scaffold files (configs, hooks, app bootstrap) in existing projects without overwriting user code; safely merges new framework defaults while preserving customizations
+- **FormRequest re-export from forms module** — `FormRequest`, `FormValidationError`, and `FormAuthorizationError` are now available via `import { FormRequest } from '@beeblock/svelar/forms'`
+
+### Fixed
+
+- **Job serialization API** — `serialize()` now returns `string` (JSON), `restore()` is an instance method instead of static; scaffold templates updated to match the correct API
+- **Schema builder API in templates** — fixed `defaultTo()` → `default()` and `alterTable()` → `addColumn()` in Stripe migration templates to match actual Svelar schema API
+- **CSRF docs** — improved documentation references for CSRF exclude paths
+
 ## [0.4.6] - 2026-03-31
 
 ### Added
