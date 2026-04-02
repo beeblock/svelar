@@ -2837,7 +2837,7 @@ export const actions: Actions = {
   let codeSent = $state(false);
   let email = $state('');
 
-  const requestSuperForm = superForm(data.requestForm, {
+  const { form: requestForm, errors: requestErrors, enhance: requestEnhance, delayed: requestDelayed } = superForm(data.requestForm, {
     onResult: ({ result }) => {
       if (result.type === 'success' && result.data?.codeSent) {
         codeSent = true;
@@ -2846,7 +2846,7 @@ export const actions: Actions = {
     },
   });
 
-  const verifySuperForm = superForm(data.verifyForm);
+  const { form: verifyForm, errors: verifyErrors, enhance: verifyEnhance, delayed: verifyDelayed, message: verifyMessage } = superForm(data.verifyForm);
 </script>
 
 <svelte:head>
@@ -2867,14 +2867,14 @@ export const actions: Actions = {
     </CardHeader>
 
     <CardContent class="space-y-4">
-      {#if verifySuperForm.message}
+      {#if $verifyMessage}
         <Alert variant="destructive">
-          <span class="text-sm">{verifySuperForm.message}</span>
+          <span class="text-sm">{$verifyMessage}</span>
         </Alert>
       {/if}
 
       {#if !codeSent}
-        <form method="POST" action="?/send" use:requestSuperForm.enhance class="space-y-4">
+        <form method="POST" action="?/send" use:requestEnhance class="space-y-4">
           <div class="space-y-2">
             <Label for="email">Email</Label>
             <Input
@@ -2882,21 +2882,21 @@ export const actions: Actions = {
               name="email"
               type="email"
               placeholder="you@example.com"
-              bind:value={requestSuperForm.form.email}
-              aria-invalid={requestSuperForm.errors.email ? 'true' : undefined}
-              disabled={requestSuperForm.delayed}
+              bind:value={$requestForm.email}
+              aria-invalid={$requestErrors.email ? 'true' : undefined}
+              disabled={$requestDelayed}
             />
-            {#if requestSuperForm.errors.email}
-              <p class="text-sm text-red-600">{requestSuperForm.errors.email[0]}</p>
+            {#if $requestErrors.email}
+              <p class="text-sm text-red-600">{$requestErrors.email[0]}</p>
             {/if}
           </div>
 
-          <Button type="submit" class="w-full" disabled={requestSuperForm.delayed}>
-            {requestSuperForm.delayed ? 'Sending...' : 'Send Code'}
+          <Button type="submit" class="w-full" disabled={$requestDelayed}>
+            {$requestDelayed ? 'Sending...' : 'Send Code'}
           </Button>
         </form>
       {:else}
-        <form method="POST" action="?/verify" use:verifySuperForm.enhance class="space-y-4">
+        <form method="POST" action="?/verify" use:verifyEnhance class="space-y-4">
           <input type="hidden" name="email" value={email} />
 
           <div class="space-y-2">
@@ -2909,18 +2909,18 @@ export const actions: Actions = {
               pattern="[0-9]*"
               maxlength={6}
               placeholder="000000"
-              bind:value={verifySuperForm.form.code}
-              aria-invalid={verifySuperForm.errors.code ? 'true' : undefined}
-              disabled={verifySuperForm.delayed}
+              bind:value={$verifyForm.code}
+              aria-invalid={$verifyErrors.code ? 'true' : undefined}
+              disabled={$verifyDelayed}
               class="text-center text-2xl tracking-[0.5em] font-mono"
             />
-            {#if verifySuperForm.errors.code}
-              <p class="text-sm text-red-600">{verifySuperForm.errors.code[0]}</p>
+            {#if $verifyErrors.code}
+              <p class="text-sm text-red-600">{$verifyErrors.code[0]}</p>
             {/if}
           </div>
 
-          <Button type="submit" class="w-full" disabled={verifySuperForm.delayed}>
-            {verifySuperForm.delayed ? 'Verifying...' : 'Verify & Sign In'}
+          <Button type="submit" class="w-full" disabled={$verifyDelayed}>
+            {$verifyDelayed ? 'Verifying...' : 'Verify & Sign In'}
           </Button>
 
           <button

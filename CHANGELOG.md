@@ -4,6 +4,12 @@ All notable changes to `@beeblock/svelar` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.9] - 2026-04-01
+
+### Fixed
+
+- **OTP login page crash** — `props_invalid_value` error caused by accessing superForm stores as object properties (`requestSuperForm.form.email`) instead of destructured Svelte stores (`$requestForm.email`); fixed template to properly destructure `superForm()` return values
+
 ## [0.4.8] - 2026-04-01
 
 ### Added
