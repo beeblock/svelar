@@ -460,27 +460,46 @@ export class ExtendedAnalyticsPlugin extends Plugin {
 npx svelar plugin:list
 ```
 
-Discovers installed plugins (packages matching `svelar-*` or with `svelar-plugin` keyword in package.json) and shows their status.
+Discovers installed plugins (packages matching `svelar-*` or `@scope/svelar-*`, or with `svelar-plugin` keyword in package.json) and shows their status.
 
 ### Install a Plugin
 
 ```bash
-npx svelar plugin:install svelar-analytics
+npx svelar plugin:install @beeblock/svelar-tags
 ```
 
-Runs `npm install`, discovers the plugin, registers it, and optionally publishes config/migrations. Use `--no-publish` to skip asset publishing.
-
-> **Note:** Stripe billing is built into the core as `@beeblock/svelar/stripe` — no plugin needed. See [Stripe Billing](./32-stripe.md).
+Runs `npm install`, discovers the plugin, registers it, and publishes migrations/routes. Use `--no-publish` to skip asset publishing.
 
 ### Publish Plugin Assets
 
 ```bash
-npx svelar plugin:publish svelar-analytics
-npx svelar plugin:publish svelar-analytics --only config
-npx svelar plugin:publish svelar-analytics --force
+npx svelar plugin:publish @beeblock/svelar-tags
+npx svelar plugin:publish @beeblock/svelar-tags --only migrations
+npx svelar plugin:publish @beeblock/svelar-tags --force
 ```
 
-Copies plugin's publishable files (config, migrations, assets) to your app. Use `--force` to overwrite existing files.
+Copies plugin's publishable files (config, migrations, route stubs) to your app. Use `--force` to overwrite existing files.
+
+### Official Plugins
+
+All official plugins support `plugin:install` and `plugin:publish`:
+
+| Plugin | Migrations | Routes | Tables |
+|--------|:----------:|:------:|--------|
+| `@beeblock/svelar-tags` | Yes | Yes | `tags`, `taggables` |
+| `@beeblock/svelar-comments` | Yes | Yes | `comments`, `comment_reactions` |
+| `@beeblock/svelar-settings` | Yes | Yes | `settings` |
+| `@beeblock/svelar-media` | Yes | Yes | `media` |
+| `@beeblock/svelar-backup` | Yes | Yes | `backups` |
+| `@beeblock/svelar-activity-log` | Yes | No | `activity_log` |
+| `@beeblock/svelar-impersonate` | No | Yes | — |
+| `@beeblock/svelar-datatable` | No | Yes | — |
+| `@beeblock/svelar-charts` | No | Yes | — |
+| `@beeblock/svelar-sitemap` | No | Yes | — |
+| `@beeblock/svelar-social-auth` | No | Yes | — |
+| `@beeblock/svelar-two-factor` | No | Yes | — |
+
+> **Note:** Stripe billing is built into the core as `@beeblock/svelar/stripe` — no plugin needed. See [Stripe Billing](./32-stripe.md).
 
 ## Creating a Reusable Plugin Package
 

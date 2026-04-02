@@ -4,7 +4,18 @@
   "workspaces": [
     "packages/svelar",
     "packages/create-svelar",
-    "packages/svelar-datatable"
+    "packages/svelar-datatable",
+    "packages/svelar-media",
+    "packages/svelar-social-auth",
+    "packages/svelar-two-factor",
+    "packages/svelar-settings",
+    "packages/svelar-comments",
+    "packages/svelar-activity-log",
+    "packages/svelar-backup",
+    "packages/svelar-charts",
+    "packages/svelar-tags",
+    "packages/svelar-impersonate",
+    "packages/svelar-sitemap"
   ],
   "scripts": {
     "build": "npm run build -w packages/svelar -w packages/create-svelar",

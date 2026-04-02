@@ -74,6 +74,23 @@ See the [Getting Started guide](https://svelar.dev/docs/getting-started) for a c
 | **Stripe** | `svelar/stripe` | Billing, subscriptions, checkout, invoices, webhook handling |
 | **Testing** | `svelar/testing` | Factory, `useSvelarTest()`, `refreshDatabase()`, `actingAs()`, database assertions |
 
+## Official Plugins
+
+| Package | Description |
+|---------|-------------|
+| [`@beeblock/svelar-datatable`](https://www.npmjs.com/package/@beeblock/svelar-datatable) | DataTable with sorting, searching, pagination, inline editing, export, virtual scroll |
+| [`@beeblock/svelar-media`](https://www.npmjs.com/package/@beeblock/svelar-media) | File attachments with image conversions, collections, S3/local storage |
+| [`@beeblock/svelar-social-auth`](https://www.npmjs.com/package/@beeblock/svelar-social-auth) | OAuth providers (Google, GitHub, Facebook, Twitter, Discord) |
+| [`@beeblock/svelar-two-factor`](https://www.npmjs.com/package/@beeblock/svelar-two-factor) | TOTP two-factor authentication with QR setup and recovery codes |
+| [`@beeblock/svelar-settings`](https://www.npmjs.com/package/@beeblock/svelar-settings) | Typed settings with database persistence and per-user/per-team scoping |
+| [`@beeblock/svelar-comments`](https://www.npmjs.com/package/@beeblock/svelar-comments) | Threaded comments with moderation, voting, and HasComments mixin |
+| [`@beeblock/svelar-activity-log`](https://www.npmjs.com/package/@beeblock/svelar-activity-log) | Audit trail with LogsActivity mixin and causer tracking |
+| [`@beeblock/svelar-backup`](https://www.npmjs.com/package/@beeblock/svelar-backup) | Database backup with local/S3 destinations and cleanup policies |
+| [`@beeblock/svelar-charts`](https://www.npmjs.com/package/@beeblock/svelar-charts) | SVG chart components (line, bar, pie, doughnut, area) |
+| [`@beeblock/svelar-tags`](https://www.npmjs.com/package/@beeblock/svelar-tags) | Tagging with HasTags mixin, tag types, slugs, and tag input UI |
+| [`@beeblock/svelar-impersonate`](https://www.npmjs.com/package/@beeblock/svelar-impersonate) | User impersonation with session guards and banner UI |
+| [`@beeblock/svelar-sitemap`](https://www.npmjs.com/package/@beeblock/svelar-sitemap) | XML sitemap generation with scheduling and model discovery |
+
 ## CLI
 
 ```bash
@@ -89,9 +106,12 @@ npx svelar migrate                     # run migrations
 npx svelar schedule:run                # start the scheduler
 npx svelar queue:work                  # process queue jobs
 npx svelar tinker                      # interactive REPL
+npx svelar plugin:list                 # list discovered plugins
+npx svelar plugin:install @beeblock/svelar-tags  # install + publish
+npx svelar plugin:publish @beeblock/svelar-tags  # publish migrations & routes
 ```
 
-41 code generation commands available. Run `npx svelar` to see all commands.
+44 commands available. Run `npx svelar` to see all commands.
 
 ## Database Support
 

@@ -52,6 +52,7 @@ test-*/
 hook-test/
 my-app/
 svelar-datatable/
+svelar-*/
 
 # Claude
 .claude/

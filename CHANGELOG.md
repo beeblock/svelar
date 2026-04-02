@@ -14,6 +14,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Test scaffold in `npx svelar new`** — new projects now include `vitest.config.ts`, `playwright.config.ts`, example tests (`tests/unit/`, `tests/feature/`), and a `UserFactory`
 - **Test scripts** — scaffolded `package.json` now includes `test`, `test:watch`, `test:e2e`, and `test:coverage` scripts
 
+### Official Plugins (v0.1.0)
+
+11 new official plugins following the `@beeblock/svelar-datatable` pattern:
+
+- **`@beeblock/svelar-media`** — Spatie Media Library-inspired file attachments with image conversions, collections, S3/local storage, and gallery UI
+- **`@beeblock/svelar-social-auth`** — Laravel Socialite-inspired OAuth (Google, GitHub, Facebook, Twitter, Discord) with provider UI components
+- **`@beeblock/svelar-two-factor`** — TOTP-based two-factor authentication with QR code setup, recovery codes, and challenge UI
+- **`@beeblock/svelar-settings`** — Spatie Settings-inspired typed settings with database persistence, per-user/per-team scoping, and settings UI
+- **`@beeblock/svelar-comments`** — Threaded comments with `HasComments` mixin, moderation, voting, and comment thread UI
+- **`@beeblock/svelar-activity-log`** — Spatie Activity Log-inspired audit trail with `LogsActivity` mixin, causer tracking, and activity timeline UI
+- **`@beeblock/svelar-backup`** — Database backup with local/S3 destinations, cleanup policies, scheduling integration, and backup manager UI
+- **`@beeblock/svelar-charts`** — SVG chart components (line, bar, pie, doughnut, area) with server-side data builder and chart queries
+- **`@beeblock/svelar-tags`** — Spatie Tags-inspired tagging with `HasTags` mixin, tag types, slugs, and tag input UI
+- **`@beeblock/svelar-impersonate`** — User impersonation with `CanImpersonate`/`CanBeImpersonated` mixins, session guards, and impersonation banner UI
+- **`@beeblock/svelar-sitemap`** — XML sitemap generation with `SitemapUrl`, `SitemapIndex`, scheduled regeneration, and automatic model discovery
+
+### Plugin Infrastructure
+
+- **`publishables()` on all official plugins** — each plugin now exposes migrations, route stubs, and config files for publishing via `npx svelar plugin:publish`
+- **Plugin classes moved to `/server` subpath** — `SvelarXxxPlugin` classes are now exported from `@beeblock/svelar-*/server` instead of the main barrel, preventing Node.js built-ins (`node:url`, `node:path`) from leaking into client bundles
+- **`PluginRegistry` scoped package support** — `discover()` now scans `@scope/svelar-*` packages in addition to top-level `svelar-*`
+- **`plugin:install`** — installs a plugin via npm and auto-publishes its migrations and route stubs
+- **`plugin:publish`** — copies a plugin's publishable files (migrations, routes, config) to the app
+- **`plugin:list`** — lists all discovered svelar plugins with install/enable status
+
+### Scaffold Improvements
+
+- **Toast notifications out of the box** — `<Toaster />` component and `registerToast` bridge are now wired up in the root layout; `apiFetch` errors automatically show toast notifications (401, 403, 422, 500, etc.)
+
+### Fixed
+
+- **`LogsActivity` mixin** — hooks now use method overrides (`save()`, `delete()`, `create()`) instead of `Model.boot()` which registered under the wrong class name; activity logging now works correctly with model inheritance
+- **Plugin client bundle pollution** — `fileURLToPath` and `node:path` imports no longer leak into browser bundles via plugin barrel exports
+
 ## [0.4.9] - 2026-04-01
 
 ### Fixed

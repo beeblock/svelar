@@ -5879,7 +5879,14 @@ export default class QueueHealthCheck extends ScheduledTask {
   static rootLayoutSvelte(name: string): string {
     return `<script lang="ts">
   import '../app.css';
-  import { Button } from '@beeblock/svelar/ui';
+  import { Button, Toaster, toast } from '@beeblock/svelar/ui';
+  import { registerToast } from '@beeblock/svelar/http';
+
+  // Wire apiFetch error handling to the toast UI
+  registerToast((variant: string, title: string, opts?: any) => {
+    const fn = (toast as any)[variant] ?? toast;
+    fn(title, opts);
+  });
 
   let { data, children } = $props();
   const year = new Date().getFullYear();
@@ -5931,6 +5938,8 @@ export default class QueueHealthCheck extends ScheduledTask {
     <p>&copy; {year} ${name}. All rights reserved.</p>
   </footer>
 </div>
+
+<Toaster position="bottom-right" />
 
 <style>
   :global(body) {

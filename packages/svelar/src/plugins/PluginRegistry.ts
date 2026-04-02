@@ -38,51 +38,63 @@ class PluginRegistryService {
       return discovered;
     }
 
-    try {
-      const entries = readdirSync(nodeModulesPath, { withFileTypes: true });
+    const scanDir = async (dir: string, prefix: string = '') => {
+      if (!existsSync(dir)) return;
 
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
+      try {
+        const entries = readdirSync(dir, { withFileTypes: true });
 
-        const packageName = entry.name;
-        // Skip scoped packages for now, handle them separately
-        if (packageName.startsWith('.')) continue;
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue;
+          if (entry.name.startsWith('.')) continue;
 
-        // Check if matches svelar-* pattern or has svelar-plugin keyword
-        const isSvelarPackage = packageName.startsWith('svelar-');
-        if (!isSvelarPackage) continue;
+          // Handle scoped packages (@beeblock/svelar-*)
+          if (entry.name.startsWith('@')) {
+            const scopeDir = join(dir, entry.name);
+            await scanDir(scopeDir, entry.name + '/');
+            continue;
+          }
 
-        const packageJsonPath = join(nodeModulesPath, packageName, 'package.json');
-        if (!existsSync(packageJsonPath)) continue;
+          const fullName = prefix + entry.name;
 
-        try {
-          const content = await readFile(packageJsonPath, 'utf-8');
-          const pkg = JSON.parse(content);
+          // Check if matches svelar-* pattern
+          const isSvelarPackage = entry.name.startsWith('svelar-');
+          if (!isSvelarPackage) continue;
 
-          // Check for svelar-plugin keyword or svelar-* pattern
-          const hasSvelarKeyword = pkg.keywords?.includes('svelar-plugin');
-          if (!isSvelarPackage && !hasSvelarKeyword) continue;
+          const packageJsonPath = join(dir, entry.name, 'package.json');
+          if (!existsSync(packageJsonPath)) continue;
 
-          const meta: PluginMeta = {
-            name: pkg.name || packageName,
-            version: pkg.version || '0.0.0',
-            description: pkg.description || '',
-            packageName,
-            installed: true,
-            enabled: false,
-            hasConfig: !!pkg.svelar?.config,
-            hasMigrations: !!pkg.svelar?.migrations,
-          };
+          try {
+            const content = await readFile(packageJsonPath, 'utf-8');
+            const pkg = JSON.parse(content);
 
-          discovered.push(meta);
-          this.plugins.set(meta.name, meta);
-        } catch {
-          // Skip packages with invalid package.json
+            // Check for svelar-plugin keyword or svelar-* pattern
+            const hasSvelarKeyword = pkg.keywords?.includes('svelar-plugin');
+            if (!isSvelarPackage && !hasSvelarKeyword) continue;
+
+            const meta: PluginMeta = {
+              name: pkg.name || fullName,
+              version: pkg.version || '0.0.0',
+              description: pkg.description || '',
+              packageName: fullName,
+              installed: true,
+              enabled: false,
+              hasConfig: !!pkg.svelar?.config,
+              hasMigrations: !!pkg.svelar?.migrations,
+            };
+
+            discovered.push(meta);
+            this.plugins.set(meta.name, meta);
+          } catch {
+            // Skip packages with invalid package.json
+          }
         }
+      } catch {
+        // Directory doesn't exist or can't be read
       }
-    } catch {
-      // Directory doesn't exist or can't be read
-    }
+    };
+
+    await scanDir(nodeModulesPath);
 
     return discovered;
   }
