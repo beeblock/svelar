@@ -1,6 +1,6 @@
 {
   "name": "@beeblock/svelar",
-  "version": "0.4.9",
+  "version": "0.5.0",
   "description": "Laravel-inspired framework on top of SvelteKit 2",
   "type": "module",
   "main": "./dist/index.js",
@@ -245,6 +245,10 @@
     "./stripe": {
       "types": "./dist/stripe/index.d.ts",
       "import": "./dist/stripe/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js"
     }
   },
   "scripts": {
@@ -289,7 +293,8 @@
     "postgres": "*",
     "pusher-js": ">=8.0.0",
     "stripe": ">=14.0.0",
-    "sveltekit-superforms": ">=2.0.0"
+    "sveltekit-superforms": ">=2.0.0",
+    "vitest": ">=1.0.0"
   },
   "peerDependenciesMeta": {
     "@aws-sdk/client-s3": {
@@ -329,6 +334,9 @@
       "optional": true
     },
     "stripe": {
+      "optional": true
+    },
+    "vitest": {
       "optional": true
     }
   },

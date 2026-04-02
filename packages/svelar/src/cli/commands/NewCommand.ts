@@ -69,6 +69,7 @@ export class NewCommand extends Command {
       'src/lib/database/migrations', 'src/lib/database/seeders',
       'src/routes', 'src/routes/api',
       'static', 'storage/logs', 'storage/cache', 'storage/uploads', 'storage/sessions',
+      'tests/unit', 'tests/feature', 'tests/e2e', 'src/lib/factories',
     ] : [
       '', 'src', 'src/lib',
       'src/lib/modules/auth', 'src/lib/modules/posts', 'src/lib/modules/admin',
@@ -78,6 +79,7 @@ export class NewCommand extends Command {
       'src/lib/database/migrations', 'src/lib/database/seeders',
       'src/routes', 'src/routes/api',
       'static', 'storage/logs', 'storage/cache', 'storage/uploads', 'storage/sessions',
+      'tests/unit', 'tests/feature', 'tests/e2e', 'src/lib/factories',
     ];
     for (const dir of dirs) {
       mkdirSync(join(projectDir, dir), { recursive: true });
@@ -287,9 +289,17 @@ export class NewCommand extends Command {
     write('src/routes/+error.svelte', T.errorSvelte());
     write('src/routes/+page.svelte', T.homePage(projectName));
 
+    // ── 13. Testing infrastructure ─────────────────────────
+    this.info('Setting up testing...');
+    write('vitest.config.ts', T.vitestConfig());
+    write('playwright.config.ts', T.playwrightConfig());
+    write('tests/unit/example.test.ts', T.exampleUnitTest());
+    write('tests/feature/auth.test.ts', T.exampleFeatureTest());
+    write('src/lib/factories/UserFactory.ts', T.scaffoldUserFactory());
+
     this.success(`Project structure created (${structureLabel})`);
 
-    // ── 13. Install dependencies ──────────────────────────
+    // ── 14. Install dependencies ──────────────────────────
     if (!flags['no-install']) {
       this.info('Installing dependencies...');
       try {

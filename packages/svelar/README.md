@@ -72,6 +72,7 @@ See the [Getting Started guide](https://svelar.dev/docs/getting-started) for a c
 | **Dashboard** | `svelar/dashboard` | Admin dashboard with job/scheduler monitoring and log viewer |
 | **Search** | `svelar/search` | Meilisearch integration with auto-syncing `Searchable` mixin |
 | **Stripe** | `svelar/stripe` | Billing, subscriptions, checkout, invoices, webhook handling |
+| **Testing** | `svelar/testing` | Factory, `useSvelarTest()`, `refreshDatabase()`, `actingAs()`, database assertions |
 
 ## CLI
 
@@ -82,13 +83,15 @@ npx svelar make:model Post -m -c       # model + migration + controller
 npx svelar make:service PaymentService # service class
 npx svelar make:job SendEmail          # queue job
 npx svelar make:task CleanupTokens     # scheduled task
+npx svelar make:test Auth --feature    # feature test
+npx svelar make:factory User --model User  # model factory
 npx svelar migrate                     # run migrations
 npx svelar schedule:run                # start the scheduler
 npx svelar queue:work                  # process queue jobs
 npx svelar tinker                      # interactive REPL
 ```
 
-39 code generation commands available. Run `npx svelar` to see all commands.
+41 code generation commands available. Run `npx svelar` to see all commands.
 
 ## Database Support
 

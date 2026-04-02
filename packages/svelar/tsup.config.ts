@@ -57,6 +57,7 @@ export default defineConfig({
     'plugins/PluginRegistry': 'src/plugins/PluginRegistry.ts',
     'plugins/PluginPublisher': 'src/plugins/PluginPublisher.ts',
     'plugins/PluginInstaller': 'src/plugins/PluginInstaller.ts',
+    'testing/index': 'src/testing/index.ts',
   },
   format: ['esm'],
   dts: false,
@@ -91,5 +92,6 @@ export default defineConfig({
     'node:path',
     'node:url',
     'node:module',
+    'vitest',
   ],
 });

@@ -4,6 +4,16 @@ All notable changes to `@beeblock/svelar` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-04-01
+
+### Added
+
+- **Testing module** (`@beeblock/svelar/testing`) — Laravel-inspired testing utilities for Vitest: `useSvelarTest()` composable, `Factory<T>` base class, `refreshDatabase()`, `actingAs()`, `createRequestEvent()`, database assertions (`assertDatabaseHas`, `assertDatabaseMissing`, `assertDatabaseCount`)
+- **`make:test` command** — generate unit (`--unit`), feature (`--feature`), or e2e Playwright (`--e2e`) test files
+- **`make:factory` command** — generate model factories with `--model` flag for type-safe test data
+- **Test scaffold in `npx svelar new`** — new projects now include `vitest.config.ts`, `playwright.config.ts`, example tests (`tests/unit/`, `tests/feature/`), and a `UserFactory`
+- **Test scripts** — scaffolded `package.json` now includes `test`, `test:watch`, `test:e2e`, and `test:coverage` scripts
+
 ## [0.4.9] - 2026-04-01
 
 ### Fixed

@@ -24,6 +24,10 @@ export class NewCommandTemplates {
           'migrate:rollback': 'npx svelar migrate --rollback',
           'migrate:refresh': 'npx svelar migrate --refresh',
           seed: 'npx svelar seed:run',
+          test: 'vitest run',
+          'test:watch': 'vitest',
+          'test:e2e': 'playwright test',
+          'test:coverage': 'vitest run --coverage',
         },
         devDependencies: {
           '@sveltejs/adapter-auto': '^3.0.0',
@@ -36,6 +40,8 @@ export class NewCommandTemplates {
           tailwindcss: '^4.2.2',
           typescript: '^5.7.0',
           vite: '^6.0.0',
+          vitest: '^2.1.0',
+          '@playwright/test': '^1.48.0',
         },
         dependencies: {
           'better-sqlite3': '^11.0.0',
@@ -141,6 +147,7 @@ export default defineConfig({
       '@beeblock/svelar/ui': resolve(svelarRoot, 'src/ui/index.ts'),
       '@beeblock/svelar/i18n/LanguageSwitcher.svelte': resolve(svelarRoot, 'src/i18n/LanguageSwitcher.svelte'),
       '@beeblock/svelar/i18n': resolve(svelarRoot, 'dist/i18n/index.js'),
+      '@beeblock/svelar/testing': resolve(svelarRoot, 'dist/testing/index.js'),
       '@beeblock/svelar': resolve(svelarRoot, 'dist/index.js'),
     },
   },
@@ -548,6 +555,11 @@ storage/cache/*
 storage/uploads/*
 storage/sessions/*
 !storage/**/.gitkeep
+
+# Testing
+test-results/
+playwright-report/
+coverage/
 `;
   }
 
@@ -6562,6 +6574,128 @@ export const POST: RequestHandler = async ({ request }) => {
     return new Response(JSON.stringify({ error: err.message }), { status: 500 });
   }
 };
+`;
+  }
+
+  // ─── Testing ──────────────────────────────────────────────────
+
+  static vitestConfig(): string {
+    return `import { defineConfig } from 'vitest/config';
+import { createRequire } from 'module';
+import { dirname, resolve } from 'path';
+
+const require_ = createRequire(import.meta.url);
+const svelarRoot = dirname(require_.resolve('@beeblock/svelar/package.json'));
+
+export default defineConfig({
+  test: {
+    globals: true,
+    include: ['tests/unit/**/*.test.ts', 'tests/feature/**/*.test.ts'],
+    exclude: ['tests/e2e/**'],
+    alias: {
+      '$lib': resolve('./src/lib'),
+      '$lib/*': resolve('./src/lib/*'),
+      '@beeblock/svelar/testing': resolve(svelarRoot, 'dist/testing/index.js'),
+      '@beeblock/svelar/orm': resolve(svelarRoot, 'dist/orm/index.js'),
+      '@beeblock/svelar/database': resolve(svelarRoot, 'dist/database/index.js'),
+      '@beeblock/svelar/auth': resolve(svelarRoot, 'dist/auth/index.js'),
+      '@beeblock/svelar/validation': resolve(svelarRoot, 'dist/validation/index.js'),
+      '@beeblock/svelar/hashing': resolve(svelarRoot, 'dist/hashing/index.js'),
+      '@beeblock/svelar/session': resolve(svelarRoot, 'dist/session/index.js'),
+      '@beeblock/svelar/events': resolve(svelarRoot, 'dist/events/index.js'),
+      '@beeblock/svelar/queue': resolve(svelarRoot, 'dist/queue/index.js'),
+      '@beeblock/svelar/cache': resolve(svelarRoot, 'dist/cache/index.js'),
+      '@beeblock/svelar/mail': resolve(svelarRoot, 'dist/mail/index.js'),
+      '@beeblock/svelar': resolve(svelarRoot, 'dist/index.js'),
+    },
+  },
+});
+`;
+  }
+
+  static playwrightConfig(): string {
+    return `import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+  testDir: 'tests/e2e',
+  testMatch: '**/*.spec.ts',
+  fullyParallel: true,
+  forbidOnly: !!process.env.CI,
+  retries: process.env.CI ? 2 : 0,
+  workers: process.env.CI ? 1 : undefined,
+  use: {
+    baseURL: 'http://localhost:5173',
+    trace: 'on-first-retry',
+  },
+  webServer: {
+    command: 'npm run dev',
+    url: 'http://localhost:5173',
+    reuseExistingServer: !process.env.CI,
+  },
+});
+`;
+  }
+
+  static exampleUnitTest(): string {
+    return `import { describe, it, expect } from 'vitest';
+
+describe('Example Unit Test', () => {
+  it('should pass a basic assertion', () => {
+    expect(1 + 1).toBe(2);
+  });
+
+  it('should handle string operations', () => {
+    const greeting = 'Hello, Svelar!';
+    expect(greeting).toContain('Svelar');
+  });
+});
+`;
+  }
+
+  static exampleFeatureTest(): string {
+    return `import { describe, it, expect } from 'vitest';
+import { useSvelarTest, assertDatabaseHas } from '@beeblock/svelar/testing';
+// import UserFactory from '$lib/factories/UserFactory';
+
+describe('Auth Feature Test', () => {
+  useSvelarTest({ refreshDatabase: true });
+
+  it('should set up the test database', async () => {
+    // The database is automatically refreshed before each test
+    // when refreshDatabase: true is set in useSvelarTest().
+    expect(true).toBe(true);
+  });
+
+  // Uncomment once you have a UserFactory:
+  // it('should create a user via factory', async () => {
+  //   const user = await UserFactory.create({ name: 'Alice' });
+  //   await assertDatabaseHas('users', { name: 'Alice' });
+  // });
+});
+`;
+  }
+
+  static scaffoldUserFactory(): string {
+    return `import { Factory } from '@beeblock/svelar/testing';
+import { User } from '$lib/modules/auth/User';
+
+export class UserFactory extends Factory<User> {
+  model() {
+    return User;
+  }
+
+  definition() {
+    return {
+      name: \`User \${this.sequence}\`,
+      email: \`user\${this.sequence}@test.com\`,
+      password_hash: 'hashed',
+      role: 'user',
+    };
+  }
+}
+
+// Singleton instance for convenience
+export default new UserFactory();
 `;
   }
 }
