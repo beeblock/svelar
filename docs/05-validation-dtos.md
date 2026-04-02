@@ -781,6 +781,148 @@ const { data } = await apiFetchJson<{ data: PostData }>('/api/posts', {
 });
 ```
 
+## Nested JSON with Pivot Data
+
+It's common for forms to submit a base model alongside related pivot data in a single request — for example, creating an order with its product line items. Svelar handles this naturally because Zod supports nested objects and arrays.
+
+### 1. Define a nested schema
+
+```typescript
+// src/lib/modules/orders/schemas.ts
+import { z } from 'zod';
+
+export const createOrderSchema = z.object({
+  // Base model fields
+  customer_name: z.string().min(1),
+  shipping_address: z.string().min(5),
+  notes: z.string().optional(),
+
+  // Pivot data (products with quantities)
+  products: z.array(z.object({
+    id: z.number(),
+    quantity: z.number().min(1),
+    price: z.number().positive(),
+  })).min(1, 'At least one product is required'),
+});
+
+export type CreateOrderInput = z.infer<typeof createOrderSchema>;
+```
+
+### 2. Create the FormRequest
+
+```typescript
+// src/lib/modules/orders/CreateOrderRequest.ts
+import { FormRequest } from '@beeblock/svelar/routing';
+import { createOrderSchema } from './schemas';
+
+export class CreateOrderRequest extends FormRequest {
+  rules() {
+    return createOrderSchema;
+  }
+
+  authorize(event: any): boolean {
+    return !!event.locals.user;
+  }
+}
+```
+
+### 3. Handle in controller/service — split base fields from pivot data
+
+```typescript
+// src/lib/modules/orders/OrderController.ts
+import { Controller } from '@beeblock/svelar/routing';
+import { CreateOrderRequest } from './CreateOrderRequest';
+import { Order } from './Order';
+
+export class OrderController extends Controller {
+  async store(event: any) {
+    const data = await CreateOrderRequest.validate(event);
+
+    // Create the base model (fillable ignores the nested 'products' key)
+    const order = await Order.create({
+      customer_name: data.customer_name,
+      shipping_address: data.shipping_address,
+      notes: data.notes,
+      user_id: event.locals.user.id,
+    });
+
+    // Attach pivot data with extra columns
+    const products = order.products(); // belongsToMany relationship
+    for (const item of data.products) {
+      await products.attach(item.id, {
+        quantity: item.quantity,
+        price: item.price,
+      });
+    }
+
+    return this.created(order);
+  }
+}
+```
+
+### 4. The model relationship
+
+```typescript
+// src/lib/modules/orders/Order.ts
+import { Model } from '@beeblock/svelar/orm';
+import { Product } from '../products/Product';
+
+export class Order extends Model {
+  static table = 'orders';
+  static fillable = ['customer_name', 'shipping_address', 'notes', 'user_id'];
+
+  products() {
+    return this.belongsToMany(Product, 'order_product', 'order_id', 'product_id');
+  }
+}
+```
+
+### Key points
+
+- **Zod validates the full nested structure** including arrays of objects, so everything is type-safe before it reaches your service layer.
+- **`Model.fillable` protects you** — even if you pass the entire validated object to `Model.create()`, only whitelisted columns are inserted. The nested `products` key is ignored.
+- **`attach(id, pivotData)`** accepts extra pivot columns like `quantity` and `price`.
+- **`sync(ids)`** replaces all pivot records — useful for update endpoints where the frontend sends the full list.
+- **`passedValidation(data)`** can restructure the payload if needed (e.g., compute totals, normalize data).
+
+### Update pattern with sync
+
+For update endpoints where the frontend sends the complete list of related items:
+
+```typescript
+async update(event: any) {
+  const data = await UpdateOrderRequest.validate(event);
+  const order = await Order.findOrFail(event.params.id);
+
+  order.fill({ customer_name: data.customer_name, shipping_address: data.shipping_address });
+  await order.save();
+
+  // Replace all product associations
+  const productIds = data.products.map((p) => p.id);
+  await order.products().sync(productIds);
+
+  return this.json(order);
+}
+```
+
+### Frontend example
+
+```typescript
+const orderData: CreateOrderInput = {
+  customer_name: 'Alice',
+  shipping_address: '123 Main St',
+  products: [
+    { id: 1, quantity: 2, price: 29.99 },
+    { id: 5, quantity: 1, price: 49.99 },
+  ],
+};
+
+const response = await apiFetch('/api/orders', {
+  method: 'POST',
+  body: JSON.stringify(orderData),
+});
+```
+
 ## Best Practices
 
 1. **Use contract schemas** — Define Zod schemas + types once in `*.schema.ts`, import everywhere
