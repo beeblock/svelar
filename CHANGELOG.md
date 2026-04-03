@@ -4,14 +4,25 @@ All notable changes to `@beeblock/svelar` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] - 2026-04-03
+
+### Changed
+
+- **`deploy.yml` template** — now writes `ENV_PROD` GitHub Secret to `.env` on the server during each deploy (no manual `.env` management on the droplet), logs into Docker Hub on the server, builds on PRs (deploy only on push)
+- **`setup-droplet.sh` template** — completely rewritten to run locally (not piped to server). Reads config from `infra/droplet.env`, SSHs into the droplet to: create deploy user, copy SSH public key, install Docker if not present, create project directory, copy both compose files, configure UFW firewall
+- **`infra:setup` command** — now supports two modes: config file (`infra/droplet.env`) or CLI flags (`--ip`, `--key`, `--deploy-user`, `--project`). Validates required variables and shows clear error messages with usage examples
+- **`droplet.env.example`** — now contains infrastructure config (DROPLET_IP, DEPLOY_USER, PROJECT_NAME, SSH_KEY_PATH) instead of app environment variables
+- **`make:infra` command** — now runs `chmod +x` on generated `.sh` files and auto-adds `infra/droplet.env` to `.gitignore` to prevent leaking server IPs and SSH key paths
+- **Default `.gitignore`** — new projects now include `infra/droplet.env` by default
+
 ## [0.6.3] - 2026-04-03
 
 ### Added
 
 - **`make:deploy` command** — one-command scaffold for the full deployment pipeline: runs `make:docker` + `make:ci` + `make:infra`
-- **`make:ci` command** — generates `.github/workflows/deploy.yml` (GitHub Actions: build Docker image, push to registry, SSH deploy to droplet). Writes `ENV_PROD` secret to `.env` on the server during each deploy — no manual `.env` management on the droplet. Supports `--image` and `--registry` flags. Builds on both push and PR, deploys only on push
-- **`make:infra` command** — generates `infra/setup-droplet.sh` (local script that SSHs into the droplet: creates deploy user, copies SSH key, adds to docker group, creates project dir, copies compose files) and `infra/droplet.env.example` (infra config: DROPLET_IP, DEPLOY_USER, PROJECT_NAME, SSH_KEY_PATH)
-- **`infra:setup` command** — runs `infra/setup-droplet.sh` with config from `infra/droplet.env`. Provisions the droplet and copies compose files in one command. Supports `--config` flag
+- **`make:ci` command** — generates `.github/workflows/deploy.yml` (GitHub Actions: build Docker image, push to registry, SSH deploy to droplet). Supports `--image` and `--registry` flags
+- **`make:infra` command** — generates `infra/setup-droplet.sh` and `infra/droplet.env.example`
+- **`infra:setup` command** — provisions the droplet and copies compose files in one command
 - **Docker compose runtime commands** — 9 new CLI commands wrapping `docker compose` with the correct dev/prod override files:
   - `dev:up`, `dev:down`, `dev:logs`, `dev:restart` — development containers (hot-reload, port 5173)
   - `prod:up`, `prod:down`, `prod:logs`, `prod:restart`, `prod:deploy` — production containers (pre-built image, port 3000)
