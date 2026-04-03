@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **`components.json` and `$lib/utils.ts`** scaffolded automatically for shadcn-svelte configuration
 - Dependencies added: `bits-ui`, `clsx`, `mode-watcher`, `tailwind-merge`, `tailwind-variants`, `tw-animate-css`
 - **`npx svelar update` redesigned** — interactive checkbox UI with arrow keys + Space to toggle files, A to select all, Enter to confirm. Files are now split into framework (updated by default) and user-customizable (excluded by default). User files like `app.ts`, `hooks.server.ts`, root layout, home page, Post domain, jobs, and schedulers are no longer offered for update unless `--include-user-files` is passed, preventing accidental overwrites of user code.
+- **`<Seo>` component** (`@beeblock/svelar/ui`) — handles `<title>`, meta description, Open Graph, Twitter Cards, canonical URLs, robots directives, and JSON-LD structured data from a single component. Scaffolded into root layout with site-wide defaults; pages override with their own `<Seo>` props.
 - **`@beeblock/svelar-stripe` official plugin** — Stripe billing extracted from core and rebuilt as a standalone plugin with:
   - **Polymorphic `Billable` mixin** — attach to any model (User, Team, etc.) via `billable_type`/`billable_id` columns
   - **DB models** — `Subscription`, `SubscriptionPlan`, `Invoice` using static methods with Connection

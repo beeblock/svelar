@@ -56,6 +56,7 @@ See the [Getting Started guide](https://svelar.dev/docs/getting-started) for a c
 | **i18n** | `svelar/i18n` | Paraglide-js integration with language switcher |
 | **Forms** | `svelar/forms` | SvelteKit Superforms integration helpers |
 | **UI Components** | `svelar/ui` | Minimal built-in components + [shadcn-svelte](https://shadcn-svelte.com) pre-installed |
+| **SEO** | `svelar/ui` | `<Seo>` component for meta tags, Open Graph, Twitter Cards, JSON-LD structured data |
 | **Hooks** | `svelar/hooks` | One-line SvelteKit hooks setup with sensible defaults |
 | **Container** | `svelar/container` | IoC container with singleton/transient bindings |
 | **Plugins** | `svelar/plugins` | Plugin discovery, publishing, and CLI management |

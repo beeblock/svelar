@@ -2522,19 +2522,19 @@ export const actions: Actions = {
         </div>
 
         <div class="text-center">
-          <a href="/forgot-password" class="text-sm text-gray-600 hover:text-brand hover:underline">Forgot your password?</a>
+          <a href="/forgot-password" class="text-sm text-muted-foreground hover:text-brand hover:underline">Forgot your password?</a>
         </div>
 
         {#if data.otpEnabled}
           <div class="text-center">
-            <a href="/otp-login" class="text-sm text-gray-600 hover:text-brand hover:underline">Sign in with a code instead</a>
+            <a href="/otp-login" class="text-sm text-muted-foreground hover:text-brand hover:underline">Sign in with a code instead</a>
           </div>
         {/if}
       </form>
     </CardContent>
 
     <CardFooter class="border-t pt-6">
-      <p class="text-sm text-center w-full text-gray-600">
+      <p class="text-sm text-center w-full text-muted-foreground">
         Don't have an account?
         <a href="/register" class="font-medium text-brand hover:underline">Create one</a>
       </p>
@@ -2698,7 +2698,7 @@ export const actions: Actions = {
     </CardContent>
 
     <CardFooter class="border-t pt-6">
-      <p class="text-sm text-center w-full text-gray-600">
+      <p class="text-sm text-center w-full text-muted-foreground">
         Already have an account?
         <a href="/login" class="font-medium text-brand hover:underline">Sign in</a>
       </p>
@@ -2810,7 +2810,7 @@ export const actions: Actions = {
     </CardContent>
 
     <CardFooter class="border-t pt-6">
-      <p class="text-sm text-center w-full text-gray-600">
+      <p class="text-sm text-center w-full text-muted-foreground">
         Remember your password?
         <a href="/login" class="font-medium text-brand hover:underline">Sign in</a>
       </p>
@@ -3087,7 +3087,7 @@ export const actions: Actions = {
 
           <button
             type="button"
-            class="w-full text-sm text-gray-600 hover:text-brand hover:underline"
+            class="w-full text-sm text-muted-foreground hover:text-brand hover:underline"
             onclick={() => { codeSent = false; }}
           >
             Use a different email
@@ -3097,7 +3097,7 @@ export const actions: Actions = {
     </CardContent>
 
     <CardFooter class="border-t pt-6">
-      <p class="text-sm text-center w-full text-gray-600">
+      <p class="text-sm text-center w-full text-muted-foreground">
         Prefer a password?
         <a href="/login" class="font-medium text-brand hover:underline">Sign in with password</a>
       </p>
@@ -3217,28 +3217,28 @@ export const load = guardAuth();
 </script>
 
 <div class="flex min-h-[calc(100vh-130px)]">
-  <aside class="w-64 border-r border-gray-200 bg-gray-50 hidden md:block">
+  <aside class="w-64 border-r border-border bg-muted/50 hidden md:block">
     <nav class="p-4 space-y-1">
       {#each navItems as item}
         {@const active = isActive(item.href, item.exact, \$page.url.pathname)}
         <a
           href={item.href}
-          class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors {active ? 'bg-brand/10 text-brand' : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'}"
+          class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors {active ? 'bg-brand/10 text-brand' : 'text-foreground hover:bg-muted hover:text-foreground'}"
         >
-          <Icon icon={item.icon} size={20} class={active ? 'text-brand' : 'text-gray-400'} />
+          <Icon icon={item.icon} size={20} class={active ? 'text-brand' : 'text-muted-foreground/70'} />
           {item.label}
         </a>
       {/each}
     </nav>
 
     {#if data.user?.role === 'admin'}
-      <div class="border-t border-gray-200 mx-4 my-2"></div>
+      <div class="border-t border-border mx-4 my-2"></div>
       <div class="p-4 pt-0">
         <a
           href="/admin"
-          class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors"
+          class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-foreground hover:bg-muted hover:text-foreground transition-colors"
         >
-          <Icon icon={Settings} size={20} class="text-gray-400" />
+          <Icon icon={Settings} size={20} class="text-muted-foreground/70" />
           Admin Panel
         </a>
       </div>
@@ -3302,14 +3302,14 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 <div class="space-y-8">
   <div>
-    <h1 class="text-3xl font-bold text-gray-900 mb-2">Dashboard</h1>
-    <p class="text-gray-600">Welcome back, {data.user.name}</p>
+    <h1 class="text-3xl font-bold text-foreground mb-2">Dashboard</h1>
+    <p class="text-muted-foreground">Welcome back, {data.user.name}</p>
   </div>
 
   <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
     <Card>
       <CardContent class="pt-6">
-        <p class="text-sm text-gray-600">API Keys</p>
+        <p class="text-sm text-muted-foreground">API Keys</p>
         <p class="text-3xl font-bold text-brand mt-2">{data.stats.apiKeyCount}</p>
         <a href="/dashboard/api-keys" class="text-sm text-brand hover:underline mt-2 inline-block">Manage keys</a>
       </CardContent>
@@ -3317,7 +3317,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 
     <Card>
       <CardContent class="pt-6">
-        <p class="text-sm text-gray-600">Teams</p>
+        <p class="text-sm text-muted-foreground">Teams</p>
         <p class="text-3xl font-bold text-brand mt-2">{data.stats.teamCount}</p>
         <a href="/dashboard/team" class="text-sm text-brand hover:underline mt-2 inline-block">Manage team</a>
       </CardContent>
@@ -3325,7 +3325,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 
     <Card>
       <CardContent class="pt-6">
-        <p class="text-sm text-gray-600">Account</p>
+        <p class="text-sm text-muted-foreground">Account</p>
         <Badge variant="default" class="mt-2">{data.user.role}</Badge>
       </CardContent>
     </Card>
@@ -3458,8 +3458,8 @@ export const actions: Actions = {
 
 <div class="space-y-8">
   <div>
-    <h1 class="text-3xl font-bold text-gray-900">API Keys</h1>
-    <p class="text-gray-600 mt-1">Manage your API keys for programmatic access</p>
+    <h1 class="text-3xl font-bold text-foreground">API Keys</h1>
+    <p class="text-muted-foreground mt-1">Manage your API keys for programmatic access</p>
   </div>
 
   {#if showCopyAlert}
@@ -3476,7 +3476,7 @@ export const actions: Actions = {
         <p class="font-medium">API Key Created</p>
         <p class="text-sm">Copy this key now. You won't be able to see it again.</p>
         <div class="flex gap-2 mt-3">
-          <code class="flex-1 bg-gray-100 px-3 py-2 rounded text-sm font-mono break-all">{generatedKey}</code>
+          <code class="flex-1 bg-muted px-3 py-2 rounded text-sm font-mono break-all">{generatedKey}</code>
           <Button size="sm" variant="outline" onclick={() => copyToClipboard(generatedKey)}>Copy</Button>
         </div>
       </div>
@@ -3495,7 +3495,7 @@ export const actions: Actions = {
           <div class="space-y-2">
             <Label for="permissions">Permissions</Label>
             <Input id="permissions" name="permissions" placeholder="read,write" bind:value={newKeyPermissions} />
-            <p class="text-xs text-gray-500">Comma-separated: read, write, admin</p>
+            <p class="text-xs text-muted-foreground">Comma-separated: read, write, admin</p>
           </div>
           <div class="flex gap-2">
             <Button type="submit">Create Key</Button>
@@ -3509,12 +3509,12 @@ export const actions: Actions = {
   {/if}
 
   <div class="space-y-4">
-    <h2 class="text-xl font-bold text-gray-900">Your Keys ({apiKeys.length})</h2>
+    <h2 class="text-xl font-bold text-foreground">Your Keys ({apiKeys.length})</h2>
 
     {#if apiKeys.length === 0}
       <Card>
         <CardContent class="pt-8 text-center">
-          <p class="text-gray-500 text-sm">No API keys yet. Create one to get started.</p>
+          <p class="text-muted-foreground text-sm">No API keys yet. Create one to get started.</p>
         </CardContent>
       </Card>
     {:else}
@@ -3525,11 +3525,11 @@ export const actions: Actions = {
               <div class="flex items-start justify-between gap-4">
                 <div class="flex-1">
                   <div class="flex items-center gap-2 mb-2">
-                    <h3 class="font-semibold text-gray-900">{key.name}</h3>
+                    <h3 class="font-semibold text-foreground">{key.name}</h3>
                     <Badge variant="default">Active</Badge>
                   </div>
-                  <p class="font-mono text-xs bg-gray-100 px-2 py-1 rounded inline-block mb-2">{key.prefix}........</p>
-                  <div class="flex gap-4 text-xs text-gray-500">
+                  <p class="font-mono text-xs bg-muted px-2 py-1 rounded inline-block mb-2">{key.prefix}........</p>
+                  <div class="flex gap-4 text-xs text-muted-foreground">
                     <span>Created {new Date(key.createdAt).toLocaleDateString()}</span>
                     <span>{key.lastUsedAt ? 'Last used ' + new Date(key.lastUsedAt).toLocaleDateString() : 'Never used'}</span>
                   </div>
@@ -3559,8 +3559,8 @@ export const actions: Actions = {
   <Card>
     <CardHeader><CardTitle>Usage</CardTitle></CardHeader>
     <CardContent>
-      <h4 class="font-medium text-gray-900 mb-2">Include your API key in the Authorization header</h4>
-      <code class="block bg-gray-100 px-4 py-3 rounded text-sm font-mono overflow-x-auto">
+      <h4 class="font-medium text-foreground mb-2">Include your API key in the Authorization header</h4>
+      <code class="block bg-muted px-4 py-3 rounded text-sm font-mono overflow-x-auto">
         curl -H "Authorization: Bearer sk_your_key_here" https://your-app.com/api/v1/data
       </code>
     </CardContent>
@@ -3709,8 +3709,8 @@ export const actions: Actions = {
 
 <div class="space-y-8">
   <div>
-    <h1 class="text-3xl font-bold text-gray-900">Team</h1>
-    <p class="text-gray-600 mt-1">Manage your team members and invitations</p>
+    <h1 class="text-3xl font-bold text-foreground">Team</h1>
+    <p class="text-muted-foreground mt-1">Manage your team members and invitations</p>
   </div>
 
   {#if alertMessage}
@@ -3751,7 +3751,7 @@ export const actions: Actions = {
             </div>
             <div>
               <Label for="role">Role</Label>
-              <select id="role" name="role" class="mt-2 w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+              <select id="role" name="role" class="mt-2 w-full px-3 py-2 border border-border rounded-md text-sm">
                 <option value="member">Member</option>
                 <option value="admin">Admin</option>
               </select>
@@ -3776,12 +3776,12 @@ export const actions: Actions = {
         {#if members.length > 0}
           <div class="space-y-3">
             {#each members as member (member.id)}
-              <div class="flex items-center justify-between p-3 border border-gray-200 rounded-lg">
+              <div class="flex items-center justify-between p-3 border border-border rounded-lg">
                 <div>
-                  <p class="font-medium text-gray-900">
+                  <p class="font-medium text-foreground">
                     {member.userId == data.user.id ? data.user.name + ' (you)' : 'User #' + member.userId}
                   </p>
-                  <p class="text-xs text-gray-500">Joined {new Date(member.joinedAt).toLocaleDateString()}</p>
+                  <p class="text-xs text-muted-foreground">Joined {new Date(member.joinedAt).toLocaleDateString()}</p>
                 </div>
                 <div class="flex items-center gap-2">
                   <Badge variant={member.role === 'owner' ? 'destructive' : 'default'}>
@@ -3802,7 +3802,7 @@ export const actions: Actions = {
             {/each}
           </div>
         {:else}
-          <p class="text-sm text-gray-500 text-center py-4">No members yet</p>
+          <p class="text-sm text-muted-foreground text-center py-4">No members yet</p>
         {/if}
       </CardContent>
     </Card>
@@ -3816,10 +3816,10 @@ export const actions: Actions = {
         <CardContent>
           <div class="space-y-2">
             {#each invitations as inv (inv.id)}
-              <div class="flex items-center justify-between p-3 border border-gray-200 rounded-lg bg-gray-50">
+              <div class="flex items-center justify-between p-3 border border-border rounded-lg bg-muted/50">
                 <div>
-                  <p class="font-medium text-gray-900">{inv.email}</p>
-                  <p class="text-xs text-gray-600">Expires {new Date(inv.expiresAt).toLocaleDateString()}</p>
+                  <p class="font-medium text-foreground">{inv.email}</p>
+                  <p class="text-xs text-muted-foreground">Expires {new Date(inv.expiresAt).toLocaleDateString()}</p>
                 </div>
                 <div class="flex items-center gap-2">
                   <Badge variant="secondary">{inv.role}</Badge>
@@ -3837,7 +3837,7 @@ export const actions: Actions = {
   {:else}
     <Card>
       <CardContent class="pt-8 text-center">
-        <p class="text-gray-500">Could not load team data. Try refreshing the page.</p>
+        <p class="text-muted-foreground">Could not load team data. Try refreshing the page.</p>
       </CardContent>
     </Card>
   {/if}
@@ -3892,30 +3892,30 @@ export const load = guardAuth('/dashboard', { role: 'admin' });
 </script>
 
 <div class="flex min-h-[calc(100vh-130px)]">
-  <aside class="w-64 border-r border-gray-200 bg-gray-50 hidden md:block">
-    <div class="p-4 border-b border-gray-200">
-      <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Administration</p>
+  <aside class="w-64 border-r border-border bg-muted/50 hidden md:block">
+    <div class="p-4 border-b border-border">
+      <p class="text-xs font-semibold text-muted-foreground/70 uppercase tracking-wider">Administration</p>
     </div>
     <nav class="p-4 space-y-1">
       {#each navItems as item}
         {@const active = isActive(item.tab, \$page.url)}
         <a
           href="/admin?tab={item.tab}"
-          class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors {active ? 'bg-brand/10 text-brand' : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'}"
+          class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors {active ? 'bg-brand/10 text-brand' : 'text-foreground hover:bg-muted hover:text-foreground'}"
         >
-          <Icon icon={item.icon} size={20} class={active ? 'text-brand' : 'text-gray-400'} />
+          <Icon icon={item.icon} size={20} class={active ? 'text-brand' : 'text-muted-foreground/70'} />
           {item.label}
         </a>
       {/each}
     </nav>
 
-    <div class="border-t border-gray-200 mx-4 my-2"></div>
+    <div class="border-t border-border mx-4 my-2"></div>
     <div class="p-4 pt-0">
       <a
         href="/dashboard"
-        class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors"
+        class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-foreground hover:bg-muted hover:text-foreground transition-colors"
       >
-        <Icon icon={ArrowLeft} size={20} class="text-gray-400" />
+        <Icon icon={ArrowLeft} size={20} class="text-muted-foreground/70" />
         Back to Dashboard
       </a>
     </div>
@@ -4494,8 +4494,8 @@ export async function load(event: ServerLoadEvent) {
 <div class="space-y-8">
   <div class="flex justify-between items-center">
     <div>
-      <h1 class="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
-      <p class="text-gray-600 mt-1">System health, queue monitoring, and task management</p>
+      <h1 class="text-3xl font-bold text-foreground">Admin Dashboard</h1>
+      <p class="text-muted-foreground mt-1">System health, queue monitoring, and task management</p>
     </div>
     <Button variant="outline" onclick={refreshDashboard}>Refresh</Button>
   </div>
@@ -4513,7 +4513,7 @@ export async function load(event: ServerLoadEvent) {
         <Card>
           <CardContent class="pt-6">
             <div>
-              <p class="text-sm text-gray-600">Total Users</p>
+              <p class="text-sm text-muted-foreground">Total Users</p>
               <p class="text-3xl font-bold text-[var(--color-brand)] mt-2">{data.stats.userCount}</p>
             </div>
           </CardContent>
@@ -4522,7 +4522,7 @@ export async function load(event: ServerLoadEvent) {
         <Card>
           <CardContent class="pt-6">
             <div>
-              <p class="text-sm text-gray-600">Total Posts</p>
+              <p class="text-sm text-muted-foreground">Total Posts</p>
               <p class="text-3xl font-bold text-[var(--color-brand)] mt-2">{data.stats.postCount}</p>
             </div>
           </CardContent>
@@ -4531,7 +4531,7 @@ export async function load(event: ServerLoadEvent) {
         <Card>
           <CardContent class="pt-6">
             <div>
-              <p class="text-sm text-gray-600">Queue Pending</p>
+              <p class="text-sm text-muted-foreground">Queue Pending</p>
               <p class="text-3xl font-bold text-yellow-600 mt-2">{queueCounts.waiting}</p>
             </div>
           </CardContent>
@@ -4540,7 +4540,7 @@ export async function load(event: ServerLoadEvent) {
         <Card>
           <CardContent class="pt-6">
             <div>
-              <p class="text-sm text-gray-600">Failed Jobs</p>
+              <p class="text-sm text-muted-foreground">Failed Jobs</p>
               <p class="text-3xl font-bold text-red-600 mt-2">{queueCounts.failed}</p>
             </div>
           </CardContent>
@@ -4567,7 +4567,7 @@ export async function load(event: ServerLoadEvent) {
                 {health.memoryUsedMB} MB / {health.memoryTotalMB} MB ({health.memoryPercent}%)
               </Badge>
             </div>
-            <div class="h-2 bg-gray-200 rounded-full overflow-hidden">
+            <div class="h-2 bg-muted rounded-full overflow-hidden">
               <div
                 class="h-full transition-all"
                 class:bg-green-500={health.memoryPercent <= 70}
@@ -4601,20 +4601,20 @@ export async function load(event: ServerLoadEvent) {
         <div class="overflow-x-auto">
           <table class="w-full text-sm">
             <thead>
-              <tr class="border-b border-gray-200">
-                <th class="text-left py-3 px-4 font-semibold text-gray-900">Name</th>
-                <th class="text-left py-3 px-4 font-semibold text-gray-900">Email</th>
-                <th class="text-left py-3 px-4 font-semibold text-gray-900">Column Role</th>
-                <th class="text-left py-3 px-4 font-semibold text-gray-900">Assigned Roles</th>
-                <th class="text-left py-3 px-4 font-semibold text-gray-900">Direct Permissions</th>
-                <th class="text-left py-3 px-4 font-semibold text-gray-900">Actions</th>
+              <tr class="border-b border-border">
+                <th class="text-left py-3 px-4 font-semibold text-foreground">Name</th>
+                <th class="text-left py-3 px-4 font-semibold text-foreground">Email</th>
+                <th class="text-left py-3 px-4 font-semibold text-foreground">Column Role</th>
+                <th class="text-left py-3 px-4 font-semibold text-foreground">Assigned Roles</th>
+                <th class="text-left py-3 px-4 font-semibold text-foreground">Direct Permissions</th>
+                <th class="text-left py-3 px-4 font-semibold text-foreground">Actions</th>
               </tr>
             </thead>
             <tbody>
               {#each users as user (user.id)}
-                <tr class="border-b border-gray-100 hover:bg-gray-50">
-                  <td class="py-3 px-4 font-medium text-gray-900">{user.name}</td>
-                  <td class="py-3 px-4 text-gray-600">{user.email}</td>
+                <tr class="border-b border-border hover:bg-muted/50">
+                  <td class="py-3 px-4 font-medium text-foreground">{user.name}</td>
+                  <td class="py-3 px-4 text-muted-foreground">{user.email}</td>
                   <td class="py-3 px-4">
                     <Badge variant={user.role === 'admin' ? 'default' : 'secondary'}>
                       {user.role}
@@ -4634,7 +4634,7 @@ export async function load(event: ServerLoadEvent) {
                       {/each}
                       {#if roles.length > 0}
                         <select
-                          class="text-xs border border-gray-200 rounded px-1 py-0.5"
+                          class="text-xs border border-border rounded px-1 py-0.5"
                           onchange={(e) => {
                             const val = Number((e.target as HTMLSelectElement).value);
                             if (val) { assignRoleToUser(user.id, val); (e.target as HTMLSelectElement).value = ''; }
@@ -4662,7 +4662,7 @@ export async function load(event: ServerLoadEvent) {
                       {/each}
                       {#if permissions.length > 0}
                         <select
-                          class="text-xs border border-gray-200 rounded px-1 py-0.5"
+                          class="text-xs border border-border rounded px-1 py-0.5"
                           onchange={(e) => {
                             const val = Number((e.target as HTMLSelectElement).value);
                             if (val) { grantPermToUser(user.id, val); (e.target as HTMLSelectElement).value = ''; }
@@ -4721,7 +4721,7 @@ export async function load(event: ServerLoadEvent) {
         {#if showRoleForm}
           <CardContent>
             <form
-              class="flex flex-wrap gap-3 items-end border-b border-gray-100 pb-4 mb-4"
+              class="flex flex-wrap gap-3 items-end border-b border-border pb-4 mb-4"
               onsubmit={(e) => { e.preventDefault(); createRole(); }}
             >
               <div class="flex-1 min-w-[200px]">
@@ -4740,19 +4740,19 @@ export async function load(event: ServerLoadEvent) {
           {#if roles.length > 0}
             <div class="space-y-4">
               {#each roles as role (role.id)}
-                <div class="border border-gray-200 rounded-lg p-4">
+                <div class="border border-border rounded-lg p-4">
                   <div class="flex items-center justify-between mb-3">
                     <div>
-                      <span class="font-medium text-gray-900">{role.name}</span>
+                      <span class="font-medium text-foreground">{role.name}</span>
                       <Badge variant="secondary" class="ml-2">{role.guard}</Badge>
                       {#if role.description}
-                        <p class="text-xs text-gray-500 mt-1">{role.description}</p>
+                        <p class="text-xs text-muted-foreground mt-1">{role.description}</p>
                       {/if}
                     </div>
                     <Button size="sm" variant="destructive" onclick={() => deleteRole(role.name)}>Delete</Button>
                   </div>
                   <div>
-                    <p class="text-xs font-semibold text-gray-500 uppercase mb-2">Permissions</p>
+                    <p class="text-xs font-semibold text-muted-foreground uppercase mb-2">Permissions</p>
                     <div class="flex flex-wrap gap-2">
                       {#each permissions as perm (perm.id)}
                         {@const has = (rolePermissionsMap[role.id] ?? []).includes(perm.id)}
@@ -4760,14 +4760,14 @@ export async function load(event: ServerLoadEvent) {
                           type="button"
                           class="px-2 py-1 rounded text-xs border transition-colors {has
                             ? 'bg-[var(--color-brand)] text-white border-[var(--color-brand)]'
-                            : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400'}"
+                            : 'bg-background text-muted-foreground border-border hover:border-foreground/30'}"
                           onclick={() => toggleRolePermission(role.id, perm.id)}
                         >
                           {perm.name}
                         </button>
                       {/each}
                       {#if permissions.length === 0}
-                        <span class="text-xs text-gray-400">No permissions defined yet</span>
+                        <span class="text-xs text-muted-foreground/70">No permissions defined yet</span>
                       {/if}
                     </div>
                   </div>
@@ -4775,7 +4775,7 @@ export async function load(event: ServerLoadEvent) {
               {/each}
             </div>
           {:else}
-            <p class="text-sm text-gray-500 py-4 text-center">
+            <p class="text-sm text-muted-foreground py-4 text-center">
               No roles defined. Create one to start assigning permissions.
             </p>
           {/if}
@@ -4802,7 +4802,7 @@ export async function load(event: ServerLoadEvent) {
         {#if showPermForm}
           <CardContent>
             <form
-              class="flex flex-wrap gap-3 items-end border-b border-gray-100 pb-4 mb-4"
+              class="flex flex-wrap gap-3 items-end border-b border-border pb-4 mb-4"
               onsubmit={(e) => { e.preventDefault(); createPermission(); }}
             >
               <div class="flex-1 min-w-[200px]">
@@ -4822,30 +4822,30 @@ export async function load(event: ServerLoadEvent) {
             <div class="overflow-x-auto">
               <table class="w-full text-sm">
                 <thead>
-                  <tr class="border-b border-gray-200">
-                    <th class="text-left py-3 px-4 font-semibold text-gray-900">Name</th>
-                    <th class="text-left py-3 px-4 font-semibold text-gray-900">Guard</th>
-                    <th class="text-left py-3 px-4 font-semibold text-gray-900">Description</th>
-                    <th class="text-left py-3 px-4 font-semibold text-gray-900">Used by Roles</th>
-                    <th class="text-left py-3 px-4 font-semibold text-gray-900">Actions</th>
+                  <tr class="border-b border-border">
+                    <th class="text-left py-3 px-4 font-semibold text-foreground">Name</th>
+                    <th class="text-left py-3 px-4 font-semibold text-foreground">Guard</th>
+                    <th class="text-left py-3 px-4 font-semibold text-foreground">Description</th>
+                    <th class="text-left py-3 px-4 font-semibold text-foreground">Used by Roles</th>
+                    <th class="text-left py-3 px-4 font-semibold text-foreground">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {#each permissions as perm (perm.id)}
                     {@const usedBy = roles.filter((r) => (rolePermissionsMap[r.id] ?? []).includes(perm.id))}
-                    <tr class="border-b border-gray-100 hover:bg-gray-50">
-                      <td class="py-3 px-4 font-medium text-gray-900">{perm.name}</td>
+                    <tr class="border-b border-border hover:bg-muted/50">
+                      <td class="py-3 px-4 font-medium text-foreground">{perm.name}</td>
                       <td class="py-3 px-4">
                         <Badge variant="secondary">{perm.guard}</Badge>
                       </td>
-                      <td class="py-3 px-4 text-gray-600">{perm.description || '---'}</td>
+                      <td class="py-3 px-4 text-muted-foreground">{perm.description || '---'}</td>
                       <td class="py-3 px-4">
                         <div class="flex flex-wrap gap-1">
                           {#each usedBy as role (role.id)}
                             <Badge variant="outline">{role.name}</Badge>
                           {/each}
                           {#if usedBy.length === 0}
-                            <span class="text-xs text-gray-400">None</span>
+                            <span class="text-xs text-muted-foreground/70">None</span>
                           {/if}
                         </div>
                       </td>
@@ -4858,7 +4858,7 @@ export async function load(event: ServerLoadEvent) {
               </table>
             </div>
           {:else}
-            <p class="text-sm text-gray-500 py-4 text-center">
+            <p class="text-sm text-muted-foreground py-4 text-center">
               No permissions defined. Create one to start building your authorization system.
             </p>
           {/if}
@@ -4874,7 +4874,7 @@ export async function load(event: ServerLoadEvent) {
         <Card>
           <CardContent class="pt-6">
             <div>
-              <p class="text-sm text-gray-600">Waiting</p>
+              <p class="text-sm text-muted-foreground">Waiting</p>
               <p class="text-3xl font-bold text-yellow-600 mt-2">{queueCounts.waiting}</p>
             </div>
           </CardContent>
@@ -4882,7 +4882,7 @@ export async function load(event: ServerLoadEvent) {
         <Card>
           <CardContent class="pt-6">
             <div>
-              <p class="text-sm text-gray-600">Active</p>
+              <p class="text-sm text-muted-foreground">Active</p>
               <p class="text-3xl font-bold text-blue-600 mt-2">{queueCounts.active}</p>
             </div>
           </CardContent>
@@ -4890,7 +4890,7 @@ export async function load(event: ServerLoadEvent) {
         <Card>
           <CardContent class="pt-6">
             <div>
-              <p class="text-sm text-gray-600">Failed</p>
+              <p class="text-sm text-muted-foreground">Failed</p>
               <p class="text-3xl font-bold text-red-600 mt-2">{queueCounts.failed}</p>
             </div>
           </CardContent>
@@ -4898,7 +4898,7 @@ export async function load(event: ServerLoadEvent) {
         <Card>
           <CardContent class="pt-6">
             <div>
-              <p class="text-sm text-gray-600">Completed</p>
+              <p class="text-sm text-muted-foreground">Completed</p>
               <p class="text-3xl font-bold text-green-600 mt-2">{queueCounts.completed}</p>
             </div>
           </CardContent>
@@ -4906,8 +4906,8 @@ export async function load(event: ServerLoadEvent) {
         <Card>
           <CardContent class="pt-6">
             <div>
-              <p class="text-sm text-gray-600">Delayed</p>
-              <p class="text-3xl font-bold text-gray-600 mt-2">{queueCounts.delayed}</p>
+              <p class="text-sm text-muted-foreground">Delayed</p>
+              <p class="text-3xl font-bold text-muted-foreground mt-2">{queueCounts.delayed}</p>
             </div>
           </CardContent>
         </Card>
@@ -4939,12 +4939,12 @@ export async function load(event: ServerLoadEvent) {
         {#if scheduledTasks.length > 0}
           <div class="space-y-3">
             {#each scheduledTasks as task (task.name)}
-              <div class="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50">
+              <div class="flex items-center justify-between p-4 border border-border rounded-lg hover:bg-muted/50">
                 <div class="flex-1">
-                  <p class="font-medium text-gray-900">{task.name}</p>
-                  <p class="text-sm text-gray-600">Schedule: {task.humanReadable}</p>
-                  <p class="text-xs text-gray-500 mt-1">Last run: {formatDate(task.lastRun)}</p>
-                  <p class="text-xs text-gray-500">Next run: {formatDate(task.nextRun)}</p>
+                  <p class="font-medium text-foreground">{task.name}</p>
+                  <p class="text-sm text-muted-foreground">Schedule: {task.humanReadable}</p>
+                  <p class="text-xs text-muted-foreground mt-1">Last run: {formatDate(task.lastRun)}</p>
+                  <p class="text-xs text-muted-foreground">Next run: {formatDate(task.nextRun)}</p>
                 </div>
                 <div class="flex items-center gap-3">
                   {#if task.lastStatus}
@@ -4964,7 +4964,7 @@ export async function load(event: ServerLoadEvent) {
             {/each}
           </div>
         {:else}
-          <p class="text-sm text-gray-500 py-4 text-center">
+          <p class="text-sm text-muted-foreground py-4 text-center">
             No scheduled tasks found. Configure the Scheduler in your app.ts to register tasks.
           </p>
         {/if}
@@ -5003,16 +5003,16 @@ export async function load(event: ServerLoadEvent) {
         {#if filteredLogs.length > 0}
           <div class="space-y-2 max-h-96 overflow-y-auto">
             {#each filteredLogs as log, i (i)}
-              <div class="flex items-start gap-3 p-3 border border-gray-200 rounded bg-gray-50 text-sm">
+              <div class="flex items-start gap-3 p-3 border border-border rounded bg-muted/50 text-sm">
                 <Badge variant={getLogBadgeVariant(log.level)} class="mt-0.5">
                   {log.level.toUpperCase()}
                 </Badge>
                 <div class="flex-1">
-                  <p class="text-gray-900">{log.message}</p>
-                  <p class="text-xs text-gray-500 mt-1">
+                  <p class="text-foreground">{log.message}</p>
+                  <p class="text-xs text-muted-foreground mt-1">
                     {formatDate(log.timestamp)}
                     {#if log.channel && log.channel !== 'default'}
-                      <span class="ml-2 text-gray-400">[{log.channel}]</span>
+                      <span class="ml-2 text-muted-foreground/70">[{log.channel}]</span>
                     {/if}
                   </p>
                 </div>
@@ -5020,7 +5020,7 @@ export async function load(event: ServerLoadEvent) {
             {/each}
           </div>
         {:else}
-          <p class="text-sm text-gray-500 py-4 text-center">
+          <p class="text-sm text-muted-foreground py-4 text-center">
             No log entries found. Logs appear here as your application runs.
           </p>
         {/if}
@@ -5840,7 +5840,7 @@ export default class QueueHealthCheck extends ScheduledTask {
     return `<script lang="ts">
   import '../app.css';
   import { ModeWatcher } from 'mode-watcher';
-  import { Button, Toaster, toast } from '@beeblock/svelar/ui';
+  import { Button, Toaster, toast, Seo } from '@beeblock/svelar/ui';
   import { registerToast } from '@beeblock/svelar/http';
 
   // Wire apiFetch error handling to the toast UI
@@ -5853,14 +5853,22 @@ export default class QueueHealthCheck extends ScheduledTask {
   const year = new Date().getFullYear();
 </script>
 
+<!-- Site-wide SEO defaults — override per page with another <Seo> -->
+<Seo
+  title="${name}"
+  description="${name} — built with Svelar, the Laravel of SvelteKit."
+  ogSiteName="${name}"
+  ogType="website"
+/>
+
 <svelte:head>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 </svelte:head>
 
-<div class="flex flex-col min-h-screen">
-  <nav class="border-b border-gray-200 bg-white shadow-sm sticky top-0 z-50">
+<div class="flex flex-col min-h-screen bg-background text-foreground">
+  <nav class="border-b border-border bg-card shadow-sm sticky top-0 z-50">
     <div class="px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
       <div class="flex items-center gap-6">
         <a href="/" class="flex items-center gap-2">
@@ -5870,16 +5878,16 @@ export default class QueueHealthCheck extends ScheduledTask {
           <span class="font-bold text-lg">${name}</span>
         </a>
         {#if data.user}
-          <a href="/dashboard" class="text-gray-600 hover:text-gray-900 text-sm font-medium">Dashboard</a>
+          <a href="/dashboard" class="text-muted-foreground hover:text-foreground text-sm font-medium">Dashboard</a>
           {#if data.user.role === 'admin'}
-            <a href="/admin" class="text-gray-600 hover:text-gray-900 text-sm font-medium">Admin</a>
+            <a href="/admin" class="text-muted-foreground hover:text-foreground text-sm font-medium">Admin</a>
           {/if}
         {/if}
       </div>
 
       <div class="flex items-center gap-3">
         {#if data.user}
-          <span class="text-sm text-gray-600 hidden sm:inline">{data.user.name}</span>
+          <span class="text-sm text-muted-foreground hidden sm:inline">{data.user.name}</span>
           <form method="POST" action="/logout">
             <Button type="submit" variant="ghost" size="sm">Logout</Button>
           </form>
@@ -5895,12 +5903,12 @@ export default class QueueHealthCheck extends ScheduledTask {
     {@render children()}
   </main>
 
-  <footer class="border-t border-gray-200 bg-white py-8 text-center text-sm text-gray-500">
+  <footer class="border-t border-border bg-card py-8 text-center text-sm text-muted-foreground">
     <p>&copy; {year} ${name}. All rights reserved.</p>
   </footer>
 </div>
 
-<ModeWatcher />
+<ModeWatcher defaultMode="light" />
 <Toaster position="bottom-right" />
 
 <style>
@@ -5945,11 +5953,11 @@ export async function load(event: ServerLoadEvent) {
 
 <div class="flex items-center justify-center min-h-[calc(100vh-200px)] px-4">
   <div class="text-center max-w-md">
-    <h1 class="text-7xl font-bold text-gray-200 mb-4">{page.status}</h1>
-    <p class="text-xl font-semibold text-gray-900 mb-2">
+    <h1 class="text-7xl font-bold text-muted mb-4">{page.status}</h1>
+    <p class="text-xl font-semibold text-foreground mb-2">
       {page.status === 404 ? 'Page Not Found' : page.status === 403 ? 'Forbidden' : page.status === 401 ? 'Unauthorized' : 'Something Went Wrong'}
     </p>
-    <p class="text-gray-500 mb-8">
+    <p class="text-muted-foreground mb-8">
       {page.error?.message || 'An unexpected error occurred. Please try again.'}
     </p>
     <div class="flex gap-3 justify-center">
@@ -6037,14 +6045,15 @@ export class EventServiceProvider extends BaseProvider {
 
   static homePage(name: string): string {
     return `<script lang="ts">
-  import { Button, Card, Badge, Separator } from '@beeblock/svelar/ui';
+  import { Button, Card, Badge, Separator, Seo } from '@beeblock/svelar/ui';
 </script>
 
-<svelte:head>
-  <title>${name} — Powered by Svelar</title>
-</svelte:head>
+<Seo
+  title="${name} — Powered by Svelar"
+  description="Welcome to ${name}. A modern SaaS application built with Svelar and SvelteKit."
+/>
 
-<div class="min-h-screen bg-white flex flex-col items-center justify-center px-4">
+<div class="min-h-screen flex flex-col items-center justify-center px-4">
   <div class="text-center max-w-lg">
     <div class="w-16 h-16 bg-brand rounded-2xl flex items-center justify-center mx-auto mb-6">
       <span class="text-white font-bold text-2xl">&lt;/&gt;</span>
@@ -6052,13 +6061,13 @@ export class EventServiceProvider extends BaseProvider {
 
     <Badge variant="outline" class="mb-4">Svelar + SvelteKit</Badge>
 
-    <h1 class="text-4xl font-extrabold text-gray-900 mb-4">
+    <h1 class="text-4xl font-extrabold mb-4">
       Welcome to <span class="text-brand">${name}</span>
     </h1>
 
-    <p class="text-gray-600 mb-8 leading-relaxed">
+    <p class="text-muted-foreground mb-8 leading-relaxed">
       Your new Svelar project is ready. Edit
-      <code class="bg-gray-100 px-1.5 py-0.5 rounded text-sm text-brand">src/routes/+page.svelte</code>
+      <code class="bg-muted px-1.5 py-0.5 rounded text-sm text-brand">src/routes/+page.svelte</code>
       to get started.
     </p>
 
@@ -6072,16 +6081,16 @@ export class EventServiceProvider extends BaseProvider {
 
   <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-2xl w-full">
     <Card class="p-5 text-center">
-      <h3 class="font-semibold text-gray-900 mb-1">ORM</h3>
-      <p class="text-sm text-gray-500">Eloquent-style models with Drizzle</p>
+      <h3 class="font-semibold mb-1">ORM</h3>
+      <p class="text-sm text-muted-foreground">Eloquent-style models with Drizzle</p>
     </Card>
     <Card class="p-5 text-center">
-      <h3 class="font-semibold text-gray-900 mb-1">Auth</h3>
-      <p class="text-sm text-gray-500">Sessions, JWT, API tokens</p>
+      <h3 class="font-semibold mb-1">Auth</h3>
+      <p class="text-sm text-muted-foreground">Sessions, JWT, API tokens</p>
     </Card>
     <Card class="p-5 text-center">
-      <h3 class="font-semibold text-gray-900 mb-1">Middleware</h3>
-      <p class="text-sm text-gray-500">CORS, CSRF, rate limiting</p>
+      <h3 class="font-semibold mb-1">Middleware</h3>
+      <p class="text-sm text-muted-foreground">CORS, CSRF, rate limiting</p>
     </Card>
   </div>
 </div>

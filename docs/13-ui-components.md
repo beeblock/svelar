@@ -32,7 +32,7 @@ Svelar also ships a minimal, composable component library built on Svelte 5 rune
 
 ### Available Components
 
-Svelar includes: `Button`, `Input`, `Label`, `Card` (with `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`), `Alert`, `Badge`, `Separator`, `Avatar` (with `AvatarImage`, `AvatarFallback`), `Tabs` (with `TabsList`, `TabsTrigger`, `TabsContent`), `Icon`, `Toaster`, and a `toast` notification API.
+Svelar includes: `Button`, `Input`, `Label`, `Card` (with `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`), `Alert`, `Badge`, `Separator`, `Avatar` (with `AvatarImage`, `AvatarFallback`), `Tabs` (with `TabsList`, `TabsTrigger`, `TabsContent`), `Icon`, `Toaster`, `toast` notification API, and `Seo` (meta tags, Open Graph, Twitter Cards, JSON-LD). See the [SEO guide](./46-seo.md) for full `<Seo>` documentation.
 
 ## Import
 
