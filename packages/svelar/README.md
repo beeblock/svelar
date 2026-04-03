@@ -112,12 +112,13 @@ npx svelar make:deploy                 # scaffold Docker + CI/CD + infra
 npx svelar make:docker                 # Dockerfile, compose files, health endpoint
 npx svelar make:ci                     # GitHub Actions workflow
 npx svelar make:infra                  # droplet setup script + env template
+npx svelar infra:setup                 # provision droplet + copy files via SSH
 npx svelar dev:up                      # start dev containers (hot-reload)
 npx svelar dev:logs                    # follow dev container logs
 npx svelar prod:deploy                 # pull latest image + restart prod
 ```
 
-53 commands available. Run `npx svelar` to see all commands.
+54 commands available. Run `npx svelar` to see all commands.
 
 ## Database Support
 

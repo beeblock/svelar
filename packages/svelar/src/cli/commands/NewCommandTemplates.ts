@@ -706,6 +706,9 @@ storage/uploads/*
 storage/sessions/*
 !storage/**/.gitkeep
 
+# Infrastructure (contains server IPs and SSH key paths)
+infra/droplet.env
+
 # Testing
 test-results/
 playwright-report/

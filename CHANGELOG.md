@@ -9,8 +9,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - **`make:deploy` command** — one-command scaffold for the full deployment pipeline: runs `make:docker` + `make:ci` + `make:infra`
-- **`make:ci` command** — generates `.github/workflows/deploy.yml` (GitHub Actions: build Docker image, push to registry, SSH deploy to droplet). Supports `--image` and `--registry` flags
-- **`make:infra` command** — generates `infra/setup-droplet.sh` (create deploy user, install Docker, configure UFW) and `infra/droplet.env.example` (production `.env` template)
+- **`make:ci` command** — generates `.github/workflows/deploy.yml` (GitHub Actions: build Docker image, push to registry, SSH deploy to droplet). Writes `ENV_PROD` secret to `.env` on the server during each deploy — no manual `.env` management on the droplet. Supports `--image` and `--registry` flags. Builds on both push and PR, deploys only on push
+- **`make:infra` command** — generates `infra/setup-droplet.sh` (local script that SSHs into the droplet: creates deploy user, copies SSH key, adds to docker group, creates project dir, copies compose files) and `infra/droplet.env.example` (infra config: DROPLET_IP, DEPLOY_USER, PROJECT_NAME, SSH_KEY_PATH)
+- **`infra:setup` command** — runs `infra/setup-droplet.sh` with config from `infra/droplet.env`. Provisions the droplet and copies compose files in one command. Supports `--config` flag
 - **Docker compose runtime commands** — 9 new CLI commands wrapping `docker compose` with the correct dev/prod override files:
   - `dev:up`, `dev:down`, `dev:logs`, `dev:restart` — development containers (hot-reload, port 5173)
   - `prod:up`, `prod:down`, `prod:logs`, `prod:restart`, `prod:deploy` — production containers (pre-built image, port 3000)

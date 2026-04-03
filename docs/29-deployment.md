@@ -359,20 +359,31 @@ Used by:
 
 ### What it does
 
-1. **Triggers** on push to `main`
-2. **Builds** the Docker image (production target) with Buildx + layer caching
-3. **Pushes** to Docker Hub with `:latest` and `:sha` tags
-4. **SSHs** into your droplet and runs `docker compose pull && up -d`
+1. **Triggers** on push to `main` (also builds on PRs, but only deploys on push)
+2. **Builds** the Docker image (production target)
+3. **Pushes** to Docker Hub with `:latest` and `:timestamp` tags
+4. **SSHs** into your droplet, writes `ENV_PROD` secret to `.env`, pulls the image, and starts containers
 
 ### Required GitHub Secrets
 
 | Secret | Description |
 |--------|-------------|
 | `DOCKER_USERNAME` | Docker Hub username |
-| `DOCKER_TOKEN` | Docker Hub access token (not password) |
+| `DOCKER_TOKEN` | Docker Hub access token |
 | `DROPLET_HOST` | Droplet IP address or hostname |
 | `DROPLET_USER` | SSH user on the droplet (e.g. `deploy`) |
 | `DROPLET_SSH_KEY` | Private SSH key for the deploy user |
+| `ENV_PROD` | **Complete production `.env` file contents** |
+
+### How `.env` works
+
+The production `.env` is **never manually managed on the server**. Instead:
+
+1. Store your entire production `.env` contents as the `ENV_PROD` GitHub Secret
+2. On every deploy, the workflow writes it to `.env` on the server: `echo "${{ secrets.ENV_PROD }}" > .env`
+3. Docker Compose reads it via `env_file: .env`
+
+This means updating environment variables is as simple as updating the `ENV_PROD` secret and pushing to main.
 
 ### Generated workflow
 
@@ -381,6 +392,8 @@ name: Deploy
 
 on:
   push:
+    branches: [main]
+  pull_request:
     branches: [main]
 
 env:
@@ -392,27 +405,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_TOKEN }}
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          target: production
-          push: true
-          tags: |
-            ${{ env.DOCKER_IMAGE }}:latest
-            ${{ env.DOCKER_IMAGE }}:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - uses: appleboy/ssh-action@v1
+
+      - name: Log in to Docker Hub
+        if: github.event_name == 'push'
+        run: echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+      - name: Build Docker image
+        run: |
+          docker build . --file Dockerfile \
+            --target production \
+            --tag $DOCKER_IMAGE:$(date +%s) \
+            --tag $DOCKER_IMAGE:latest
+
+      - name: Push to Docker Hub
+        if: github.event_name == 'push'
+        run: docker push $DOCKER_IMAGE --all-tags
+
+      - name: Deploy to droplet
+        if: github.event_name == 'push'
+        uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DROPLET_HOST }}
           username: ${{ secrets.DROPLET_USER }}
           key: ${{ secrets.DROPLET_SSH_KEY }}
           script: |
+            echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
             cd ~/app
+            echo "${{ secrets.ENV_PROD }}" > .env
             docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
             docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
             docker image prune -f
@@ -430,52 +449,84 @@ npx svelar make:ci --registry=ghcr.io/myorg --image=myapp
 
 ## Infrastructure Setup
 
-`npx svelar make:infra` generates two files for provisioning a DigitalOcean droplet (or any Ubuntu 22.04+ server).
+### How it works
 
-### `infra/setup-droplet.sh`
+`npx svelar make:infra` generates a setup script and config template. `npx svelar infra:setup` runs the script — it reads config from `infra/droplet.env`, SSHs into the droplet, and sets everything up automatically.
 
-Run this on a fresh droplet as root:
+The `.env` file is **not** copied to the server during setup. It's managed by CI/CD — the `ENV_PROD` GitHub Secret is written to `.env` on every deploy.
 
-```bash
-ssh root@your-droplet 'bash -s' < infra/setup-droplet.sh
-```
-
-It does:
-1. Creates a `deploy` user with sudo access
-2. Copies SSH authorized keys from root
-3. Installs Docker + Docker Compose plugin
-4. Creates the project directory (`~/app`) with correct permissions
-5. Configures UFW firewall (allow SSH, HTTP, HTTPS)
-
-### `infra/droplet.env.example`
-
-A commented `.env` template with all production variables. Copy it to the droplet:
-
-```bash
-scp infra/droplet.env.example deploy@your-droplet:~/app/.env
-# Then edit with real values
-ssh deploy@your-droplet 'nano ~/app/.env'
-```
-
-### Full deployment flow
+### Setup Flow
 
 ```bash
 # 1. Scaffold everything
 npx svelar make:deploy
 
-# 2. Provision the droplet
-ssh root@your-droplet 'bash -s' < infra/setup-droplet.sh
+# 2. Fill in your droplet config
+cp infra/droplet.env.example infra/droplet.env
+# Edit: DROPLET_IP, DEPLOY_USER, PROJECT_NAME, SSH_KEY_PATH
 
-# 3. Copy compose files to the droplet
-scp docker-compose.yml docker-compose.prod.yml deploy@your-droplet:~/app/
+# 3. Provision the droplet (interactive — asks for confirmation)
+npx svelar infra:setup
 
-# 4. Copy and edit the .env
-scp infra/droplet.env.example deploy@your-droplet:~/app/.env
-ssh deploy@your-droplet 'nano ~/app/.env'
+# 4. Add GitHub Secrets:
+#    DOCKER_USERNAME, DOCKER_TOKEN, DROPLET_HOST, DROPLET_USER,
+#    DROPLET_SSH_KEY, ENV_PROD
 
-# 5. Push to GitHub — the workflow handles the rest
+# 5. Push to main — GitHub Actions handles the rest
 git push origin main
 ```
+
+### Generated Files
+
+`npx svelar make:infra` generates two files:
+
+#### `infra/droplet.env.example`
+
+Configuration for the setup script (NOT the app `.env`). Copy to `infra/droplet.env` and fill in:
+
+```bash
+# Required
+DROPLET_IP=           # Your server's public IP
+DEPLOY_USER=deploy    # Non-root user to create
+PROJECT_NAME=myapp    # Directory name on server: ~/PROJECT_NAME
+SSH_KEY_PATH=~/.ssh/id_ed25519  # Private key (public key = path + .pub)
+
+# Optional
+COMPOSE_FILE=docker-compose.prod.yml
+DEPLOY_USER_PASSWORD=  # For emergency console access
+```
+
+#### `infra/setup-droplet.sh`
+
+Runs locally, SSHs into the droplet to:
+1. Create a `deploy` user with passwordless sudo
+2. Copy your SSH public key to the deploy user
+3. Add deploy user to the `docker` group
+4. Create the project directory (`~/PROJECT_NAME`)
+5. Copy `docker-compose.yml` and `docker-compose.prod.yml` to the server
+
+The script assumes Docker is pre-installed on the droplet (DigitalOcean Docker droplets). For bare Ubuntu, Docker installation can be added.
+
+#### Using `infra:setup` with flags (no config file needed)
+
+```bash
+npx svelar infra:setup --ip=123.45.67.89 --key=~/.ssh/id_ed25519
+npx svelar infra:setup --ip=123.45.67.89 --key=~/.ssh/id_ed25519 --deploy-user=deploy --project=myapp
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--ip` | (required) | Droplet IP or hostname |
+| `--key`, `-k` | (required) | Path to SSH private key |
+| `--deploy-user` | `deploy` | Non-root user to create |
+| `--project`, `-p` | package.json name | Remote directory name |
+| `--config`, `-c` | `infra/droplet.env` | Path to config file (alternative to flags) |
+
+You can also run the script directly: `bash infra/setup-droplet.sh`
+
+#### Security
+
+`make:infra` automatically adds `infra/droplet.env` to `.gitignore` so server IPs and SSH key paths are never committed. The `infra/droplet.env.example` template (with empty values) is safe to commit.
 
 ---
 
