@@ -13,8 +13,7 @@ export class MakeDeployCommand extends Command {
   arguments = [];
   flags = [
     { name: 'db', alias: 'd', description: 'Database driver: postgres, mysql, sqlite (default: postgres)', type: 'string' as const },
-    { name: 'image', alias: 'i', description: 'Docker image name (default: package.json name)', type: 'string' as const },
-    { name: 'registry', description: 'Docker registry prefix (default: Docker Hub)', type: 'string' as const },
+    { name: 'image', alias: 'i', description: 'Docker image name for compose fallback (default: package.json name)', type: 'string' as const },
     { name: 'port', description: 'Production port (default: 3000)', type: 'string' as const },
     { name: 'dev-port', description: 'Development port (default: 5173)', type: 'string' as const },
     { name: 'force', alias: 'f', description: 'Overwrite existing files', type: 'boolean' as const },

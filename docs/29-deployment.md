@@ -86,11 +86,6 @@ npx svelar make:docker --db=sqlite
 
 # Docker image name (default: package.json name)
 npx svelar make:docker --image=myapp
-npx svelar make:ci --image=myapp
-
-# Registry prefix (default: Docker Hub)
-npx svelar make:docker --registry=ghcr.io/myorg
-npx svelar make:ci --registry=ghcr.io/myorg
 
 # Exclude optional services
 npx svelar make:docker --no-redis       # No Redis (uses in-memory queue)
@@ -370,9 +365,11 @@ Used by:
 |--------|-------------|
 | `DOCKER_USERNAME` | Docker Hub username |
 | `DOCKER_TOKEN` | Docker Hub access token |
+| `DOCKER_IMAGE_NAME` | Docker image name (e.g. `myapp`) |
 | `DROPLET_HOST` | Droplet IP address or hostname |
 | `DROPLET_USER` | SSH user on the droplet (e.g. `deploy`) |
 | `DROPLET_SSH_KEY` | Private SSH key for the deploy user |
+| `DROPLET_PROJECT` | Project directory name on the droplet (e.g. `myapp`) |
 | `ENV_PROD` | **Complete production `.env` file contents** |
 
 ### How `.env` works
@@ -397,7 +394,7 @@ on:
     branches: [main]
 
 env:
-  DOCKER_IMAGE: ${{ secrets.DOCKER_USERNAME }}/myapp
+  DOCKER_IMAGE: ${{ secrets.DOCKER_USERNAME }}/${{ secrets.DOCKER_IMAGE_NAME }}
 
 jobs:
   build-and-deploy:
@@ -430,19 +427,11 @@ jobs:
           key: ${{ secrets.DROPLET_SSH_KEY }}
           script: |
             echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
-            cd ~/app
+            cd ${{ secrets.DROPLET_PROJECT }}/
             echo "${{ secrets.ENV_PROD }}" > .env
             docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
             docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
             docker image prune -f
-```
-
-### Custom registries
-
-To use GitHub Container Registry instead of Docker Hub:
-
-```bash
-npx svelar make:ci --registry=ghcr.io/myorg --image=myapp
 ```
 
 ---
@@ -469,8 +458,9 @@ cp infra/droplet.env.example infra/droplet.env
 npx svelar infra:setup
 
 # 4. Add GitHub Secrets:
-#    DOCKER_USERNAME, DOCKER_TOKEN, DROPLET_HOST, DROPLET_USER,
-#    DROPLET_SSH_KEY, ENV_PROD
+#    DOCKER_USERNAME, DOCKER_TOKEN, DOCKER_IMAGE_NAME,
+#    DROPLET_HOST, DROPLET_USER, DROPLET_SSH_KEY, DROPLET_PROJECT,
+#    ENV_PROD
 
 # 5. Push to main — GitHub Actions handles the rest
 git push origin main

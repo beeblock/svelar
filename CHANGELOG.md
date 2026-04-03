@@ -4,11 +4,19 @@ All notable changes to `@beeblock/svelar` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.5] - 2026-04-03
+
+### Changed
+
+- **`deploy.yml` template** — **zero hardcoded values**: all dynamic values (image name, project dir, env) come from GitHub Secrets (`DOCKER_IMAGE_NAME`, `DROPLET_PROJECT`, `ENV_PROD`). Removed `--image`/`--registry` flags from `make:ci` — no longer needed
+- **`make:ci` command** — removed `--image` and `--registry` flags; workflow is now fully driven by GitHub Secrets
+- **Docs cleanup** — removed stale `--image`/`--registry` references from deployment docs, CLI reference, and skill files
+
 ## [0.6.4] - 2026-04-03
 
 ### Changed
 
-- **`deploy.yml` template** — now writes `ENV_PROD` GitHub Secret to `.env` on the server during each deploy (no manual `.env` management on the droplet), logs into Docker Hub on the server, builds on PRs (deploy only on push)
+- **`deploy.yml` template** — writes `ENV_PROD` GitHub Secret to `.env` on the server during each deploy (no manual `.env` management on the droplet), logs into Docker Hub on the server, builds on PRs (deploy only on push)
 - **`setup-droplet.sh` template** — completely rewritten to run locally (not piped to server). Reads config from `infra/droplet.env`, SSHs into the droplet to: create deploy user, copy SSH public key, install Docker if not present, create project directory, copy both compose files, configure UFW firewall
 - **`infra:setup` command** — now supports two modes: config file (`infra/droplet.env`) or CLI flags (`--ip`, `--key`, `--deploy-user`, `--project`). Validates required variables and shows clear error messages with usage examples
 - **`droplet.env.example`** — now contains infrastructure config (DROPLET_IP, DEPLOY_USER, PROJECT_NAME, SSH_KEY_PATH) instead of app environment variables
@@ -20,7 +28,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - **`make:deploy` command** — one-command scaffold for the full deployment pipeline: runs `make:docker` + `make:ci` + `make:infra`
-- **`make:ci` command** — generates `.github/workflows/deploy.yml` (GitHub Actions: build Docker image, push to registry, SSH deploy to droplet). Supports `--image` and `--registry` flags
+- **`make:ci` command** — generates `.github/workflows/deploy.yml` (GitHub Actions: build Docker image, push to registry, SSH deploy to droplet). All values come from GitHub Secrets — nothing hardcoded
 - **`make:infra` command** — generates `infra/setup-droplet.sh` and `infra/droplet.env.example`
 - **`infra:setup` command** — provisions the droplet and copies compose files in one command
 - **Docker compose runtime commands** — 9 new CLI commands wrapping `docker compose` with the correct dev/prod override files:
@@ -31,7 +39,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **`docker-compose.dev.yml`** — development override: builds the `development` Dockerfile target, bind-mounts source for hot-reload, maps port 5173
 - **`docker-compose.prod.yml`** — production override: uses pre-built image from Docker Hub / registry instead of local build
 - **Health endpoint** — `make:docker` now generates `src/routes/api/health/+server.ts` returning `{ status, timestamp, uptime }`, used by Docker HEALTHCHECK and Traefik
-- **`--image` and `--registry` flags** on `make:docker` for configuring Docker image name and registry prefix
+- **`--image` flag** on `make:docker` for configuring Docker image name (used as compose fallback default)
 
 ## [0.6.2] - 2026-04-03
 
