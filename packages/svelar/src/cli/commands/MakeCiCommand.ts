@@ -35,6 +35,8 @@ export class MakeCiCommand extends Command {
     this.success('Created .github/workflows/deploy.yml');
 
     this.newLine();
+    this.info('Workflow steps: build image → push to Docker Hub → SCP compose files → SSH deploy');
+    this.newLine();
     this.info('Required GitHub Secrets:');
     this.log('  DOCKER_USERNAME   — Docker Hub username');
     this.log('  DOCKER_TOKEN      — Docker Hub access token');

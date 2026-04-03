@@ -61,22 +61,43 @@ export class InfraSetupCommand extends Command {
         return;
       }
 
-      // Build a temporary env for the script
+      // Build a temporary env for the script — validate inputs to prevent injection
       const appName = this.resolveAppName(cwd);
-      const envVars = [
-        `DROPLET_IP=${flags.ip}`,
-        `SSH_KEY_PATH=${flags.key}`,
-        `DEPLOY_USER=${flags['deploy-user'] ?? 'deploy'}`,
-        `PROJECT_NAME=${flags.project ?? appName}`,
-      ].join(' ');
+      const safePattern = /^[a-zA-Z0-9@._:~\/ -]+$/;
+      const home = process.env.HOME || process.env.USERPROFILE || '';
+      const resolveTilde = (v: string) => v.replace(/^~(?=\/|$)/, home);
+      const flagValues: Record<string, string> = {
+        ip: String(flags.ip),
+        key: resolveTilde(String(flags.key)),
+        'deploy-user': String(flags['deploy-user'] ?? 'deploy'),
+        project: String(flags.project ?? appName),
+      };
+
+      for (const [name, value] of Object.entries(flagValues)) {
+        if (!safePattern.test(value)) {
+          this.error(`Invalid characters in --${name} flag: ${value}`);
+          return;
+        }
+      }
 
       this.info('Running infra/setup-droplet.sh with flags...');
       this.newLine();
 
       try {
         execSync(
-          `${envVars} bash "${setupScript}"`,
-          { stdio: 'inherit', cwd, shell: 'bash' },
+          `bash "${setupScript}"`,
+          {
+            stdio: 'inherit',
+            cwd,
+            shell: 'bash',
+            env: {
+              ...process.env,
+              DROPLET_IP: flagValues.ip,
+              SSH_KEY_PATH: flagValues.key,
+              DEPLOY_USER: flagValues['deploy-user'],
+              PROJECT_NAME: flagValues.project,
+            },
+          },
         );
       } catch {
         this.newLine();

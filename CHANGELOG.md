@@ -4,13 +4,37 @@ All notable changes to `@beeblock/svelar` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.6] - 2026-04-03
+
+### Security
+
+- **Command injection fix** — `--service` flag in `dev:*`/`prod:*` commands now validated against `^[a-zA-Z0-9][a-zA-Z0-9._-]*$` pattern
+- **Command injection fix** — `infra:setup` flag values now validated and passed as environment variables instead of shell-interpolated strings
+- **GitHub Actions hardening** — replaced raw `echo | docker login` with official `docker/login-action@v3` to prevent secret leakage in logs
+- **Sudo least privilege** — deploy user restricted to `NOPASSWD` for Docker commands only instead of `ALL`
+- **PgBouncer auth clarification** — added comments explaining md5 is required for client→PgBouncer (edoburu image limitation), while PgBouncer→PostgreSQL still negotiates scram-sha-256 automatically
+- **SSH key path validation** — setup script now rejects paths containing spaces to prevent word-splitting bugs
+
 ## [0.6.5] - 2026-04-03
+
+### Added
+
+- **PgBouncer connection pooling** — automatically included when using PostgreSQL. App connects to `pgbouncer:6432` instead of directly to PostgreSQL. Full config in `docker/pgbouncer/pgbouncer.ini` (transaction mode, scram-sha-256, 500 max client connections, 80 max DB connections)
+- **`docker/postgres/postgresql.conf`** — production-tuned PostgreSQL config (memory, WAL, checkpoints, parallel queries, logging slow queries >1s, pg_stat_statements, autovacuum). 2GB RAM baseline with scaling comments
+- **`docker/postgres/init.sql`** — auto-enables extensions: uuid-ossp, pgcrypto, citext, unaccent, pg_trgm, pg_stat_statements
+- **`docker/pgbouncer/pgbouncer.ini`** — full PgBouncer config with pool sizes, timeouts, TCP keepalive, server checks. Credentials auto-generated from `DATABASE_URL` at container startup — no static password files committed to git
+- **`docker/mysql/init.sql`** — MySQL UTF-8 charset config (when using `--db=mysql`)
+- **Production hardening** — every service now has healthchecks, memory limits (`deploy.resources.limits`), `restart: unless-stopped`, and log rotation (`json-file` driver with max-size/max-file caps). Memory limits configurable via `.env` for app, postgres, mysql, redis
+- **CI/CD compose sync** — `deploy.yml` now copies `docker/` config directory alongside compose files via `appleboy/scp-action`
+- **`setup-droplet.sh`** — now copies `docker/` config directory to droplet during initial setup
+- **`.env.example`** — complete rewrite with every env variable documented with comments, organized by section (App, Database, PgBouncer, Auth, Mail, Queue, Redis, Storage, Search, PDF, Broadcasting, Stripe, Docker/Deployment)
+- **Multi-project docs** — new "Multiple Projects on One Droplet" section covering APP_PORT per project, Docker namespace isolation, and reverse proxy setup
 
 ### Changed
 
-- **`deploy.yml` template** — **zero hardcoded values**: all dynamic values (image name, project dir, env) come from GitHub Secrets (`DOCKER_IMAGE_NAME`, `DROPLET_PROJECT`, `ENV_PROD`). Removed `--image`/`--registry` flags from `make:ci` — no longer needed
+- **PostgreSQL version** — upgraded from `postgres:16-alpine` to `postgres:17-alpine`
+- **`deploy.yml` template** — **zero hardcoded values**: all dynamic values (image name, project dir, env) come from GitHub Secrets (`DOCKER_IMAGE_NAME`, `DROPLET_PROJECT`, `ENV_PROD`). `DOCKER_IMAGE` is written to `.env` on the server for compose variable substitution. Removed `--image`/`--registry` flags from `make:ci`
 - **`make:ci` command** — removed `--image` and `--registry` flags; workflow is now fully driven by GitHub Secrets
-- **Docs cleanup** — removed stale `--image`/`--registry` references from deployment docs, CLI reference, and skill files
 
 ## [0.6.4] - 2026-04-03
 

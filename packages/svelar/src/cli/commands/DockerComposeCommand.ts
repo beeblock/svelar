@@ -30,6 +30,13 @@ export abstract class DockerComposeCommand extends Command {
     }
 
     const service = flags.service as string | undefined;
+
+    // Validate service name to prevent command injection
+    if (service && !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(service)) {
+      this.error(`Invalid service name: ${service}`);
+      return;
+    }
+
     const parts = [
       'docker', 'compose',
       '-f', 'docker-compose.yml',

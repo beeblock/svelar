@@ -614,24 +614,32 @@ export const { handle, handleError } = createSvelarApp({
   }
 
   static envExample(): string {
-    return `# App Security — generate a random string for production
+    return `# ── App ────────────────────────────────────────────────────
+# APP_KEY: Encryption key for cookies, sessions, and tokens. Must be unique per environment.
+# Generate with: npx svelar key:generate
 APP_KEY=change-me-to-a-random-string
-
-# App
+# APP_NAME: Displayed in emails, page titles, and meta tags.
 APP_NAME=My App
+# APP_URL: Full public URL of your app. Used for CORS, redirects, and link generation.
 APP_URL=http://localhost:5173
 
-# Internal secret (scheduler <-> web server bridge)
+# ── Internal ──────────────────────────────────────────────
+# INTERNAL_SECRET: Shared secret for internal HTTP bridge (scheduler -> web server).
+# Must match between the scheduler process and the web server.
 INTERNAL_SECRET=change-me-to-a-random-string
 
-# Database (SQLite by default, no extra config needed)
+# ── Database ──────────────────────────────────────────────
+# DB_DRIVER: sqlite | postgresql | mysql2
+# SQLite is the default — no extra config needed.
 DB_DRIVER=sqlite
+# DB_PATH: Path to SQLite file (relative to project root). Only used with sqlite driver.
 DB_PATH=database.db
 
 # PostgreSQL (uncomment to switch)
+# In Docker: app connects through PgBouncer on port 6432, not directly to postgres.
 # DB_DRIVER=postgresql
-# DB_HOST=localhost
-# DB_PORT=5432
+# DB_HOST=pgbouncer
+# DB_PORT=6432
 # DB_NAME=svelar_db
 # DB_USER=postgres
 # DB_PASSWORD=secret
@@ -643,49 +651,137 @@ DB_PATH=database.db
 # DB_NAME=svelar_db
 # DB_USER=root
 # DB_PASSWORD=secret
+# DB_ROOT_PASSWORD: Root password for MySQL container (Docker only).
+# DB_ROOT_PASSWORD=rootsecret
 
-# JWT (if using JWT auth)
+# ── PgBouncer (connection pooling — PostgreSQL only) ─────
+# PgBouncer sits between app and PostgreSQL. Included automatically with postgres.
+# App connects to pgbouncer:6432, PgBouncer connects to postgres:5432.
+# Pool settings are in docker/pgbouncer/pgbouncer.ini (not env vars).
+# PostgreSQL tuning is in docker/postgres/postgresql.conf.
+# Credentials are read from DATABASE_URL in docker-compose.yml (no static password files).
+
+# ── Auth ──────────────────────────────────────────────────
+# AUTH_OTP_ENABLED: Enable one-time password (magic link) login.
+AUTH_OTP_ENABLED=true
+# AUTH_EMAIL_VERIFICATION_REQUIRED: Require email verification before access.
+AUTH_EMAIL_VERIFICATION_REQUIRED=false
+# JWT_SECRET: Secret key for signing JWT tokens. Required if using JWT auth.
 # JWT_SECRET=your-jwt-secret-key
 
-# Mail (default: log — switch to smtp, postmark, or resend for production)
+# ── Mail ──────────────────────────────────────────────────
+# MAIL_DRIVER: log | smtp | postmark | resend
+# "log" prints to console (dev). Switch to a real driver for production.
 # MAIL_DRIVER=log
+# MAIL_FROM: Default sender address for all outgoing emails.
 # MAIL_FROM=hello@example.com
+# SMTP (uncomment for generic SMTP)
+# SMTP_HOST=smtp.example.com
+# SMTP_PORT=587
+# SMTP_USER=your-smtp-user
+# SMTP_PASSWORD=your-smtp-password
+# Postmark (uncomment to use)
 # POSTMARK_API_TOKEN=your-postmark-server-token
+# Resend (uncomment to use)
 # RESEND_API_KEY=re_your-resend-api-key
 
-# Redis (optional — needed for BullMQ queue and Redis cache/session)
-# REDIS_HOST=localhost
-# REDIS_PORT=6379
-# REDIS_PASSWORD=
-
-# Queue driver (sync = immediate, redis = background via BullMQ)
+# ── Queue ─────────────────────────────────────────────────
+# QUEUE_DRIVER: sync | redis
+# "sync" runs jobs immediately (dev). "redis" uses BullMQ for background processing.
 # QUEUE_DRIVER=sync
 
-# Meilisearch (optional — full-text search engine)
+# ── Redis ─────────────────────────────────────────────────
+# Required for: BullMQ queue, Redis cache driver, Redis session driver.
+# REDIS_HOST=localhost
+# REDIS_PORT=6379
+# REDIS_PASSWORD: Set a password in production. Docker compose uses this for the Redis container too.
+# REDIS_PASSWORD=
+
+# ── Storage ───────────────────────────────────────────────
+# STORAGE_DISK: local | s3
+# "local" stores files on disk. "s3" uses any S3-compatible service (AWS, RustFS, MinIO).
+# STORAGE_DISK=local
+# S3_ENDPOINT: URL of the S3-compatible service. Use http://rustfs:9000 for Docker RustFS.
+# S3_ENDPOINT=http://localhost:9000
+# S3_ACCESS_KEY=svelar
+# S3_SECRET_KEY=svelarsecret
+# S3_BUCKET: Bucket name. Created automatically by most S3 services.
+# S3_BUCKET=svelar
+# S3_REGION=us-east-1
+
+# RustFS (S3 storage container — Docker only)
+# RUSTFS_ROOT_USER: Admin username for RustFS/MinIO. Also used as S3_ACCESS_KEY.
+# RUSTFS_ROOT_USER=svelar
+# RUSTFS_ROOT_PASSWORD: Admin password for RustFS/MinIO. Also used as S3_SECRET_KEY.
+# RUSTFS_ROOT_PASSWORD=svelarsecret
+# RUSTFS_CONSOLE_PORT: Host port for the RustFS admin console (default: 9001). Change per project on shared droplets.
+# RUSTFS_CONSOLE_PORT=9001
+
+# ── Search ────────────────────────────────────────────────
+# Meilisearch — full-text search engine (optional).
 # MEILISEARCH_HOST=http://localhost:7700
+# MEILISEARCH_KEY: Master key for Meilisearch. Required in production.
 # MEILISEARCH_KEY=
+# MEILI_MASTER_KEY: Same key, used by the Meilisearch Docker container.
+# MEILI_MASTER_KEY=svelar-meili-master-key
+# MEILI_PORT: Host port for Meilisearch dashboard (Docker only, default: 7700).
+# MEILI_PORT=7700
 
-# PDF (default driver is pdfkit — no config needed)
-# Switch to Gotenberg for pixel-perfect HTML rendering:
+# ── PDF ───────────────────────────────────────────────────
+# PDF_DRIVER: pdfkit | gotenberg
+# "pdfkit" works out of the box. "gotenberg" renders HTML to PDF (needs Gotenberg service).
 # PDF_DRIVER=gotenberg
+# GOTENBERG_URL: URL of the Gotenberg service. Use http://gotenberg:3000 for Docker.
 # GOTENBERG_URL=http://localhost:3001
+# GOTENBERG_TIMEOUT: Max time for PDF generation (default: 60s).
+# GOTENBERG_TIMEOUT=60s
+# GOTENBERG_LOG_LEVEL: Gotenberg container log level (default: info).
+# GOTENBERG_LOG_LEVEL=info
 
-# Auth Features
-AUTH_OTP_ENABLED=true
-AUTH_EMAIL_VERIFICATION_REQUIRED=false
-
-# Stripe (optional — install @beeblock/svelar-stripe plugin)
-# STRIPE_SECRET_KEY=sk_test_...
-# STRIPE_PUBLISHABLE_KEY=pk_test_...
-# STRIPE_WEBHOOK_SECRET=whsec_...
-# STRIPE_CURRENCY=usd
-
-# Broadcasting (optional — Pusher/Soketi WebSocket)
+# ── Broadcasting ──────────────────────────────────────────
+# Pusher/Soketi WebSocket for real-time events (optional).
 # PUSHER_KEY=app-key
 # PUSHER_SECRET=app-secret
 # PUSHER_APP_ID=app-id
+# PUSHER_HOST: Use "soketi" for Docker, "localhost" for local dev.
 # PUSHER_HOST=localhost
 # PUSHER_PORT=6001
+# SOKETI_PORT: Host port for Soketi WebSocket (Docker only, default: 6001).
+# SOKETI_PORT=6001
+# SOKETI_DEBUG: Enable Soketi debug logging (0 or 1).
+# SOKETI_DEBUG=0
+# SOKETI_MAX_CONNS: Max concurrent WebSocket connections per app (default: 1000).
+# SOKETI_MAX_CONNS=1000
+
+# ── Stripe ────────────────────────────────────────────────
+# Install @beeblock/svelar-stripe plugin first.
+# STRIPE_SECRET_KEY=sk_test_...
+# STRIPE_PUBLISHABLE_KEY=pk_test_...
+# STRIPE_WEBHOOK_SECRET: Webhook signing secret from Stripe dashboard.
+# STRIPE_WEBHOOK_SECRET=whsec_...
+# STRIPE_CURRENCY: Default currency for charges (default: usd).
+# STRIPE_CURRENCY=usd
+
+# ── Docker / Deployment ──────────────────────────────────
+# APP_PORT: Host port for the production container (default: 3000).
+# Change per project when running multiple apps on the same droplet.
+# APP_PORT=3000
+# DEV_PORT: Host port for the development container (default: 5173).
+# DEV_PORT=5173
+# DOCKER_IMAGE: Full Docker Hub image path (e.g. username/myapp).
+# Set automatically by CI/CD — only needed for manual docker compose commands.
+# DOCKER_IMAGE=username/myapp
+
+# ── Container Memory Limits ──────────────────────────────
+# Prevent any single container from consuming all droplet memory.
+# APP_MEMORY_LIMIT: App container (PM2 cluster: web + worker + scheduler). Default: 1G.
+# APP_MEMORY_LIMIT=1G
+# POSTGRES_MEMORY_LIMIT: PostgreSQL container. Default: 1G. Scale with postgresql.conf shared_buffers.
+# POSTGRES_MEMORY_LIMIT=1G
+# MYSQL_MEMORY_LIMIT: MySQL container (if using MySQL). Default: 1G.
+# MYSQL_MEMORY_LIMIT=1G
+# REDIS_MEMORY_LIMIT: Redis container. Default: 256M.
+# REDIS_MEMORY_LIMIT=256M
 `;
   }
 

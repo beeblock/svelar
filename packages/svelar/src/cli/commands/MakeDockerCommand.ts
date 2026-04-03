@@ -53,6 +53,14 @@ export class MakeDockerCommand extends Command {
     const healthDir = join(cwd, 'src', 'routes', 'api', 'health');
     mkdirSync(healthDir, { recursive: true });
 
+    // Ensure docker config directories exist for non-sqlite DBs
+    if (db === 'postgres') {
+      mkdirSync(join(cwd, 'docker', 'postgres'), { recursive: true });
+      mkdirSync(join(cwd, 'docker', 'pgbouncer'), { recursive: true });
+    } else if (db === 'mysql') {
+      mkdirSync(join(cwd, 'docker', 'mysql'), { recursive: true });
+    }
+
     const files: Array<{ path: string; content: string; label: string }> = [
       {
         path: join(cwd, 'Dockerfile'),
@@ -91,6 +99,31 @@ export class MakeDockerCommand extends Command {
       },
     ];
 
+    // Add database init config
+    if (db === 'postgres') {
+      files.push({
+        path: join(cwd, 'docker', 'postgres', 'postgresql.conf'),
+        content: DeployTemplates.postgresConf(),
+        label: 'docker/postgres/postgresql.conf',
+      });
+      files.push({
+        path: join(cwd, 'docker', 'postgres', 'init.sql'),
+        content: DeployTemplates.postgresInit(),
+        label: 'docker/postgres/init.sql',
+      });
+      files.push({
+        path: join(cwd, 'docker', 'pgbouncer', 'pgbouncer.ini'),
+        content: DeployTemplates.pgbouncerIni(),
+        label: 'docker/pgbouncer/pgbouncer.ini',
+      });
+    } else if (db === 'mysql') {
+      files.push({
+        path: join(cwd, 'docker', 'mysql', 'init.sql'),
+        content: DeployTemplates.mysqlInit(),
+        label: 'docker/mysql/init.sql',
+      });
+    }
+
     let created = 0;
     let skipped = 0;
 
@@ -105,11 +138,6 @@ export class MakeDockerCommand extends Command {
       created++;
     }
 
-    // Create docker/ directory if using a non-sqlite DB
-    if (db !== 'sqlite') {
-      const dockerDir = join(cwd, 'docker');
-      mkdirSync(dockerDir, { recursive: true });
-    }
 
     this.newLine();
     if (created > 0) {
@@ -180,8 +208,8 @@ export class MakeDockerCommand extends Command {
     lines.push('      - NODE_ENV=production');
 
     if (db === 'postgres') {
-      lines.push('      - DB_HOST=postgres');
-      lines.push('      - DB_PORT=5432');
+      lines.push('      - DB_HOST=pgbouncer');
+      lines.push('      - DB_PORT=6432');
     } else if (db === 'mysql') {
       lines.push('      - DB_HOST=mysql');
       lines.push('      - DB_PORT=3306');
@@ -219,7 +247,7 @@ export class MakeDockerCommand extends Command {
 
     // depends_on with health checks
     const deps: string[] = [];
-    if (db === 'postgres') deps.push('postgres');
+    if (db === 'postgres') deps.push('pgbouncer');
     if (db === 'mysql') deps.push('mysql');
     if (redis) deps.push('redis');
     if (soketi) deps.push('soketi');
@@ -237,25 +265,84 @@ export class MakeDockerCommand extends Command {
 
     lines.push('    volumes:');
     lines.push('      - app_storage:/app/storage');
+    lines.push('    healthcheck:');
+    lines.push('      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]');
+    lines.push('      interval: 30s');
+    lines.push('      timeout: 5s');
+    lines.push('      start_period: 15s');
+    lines.push('      retries: 3');
+    lines.push('    deploy:');
+    lines.push('      resources:');
+    lines.push('        limits:');
+    lines.push('          memory: ${APP_MEMORY_LIMIT:-1G}');
+    lines.push('          pids: 200');
+    lines.push('    logging:');
+    lines.push('      driver: json-file');
+    lines.push('      options:');
+    lines.push('        max-size: "10m"');
+    lines.push('        max-file: "3"');
 
     // ── PostgreSQL ──
     if (db === 'postgres') {
       lines.push('');
       lines.push('  postgres:');
-      lines.push('    image: postgres:16-alpine');
+      lines.push('    image: postgres:17-alpine');
       lines.push('    restart: unless-stopped');
-      lines.push('    # No ports exposed — only reachable by app via Docker network');
+      lines.push('    # No ports exposed — only reachable via PgBouncer on the Docker network');
+      lines.push('    command: postgres -c config_file=/etc/postgresql/postgresql.conf');
       lines.push('    environment:');
       lines.push('      POSTGRES_DB: ${DB_NAME:-svelar}');
       lines.push('      POSTGRES_USER: ${DB_USER:-svelar}');
       lines.push('      POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}');
       lines.push('    volumes:');
       lines.push('      - pgdata:/var/lib/postgresql/data');
+      lines.push('      - ./docker/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro');
+      lines.push('      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro');
       lines.push('    healthcheck:');
-      lines.push('      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-svelar}"]');
+      lines.push('      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-svelar} -d ${DB_NAME:-svelar}"]');
+      lines.push('      interval: 30s');
+      lines.push('      timeout: 10s');
+      lines.push('      retries: 5');
+      lines.push('    deploy:');
+      lines.push('      resources:');
+      lines.push('        limits:');
+      lines.push('          memory: ${POSTGRES_MEMORY_LIMIT:-1G}');
+      lines.push('    logging:');
+      lines.push('      driver: json-file');
+      lines.push('      options:');
+      lines.push('        max-size: "10m"');
+      lines.push('        max-file: "3"');
+
+      // ── PgBouncer (connection pooler) ──
+      lines.push('');
+      lines.push('  pgbouncer:');
+      lines.push('    image: edoburu/pgbouncer:v1.25.1-p0');
+      lines.push('    restart: unless-stopped');
+      lines.push('    # No ports exposed — only reachable by app via Docker network');
+      lines.push('    # Expose 6432 to host only for direct debugging (uncomment below)');
+      lines.push('    # ports:');
+      lines.push('    #   - "6432:6432"');
+      lines.push('    environment:');
+      lines.push('      DATABASE_URL: postgres://${DB_USER:-svelar}:${DB_PASSWORD:-secret}@postgres:5432/${DB_NAME:-svelar}');
+      lines.push('    volumes:');
+      lines.push('      - ./docker/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro');
+      lines.push('    depends_on:');
+      lines.push('      postgres:');
+      lines.push('        condition: service_healthy');
+      lines.push('    healthcheck:');
+      lines.push('      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "6432"]');
       lines.push('      interval: 10s');
       lines.push('      timeout: 5s');
       lines.push('      retries: 5');
+      lines.push('    deploy:');
+      lines.push('      resources:');
+      lines.push('        limits:');
+      lines.push('          memory: 128M');
+      lines.push('    logging:');
+      lines.push('      driver: json-file');
+      lines.push('      options:');
+      lines.push('        max-size: "5m"');
+      lines.push('        max-file: "3"');
     }
 
     // ── MySQL ──
@@ -272,11 +359,21 @@ export class MakeDockerCommand extends Command {
       lines.push('      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootsecret}');
       lines.push('    volumes:');
       lines.push('      - mysqldata:/var/lib/mysql');
+      lines.push('      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro');
       lines.push('    healthcheck:');
       lines.push('      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]');
       lines.push('      interval: 10s');
       lines.push('      timeout: 5s');
       lines.push('      retries: 5');
+      lines.push('    deploy:');
+      lines.push('      resources:');
+      lines.push('        limits:');
+      lines.push('          memory: ${MYSQL_MEMORY_LIMIT:-1G}');
+      lines.push('    logging:');
+      lines.push('      driver: json-file');
+      lines.push('      options:');
+      lines.push('        max-size: "10m"');
+      lines.push('        max-file: "3"');
     }
 
     // ── Redis ──
@@ -294,6 +391,15 @@ export class MakeDockerCommand extends Command {
       lines.push('      interval: 10s');
       lines.push('      timeout: 5s');
       lines.push('      retries: 5');
+      lines.push('    deploy:');
+      lines.push('      resources:');
+      lines.push('        limits:');
+      lines.push('          memory: ${REDIS_MEMORY_LIMIT:-256M}');
+      lines.push('    logging:');
+      lines.push('      driver: json-file');
+      lines.push('      options:');
+      lines.push('        max-size: "5m"');
+      lines.push('        max-file: "3"');
     }
 
     // ── Soketi ──
@@ -319,6 +425,15 @@ export class MakeDockerCommand extends Command {
       lines.push('      interval: 10s');
       lines.push('      timeout: 5s');
       lines.push('      retries: 3');
+      lines.push('    deploy:');
+      lines.push('      resources:');
+      lines.push('        limits:');
+      lines.push('          memory: 256M');
+      lines.push('    logging:');
+      lines.push('      driver: json-file');
+      lines.push('      options:');
+      lines.push('        max-size: "5m"');
+      lines.push('        max-file: "3"');
     }
 
     // ── Gotenberg ──
@@ -338,6 +453,15 @@ export class MakeDockerCommand extends Command {
       lines.push('      interval: 10s');
       lines.push('      timeout: 5s');
       lines.push('      retries: 5');
+      lines.push('    deploy:');
+      lines.push('      resources:');
+      lines.push('        limits:');
+      lines.push('          memory: 512M');
+      lines.push('    logging:');
+      lines.push('      driver: json-file');
+      lines.push('      options:');
+      lines.push('        max-size: "5m"');
+      lines.push('        max-file: "3"');
     }
 
     // ── RustFS (S3-compatible object storage) ──
@@ -359,6 +483,15 @@ export class MakeDockerCommand extends Command {
       lines.push('      interval: 10s');
       lines.push('      timeout: 5s');
       lines.push('      retries: 5');
+      lines.push('    deploy:');
+      lines.push('      resources:');
+      lines.push('        limits:');
+      lines.push('          memory: 512M');
+      lines.push('    logging:');
+      lines.push('      driver: json-file');
+      lines.push('      options:');
+      lines.push('        max-size: "5m"');
+      lines.push('        max-file: "3"');
     }
 
     // ── Meilisearch ──
@@ -383,6 +516,15 @@ export class MakeDockerCommand extends Command {
       lines.push('      interval: 10s');
       lines.push('      timeout: 5s');
       lines.push('      retries: 5');
+      lines.push('    deploy:');
+      lines.push('      resources:');
+      lines.push('        limits:');
+      lines.push('          memory: 512M');
+      lines.push('    logging:');
+      lines.push('      driver: json-file');
+      lines.push('      options:');
+      lines.push('        max-size: "5m"');
+      lines.push('        max-file: "3"');
     }
 
     // ── Volumes ──

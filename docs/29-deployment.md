@@ -72,7 +72,7 @@ npx svelar prod:deploy
 | Command | What it generates |
 |---------|-------------------|
 | `npx svelar make:deploy` | Runs all three commands below |
-| `npx svelar make:docker` | `Dockerfile`, `docker-compose.yml`, `docker-compose.dev.yml`, `docker-compose.prod.yml`, `.dockerignore`, `ecosystem.config.cjs`, `src/routes/api/health/+server.ts` |
+| `npx svelar make:docker` | `Dockerfile`, `docker-compose.yml`, `docker-compose.dev.yml`, `docker-compose.prod.yml`, `.dockerignore`, `ecosystem.config.cjs`, `src/routes/api/health/+server.ts`, `docker/postgres/postgresql.conf`, `docker/postgres/init.sql`, `docker/pgbouncer/pgbouncer.ini` (PostgreSQL only) |
 | `npx svelar make:ci` | `.github/workflows/deploy.yml` |
 | `npx svelar make:infra` | `infra/setup-droplet.sh`, `infra/droplet.env.example` |
 
@@ -148,16 +148,22 @@ npx svelar dev:up --service=redis
 ```
 your-project/
 ├── Dockerfile                          # Multi-stage (base, deps, builder, production, development)
-├── docker-compose.yml                  # Base compose — all services (app, postgres, redis, etc.)
+├── docker-compose.yml                  # Base compose — all services (app, postgres, pgbouncer, redis, etc.)
 ├── docker-compose.dev.yml              # Dev override — builds development target, bind-mounts source
 ├── docker-compose.prod.yml             # Prod override — uses pre-built image from registry
 ├── .dockerignore                       # Excludes node_modules, .env, build artifacts
 ├── ecosystem.config.cjs                # PM2 config (web, worker, scheduler)
 ├── src/routes/api/health/+server.ts    # Health endpoint
+├── docker/                             # Database & pooler config (PostgreSQL only)
+│   ├── postgres/
+│   │   ├── postgresql.conf             # Production-tuned PostgreSQL config
+│   │   └── init.sql                    # Extensions (uuid-ossp, pgcrypto, citext, pg_trgm, etc.)
+│   └── pgbouncer/
+│       └── pgbouncer.ini               # Connection pooler config (transaction mode, pool sizes)
 ├── .github/workflows/deploy.yml        # GitHub Actions CI/CD
 └── infra/
     ├── setup-droplet.sh                # Droplet provisioning script
-    └── droplet.env.example             # Production .env template
+    └── droplet.env.example             # Infrastructure config template
 ```
 
 ---
@@ -169,10 +175,14 @@ Svelar uses **docker compose override files** to keep one `docker-compose.yml` (
 ### How it works
 
 ```
-docker-compose.yml           Base config — app service + infrastructure (postgres, redis, etc.)
+docker-compose.yml           Base config — app + infrastructure (postgres, pgbouncer, redis, etc.)
   + docker-compose.dev.yml   Dev override — builds FROM Dockerfile target=development
   + docker-compose.prod.yml  Prod override — pulls pre-built image from registry
+
+Request flow:  App (PM2 cluster) → PgBouncer (:6432) → PostgreSQL (:5432)
 ```
+
+PostgreSQL, PgBouncer, Redis, and all other services are defined in the base `docker-compose.yml` — they run identically in both dev and prod. Only the `app` service changes between overrides.
 
 **Development** (`dev:up`):
 - Builds the `development` stage of the Dockerfile
@@ -546,21 +556,78 @@ app:
 
 ```yaml
 postgres:
-  image: postgres:16-alpine
+  image: postgres:17-alpine
   restart: unless-stopped
-  # No ports exposed — only reachable by app via Docker network
+  # No ports exposed — only reachable via PgBouncer on the Docker network
+  command: postgres -c config_file=/etc/postgresql/postgresql.conf
   environment:
     POSTGRES_DB: ${DB_NAME:-svelar}
     POSTGRES_USER: ${DB_USER:-svelar}
     POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
   volumes:
     - pgdata:/var/lib/postgresql/data
+    - ./docker/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
   healthcheck:
-    test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-svelar}"]
+    test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-svelar} -d ${DB_NAME:-svelar}"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+```
+
+The app never connects directly to PostgreSQL — it goes through PgBouncer (see below).
+
+**Generated config files:**
+
+| File | Purpose |
+|------|---------|
+| `docker/postgres/postgresql.conf` | Production-tuned settings (memory, WAL, logging, autovacuum, pg_stat_statements) |
+| `docker/postgres/init.sql` | Extensions: uuid-ossp, pgcrypto, citext, unaccent, pg_trgm, pg_stat_statements |
+
+Extensions and postgresql.conf are loaded automatically on both dev and prod — they come from the base `docker-compose.yml` which is shared by both overrides.
+
+### PgBouncer (connection pooling)
+
+PgBouncer is included automatically when using PostgreSQL. It sits between the app and the database, pooling connections to prevent exhaustion under load (PM2 cluster mode with multiple workers).
+
+Credentials are read from the `DATABASE_URL` environment variable in `docker-compose.yml` — the PgBouncer image auto-generates its auth file at startup. No static password files are committed to git.
+
+```yaml
+pgbouncer:
+  image: edoburu/pgbouncer:v1.25.1-p0
+  restart: unless-stopped
+  environment:
+    DATABASE_URL: postgres://${DB_USER:-svelar}:${DB_PASSWORD:-secret}@postgres:5432/${DB_NAME:-svelar}
+  volumes:
+    - ./docker/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+  depends_on:
+    postgres:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "pg_isready", "-h", "localhost", "-p", "6432"]
     interval: 10s
     timeout: 5s
     retries: 5
 ```
+
+The app connects to `pgbouncer:6432` (not `postgres:5432`). This is set automatically in `docker-compose.yml` via `DB_HOST=pgbouncer` and `DB_PORT=6432`.
+
+**Generated config files:**
+
+| File | Purpose |
+|------|---------|
+| `docker/pgbouncer/pgbouncer.ini` | Pool mode (transaction), pool sizes, timeouts, keepalive, scram-sha-256 auth |
+
+**Default pool settings:**
+
+| Setting | Value | Description |
+|---------|-------|-------------|
+| `pool_mode` | transaction | Release connection after each transaction |
+| `max_client_conn` | 500 | Max connections from app |
+| `max_db_connections` | 80 | Max connections to PostgreSQL |
+| `default_pool_size` | 25 | Connections per user/database pair |
+
+To tune these values, edit `docker/pgbouncer/pgbouncer.ini` directly. Changes are picked up on next deploy (the `docker/` directory is synced automatically by CI/CD).
 
 ### Redis
 
@@ -732,8 +799,8 @@ docker compose exec app pm2 scale worker 4
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DB_HOST` | `postgres` | Database hostname (auto-set in Docker) |
-| `DB_PORT` | `5432` | Database port |
+| `DB_HOST` | `pgbouncer` | PgBouncer hostname (auto-set in Docker for PostgreSQL) |
+| `DB_PORT` | `6432` | PgBouncer port (app connects here, not directly to postgres) |
 | `DB_NAME` | `svelar` | Database name |
 | `DB_USER` | `svelar` | Database user |
 | `DB_PASSWORD` | `secret` | Database password |
@@ -1238,6 +1305,65 @@ services:
     # No ports section — internal only
   redis:
     # No ports section — internal only
+```
+
+---
+
+## Multiple Projects on One Droplet
+
+You can deploy multiple Svelar apps to the same droplet. Each project runs in its own directory with isolated Docker networks, containers, and volumes — no conflicts by default.
+
+The only thing you need to manage is **host port mapping** so projects don't fight over the same port.
+
+### Port configuration (APP_PORT)
+
+Each project needs a unique APP_PORT in its ENV_PROD GitHub Secret to avoid port conflicts:
+
+```bash
+# Project A — ENV_PROD secret
+APP_PORT=3000
+DB_NAME=project_a
+DB_PASSWORD=supersecret
+# ...
+
+# Project B — ENV_PROD secret
+APP_PORT=3001
+DB_NAME=project_b
+DB_PASSWORD=supersecret
+# ...
+```
+
+The compose file maps `${APP_PORT:-3000}:3000` — the host port comes from `.env`, the container always listens on `3000` internally.
+
+### Why there are no service name conflicts
+
+Docker Compose namespaces everything by project directory. If project A lives in `/home/deploy/my-app` and project B in `/home/deploy/my-api`, their containers and volumes are prefixed differently:
+
+```
+my-app-app-1        my-api-app-1
+my-app-postgres-1   my-api-postgres-1
+my-app_pgdata       my-api_pgdata
+```
+
+Each project gets its own isolated Docker network — services communicate internally without host ports.
+
+### Services that expose host ports
+
+| Service | Port | Env variable | Notes |
+|---------|------|-------------|-------|
+| `app` | 3000 | `APP_PORT` | **Must be unique per project** |
+| `rustfs` | 9001 | `RUSTFS_CONSOLE_PORT` | Admin console — unique per project if both use RustFS |
+
+All other services (postgres, redis, soketi, gotenberg, meilisearch) are internal-only — no host port, no conflicts.
+
+### Using a reverse proxy
+
+For production with multiple projects, put a reverse proxy (Nginx, Caddy, or Traefik) in front to route domains to the correct `APP_PORT`:
+
+```
+blog.example.com   → localhost:3000 (project A)
+api.example.com    → localhost:3001 (project B)
+admin.example.com  → localhost:3002 (project C)
 ```
 
 ---
