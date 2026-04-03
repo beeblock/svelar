@@ -1,12 +1,13 @@
 # Stripe Billing
 
-Svelar includes a built-in Stripe module for subscriptions, checkout, invoices, refunds, and webhook handling. No plugins needed.
+The  plugin provides Stripe billing with a polymorphic Billable mixin, subscriptions, one-time payments, checkout, invoices, refunds, and webhook handling.
 
 ## Setup
 
-### 1. Install Stripe SDK
+### 1. Install the Plugin
 
 ```bash
+npx svelar plugin:install @beeblock/svelar-stripe
 npm install stripe
 ```
 
@@ -27,10 +28,11 @@ Get these from [Stripe Dashboard](https://dashboard.stripe.com/apikeys):
 
 ### 3. Configure in app.ts
 
-Uncomment the Stripe block in `src/app.ts`:
+Add Stripe configuration and register your billable models in `src/app.ts`:
 
 ```typescript
-import { Stripe } from '@beeblock/svelar/stripe';
+import { Stripe } from '@beeblock/svelar-stripe';
+import { User } from '$lib/models/User';
 
 Stripe.configure({
   secretKey: process.env.STRIPE_SECRET_KEY ?? '',
@@ -38,21 +40,58 @@ Stripe.configure({
   webhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? '',
   currency: 'usd',
 });
+
+// Register every model that can be billed
+Stripe.registerBillable(User);
+// Stripe.registerBillable(Team);   // if teams are billable too
 ```
 
-### 4. Run Migrations
+`registerBillable()` tells the plugin which ORM Model corresponds to each table name, so all billing queries go through the Svelar ORM — no raw SQL.
 
-The scaffold includes 4 Stripe migrations (00000009-00000012):
+### 4. Publish & Run Migrations
+
+The plugin publishes migrations when installed via `plugin:install`. You can also publish them manually:
+
+```bash
+npx svelar plugin:publish @beeblock/svelar-stripe
+```
+
+Then run all migrations:
 
 ```bash
 npx svelar migrate
 ```
 
 This creates:
-- `stripe_customer_id` column on `users` table
 - `subscription_plans` table
-- `subscriptions` table
-- `invoices` table
+- `subscriptions` table (polymorphic: `billable_type` + `billable_id`)
+- `invoices` table (polymorphic: `billable_type` + `billable_id`)
+- `stripe_customer_id` column on `users` table
+
+#### Adding Billable to Other Models
+
+The Billable mixin is **polymorphic** — any model can be billable, not just User. To make another model billable (e.g. Team, Company), duplicate the `add_stripe_customer_id_to_billable` migration and change the table name:
+
+```typescript
+// src/lib/database/migrations/XXXX_add_stripe_customer_id_to_teams.ts
+import { Migration } from '@beeblock/svelar/database';
+
+const BILLABLE_TABLE = 'teams'; // <-- your model's table
+
+export default class AddStripeCustomerIdToTeams extends Migration {
+  async up() {
+    await this.schema.addColumn(BILLABLE_TABLE, (table) => {
+      table.string('stripe_customer_id').nullable();
+    });
+  }
+
+  async down() {
+    await this.schema.dropColumn(BILLABLE_TABLE, 'stripe_customer_id');
+  }
+}
+```
+
+Then run `npx svelar migrate` again.
 
 ### 5. Set Up Stripe Webhook
 
@@ -82,9 +121,10 @@ Stripe.configure({
   // Optional
   currency: 'usd',                                    // Default currency for new subscriptions
   trialDays: 14,                                       // Default trial period
-  portalReturnUrl: 'http://localhost:5173/dashboard/billing',  // Return URL after Stripe Portal
-  checkoutSuccessUrl: 'http://localhost:5173/dashboard?status=success',
-  checkoutCancelUrl: 'http://localhost:5173/dashboard?status=canceled',
+  portalReturnUrl: '/dashboard/billing',               // Return URL after Stripe Portal
+  checkoutSuccessUrl: '/dashboard?status=success',     // Redirect after successful checkout
+  checkoutCancelUrl: '/dashboard?status=canceled',     // Redirect after canceled checkout
+  logging: true,                                       // Set to false to silence all [svelar-stripe] log output
 });
 ```
 
@@ -100,7 +140,7 @@ Create products and prices in your [Stripe Dashboard](https://dashboard.stripe.c
 You can also create them via the API:
 
 ```typescript
-import { Stripe } from '@beeblock/svelar/stripe';
+import { Stripe } from '@beeblock/svelar-stripe';
 
 const client = await Stripe.service().getClient();
 
@@ -173,7 +213,7 @@ Note: amounts are always in the smallest currency unit (cents for USD/EUR, yen f
 ### Create a Customer
 
 ```typescript
-import { Stripe } from '@beeblock/svelar/stripe';
+import { Stripe } from '@beeblock/svelar-stripe';
 
 const customer = await Stripe.service().createCustomer({
   id: user.id,
@@ -207,7 +247,7 @@ await Stripe.service().updateCustomer(user.stripe_customer_id, {
 ### Create a Subscription
 
 ```typescript
-import { Stripe } from '@beeblock/svelar/stripe';
+import { Stripe } from '@beeblock/svelar-stripe';
 
 const subscription = await Stripe.service().createSubscription(
   user.stripe_customer_id,
@@ -224,7 +264,7 @@ const subscription = await Stripe.service().createSubscription(
 For higher-level subscription operations with database sync:
 
 ```typescript
-import { Stripe } from '@beeblock/svelar/stripe';
+import { Stripe } from '@beeblock/svelar-stripe';
 
 // Initialize with repositories (do this once in app.ts)
 Stripe.initSubscriptions({
@@ -352,7 +392,7 @@ const refunds = await Stripe.service().listRefunds('ch_xxxxx');
 Register handlers for Stripe webhook events in `app.ts`:
 
 ```typescript
-import { Stripe } from '@beeblock/svelar/stripe';
+import { Stripe } from '@beeblock/svelar-stripe';
 
 // Handle subscription changes
 Stripe.webhooks()
@@ -423,28 +463,52 @@ Stripe.webhooks().once('checkout.session.completed', async (event) => {
 });
 ```
 
-## Scaffold Pages
+## Routes & Controllers
 
-New projects include these billing-related pages:
-
-### User Dashboard (`/dashboard/billing`)
-- View current plan, price, status
-- Cancel/resume subscription
-- Manage payment method (via Stripe Portal)
-- Invoice history with PDF download links
-
-### Admin Panel (`/admin` > Billing tab)
-- List all subscriptions with customer details
-- Cancel subscriptions (at period end or immediately)
-- Issue refunds by invoice ID
+The plugin publishes route stubs when installed via `npx svelar plugin:install @beeblock/svelar-stripe`. You can also create them manually:
 
 ### API Routes
-| Route | Method | Description |
-|-------|--------|-------------|
-| `/api/webhooks/stripe` | POST | Webhook endpoint (CSRF excluded) |
-| `/api/admin/billing/subscriptions` | GET | List all subscriptions |
-| `/api/admin/billing/cancel` | POST | Cancel a subscription |
-| `/api/admin/billing/refund` | POST | Refund an invoice |
+
+| Route | Method | Controller | Description |
+|-------|--------|------------|-------------|
+| `/api/webhooks/stripe` | POST | `StripeWebhookController.handleWebhook` | Webhook endpoint (CSRF excluded) |
+| `/api/admin/billing/subscriptions` | GET | `BillingController.listSubscriptions` | List all subscriptions |
+| `/api/admin/billing/cancel` | POST | `BillingController.cancelSubscription` | Cancel a subscription |
+| `/api/admin/billing/refund` | POST | `BillingController.refundInvoice` | Refund an invoice |
+
+These use controllers from `@beeblock/svelar-stripe/server`:
+
+```typescript
+// src/routes/api/admin/billing/subscriptions/+server.ts
+import { BillingController } from '@beeblock/svelar-stripe/server';
+
+const ctrl = new BillingController();
+export const GET = ctrl.handle('listSubscriptions');
+```
+
+```typescript
+// src/routes/api/webhooks/stripe/+server.ts
+import { StripeWebhookController } from '@beeblock/svelar-stripe/server';
+
+const ctrl = new StripeWebhookController();
+export const POST = ctrl.handle('handleWebhook');
+```
+
+You can extend these controllers to add custom auth checks or behavior:
+
+```typescript
+import { BillingController } from '@beeblock/svelar-stripe/server';
+import { Gate } from '@beeblock/svelar/auth';
+
+class MyBillingController extends BillingController {
+  async listSubscriptions(event: any) {
+    if (await Gate.denies('admin-access', event.locals.user)) {
+      return this.json({ message: 'Unauthorized' }, 403);
+    }
+    return super.listSubscriptions(event);
+  }
+}
+```
 
 ## Products & Prices API
 

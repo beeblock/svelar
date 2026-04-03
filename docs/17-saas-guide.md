@@ -568,7 +568,7 @@ await Webhooks.dispatch('invoice.paid', { invoiceId: 123, amount: 99.99 });
 
 ## Stripe Billing
 
-Stripe is built into the core — no plugins required. Set it up in three steps:
+Stripe billing is available as the `@beeblock/svelar-stripe` plugin. Set it up in three steps:
 
 ### 1. Install & Configure
 
@@ -578,7 +578,7 @@ npm install stripe
 
 ```typescript
 // src/app.ts — uncomment the Stripe block
-import { Stripe } from '@beeblock/svelar/stripe';
+import { Stripe } from '@beeblock/svelar-stripe';
 
 Stripe.configure({
   secretKey: process.env.STRIPE_SECRET_KEY ?? '',

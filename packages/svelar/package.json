@@ -1,6 +1,6 @@
 {
   "name": "@beeblock/svelar",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Laravel-inspired framework on top of SvelteKit 2",
   "type": "module",
   "main": "./dist/index.js",
@@ -242,10 +242,6 @@
       "types": "./dist/excel/index.d.ts",
       "import": "./dist/excel/index.js"
     },
-    "./stripe": {
-      "types": "./dist/stripe/index.d.ts",
-      "import": "./dist/stripe/index.js"
-    },
     "./testing": {
       "types": "./dist/testing/index.d.ts",
       "import": "./dist/testing/index.js"
@@ -273,7 +269,7 @@
     "@vitest/coverage-v8": "^2.1.9",
     "better-sqlite3": "^11.0.0",
     "exceljs": "^4.4.0",
-    "stripe": "^21.0.1",
+
     "sveltekit-superforms": "^2.30.1",
     "tsup": "^8.3.0",
     "typescript": "^5.7.0",
@@ -292,7 +288,7 @@
     "pdfkit": ">=0.18.0",
     "postgres": "*",
     "pusher-js": ">=8.0.0",
-    "stripe": ">=14.0.0",
+
     "sveltekit-superforms": ">=2.0.0",
     "vitest": ">=1.0.0"
   },
@@ -333,9 +329,7 @@
     "meilisearch": {
       "optional": true
     },
-    "stripe": {
-      "optional": true
-    },
+
     "vitest": {
       "optional": true
     }
@@ -353,9 +347,7 @@
     "cache",
     "queue",
     "mail",
-    "stripe",
-    "billing",
-    "subscriptions"
+    "billing"
   ],
   "license": "MIT",
   "author": "Raoni <alephtus@gmail.com>",

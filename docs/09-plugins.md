@@ -497,9 +497,8 @@ All official plugins support `plugin:install` and `plugin:publish`:
 | `@beeblock/svelar-charts` | No | Yes | — |
 | `@beeblock/svelar-sitemap` | No | Yes | — |
 | `@beeblock/svelar-social-auth` | No | Yes | — |
+| `@beeblock/svelar-stripe` | Yes | Yes | `stripe` |
 | `@beeblock/svelar-two-factor` | No | Yes | — |
-
-> **Note:** Stripe billing is built into the core as `@beeblock/svelar/stripe` — no plugin needed. See [Stripe Billing](./32-stripe.md).
 
 ## Creating a Reusable Plugin Package
 

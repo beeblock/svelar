@@ -7,7 +7,7 @@ A Spatie-inspired activity log plugin for Svelar/SvelteKit that records user act
 **Install:**
 
 ```bash
-npm install @beeblock/svelar-activity-log
+npx svelar plugin:install @beeblock/svelar-activity-log
 ```
 
 **Imports:**

@@ -161,11 +161,18 @@ class PluginInstallerService {
   }
 
   private async loadPluginClass(packageName: string): Promise<any> {
+    // Try the dedicated /plugin entry first (server-only, avoids node: imports in client barrel).
+    // Fall back to the main entry for backwards compatibility.
     try {
-      const mod = await import(packageName);
+      const mod = await import(`${packageName}/plugin`);
       return mod.default || Object.values(mod)[0];
     } catch {
-      return null;
+      try {
+        const mod = await import(packageName);
+        return mod.default || Object.values(mod)[0];
+      } catch {
+        return null;
+      }
     }
   }
 }

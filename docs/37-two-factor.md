@@ -7,7 +7,7 @@ TOTP-based two-factor authentication plugin for Svelar/SvelteKit with QR code ge
 **Install:**
 
 ```bash
-npm install @beeblock/svelar-two-factor
+npx svelar plugin:install @beeblock/svelar-two-factor
 ```
 
 **Imports:**

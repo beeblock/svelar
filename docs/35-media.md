@@ -7,7 +7,7 @@ A full-featured media library plugin for Svelar/SvelteKit with file uploads, ima
 **Install:**
 
 ```bash
-npm install @beeblock/svelar-media
+npx svelar plugin:install @beeblock/svelar-media
 ```
 
 **Imports:**

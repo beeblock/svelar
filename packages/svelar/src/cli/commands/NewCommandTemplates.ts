@@ -47,9 +47,15 @@ export class NewCommandTemplates {
           'better-sqlite3': '^11.0.0',
           'drizzle-orm': '^0.38.0',
           '@beeblock/svelar': `^${svelarVersion}`,
+          'bits-ui': '^1.0.0',
+          clsx: '^2.1.0',
           exceljs: '^4.4.0',
+          'mode-watcher': '^0.5.0',
           pdfkit: '^0.18.0',
           'sveltekit-superforms': '^2.22.0',
+          'tailwind-merge': '^3.0.0',
+          'tailwind-variants': '^1.0.0',
+          'tw-animate-css': '^1.2.0',
           zod: '^3.23.0',
         },
       },
@@ -138,7 +144,7 @@ export default defineConfig({
       '@beeblock/svelar/services': resolve(svelarRoot, 'dist/services/index.js'),
       '@beeblock/svelar/session': resolve(svelarRoot, 'dist/session/index.js'),
       '@beeblock/svelar/storage': resolve(svelarRoot, 'dist/storage/index.js'),
-      '@beeblock/svelar/stripe': resolve(svelarRoot, 'dist/stripe/index.js'),
+
       '@beeblock/svelar/support': resolve(svelarRoot, 'dist/support/index.js'),
       '@beeblock/svelar/teams': resolve(svelarRoot, 'dist/teams/index.js'),
       '@beeblock/svelar/uploads': resolve(svelarRoot, 'dist/uploads/index.js'),
@@ -159,10 +165,10 @@ export default defineConfig({
   },
   ssr: {
     // Process lucide-svelte during SSR (Svelte components must be compiled)
-    noExternal: ['lucide-svelte', '@tabler/icons-svelte'],
+    noExternal: ['lucide-svelte', '@tabler/icons-svelte', 'bits-ui'],
   },
   optimizeDeps: {
-    exclude: ['lucide-svelte', '@tabler/icons-svelte'],
+    exclude: ['lucide-svelte', '@tabler/icons-svelte', 'bits-ui'],
   },
 });
 `;
@@ -281,12 +287,164 @@ export default defineConfig({
 
   static appCss(): string {
     return `@import "tailwindcss";
+@import "tw-animate-css";
 @source "../node_modules/@beeblock/svelar/src/ui";
 
-@theme {
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.129 0.042 264.695);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.129 0.042 264.695);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.129 0.042 264.695);
+  --primary: oklch(0.208 0.042 265.755);
+  --primary-foreground: oklch(0.984 0.003 247.858);
+  --secondary: oklch(0.968 0.007 264.536);
+  --secondary-foreground: oklch(0.208 0.042 265.755);
+  --muted: oklch(0.968 0.007 264.536);
+  --muted-foreground: oklch(0.554 0.023 264.364);
+  --accent: oklch(0.968 0.007 264.536);
+  --accent-foreground: oklch(0.208 0.042 265.755);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.577 0.245 27.325);
+  --border: oklch(0.929 0.013 264.531);
+  --input: oklch(0.929 0.013 264.531);
+  --ring: oklch(0.869 0.022 264.401);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.984 0.003 247.858);
+  --sidebar-foreground: oklch(0.554 0.023 264.364);
+  --sidebar-primary: oklch(0.208 0.042 265.755);
+  --sidebar-primary-foreground: oklch(0.984 0.003 247.858);
+  --sidebar-accent: oklch(0.968 0.007 264.536);
+  --sidebar-accent-foreground: oklch(0.208 0.042 265.755);
+  --sidebar-border: oklch(0.929 0.013 264.531);
+  --sidebar-ring: oklch(0.869 0.022 264.401);
+}
+
+.dark {
+  --background: oklch(0.129 0.042 264.695);
+  --foreground: oklch(0.984 0.003 247.858);
+  --card: oklch(0.129 0.042 264.695);
+  --card-foreground: oklch(0.984 0.003 247.858);
+  --popover: oklch(0.129 0.042 264.695);
+  --popover-foreground: oklch(0.984 0.003 247.858);
+  --primary: oklch(0.984 0.003 247.858);
+  --primary-foreground: oklch(0.208 0.042 265.755);
+  --secondary: oklch(0.279 0.041 260.873);
+  --secondary-foreground: oklch(0.984 0.003 247.858);
+  --muted: oklch(0.279 0.041 260.873);
+  --muted-foreground: oklch(0.711 0.019 264.147);
+  --accent: oklch(0.279 0.041 260.873);
+  --accent-foreground: oklch(0.984 0.003 247.858);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.577 0.245 27.325);
+  --border: oklch(0.279 0.041 260.873);
+  --input: oklch(0.279 0.041 260.873);
+  --ring: oklch(0.442 0.036 264.591);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.129 0.042 264.695);
+  --sidebar-foreground: oklch(0.984 0.003 247.858);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.984 0.003 247.858);
+  --sidebar-accent: oklch(0.279 0.041 260.873);
+  --sidebar-accent-foreground: oklch(0.984 0.003 247.858);
+  --sidebar-border: oklch(0.279 0.041 260.873);
+  --sidebar-ring: oklch(0.442 0.036 264.591);
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
   --color-brand: #ff3e00;
   --color-brand-dark: #e03500;
   --color-brand-light: #fff5f2;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+`;
+  }
+
+  static componentsJson(): string {
+    return JSON.stringify(
+      {
+        $schema: 'https://shadcn-svelte.com/schema.json',
+        tailwind: {
+          css: 'src/app.css',
+          baseColor: 'slate',
+        },
+        aliases: {
+          lib: '$lib',
+          utils: '$lib/utils',
+          components: '$lib/components',
+          ui: '$lib/components/ui',
+          hooks: '$lib/hooks',
+        },
+        typescript: true,
+        registry: 'https://shadcn-svelte.com/registry',
+      },
+      null,
+      2
+    ) + '\n';
+  }
+
+  static utilsCn(): string {
+    return `import { type ClassValue, clsx } from "clsx";
+import { twMerge } from "tailwind-merge";
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
 }
 `;
   }
@@ -398,15 +556,6 @@ Features.configure({ driver: 'database' });
 // ── PDF (PDFKit — no Docker needed) ─────────────────────
 PDF.configure({ driver: 'pdfkit' });
 
-// ── Stripe (billing — uncomment and npm install stripe) ──
-// import { Stripe } from '@beeblock/svelar/stripe';
-// Stripe.configure({
-//   secretKey: process.env.STRIPE_SECRET_KEY ?? '',
-//   publishableKey: process.env.STRIPE_PUBLISHABLE_KEY ?? '',
-//   webhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? '',
-//   currency: 'usd',
-// });
-
 // ── Dashboard ─────────────────────────────────────────────
 configureDashboard({ enabled: true, prefix: '/admin' });
 
@@ -516,11 +665,6 @@ DB_PATH=database.db
 # MEILISEARCH_HOST=http://localhost:7700
 # MEILISEARCH_KEY=
 
-# Stripe (billing and subscriptions — npm install stripe)
-# STRIPE_SECRET_KEY=sk_test_...
-# STRIPE_PUBLISHABLE_KEY=pk_test_...
-# STRIPE_WEBHOOK_SECRET=whsec_...
-
 # PDF (default driver is pdfkit — no config needed)
 # Switch to Gotenberg for pixel-perfect HTML rendering:
 # PDF_DRIVER=gotenberg
@@ -529,6 +673,12 @@ DB_PATH=database.db
 # Auth Features
 AUTH_OTP_ENABLED=true
 AUTH_EMAIL_VERIFICATION_REQUIRED=false
+
+# Stripe (optional — install @beeblock/svelar-stripe plugin)
+# STRIPE_SECRET_KEY=sk_test_...
+# STRIPE_PUBLISHABLE_KEY=pk_test_...
+# STRIPE_WEBHOOK_SECRET=whsec_...
+# STRIPE_CURRENCY=usd
 
 # Broadcasting (optional — Pusher/Soketi WebSocket)
 # PUSHER_KEY=app-key
@@ -3046,7 +3196,6 @@ export const load = guardAuth();
   import LayoutDashboard from 'lucide-svelte/icons/layout-dashboard';
   import KeyRound from 'lucide-svelte/icons/key-round';
   import Users from 'lucide-svelte/icons/users';
-  import CreditCard from 'lucide-svelte/icons/credit-card';
   import Settings from 'lucide-svelte/icons/settings';
 
   interface Props {
@@ -3060,7 +3209,6 @@ export const load = guardAuth();
     { href: '/dashboard', label: 'Overview', exact: true, icon: LayoutDashboard },
     { href: '/dashboard/api-keys', label: 'API Keys', exact: false, icon: KeyRound },
     { href: '/dashboard/team', label: 'Team', exact: false, icon: Users },
-    { href: '/dashboard/billing', label: 'Billing', exact: false, icon: CreditCard },
   ];
 
   function isActive(href: string, exact: boolean, pathname: string): boolean {
@@ -3718,7 +3866,6 @@ export const load = guardAuth('/dashboard', { role: 'admin' });
   import ListTodo from 'lucide-svelte/icons/list-todo';
   import Clock from 'lucide-svelte/icons/clock';
   import FileText from 'lucide-svelte/icons/file-text';
-  import CreditCard from 'lucide-svelte/icons/credit-card';
   import ArrowLeft from 'lucide-svelte/icons/arrow-left';
 
   interface Props {
@@ -3733,7 +3880,6 @@ export const load = guardAuth('/dashboard', { role: 'admin' });
     { tab: 'users', label: 'Users', icon: Users },
     { tab: 'roles', label: 'Roles', icon: ShieldCheck },
     { tab: 'permissions', label: 'Permissions', icon: Lock },
-    { tab: 'billing', label: 'Billing', icon: CreditCard },
     { tab: 'queue', label: 'Queue', icon: ListTodo },
     { tab: 'scheduler', label: 'Scheduler', icon: Clock },
     { tab: 'logs', label: 'Logs', icon: FileText },
@@ -3790,8 +3936,6 @@ import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
 import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
 import { LogViewer } from '@beeblock/svelar/logging/LogViewer';
 import { Permissions } from '@beeblock/svelar/permissions';
-import { Stripe } from '@beeblock/svelar/stripe';
-
 export async function load(event: ServerLoadEvent) {
   const user = event.locals.user;
 
@@ -3860,33 +4004,6 @@ export async function load(event: ServerLoadEvent) {
     }
   } catch { /* permissions tables may not exist yet */ }
 
-  // Billing / Stripe subscriptions
-  let billingSubscriptions: any[] = [];
-  try {
-    const client = await Stripe.service().getClient();
-    const subs = await client.subscriptions.list({
-      limit: 25,
-      expand: ['data.customer'],
-    });
-    billingSubscriptions = subs.data.map((sub: any) => ({
-      id: sub.id,
-      status: sub.status,
-      cancelAtPeriodEnd: sub.cancel_at_period_end,
-      customer: {
-        id: typeof sub.customer === 'string' ? sub.customer : sub.customer?.id,
-        email: typeof sub.customer === 'object' ? sub.customer?.email : null,
-        name: typeof sub.customer === 'object' ? sub.customer?.name : null,
-      },
-      plan: {
-        nickname: sub.items?.data?.[0]?.price?.nickname ?? 'Plan',
-        amount: sub.items?.data?.[0]?.price?.unit_amount ?? 0,
-        currency: sub.items?.data?.[0]?.price?.currency ?? 'usd',
-        interval: sub.items?.data?.[0]?.price?.recurring?.interval ?? 'month',
-      },
-      created: sub.created,
-    }));
-  } catch { /* stripe not configured or no subscriptions */ }
-
   return {
     user: {
       id: user.id,
@@ -3952,7 +4069,6 @@ export async function load(event: ServerLoadEvent) {
         perms.map((p: any) => ({ id: p.id, name: p.name })),
       ]),
     ),
-    billingSubscriptions,
   };
 }
 `;
@@ -3989,12 +4105,6 @@ export async function load(event: ServerLoadEvent) {
   let newPermDesc = \$state('');
   let showRoleForm = \$state(false);
   let showPermForm = \$state(false);
-
-  // Billing state
-  let billingSubscriptions = \$state<any[]>(data.billingSubscriptions ?? []);
-  let billingLoading = \$state(false);
-  let billingMessage = \$state('');
-  let billingMessageType = \$state<'success' | 'error'>('success');
 
   let logFilter = \$state<'all' | 'info' | 'warn' | 'error'>('all');
 
@@ -4374,74 +4484,7 @@ export async function load(event: ServerLoadEvent) {
     return level === 'error' || level === 'fatal' ? 'destructive' : level === 'warn' ? 'secondary' : 'default';
   }
 
-  function billingFlash(msg: string, type: 'success' | 'error' = 'success') {
-    billingMessage = msg;
-    billingMessageType = type;
-  }
 
-  function formatCurrency(amount: number, currency: string): string {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency.toUpperCase() }).format(amount / 100);
-  }
-
-  function billingStatusVariant(status: string): 'default' | 'secondary' | 'destructive' {
-    if (status === 'active' || status === 'trialing') return 'default';
-    if (status === 'past_due' || status === 'incomplete') return 'secondary';
-    return 'destructive';
-  }
-
-  async function refreshBilling() {
-    billingLoading = true;
-    try {
-      const res = await fetch('/api/admin/billing/subscriptions?limit=50');
-      if (res.ok) {
-        const data = await res.json();
-        billingSubscriptions = data.subscriptions;
-      }
-    } catch { /* ignore */ }
-    billingLoading = false;
-  }
-
-  async function cancelSubscription(subscriptionId: string, customerEmail: string, immediately: boolean) {
-    const mode = immediately ? 'immediately' : 'at end of billing period';
-    if (!confirm(\`Cancel subscription for \${customerEmail} \${mode}?\`)) return;
-    try {
-      const res = await fetch('/api/admin/billing/cancel', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subscriptionId, immediately }),
-      });
-      if (res.ok) {
-        billingFlash(\`Subscription \${immediately ? 'canceled' : 'set to cancel at period end'}\`);
-        await refreshBilling();
-      } else {
-        const err = await res.json();
-        billingFlash(err.error || 'Failed to cancel', 'error');
-      }
-    } catch {
-      billingFlash('Network error', 'error');
-    }
-  }
-
-  async function refundSubscription(subscriptionId: string, customerEmail: string) {
-    const invoiceId = prompt(\`Enter the Stripe Invoice ID to refund for \${customerEmail}:\`);
-    if (!invoiceId) return;
-    try {
-      const res = await fetch('/api/admin/billing/refund', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ invoiceId }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        billingFlash(\`Refund issued: \${data.refund.id} (\${data.refund.status})\`);
-      } else {
-        const err = await res.json();
-        billingFlash(err.error || 'Refund failed', 'error');
-      }
-    } catch {
-      billingFlash('Network error', 'error');
-    }
-  }
 </script>
 
 <svelte:head>
@@ -4822,89 +4865,6 @@ export async function load(event: ServerLoadEvent) {
         </CardContent>
       </Card>
     </div>
-  {/if}
-
-  <!-- Billing -->
-  {#if activeTab === 'billing'}
-    <Card>
-      <CardHeader>
-        <div class="flex items-center justify-between">
-          <div>
-            <CardTitle>Subscriptions</CardTitle>
-            <CardDescription>Manage user subscriptions, issue refunds, and cancel plans</CardDescription>
-          </div>
-          <Button variant="outline" size="sm" onclick={refreshBilling} disabled={billingLoading}>
-            {billingLoading ? 'Loading...' : 'Refresh'}
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent>
-        {#if billingMessage}
-          <Alert variant={billingMessageType === 'error' ? 'destructive' : 'default'} class="mb-4">
-            <span class="text-sm">{billingMessage}</span>
-          </Alert>
-        {/if}
-
-        {#if billingSubscriptions.length === 0}
-          <p class="text-sm text-gray-500 py-8 text-center">
-            No subscriptions found. Subscriptions will appear here when users subscribe via Stripe.
-          </p>
-        {:else}
-          <div class="border rounded-lg overflow-hidden">
-            <table class="w-full text-sm">
-              <thead class="bg-gray-50 text-left">
-                <tr>
-                  <th class="px-4 py-3 text-gray-600 font-medium">Customer</th>
-                  <th class="px-4 py-3 text-gray-600 font-medium">Plan</th>
-                  <th class="px-4 py-3 text-gray-600 font-medium">Price</th>
-                  <th class="px-4 py-3 text-gray-600 font-medium">Status</th>
-                  <th class="px-4 py-3 text-gray-600 font-medium">Created</th>
-                  <th class="px-4 py-3 text-gray-600 font-medium text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y">
-                {#each billingSubscriptions as sub (sub.id)}
-                  <tr class="hover:bg-gray-50">
-                    <td class="px-4 py-3">
-                      <div>
-                        <p class="font-medium text-gray-900">{sub.customer.name ?? 'Unknown'}</p>
-                        <p class="text-xs text-gray-500">{sub.customer.email ?? sub.customer.id}</p>
-                      </div>
-                    </td>
-                    <td class="px-4 py-3 text-gray-700">{sub.plan.nickname}</td>
-                    <td class="px-4 py-3 text-gray-700">{formatCurrency(sub.plan.amount, sub.plan.currency)}/{sub.plan.interval}</td>
-                    <td class="px-4 py-3">
-                      <Badge variant={billingStatusVariant(sub.status)}>{sub.status}</Badge>
-                      {#if sub.cancelAtPeriodEnd}
-                        <Badge variant="secondary" class="ml-1">canceling</Badge>
-                      {/if}
-                    </td>
-                    <td class="px-4 py-3 text-gray-500">{formatDate(new Date(sub.created * 1000).toISOString())}</td>
-                    <td class="px-4 py-3 text-right">
-                      <div class="flex gap-1 justify-end">
-                        <Button size="sm" variant="outline" onclick={() => refundSubscription(sub.id, sub.customer.email ?? sub.customer.id)}>
-                          Refund
-                        </Button>
-                        {#if sub.status === 'active' || sub.status === 'trialing'}
-                          {#if !sub.cancelAtPeriodEnd}
-                            <Button size="sm" variant="outline" onclick={() => cancelSubscription(sub.id, sub.customer.email ?? sub.customer.id, false)}>
-                              Cancel
-                            </Button>
-                          {/if}
-                          <Button size="sm" variant="destructive" onclick={() => cancelSubscription(sub.id, sub.customer.email ?? sub.customer.id, true)}>
-                            Cancel Now
-                          </Button>
-                        {/if}
-                      </div>
-                    </td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
-        {/if}
-      </CardContent>
-    </Card>
   {/if}
 
   <!-- Queue -->
@@ -5879,6 +5839,7 @@ export default class QueueHealthCheck extends ScheduledTask {
   static rootLayoutSvelte(name: string): string {
     return `<script lang="ts">
   import '../app.css';
+  import { ModeWatcher } from 'mode-watcher';
   import { Button, Toaster, toast } from '@beeblock/svelar/ui';
   import { registerToast } from '@beeblock/svelar/http';
 
@@ -5939,6 +5900,7 @@ export default class QueueHealthCheck extends ScheduledTask {
   </footer>
 </div>
 
+<ModeWatcher />
 <Toaster position="bottom-right" />
 
 <style>
@@ -6126,465 +6088,6 @@ export class EventServiceProvider extends BaseProvider {
 `;
   }
 
-  // ── Stripe Migrations ────────────────────────────────────
-
-  static addStripeToUsers(): string {
-    return `import { Migration } from '@beeblock/svelar/database';
-
-export default class AddStripeToUsers extends Migration {
-  async up() {
-    await this.schema.addColumn('users', (table) => {
-      table.string('stripe_customer_id').nullable();
-    });
-  }
-
-  async down() {
-    await this.schema.dropColumn('users', 'stripe_customer_id');
-  }
-}
-`;
-  }
-
-  static createSubscriptionPlansTable(): string {
-    return `import { Migration } from '@beeblock/svelar/database';
-
-export default class CreateSubscriptionPlansTable extends Migration {
-  async up() {
-    await this.schema.createTable('subscription_plans', (table) => {
-      table.increments('id').primary();
-      table.string('name');
-      table.string('stripe_price_id').unique();
-      table.string('stripe_product_id');
-      table.integer('price');
-      table.string('currency').default('usd');
-      table.string('interval').default('month');
-      table.integer('interval_count').default(1);
-      table.integer('trial_days').default(0);
-      table.text('features').default('[]');
-      table.integer('sort_order').default(0);
-      table.integer('active').default(1);
-      table.string('created_at');
-      table.string('updated_at');
-    });
-  }
-
-  async down() {
-    await this.schema.dropTable('subscription_plans');
-  }
-}
-`;
-  }
-
-  static createSubscriptionsTable(): string {
-    return `import { Migration } from '@beeblock/svelar/database';
-
-export default class CreateSubscriptionsTable extends Migration {
-  async up() {
-    await this.schema.createTable('subscriptions', (table) => {
-      table.increments('id').primary();
-      table.integer('user_id');
-      table.string('stripe_subscription_id').unique();
-      table.string('stripe_customer_id');
-      table.integer('plan_id');
-      table.string('status').default('active');
-      table.string('current_period_start');
-      table.string('current_period_end');
-      table.integer('cancel_at_period_end').default(0);
-      table.string('trial_ends_at').nullable();
-      table.string('canceled_at').nullable();
-      table.string('created_at');
-      table.string('updated_at');
-    });
-  }
-
-  async down() {
-    await this.schema.dropTable('subscriptions');
-  }
-}
-`;
-  }
-
-  static createInvoicesTable(): string {
-    return `import { Migration } from '@beeblock/svelar/database';
-
-export default class CreateInvoicesTable extends Migration {
-  async up() {
-    await this.schema.createTable('invoices', (table) => {
-      table.increments('id').primary();
-      table.integer('user_id');
-      table.integer('subscription_id').nullable();
-      table.string('stripe_invoice_id').unique();
-      table.integer('amount_due');
-      table.integer('amount_paid');
-      table.string('currency').default('usd');
-      table.string('status').default('open');
-      table.string('paid_at').nullable();
-      table.string('due_date').nullable();
-      table.text('invoice_pdf').nullable();
-      table.string('created_at');
-      table.string('updated_at').nullable();
-    });
-  }
-
-  async down() {
-    await this.schema.dropTable('invoices');
-  }
-}
-`;
-  }
-
-  // ── Billing / Stripe ───────────────────────────────────
-
-  static billingPageServer(): string {
-    return `import type { Actions, PageServerLoad } from './$types';
-import { fail, redirect } from '@sveltejs/kit';
-import { Stripe } from '@beeblock/svelar/stripe';
-
-export const load: PageServerLoad = async ({ locals }) => {
-  const user = locals.user as any;
-  let subscription: any = null;
-  let invoices: any[] = [];
-  const plans: any[] = [];
-
-  try {
-    const service = Stripe.service();
-    if (user.stripe_customer_id) {
-      const client = await service.getClient();
-      const subs = await client.subscriptions.list({
-        customer: user.stripe_customer_id,
-        limit: 1,
-        expand: ['data.default_payment_method'],
-      });
-      if (subs.data.length > 0) {
-        const sub = subs.data[0] as any;
-        subscription = {
-          id: sub.id,
-          status: sub.status,
-          cancelAtPeriodEnd: sub.cancel_at_period_end,
-          currentPeriodEnd: sub.current_period_end
-            ? new Date(typeof sub.current_period_end === 'number' ? sub.current_period_end * 1000 : sub.current_period_end).toISOString()
-            : null,
-          trialEnd: sub.trial_end
-            ? new Date(typeof sub.trial_end === 'number' ? sub.trial_end * 1000 : sub.trial_end).toISOString()
-            : null,
-          plan: {
-            nickname: sub.items?.data?.[0]?.price?.nickname ?? 'Plan',
-            amount: sub.items?.data?.[0]?.price?.unit_amount ?? 0,
-            currency: sub.items?.data?.[0]?.price?.currency ?? 'usd',
-            interval: sub.items?.data?.[0]?.price?.recurring?.interval ?? 'month',
-          },
-        };
-      }
-
-      const invResponse = await service.getInvoices(user.stripe_customer_id, 10);
-      invoices = invResponse.map((inv: any) => ({
-        id: inv.id,
-        amountDue: inv.amount_due,
-        amountPaid: inv.amount_paid,
-        currency: inv.currency,
-        status: inv.status,
-        created: new Date(typeof inv.created === 'number' ? inv.created * 1000 : inv.created).toISOString(),
-        invoicePdf: inv.invoice_pdf ?? null,
-        hostedUrl: inv.hosted_invoice_url ?? null,
-      }));
-    }
-  } catch {}
-
-  return { user: { id: user.id, name: user.name, email: user.email, stripeCustomerId: user.stripe_customer_id }, subscription, invoices, plans };
-};
-
-export const actions: Actions = {
-  portal: async ({ locals }) => {
-    const user = locals.user as any;
-    if (!user?.stripe_customer_id) return fail(400, { error: 'No billing account' });
-
-    try {
-      const session = await Stripe.service().createPortalSession(
-        user.stripe_customer_id,
-        '/dashboard/billing',
-      );
-      throw redirect(303, session.url);
-    } catch (e: any) {
-      if (e.status === 303) throw e;
-      return fail(500, { error: e.message ?? 'Failed to open portal' });
-    }
-  },
-
-  cancel: async ({ locals }) => {
-    const user = locals.user as any;
-    if (!user?.stripe_customer_id) return fail(400, { error: 'No billing account' });
-
-    try {
-      const client = await Stripe.service().getClient();
-      const subs = await client.subscriptions.list({ customer: user.stripe_customer_id, status: 'active', limit: 1 });
-      if (subs.data.length === 0) return fail(400, { error: 'No active subscription' });
-      await Stripe.service().cancelSubscription(subs.data[0].id, false);
-      return { success: true, canceled: true };
-    } catch (e: any) {
-      return fail(500, { error: e.message ?? 'Failed to cancel' });
-    }
-  },
-
-  resume: async ({ locals }) => {
-    const user = locals.user as any;
-    if (!user?.stripe_customer_id) return fail(400, { error: 'No billing account' });
-
-    try {
-      const client = await Stripe.service().getClient();
-      const subs = await client.subscriptions.list({ customer: user.stripe_customer_id, limit: 1 });
-      if (subs.data.length === 0) return fail(400, { error: 'No subscription found' });
-      await Stripe.service().resumeSubscription(subs.data[0].id);
-      return { success: true, resumed: true };
-    } catch (e: any) {
-      return fail(500, { error: e.message ?? 'Failed to resume' });
-    }
-  },
-};
-`;
-  }
-
-  static billingPageSvelte(): string {
-    return `<script lang="ts">
-  import { enhance } from '$app/forms';
-  import { Button, Badge, Card, CardHeader, CardTitle, CardContent, Alert } from '@beeblock/svelar/ui';
-
-  let { data, form: actionData } = $props();
-
-  function formatCurrency(amount: number, currency: string): string {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency.toUpperCase() }).format(amount / 100);
-  }
-
-  function statusColor(status: string): 'default' | 'secondary' | 'destructive' {
-    if (status === 'active' || status === 'trialing' || status === 'paid') return 'default';
-    if (status === 'past_due' || status === 'incomplete') return 'secondary';
-    return 'destructive';
-  }
-</script>
-
-<svelte:head>
-  <title>Billing</title>
-</svelte:head>
-
-<div class="space-y-8">
-  <div>
-    <h1 class="text-3xl font-bold text-gray-900">Billing</h1>
-    <p class="text-gray-600 mt-1">Manage your subscription and billing</p>
-  </div>
-
-  {#if actionData?.error}
-    <Alert variant="destructive"><span class="text-sm">{actionData.error}</span></Alert>
-  {/if}
-  {#if actionData?.canceled}
-    <Alert variant="default"><span class="text-sm">Subscription will cancel at end of billing period.</span></Alert>
-  {/if}
-  {#if actionData?.resumed}
-    <Alert variant="default"><span class="text-sm">Subscription resumed successfully.</span></Alert>
-  {/if}
-
-  <Card>
-    <CardHeader>
-      <CardTitle>Current Plan</CardTitle>
-    </CardHeader>
-    <CardContent>
-      {#if data.subscription}
-        <div class="flex items-start justify-between">
-          <div>
-            <div class="flex items-center gap-2 mb-2">
-              <h3 class="text-xl font-semibold text-gray-900">{data.subscription.plan.nickname}</h3>
-              <Badge variant={statusColor(data.subscription.status)}>{data.subscription.status}</Badge>
-            </div>
-            <p class="text-2xl font-bold text-brand">
-              {formatCurrency(data.subscription.plan.amount, data.subscription.plan.currency)}/{data.subscription.plan.interval}
-            </p>
-            {#if data.subscription.trialEnd}
-              <p class="text-sm text-gray-500 mt-1">Trial ends {new Date(data.subscription.trialEnd).toLocaleDateString()}</p>
-            {/if}
-            {#if data.subscription.cancelAtPeriodEnd}
-              <p class="text-sm text-orange-600 mt-1">Cancels on {new Date(data.subscription.currentPeriodEnd).toLocaleDateString()}</p>
-            {:else if data.subscription.currentPeriodEnd}
-              <p class="text-sm text-gray-500 mt-1">Renews {new Date(data.subscription.currentPeriodEnd).toLocaleDateString()}</p>
-            {/if}
-          </div>
-          <div class="flex flex-col gap-2">
-            <form method="POST" action="?/portal" use:enhance>
-              <Button type="submit" variant="outline" size="sm">Manage Payment</Button>
-            </form>
-            {#if data.subscription.cancelAtPeriodEnd}
-              <form method="POST" action="?/resume" use:enhance>
-                <Button type="submit" size="sm">Resume</Button>
-              </form>
-            {:else if data.subscription.status === 'active' || data.subscription.status === 'trialing'}
-              <form method="POST" action="?/cancel" use:enhance>
-                <Button type="submit" variant="destructive" size="sm"
-                  onclick={(e) => { if (!confirm('Cancel your subscription? You will retain access until the end of the billing period.')) e.preventDefault(); }}>
-                  Cancel Plan
-                </Button>
-              </form>
-            {/if}
-          </div>
-        </div>
-      {:else}
-        <div class="text-center py-6">
-          <p class="text-gray-500 mb-4">No active subscription</p>
-          <p class="text-sm text-gray-400">Contact us or visit the pricing page to get started.</p>
-        </div>
-      {/if}
-    </CardContent>
-  </Card>
-
-  <div>
-    <h2 class="text-xl font-bold text-gray-900 mb-4">Invoice History</h2>
-    {#if data.invoices.length === 0}
-      <Card>
-        <CardContent class="pt-8 text-center">
-          <p class="text-gray-500 text-sm">No invoices yet.</p>
-        </CardContent>
-      </Card>
-    {:else}
-      <div class="border rounded-lg overflow-hidden">
-        <table class="w-full text-sm">
-          <thead class="bg-gray-50 text-left">
-            <tr>
-              <th class="px-4 py-3 text-gray-600 font-medium">Date</th>
-              <th class="px-4 py-3 text-gray-600 font-medium">Amount</th>
-              <th class="px-4 py-3 text-gray-600 font-medium">Status</th>
-              <th class="px-4 py-3 text-gray-600 font-medium text-right">Invoice</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y">
-            {#each data.invoices as inv (inv.id)}
-              <tr class="hover:bg-gray-50">
-                <td class="px-4 py-3">{new Date(inv.created).toLocaleDateString()}</td>
-                <td class="px-4 py-3 font-medium">{formatCurrency(inv.amountDue, inv.currency)}</td>
-                <td class="px-4 py-3"><Badge variant={statusColor(inv.status)}>{inv.status}</Badge></td>
-                <td class="px-4 py-3 text-right">
-                  {#if inv.invoicePdf}
-                    <a href={inv.invoicePdf} target="_blank" rel="noopener" class="text-brand hover:underline text-xs">PDF</a>
-                  {/if}
-                  {#if inv.hostedUrl}
-                    <a href={inv.hostedUrl} target="_blank" rel="noopener" class="text-brand hover:underline text-xs ml-2">View</a>
-                  {/if}
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-    {/if}
-  </div>
-</div>
-`;
-  }
-
-  static stripeWebhookRoute(): string {
-    return `import type { RequestHandler } from './$types';
-import { Stripe } from '@beeblock/svelar/stripe';
-
-export const POST: RequestHandler = async ({ request }) => {
-  const signature = request.headers.get('stripe-signature');
-  if (!signature) {
-    return new Response(JSON.stringify({ error: 'Missing signature' }), { status: 400 });
-  }
-
-  try {
-    const body = await request.text();
-    const event = await Stripe.service().constructWebhookEvent(body, signature);
-    await Stripe.webhooks().handle(event);
-    return new Response(JSON.stringify({ received: true }), { status: 200 });
-  } catch (err: any) {
-    console.error('Stripe webhook error:', err.message);
-    return new Response(JSON.stringify({ error: 'Webhook failed' }), { status: 400 });
-  }
-};
-`;
-  }
-
-  static apiAdminBillingSubscriptions(): string {
-    return `import type { RequestHandler } from './$types';
-import { Stripe } from '@beeblock/svelar/stripe';
-
-export const GET: RequestHandler = async ({ url }) => {
-  try {
-    const limit = Number(url.searchParams.get('limit') ?? '25');
-    const startingAfter = url.searchParams.get('starting_after') ?? undefined;
-    const client = await Stripe.service().getClient();
-    const subs = await client.subscriptions.list({
-      limit,
-      starting_after: startingAfter,
-      expand: ['data.customer'],
-    });
-
-    const data = subs.data.map((sub: any) => ({
-      id: sub.id,
-      status: sub.status,
-      cancelAtPeriodEnd: sub.cancel_at_period_end,
-      customer: {
-        id: typeof sub.customer === 'string' ? sub.customer : sub.customer?.id,
-        email: typeof sub.customer === 'object' ? sub.customer?.email : null,
-        name: typeof sub.customer === 'object' ? sub.customer?.name : null,
-      },
-      plan: {
-        nickname: sub.items?.data?.[0]?.price?.nickname ?? 'Plan',
-        amount: sub.items?.data?.[0]?.price?.unit_amount ?? 0,
-        currency: sub.items?.data?.[0]?.price?.currency ?? 'usd',
-        interval: sub.items?.data?.[0]?.price?.recurring?.interval ?? 'month',
-      },
-      created: sub.created,
-    }));
-
-    return new Response(JSON.stringify({ subscriptions: data, hasMore: subs.has_more }), {
-      headers: { 'Content-Type': 'application/json' },
-    });
-  } catch (err: any) {
-    return new Response(JSON.stringify({ error: err.message }), { status: 500 });
-  }
-};
-`;
-  }
-
-  static apiAdminBillingRefund(): string {
-    return `import type { RequestHandler } from './$types';
-import { Stripe } from '@beeblock/svelar/stripe';
-
-export const POST: RequestHandler = async ({ request }) => {
-  try {
-    const { invoiceId } = await request.json();
-    if (!invoiceId) {
-      return new Response(JSON.stringify({ error: 'invoiceId is required' }), { status: 400 });
-    }
-
-    const refund = await Stripe.service().refundInvoice(invoiceId);
-    return new Response(JSON.stringify({ refund: { id: refund.id, amount: refund.amount, status: refund.status } }), {
-      headers: { 'Content-Type': 'application/json' },
-    });
-  } catch (err: any) {
-    return new Response(JSON.stringify({ error: err.message }), { status: 500 });
-  }
-};
-`;
-  }
-
-  static apiAdminBillingCancel(): string {
-    return `import type { RequestHandler } from './$types';
-import { Stripe } from '@beeblock/svelar/stripe';
-
-export const POST: RequestHandler = async ({ request }) => {
-  try {
-    const { subscriptionId, immediately } = await request.json();
-    if (!subscriptionId) {
-      return new Response(JSON.stringify({ error: 'subscriptionId is required' }), { status: 400 });
-    }
-
-    const sub = await Stripe.service().cancelSubscription(subscriptionId, immediately ?? false);
-    return new Response(JSON.stringify({ subscription: { id: sub.id, status: sub.status, cancel_at_period_end: sub.cancel_at_period_end } }), {
-      headers: { 'Content-Type': 'application/json' },
-    });
-  } catch (err: any) {
-    return new Response(JSON.stringify({ error: err.message }), { status: 500 });
-  }
-};
-`;
-  }
 
   // ─── Testing ──────────────────────────────────────────────────
 

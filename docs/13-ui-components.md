@@ -1,10 +1,38 @@
 # UI Components
 
-Svelar ships a minimal, composable component library built on Svelte 5 runes. Every component is themed via Tailwind CSS v4 `@theme` tokens and works out of the box.
+Svelar projects come with two UI layers out of the box:
 
-## Available Components
+1. **[shadcn-svelte](https://shadcn-svelte.com)** (recommended) — A comprehensive component library with 50+ components (Dialog, Dropdown, Select, Combobox, Calendar, Sheet, Command Palette, etc.) pre-installed at `$lib/components/ui/`. This is the recommended way to build your app's user-facing pages. You own the source files and can customize them freely.
 
-Svelar includes components covering the most common UI patterns: `Button`, `Input`, `Label`, `Card` (with `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`), `Alert`, `Badge`, `Separator`, `Avatar` (with `AvatarImage`, `AvatarFallback`), `Tabs` (with `TabsList`, `TabsTrigger`, `TabsContent`), `Icon`, `Toaster`, and a `toast` notification API.
+2. **Svelar built-in components** (`@beeblock/svelar/ui`) — A minimal set of components used by the framework's dashboard and admin panel. These are framework-internal and should not need to be modified.
+
+> **Not locked in.** shadcn-svelte is the recommended default, but you can use any CSS framework or component library you prefer. Tailwind CSS v4 is included regardless.
+
+## shadcn-svelte (Recommended)
+
+When you scaffold a project with `npx svelar new`, all shadcn-svelte components are installed automatically at `$lib/components/ui/`. Use them in your pages:
+
+```svelte
+<script>
+  import { Button } from '$lib/components/ui/button';
+  import * as Card from '$lib/components/ui/card';
+  import * as Dialog from '$lib/components/ui/dialog';
+  import { Input } from '$lib/components/ui/input';
+  import { Label } from '$lib/components/ui/label';
+</script>
+```
+
+Dark mode is supported out of the box via `mode-watcher`. The `cn()` utility is available at `$lib/utils.ts` for conditional class merging.
+
+For full component documentation, see [shadcn-svelte.com](https://shadcn-svelte.com/docs/components).
+
+## Svelar Built-in Components
+
+Svelar also ships a minimal, composable component library built on Svelte 5 runes used by the dashboard and admin panel. Every component is themed via Tailwind CSS v4 `@theme` tokens.
+
+### Available Components
+
+Svelar includes: `Button`, `Input`, `Label`, `Card` (with `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`), `Alert`, `Badge`, `Separator`, `Avatar` (with `AvatarImage`, `AvatarFallback`), `Tabs` (with `TabsList`, `TabsTrigger`, `TabsContent`), `Icon`, `Toaster`, and a `toast` notification API.
 
 ## Import
 

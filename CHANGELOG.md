@@ -4,6 +4,49 @@ All notable changes to `@beeblock/svelar` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-04-03
+
+### Added
+
+- **shadcn-svelte pre-installed in scaffolded projects** — `npx svelar new` now installs all shadcn-svelte components at `$lib/components/ui/` with dark mode support via `mode-watcher`, `cn()` utility, and full Tailwind CSS v4 theme (oklch colors). Svelar's built-in components (`@beeblock/svelar/ui`) remain for the dashboard and admin panel.
+- **`components.json` and `$lib/utils.ts`** scaffolded automatically for shadcn-svelte configuration
+- Dependencies added: `bits-ui`, `clsx`, `mode-watcher`, `tailwind-merge`, `tailwind-variants`, `tw-animate-css`
+- **`npx svelar update` redesigned** — interactive checkbox UI with arrow keys + Space to toggle files, A to select all, Enter to confirm. Files are now split into framework (updated by default) and user-customizable (excluded by default). User files like `app.ts`, `hooks.server.ts`, root layout, home page, Post domain, jobs, and schedulers are no longer offered for update unless `--include-user-files` is passed, preventing accidental overwrites of user code.
+- **`@beeblock/svelar-stripe` official plugin** — Stripe billing extracted from core and rebuilt as a standalone plugin with:
+  - **Polymorphic `Billable` mixin** — attach to any model (User, Team, etc.) via `billable_type`/`billable_id` columns
+  - **DB models** — `Subscription`, `SubscriptionPlan`, `Invoice` using static methods with Connection
+  - **`BillingService`** — high-level orchestration replacing `SubscriptionManager`, supports both subscriptions and one-time payments
+  - **`registerDefaultWebhookHandlers()`** — one-liner to sync subscription/invoice events to DB
+  - **FormRequests** — `SubscribeRequest`, `CancelSubscriptionRequest`, `CheckoutRequest`, `RefundRequest` with Zod validation
+  - **Resources** — `SubscriptionResource`, `InvoiceResource`, `PlanResource`
+  - **Controllers** — `BillingController`, `StripeWebhookController`
+  - **Plugin class** — `SvelarStripePlugin` with publishable migrations and routes
+
+### Removed
+
+- `@beeblock/svelar/stripe` export — use `@beeblock/svelar-stripe` instead
+- Stripe migrations, routes, billing page, and admin billing tab from scaffold
+- Stripe peer dependency, devDependency, and vite alias from core
+
+### Fixed
+
+- **Plugin installation docs** — all 13 plugin docs now correctly use `npx svelar plugin:install` instead of `npm install` (plugin:install handles npm install internally and also publishes migrations and routes)
+
+### Migration Guide (Stripe)
+
+```bash
+# Install the new plugin
+npx svelar plugin:install @beeblock/svelar-stripe
+npm install stripe
+
+# Update imports
+# Before: import { Stripe } from '@beeblock/svelar/stripe';
+# After:  import { Stripe } from '@beeblock/svelar-stripe';
+
+# Before: import { AdminBillingController } from '@beeblock/svelar/stripe';
+# After:  import { BillingController } from '@beeblock/svelar-stripe/server';
+```
+
 ## [0.5.0] - 2026-04-01
 
 ### Added
@@ -38,6 +81,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **`plugin:install`** — installs a plugin via npm and auto-publishes its migrations and route stubs
 - **`plugin:publish`** — copies a plugin's publishable files (migrations, routes, config) to the app
 - **`plugin:list`** — lists all discovered svelar plugins with install/enable status
+
+### Stripe Billing Controllers
+
+- **`AdminBillingController`** — built-in controller for admin billing routes (`listSubscriptions`, `cancelSubscription`, `refundInvoice`) with Zod validation, exported from `@beeblock/svelar/stripe`
+- **`StripeWebhookController`** — built-in controller for Stripe webhook handling (`handleWebhook`) with signature verification, exported from `@beeblock/svelar/stripe`
+- Scaffold templates updated to use these controllers instead of raw SvelteKit route handlers
 
 ### Scaffold Improvements
 

@@ -51,7 +51,7 @@ export default defineConfig({
     'queue/JobMonitor': 'src/queue/JobMonitor.ts',
     'scheduler/ScheduleMonitor': 'src/scheduler/ScheduleMonitor.ts',
     'logging/LogViewer': 'src/logging/LogViewer.ts',
-    'stripe/index': 'src/stripe/index.ts',
+
     'support/index': 'src/support/index.ts',
     'support/date': 'src/support/date.ts',
     'plugins/PluginRegistry': 'src/plugins/PluginRegistry.ts',
@@ -85,7 +85,7 @@ export default defineConfig({
     'nodemailer',
     'exceljs',
     'ioredis',
-    'stripe',
+
     'node:sqlite',
     'node:crypto',
     'node:fs',

@@ -9,6 +9,7 @@ interface ScaffoldFile {
   content: () => string;
   category: 'config' | 'migration' | 'route' | 'page' | 'domain' | 'job' | 'seeder';
   description: string;
+  ownership: 'framework' | 'user';
 }
 
 function ask(question: string): Promise<string> {
@@ -21,15 +22,140 @@ function ask(question: string): Promise<string> {
   });
 }
 
+/**
+ * Interactive checkbox selector using raw terminal input.
+ * Arrow keys to navigate, Space to toggle, A to toggle all, Enter to confirm.
+ */
+function checkbox(items: { label: string; hint?: string }[]): Promise<number[]> {
+  return new Promise((resolve) => {
+    const selected = new Set<number>();
+    let cursor = 0;
+    const stdin = process.stdin;
+    const stdout = process.stdout;
+
+    // Save cursor and hide it
+    const hideCursor = '\x1b[?25l';
+    const showCursor = '\x1b[?25h';
+
+    function render() {
+      // Move cursor up to overwrite previous render (except first render)
+      if (renderCount > 0) {
+        stdout.write(`\x1b[${items.length + 2}A`);
+      }
+
+      // Header
+      stdout.write(`\x1b[2K  \x1b[36mSpace\x1b[0m toggle  \x1b[36mA\x1b[0m toggle all  \x1b[36m\u2191\u2193\x1b[0m navigate  \x1b[36mEnter\x1b[0m confirm\n`);
+
+      for (let i = 0; i < items.length; i++) {
+        const isCursor = i === cursor;
+        const isSelected = selected.has(i);
+        const check = isSelected ? '\x1b[32m\u25c9\x1b[0m' : '\x1b[90m\u25cb\x1b[0m';
+        const pointer = isCursor ? '\x1b[36m\u276f\x1b[0m' : ' ';
+        const label = isCursor ? `\x1b[1m${items[i].label}\x1b[0m` : items[i].label;
+        const hint = items[i].hint ? `  \x1b[90m${items[i].hint}\x1b[0m` : '';
+        stdout.write(`\x1b[2K  ${pointer} ${check} ${label}${hint}\n`);
+      }
+
+      // Footer
+      const count = selected.size;
+      stdout.write(`\x1b[2K  \x1b[90m${count} file${count !== 1 ? 's' : ''} selected\x1b[0m\n`);
+
+      renderCount++;
+    }
+
+    let renderCount = 0;
+
+    stdout.write(hideCursor);
+
+    const wasRaw = stdin.isRaw;
+    stdin.setRawMode(true);
+    stdin.resume();
+
+    render();
+
+    function onData(key: Buffer) {
+      const str = key.toString();
+
+      // Enter — confirm
+      if (str === '\r' || str === '\n') {
+        cleanup();
+        resolve([...selected].sort((a, b) => a - b));
+        return;
+      }
+
+      // Ctrl+C — abort with empty selection
+      if (str === '\x03') {
+        cleanup();
+        resolve([]);
+        return;
+      }
+
+      // Escape — abort with empty selection
+      if (str === '\x1b' && key.length === 1) {
+        cleanup();
+        resolve([]);
+        return;
+      }
+
+      // Space — toggle current item
+      if (str === ' ') {
+        if (selected.has(cursor)) {
+          selected.delete(cursor);
+        } else {
+          selected.add(cursor);
+        }
+        render();
+        return;
+      }
+
+      // A / a — toggle all
+      if (str === 'a' || str === 'A') {
+        if (selected.size === items.length) {
+          selected.clear();
+        } else {
+          for (let i = 0; i < items.length; i++) selected.add(i);
+        }
+        render();
+        return;
+      }
+
+      // Arrow keys (escape sequences)
+      if (str === '\x1b[A' || str === 'k') {
+        // Up
+        cursor = cursor > 0 ? cursor - 1 : items.length - 1;
+        render();
+        return;
+      }
+
+      if (str === '\x1b[B' || str === 'j') {
+        // Down
+        cursor = cursor < items.length - 1 ? cursor + 1 : 0;
+        render();
+        return;
+      }
+    }
+
+    function cleanup() {
+      stdin.removeListener('data', onData);
+      stdin.setRawMode(wasRaw ?? false);
+      stdin.pause();
+      stdout.write(showCursor);
+    }
+
+    stdin.on('data', onData);
+  });
+}
+
 export class UpdateCommand extends Command {
   name = 'update';
   description = 'Update scaffold files from the latest svelar templates without overwriting customizations';
 
   flags = [
-    { name: 'force', alias: 'f', description: 'Overwrite all files without prompting', type: 'boolean' as const, default: false },
+    { name: 'force', alias: 'f', description: 'Overwrite all framework files without prompting', type: 'boolean' as const, default: false },
     { name: 'dry-run', alias: 'd', description: 'Show what would be updated without writing', type: 'boolean' as const, default: false },
     { name: 'category', alias: 'c', description: 'Only update a specific category (config, migration, route, page, domain, job, seeder)', type: 'string' as const, default: '' },
     { name: 'list', alias: 'l', description: 'List all updatable files and their status', type: 'boolean' as const, default: false },
+    { name: 'include-user-files', alias: 'u', description: 'Include user-customizable files (app.ts, hooks, layouts, home page, etc.)', type: 'boolean' as const, default: false },
   ];
 
   async handle(_args: string[], flags: Record<string, any>): Promise<void> {
@@ -38,6 +164,7 @@ export class UpdateCommand extends Command {
     const dryRun = flags['dry-run'] ?? false;
     const categoryFilter = flags.category ?? '';
     const listOnly = flags.list ?? false;
+    const includeUserFiles = flags['include-user-files'] ?? false;
 
     // Detect project structure
     const isDDD = existsSync(join(cwd, 'src', 'lib', 'modules'));
@@ -54,28 +181,31 @@ export class UpdateCommand extends Command {
     this.log('');
 
     // Build file manifest
-    const files = this.getFileManifest(isDDD, projectName);
+    const allFiles = this.getFileManifest(isDDD, projectName);
 
     // Filter by category if specified
     const filtered = categoryFilter
-      ? files.filter(f => f.category === categoryFilter)
-      : files;
+      ? allFiles.filter(f => f.category === categoryFilter)
+      : allFiles;
 
     if (filtered.length === 0) {
       this.warn(`No files found for category "${categoryFilter}". Valid categories: config, migration, route, page, domain, job, seeder`);
       return;
     }
 
-    // Classify files
+    // Split into framework vs user files
+    const frameworkFiles = filtered.filter(f => f.ownership === 'framework');
+    const userFiles = filtered.filter(f => f.ownership === 'user');
+
+    // Classify framework files
     const newFiles: ScaffoldFile[] = [];
     const changedFiles: ScaffoldFile[] = [];
     const unchangedFiles: ScaffoldFile[] = [];
-    const missingFiles: ScaffoldFile[] = [];
 
-    for (const file of filtered) {
+    for (const file of frameworkFiles) {
       const fullPath = join(cwd, file.path);
       if (!existsSync(fullPath)) {
-        missingFiles.push(file);
+        newFiles.push(file);
         continue;
       }
 
@@ -94,119 +224,182 @@ export class UpdateCommand extends Command {
       }
     }
 
+    // Classify user files (only when --include-user-files)
+    const userChanged: ScaffoldFile[] = [];
+    const userNew: ScaffoldFile[] = [];
+    const userUnchanged: ScaffoldFile[] = [];
+
+    if (includeUserFiles) {
+      for (const file of userFiles) {
+        const fullPath = join(cwd, file.path);
+        if (!existsSync(fullPath)) {
+          userNew.push(file);
+          continue;
+        }
+
+        const existing = readFileSync(fullPath, 'utf-8');
+        let template: string;
+        try {
+          template = file.content();
+        } catch {
+          continue;
+        }
+
+        if (this.normalize(existing) === this.normalize(template)) {
+          userUnchanged.push(file);
+        } else {
+          userChanged.push(file);
+        }
+      }
+    }
+
     // List mode
     if (listOnly) {
-      this.printStatus(missingFiles, changedFiles, unchangedFiles);
+      this.printStatus(newFiles, changedFiles, unchangedFiles, 'Framework Files');
+      if (includeUserFiles) {
+        this.log('');
+        this.printStatus(userNew, userChanged, userUnchanged, 'User-Customizable Files');
+      } else {
+        this.log('');
+        this.log(`  \x1b[90m${userFiles.length} user-customizable files not shown. Use --include-user-files to include.\x1b[0m`);
+      }
       return;
     }
 
     // Summary
-    this.log(`  Files scanned:    ${filtered.length}`);
-    this.log(`  Up to date:       \x1b[32m${unchangedFiles.length}\x1b[0m`);
-    this.log(`  Changed/outdated: \x1b[33m${changedFiles.length}\x1b[0m`);
-    this.log(`  Missing (new):    \x1b[36m${missingFiles.length}\x1b[0m`);
+    this.log(`  Framework files scanned: ${frameworkFiles.length}`);
+    this.log(`  Up to date:             \x1b[32m${unchangedFiles.length}\x1b[0m`);
+    this.log(`  Changed/outdated:       \x1b[33m${changedFiles.length}\x1b[0m`);
+    this.log(`  Missing (new):          \x1b[36m${newFiles.length}\x1b[0m`);
+    if (!includeUserFiles && userFiles.length > 0) {
+      this.log(`  User files (excluded):  \x1b[90m${userFiles.length}\x1b[0m  \x1b[90m(use --include-user-files to include)\x1b[0m`);
+    }
     this.log('');
 
-    if (changedFiles.length === 0 && missingFiles.length === 0) {
+    if (changedFiles.length === 0 && newFiles.length === 0 && userChanged.length === 0 && userNew.length === 0) {
       this.success('All scaffold files are up to date!');
       return;
     }
 
     // Handle missing files (new templates added in newer versions)
-    if (missingFiles.length > 0) {
-      this.info(`New files available (${missingFiles.length}):`);
-      for (const file of missingFiles) {
-        this.log(`  \x1b[36m+\x1b[0m ${file.path}  \x1b[90m(${file.description})\x1b[0m`);
-      }
-      this.log('');
-
-      if (!dryRun) {
-        const answer = force ? 'y' : await ask('  Create all new files? [Y/n/s(elect)] ');
-
-        if (answer === 'y' || answer === 'yes' || answer === '') {
-          for (const file of missingFiles) {
-            this.writeFile(join(cwd, file.path), file.content());
-            this.success(`Created ${file.path}`);
-          }
-        } else if (answer === 's' || answer === 'select') {
-          for (const file of missingFiles) {
-            const a = await ask(`  Create ${file.path}? [y/N] `);
-            if (a === 'y' || a === 'yes') {
-              this.writeFile(join(cwd, file.path), file.content());
-              this.success(`Created ${file.path}`);
-            } else {
-              this.log(`  \x1b[90mSkipped ${file.path}\x1b[0m`);
-            }
-          }
-        } else {
-          this.log('  Skipped new files.');
-        }
-        this.log('');
-      }
+    if (newFiles.length > 0) {
+      await this.handleNewFiles(newFiles, cwd, force, dryRun);
     }
 
-    // Handle changed files
+    // Handle changed framework files
     if (changedFiles.length > 0) {
-      this.info(`Changed files (${changedFiles.length}):`);
-      for (const file of changedFiles) {
-        this.log(`  \x1b[33m~\x1b[0m ${file.path}  \x1b[90m(${file.description})\x1b[0m`);
+      await this.handleChangedFiles(changedFiles, cwd, force, dryRun, 'Framework');
+    }
+
+    // Handle user files (only when --include-user-files)
+    if (includeUserFiles) {
+      if (userNew.length > 0) {
+        await this.handleNewFiles(userNew, cwd, force, dryRun);
       }
-      this.log('');
-
-      if (dryRun) {
-        this.info('Dry run — no files were modified.');
-        return;
-      }
-
-      if (force) {
-        for (const file of changedFiles) {
-          this.writeFile(join(cwd, file.path), file.content());
-          this.success(`Updated ${file.path}`);
-        }
-      } else {
-        const answer = await ask('  Update changed files? [s(elect)/a(ll)/N] ');
-
-        if (answer === 'a' || answer === 'all') {
-          for (const file of changedFiles) {
-            const fullPath = join(cwd, file.path);
-            // Backup
-            const backupPath = fullPath + '.bak';
-            const existing = readFileSync(fullPath, 'utf-8');
-            writeFileSync(backupPath, existing);
-            this.writeFile(fullPath, file.content());
-            this.success(`Updated ${file.path}  \x1b[90m(backup: ${file.path}.bak)\x1b[0m`);
-          }
-        } else if (answer === 's' || answer === 'select') {
-          for (const file of changedFiles) {
-            const a = await ask(`  Update ${file.path}? [y/N/d(iff)] `);
-            if (a === 'd' || a === 'diff') {
-              this.showDiff(join(cwd, file.path), file.content());
-              const confirm = await ask(`  Apply this update? [y/N] `);
-              if (confirm === 'y' || confirm === 'yes') {
-                const existing = readFileSync(join(cwd, file.path), 'utf-8');
-                writeFileSync(join(cwd, file.path) + '.bak', existing);
-                this.writeFile(join(cwd, file.path), file.content());
-                this.success(`Updated ${file.path}`);
-              } else {
-                this.log(`  \x1b[90mSkipped ${file.path}\x1b[0m`);
-              }
-            } else if (a === 'y' || a === 'yes') {
-              const existing = readFileSync(join(cwd, file.path), 'utf-8');
-              writeFileSync(join(cwd, file.path) + '.bak', existing);
-              this.writeFile(join(cwd, file.path), file.content());
-              this.success(`Updated ${file.path}  \x1b[90m(backup: ${file.path}.bak)\x1b[0m`);
-            } else {
-              this.log(`  \x1b[90mSkipped ${file.path}\x1b[0m`);
-            }
-          }
-        } else {
-          this.log('  No files updated.');
-        }
+      if (userChanged.length > 0) {
+        this.log('');
+        this.warn('The following are user-customizable files. Updating them may overwrite your changes.');
+        await this.handleChangedFiles(userChanged, cwd, false, dryRun, 'User');
       }
     }
 
     this.log('');
     this.success('Update complete.');
+  }
+
+  private async handleNewFiles(files: ScaffoldFile[], cwd: string, force: boolean, dryRun: boolean): Promise<void> {
+    this.info(`New files available (${files.length}):`);
+    for (const file of files) {
+      this.log(`  \x1b[36m+\x1b[0m ${file.path}  \x1b[90m(${file.description})\x1b[0m`);
+    }
+    this.log('');
+
+    if (dryRun) return;
+
+    if (force) {
+      for (const file of files) {
+        this.writeFile(join(cwd, file.path), file.content());
+        this.success(`Created ${file.path}`);
+      }
+      return;
+    }
+
+    // Interactive checkbox for new files
+    this.log('  Select files to create:');
+    this.log('');
+
+    const indices = await checkbox(
+      files.map(f => ({ label: f.path, hint: f.description }))
+    );
+
+    this.log('');
+
+    if (indices.length === 0) {
+      this.log('  Skipped new files.');
+    } else {
+      for (const idx of indices) {
+        this.writeFile(join(cwd, files[idx].path), files[idx].content());
+        this.success(`Created ${files[idx].path}`);
+      }
+    }
+    this.log('');
+  }
+
+  private async handleChangedFiles(files: ScaffoldFile[], cwd: string, force: boolean, dryRun: boolean, label: string): Promise<void> {
+    this.info(`${label} files with updates (${files.length}):`);
+    for (const file of files) {
+      this.log(`  \x1b[33m~\x1b[0m ${file.path}  \x1b[90m(${file.description})\x1b[0m`);
+    }
+    this.log('');
+
+    if (dryRun) {
+      this.info('Dry run — no files were modified.');
+      return;
+    }
+
+    if (force) {
+      for (const file of files) {
+        this.backupAndWrite(join(cwd, file.path), file.content());
+        this.success(`Updated ${file.path}`);
+      }
+      return;
+    }
+
+    // Ask if they want to see diffs first
+    const wantDiff = await ask('  View diffs before selecting? [y/N] ');
+    if (wantDiff === 'y' || wantDiff === 'yes') {
+      for (const file of files) {
+        this.log(`\n  \x1b[1m${file.path}\x1b[0m  \x1b[90m(${file.description})\x1b[0m`);
+        this.showDiff(join(cwd, file.path), file.content());
+      }
+    }
+
+    // Interactive checkbox
+    this.log('  Select files to update (creates .bak backups):');
+    this.log('');
+
+    const indices = await checkbox(
+      files.map(f => ({ label: f.path, hint: f.description }))
+    );
+
+    this.log('');
+
+    if (indices.length === 0) {
+      this.log('  No files updated.');
+    } else {
+      for (const idx of indices) {
+        this.backupAndWrite(join(cwd, files[idx].path), files[idx].content());
+        this.success(`Updated ${files[idx].path}  \x1b[90m(backup: ${files[idx].path}.bak)\x1b[0m`);
+      }
+    }
+  }
+
+  private backupAndWrite(fullPath: string, content: string): void {
+    if (existsSync(fullPath)) {
+      const existing = readFileSync(fullPath, 'utf-8');
+      writeFileSync(fullPath + '.bak', existing);
+    }
+    this.writeFile(fullPath, content);
   }
 
   private normalize(content: string): string {
@@ -222,9 +415,8 @@ export class UpdateCommand extends Command {
     const existing = readFileSync(filePath, 'utf-8').split('\n');
     const updated = newContent.split('\n');
 
-    this.log('');
-    this.log(`  \x1b[90m--- ${filePath} (current)\x1b[0m`);
-    this.log(`  \x1b[90m+++ ${filePath} (updated)\x1b[0m`);
+    this.log(`  \x1b[90m--- current\x1b[0m`);
+    this.log(`  \x1b[90m+++ updated\x1b[0m`);
 
     const maxLines = Math.max(existing.length, updated.length);
     let contextBefore = 0;
@@ -250,18 +442,18 @@ export class UpdateCommand extends Command {
       }
     }
 
-    // Show at most 40 diff lines to avoid flooding
-    const shown = diffLines.slice(0, 40);
+    const shown = diffLines.slice(0, 50);
     for (const line of shown) {
       this.log(line);
     }
-    if (diffLines.length > 40) {
-      this.log(`  \x1b[90m... and ${diffLines.length - 40} more lines\x1b[0m`);
+    if (diffLines.length > 50) {
+      this.log(`  \x1b[90m... and ${diffLines.length - 50} more lines\x1b[0m`);
     }
     this.log('');
   }
 
-  private printStatus(missing: ScaffoldFile[], changed: ScaffoldFile[], unchanged: ScaffoldFile[]): void {
+  private printStatus(missing: ScaffoldFile[], changed: ScaffoldFile[], unchanged: ScaffoldFile[], label: string): void {
+    this.info(label);
     const rows: string[][] = [];
 
     for (const f of missing) {
@@ -280,15 +472,15 @@ export class UpdateCommand extends Command {
   private getFileManifest(isDDD: boolean, projectName: string): ScaffoldFile[] {
     const files: ScaffoldFile[] = [];
 
-    // Helper to add entries
-    const add = (path: string, content: () => string, category: ScaffoldFile['category'], description: string) => {
-      files.push({ path, content, category, description });
+    const add = (path: string, content: () => string, category: ScaffoldFile['category'], description: string, ownership: 'framework' | 'user' = 'framework') => {
+      files.push({ path, content, category, description, ownership });
     };
 
     // ── Config ──
-    add('src/app.ts', () => T.appTs(), 'config', 'Application bootstrap');
-    add('src/hooks.server.ts', () => T.hooksServerTs(), 'config', 'SvelteKit hooks');
-    add('vite.config.ts', () => T.viteConfig(), 'config', 'Vite configuration');
+    // app.ts and hooks.server.ts are user-owned — users add their own bootstrap code
+    add('src/app.ts', () => T.appTs(), 'config', 'Application bootstrap', 'user');
+    add('src/hooks.server.ts', () => T.hooksServerTs(), 'config', 'SvelteKit hooks', 'user');
+    add('vite.config.ts', () => T.viteConfig(), 'config', 'Vite configuration', 'user');
     add('.env.example', () => T.envExample(), 'config', 'Environment template');
     add('svelar.database.json', () => T.svelarDatabaseJson(), 'config', 'Database config');
     add('src/app.css', () => T.appCss(), 'config', 'Global styles');
@@ -303,10 +495,6 @@ export class UpdateCommand extends Command {
     add('src/lib/database/migrations/00000006_create_audit_logs_table.ts', () => T.createAuditLogsTable(), 'migration', 'Audit logs table');
     add('src/lib/database/migrations/00000007_create_notifications_table.ts', () => T.createNotificationsTable(), 'migration', 'Notifications table');
     add('src/lib/database/migrations/00000008_create_failed_jobs_table.ts', () => T.createFailedJobsTable(), 'migration', 'Failed jobs table');
-    add('src/lib/database/migrations/00000009_add_stripe_to_users.ts', () => T.addStripeToUsers(), 'migration', 'Stripe customer ID on users');
-    add('src/lib/database/migrations/00000010_create_subscription_plans.ts', () => T.createSubscriptionPlansTable(), 'migration', 'Subscription plans table');
-    add('src/lib/database/migrations/00000011_create_subscriptions.ts', () => T.createSubscriptionsTable(), 'migration', 'Subscriptions table');
-    add('src/lib/database/migrations/00000012_create_invoices.ts', () => T.createInvoicesTable(), 'migration', 'Invoices table');
 
     // ── Auth Domain ──
     const authDir = isDDD ? 'src/lib/modules/auth' : 'src/lib';
@@ -336,16 +524,16 @@ export class UpdateCommand extends Command {
     add(`${isDDD ? authDir : `${authDir}/schemas`}/gates.ts`, () => T.gates(), 'domain', 'Authorization gates');
     add(`${isDDD ? authDir + '/schemas' : `${authDir}/schemas`}.ts`, () => T.authSchema(), 'domain', 'Auth Zod schemas');
 
-    // ── Posts Domain ──
+    // ── Posts Domain — user-owned (example code users modify) ──
     const postsDir = isDDD ? 'src/lib/modules/posts' : 'src/lib';
-    add(`${isDDD ? postsDir : `${postsDir}/models`}/Post.ts`, () => T.postModel(), 'domain', 'Post model');
-    add(`${isDDD ? postsDir : `${postsDir}/repositories`}/PostRepository.ts`, () => T.postRepository(), 'domain', 'Post repository');
-    add(`${isDDD ? postsDir : `${postsDir}/services`}/PostService.ts`, () => T.postService(), 'domain', 'Post service');
-    add(`${isDDD ? postsDir : `${postsDir}/controllers`}/PostController.ts`, () => T.postController(), 'domain', 'Post controller');
-    add(`${isDDD ? postsDir : `${postsDir}/actions`}/CreatePostAction.ts`, () => T.createPostAction(), 'domain', 'Create post action');
+    add(`${isDDD ? postsDir : `${postsDir}/models`}/Post.ts`, () => T.postModel(), 'domain', 'Post model', 'user');
+    add(`${isDDD ? postsDir : `${postsDir}/repositories`}/PostRepository.ts`, () => T.postRepository(), 'domain', 'Post repository', 'user');
+    add(`${isDDD ? postsDir : `${postsDir}/services`}/PostService.ts`, () => T.postService(), 'domain', 'Post service', 'user');
+    add(`${isDDD ? postsDir : `${postsDir}/controllers`}/PostController.ts`, () => T.postController(), 'domain', 'Post controller', 'user');
+    add(`${isDDD ? postsDir : `${postsDir}/actions`}/CreatePostAction.ts`, () => T.createPostAction(), 'domain', 'Create post action', 'user');
 
-    // ── Seeder ──
-    add('src/lib/database/seeders/DatabaseSeeder.ts', () => T.databaseSeeder(), 'seeder', 'Database seeder');
+    // ── Seeder — user-owned ──
+    add('src/lib/database/seeders/DatabaseSeeder.ts', () => T.databaseSeeder(), 'seeder', 'Database seeder', 'user');
 
     // ── Auth Pages ──
     add('src/routes/login/+page.server.ts', () => T.loginPageServer(), 'page', 'Login server');
@@ -371,8 +559,6 @@ export class UpdateCommand extends Command {
     add('src/routes/dashboard/api-keys/+page.svelte', () => T.apiKeysPageSvelte(), 'page', 'API keys page');
     add('src/routes/dashboard/team/+page.server.ts', () => T.teamPageServer(), 'page', 'Team server');
     add('src/routes/dashboard/team/+page.svelte', () => T.teamPageSvelte(), 'page', 'Team page');
-    add('src/routes/dashboard/billing/+page.server.ts', () => T.billingPageServer(), 'page', 'Billing server');
-    add('src/routes/dashboard/billing/+page.svelte', () => T.billingPageSvelte(), 'page', 'Billing page');
 
     // ── Admin Pages ──
     add('src/routes/admin/+layout.server.ts', () => T.adminLayoutServer(), 'page', 'Admin auth guard');
@@ -412,30 +598,26 @@ export class UpdateCommand extends Command {
     add('src/routes/api/admin/scheduler/[name]/toggle/+server.ts', () => T.apiAdminSchedulerToggle(), 'route', 'Toggle task API');
     add('src/routes/api/admin/logs/+server.ts', () => T.apiAdminLogs(), 'route', 'Admin logs API');
     add('src/routes/api/admin/stats/+server.ts', () => T.apiAdminStats(), 'route', 'Admin stats API');
-    add('src/routes/api/admin/billing/subscriptions/+server.ts', () => T.apiAdminBillingSubscriptions(), 'route', 'Admin billing subscriptions');
-    add('src/routes/api/admin/billing/refund/+server.ts', () => T.apiAdminBillingRefund(), 'route', 'Admin billing refund');
-    add('src/routes/api/admin/billing/cancel/+server.ts', () => T.apiAdminBillingCancel(), 'route', 'Admin billing cancel');
-    add('src/routes/api/webhooks/stripe/+server.ts', () => T.stripeWebhookRoute(), 'route', 'Stripe webhook');
 
-    // ── Jobs ──
+    // ── Jobs — user-owned (users customize job logic) ──
     const jobDir = isDDD ? 'src/lib/shared/jobs' : 'src/lib/jobs';
-    add(`${jobDir}/SendWelcomeEmail.ts`, () => T.sendWelcomeEmail(), 'job', 'Welcome email job');
-    add(`${jobDir}/DailyDigestJob.ts`, () => T.dailyDigestJob(), 'job', 'Daily digest job');
-    add(`${jobDir}/ExportDataJob.ts`, () => T.exportDataJob(), 'job', 'Export data job');
+    add(`${jobDir}/SendWelcomeEmail.ts`, () => T.sendWelcomeEmail(), 'job', 'Welcome email job', 'user');
+    add(`${jobDir}/DailyDigestJob.ts`, () => T.dailyDigestJob(), 'job', 'Daily digest job', 'user');
+    add(`${jobDir}/ExportDataJob.ts`, () => T.exportDataJob(), 'job', 'Export data job', 'user');
 
-    // ── Scheduled Tasks ──
+    // ── Scheduled Tasks — user-owned (users customize task logic) ──
     const taskDir = isDDD ? 'src/lib/shared/scheduler' : 'src/lib/scheduler';
-    add(`${taskDir}/CleanupExpiredTokens.ts`, () => T.cleanupExpiredTokens(), 'job', 'Cleanup tokens task');
-    add(`${taskDir}/CleanExpiredSessions.ts`, () => T.cleanExpiredSessions(), 'job', 'Clean sessions task');
-    add(`${taskDir}/DailyDigestEmail.ts`, () => T.dailyDigestEmail(), 'job', 'Daily digest task');
-    add(`${taskDir}/PruneAuditLogs.ts`, () => T.pruneAuditLogs(), 'job', 'Prune audit logs task');
-    add(`${taskDir}/QueueHealthCheck.ts`, () => T.queueHealthCheck(), 'job', 'Queue health check task');
+    add(`${taskDir}/CleanupExpiredTokens.ts`, () => T.cleanupExpiredTokens(), 'job', 'Cleanup tokens task', 'user');
+    add(`${taskDir}/CleanExpiredSessions.ts`, () => T.cleanExpiredSessions(), 'job', 'Clean sessions task', 'user');
+    add(`${taskDir}/DailyDigestEmail.ts`, () => T.dailyDigestEmail(), 'job', 'Daily digest task', 'user');
+    add(`${taskDir}/PruneAuditLogs.ts`, () => T.pruneAuditLogs(), 'job', 'Prune audit logs task', 'user');
+    add(`${taskDir}/QueueHealthCheck.ts`, () => T.queueHealthCheck(), 'job', 'Queue health check task', 'user');
 
-    // ── Root Layout ──
-    add('src/routes/+layout.svelte', () => T.rootLayoutSvelte(projectName), 'page', 'Root layout');
-    add('src/routes/+layout.server.ts', () => T.rootLayoutServer(), 'page', 'Root layout server');
-    add('src/routes/+error.svelte', () => T.errorSvelte(), 'page', 'Error page');
-    add('src/routes/+page.svelte', () => T.homePage(projectName), 'page', 'Home page');
+    // ── Root Layout — user-owned (users customize their app shell) ──
+    add('src/routes/+layout.svelte', () => T.rootLayoutSvelte(projectName), 'page', 'Root layout', 'user');
+    add('src/routes/+layout.server.ts', () => T.rootLayoutServer(), 'page', 'Root layout server', 'user');
+    add('src/routes/+error.svelte', () => T.errorSvelte(), 'page', 'Error page', 'user');
+    add('src/routes/+page.svelte', () => T.homePage(projectName), 'page', 'Home page', 'user');
 
     return files;
   }

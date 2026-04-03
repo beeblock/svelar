@@ -15,11 +15,9 @@ Full documentation is available at **[svelar.dev](https://svelar.dev)**.
 ## Quick Start
 
 ```bash
-# Scaffold a new project
+# Scaffold a new project (installs deps, shadcn-svelte, runs migrations automatically)
 npx svelar new my-app
 cd my-app
-npm install
-npx svelar migrate
 npm run dev
 ```
 
@@ -57,7 +55,7 @@ See the [Getting Started guide](https://svelar.dev/docs/getting-started) for a c
 | **Permissions** | `svelar/permissions` | Role-based access control with permissions and gates |
 | **i18n** | `svelar/i18n` | Paraglide-js integration with language switcher |
 | **Forms** | `svelar/forms` | SvelteKit Superforms integration helpers |
-| **UI Components** | `svelar/ui` | Button, Card, Input, Alert, Badge, Avatar, Tabs, Icon, Toaster |
+| **UI Components** | `svelar/ui` | Minimal built-in components + [shadcn-svelte](https://shadcn-svelte.com) pre-installed |
 | **Hooks** | `svelar/hooks` | One-line SvelteKit hooks setup with sensible defaults |
 | **Container** | `svelar/container` | IoC container with singleton/transient bindings |
 | **Plugins** | `svelar/plugins` | Plugin discovery, publishing, and CLI management |
@@ -71,7 +69,6 @@ See the [Getting Started guide](https://svelar.dev/docs/getting-started) for a c
 | **Uploads** | `svelar/uploads` | File upload handling with validation (local + S3) |
 | **Dashboard** | `svelar/dashboard` | Admin dashboard with job/scheduler monitoring and log viewer |
 | **Search** | `svelar/search` | Meilisearch integration with auto-syncing `Searchable` mixin |
-| **Stripe** | `svelar/stripe` | Billing, subscriptions, checkout, invoices, webhook handling |
 | **Testing** | `svelar/testing` | Factory, `useSvelarTest()`, `refreshDatabase()`, `actingAs()`, database assertions |
 
 ## Official Plugins
@@ -87,6 +84,7 @@ See the [Getting Started guide](https://svelar.dev/docs/getting-started) for a c
 | [`@beeblock/svelar-activity-log`](https://www.npmjs.com/package/@beeblock/svelar-activity-log) | Audit trail with LogsActivity mixin and causer tracking |
 | [`@beeblock/svelar-backup`](https://www.npmjs.com/package/@beeblock/svelar-backup) | Database backup with local/S3 destinations and cleanup policies |
 | [`@beeblock/svelar-charts`](https://www.npmjs.com/package/@beeblock/svelar-charts) | SVG chart components (line, bar, pie, doughnut, area) |
+| [`@beeblock/svelar-stripe`](https://www.npmjs.com/package/@beeblock/svelar-stripe) | Stripe billing with polymorphic Billable mixin, subscriptions, one-time payments, checkout, invoices, webhooks |
 | [`@beeblock/svelar-tags`](https://www.npmjs.com/package/@beeblock/svelar-tags) | Tagging with HasTags mixin, tag types, slugs, and tag input UI |
 | [`@beeblock/svelar-impersonate`](https://www.npmjs.com/package/@beeblock/svelar-impersonate) | User impersonation with session guards and banner UI |
 | [`@beeblock/svelar-sitemap`](https://www.npmjs.com/package/@beeblock/svelar-sitemap) | XML sitemap generation with scheduling and model discovery |
@@ -94,7 +92,7 @@ See the [Getting Started guide](https://svelar.dev/docs/getting-started) for a c
 ## CLI
 
 ```bash
-npx svelar new my-app                  # scaffold a new project
+npx svelar new my-app                  # scaffold with shadcn-svelte + all components
 npx svelar update                      # update scaffold files without overwriting
 npx svelar make:model Post -m -c       # model + migration + controller
 npx svelar make:service PaymentService # service class

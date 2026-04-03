@@ -7,7 +7,7 @@ A polymorphic tagging plugin for Svelar/SvelteKit with typed tags, automatic slu
 **Install:**
 
 ```bash
-npm install @beeblock/svelar-tags
+npx svelar plugin:install @beeblock/svelar-tags
 ```
 
 **Imports:**

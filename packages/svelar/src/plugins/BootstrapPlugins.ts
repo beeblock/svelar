@@ -81,11 +81,17 @@ async function loadPluginClass(pluginName: string): Promise<any> {
   try {
     // Read package.json to find main entry
     const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
-    const main = pkg.main || 'index.js';
-    const fullPath = join(packagePath, main);
 
-    // Try to load the plugin
-    const mod = await import(fullPath);
+    // Try the dedicated /plugin entry first (server-only, avoids node: imports in client barrel).
+    let mod: any;
+    const pluginEntry = pkg.exports?.['./plugin']?.default;
+    if (pluginEntry) {
+      mod = await import(join(packagePath, pluginEntry));
+    } else {
+      const main = pkg.main || 'index.js';
+      mod = await import(join(packagePath, main));
+    }
+
     const PluginClass = mod.default || Object.values(mod)[0];
 
     if (!PluginClass) {

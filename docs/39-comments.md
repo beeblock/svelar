@@ -7,7 +7,7 @@ A polymorphic commenting system for Svelar/SvelteKit with nested replies, reacti
 **Install:**
 
 ```bash
-npm install @beeblock/svelar-comments
+npx svelar plugin:install @beeblock/svelar-comments
 ```
 
 **Imports:**

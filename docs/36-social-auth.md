@@ -7,7 +7,7 @@ OAuth 2.0 social authentication plugin for Svelar/SvelteKit with built-in suppor
 **Install:**
 
 ```bash
-npm install @beeblock/svelar-social-auth
+npx svelar plugin:install @beeblock/svelar-social-auth
 ```
 
 **Imports:**

@@ -7,7 +7,7 @@ A database backup plugin for Svelar/SvelteKit with support for SQLite, PostgreSQ
 **Install:**
 
 ```bash
-npm install @beeblock/svelar-backup
+npx svelar plugin:install @beeblock/svelar-backup
 ```
 
 **Imports:**

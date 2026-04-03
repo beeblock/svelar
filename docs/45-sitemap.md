@@ -7,7 +7,7 @@ An XML sitemap generator plugin for Svelar/SvelteKit with a fluent builder API, 
 **Install:**
 
 ```bash
-npm install @beeblock/svelar-sitemap
+npx svelar plugin:install @beeblock/svelar-sitemap
 ```
 
 **Imports:**

@@ -521,15 +521,16 @@ const url = await upload.url({ expiresIn: 3600 });
 
 ## Billing with Stripe
 
-Stripe billing is built into the core — no plugins needed. Install the Stripe SDK and configure:
+Stripe billing is available as the `@beeblock/svelar-stripe` plugin. Install the Stripe SDK and configure:
 
 ```bash
-npm install stripe
+npm install @beeblock/svelar-stripe stripe
+npx svelar plugin:install @beeblock/svelar-stripe
 ```
 
 ```typescript
 // src/app.ts
-import { Stripe } from '@beeblock/svelar/stripe';
+import { Stripe } from '@beeblock/svelar-stripe';
 
 Stripe.configure({
   secretKey: process.env.STRIPE_SECRET_KEY ?? '',

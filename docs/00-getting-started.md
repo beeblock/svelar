@@ -116,20 +116,20 @@ These cron tasks run automatically when you start the scheduler:
 | `PruneAuditLogs` | Periodic | Removes old audit entries |
 | `QueueHealthCheck` | Periodic | Monitors queue health |
 
-### UI Components (Pre-built)
+### UI Components (Pre-installed)
 
-Svelar ships a component library themed with Tailwind CSS v4:
+Svelar scaffolds projects with **[shadcn-svelte](https://shadcn-svelte.com)** — a comprehensive component library with 50+ components including Dialog, Dropdown, Select, Combobox, Calendar, Sheet, Command Palette, Data Table, and more. All components are installed at `$lib/components/ui/` and ready to use.
 
-- `Button` — default, outline, destructive, ghost variants
-- `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`
-- `Input`, `Label` — form elements
-- `Badge` — status indicators
-- `Alert` — info, success, destructive variants
-- `Avatar`, `AvatarImage`, `AvatarFallback` — user avatars
-- `Tabs`, `TabsList`, `TabsTrigger`, `TabsContent` — tabbed navigation
-- `Separator` — visual dividers
-- `Icon` — lucide-svelte icon wrapper
-- `Toaster` — toast notifications with position, duration, action support
+Dark mode is supported out of the box via `mode-watcher`. Import components from `$lib/components/ui/`:
+
+```svelte
+import { Button } from '$lib/components/ui/button';
+import * as Card from '$lib/components/ui/card';
+```
+
+Svelar also ships its own minimal components (`@beeblock/svelar/ui`) used internally by the dashboard and admin panel: `Button`, `Card`, `Input`, `Label`, `Badge`, `Alert`, `Avatar`, `Tabs`, `Separator`, `Icon`, and `Toaster`.
+
+> You're not locked into shadcn-svelte — use any CSS framework or component library you prefer.
 
 ### Internationalization (Pre-configured)
 

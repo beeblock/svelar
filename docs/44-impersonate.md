@@ -7,7 +7,7 @@ A user impersonation plugin for Svelar/SvelteKit that allows administrators to l
 **Install:**
 
 ```bash
-npm install @beeblock/svelar-impersonate
+npx svelar plugin:install @beeblock/svelar-impersonate
 ```
 
 **Imports:**

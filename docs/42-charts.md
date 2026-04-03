@@ -7,7 +7,7 @@ A server-side chart data query builder and SVG chart component library for Svela
 **Install:**
 
 ```bash
-npm install @beeblock/svelar-charts
+npx svelar plugin:install @beeblock/svelar-charts
 ```
 
 **Imports:**

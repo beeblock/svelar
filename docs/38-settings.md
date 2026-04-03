@@ -7,7 +7,7 @@ A persistent key-value settings store for Svelar/SvelteKit with scoped settings 
 **Install:**
 
 ```bash
-npm install @beeblock/svelar-settings
+npx svelar plugin:install @beeblock/svelar-settings
 ```
 
 **Imports:**

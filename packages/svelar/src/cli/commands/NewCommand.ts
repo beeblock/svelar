@@ -64,7 +64,8 @@ export class NewCommand extends Command {
       'src/lib/resources', 'src/lib/events', 'src/lib/listeners',
       'src/lib/notifications', 'src/lib/schemas',
       'src/lib/jobs', 'src/lib/scheduler', 'src/lib/middleware',
-      'src/lib/components', 'src/lib/stores', 'src/lib/plugins',
+      'src/lib/components', 'src/lib/components/ui', 'src/lib/hooks',
+      'src/lib/stores', 'src/lib/plugins',
       'src/lib/channels', 'src/lib/commands', 'src/lib/providers',
       'src/lib/database/migrations', 'src/lib/database/seeders',
       'src/routes', 'src/routes/api',
@@ -74,7 +75,8 @@ export class NewCommand extends Command {
       '', 'src', 'src/lib',
       'src/lib/modules/auth', 'src/lib/modules/posts', 'src/lib/modules/admin',
       'src/lib/shared/jobs', 'src/lib/shared/scheduler', 'src/lib/shared/middleware',
-      'src/lib/shared/components', 'src/lib/shared/stores', 'src/lib/shared/plugins',
+      'src/lib/shared/components', 'src/lib/components/ui', 'src/lib/hooks',
+      'src/lib/shared/stores', 'src/lib/shared/plugins',
       'src/lib/shared/channels', 'src/lib/shared/commands', 'src/lib/shared/providers',
       'src/lib/database/migrations', 'src/lib/database/seeders',
       'src/routes', 'src/routes/api',
@@ -117,6 +119,8 @@ export class NewCommand extends Command {
 
     write('.gitignore', T.gitignore());
     write('svelar.database.json', T.svelarDatabaseJson());
+    write('components.json', T.componentsJson());
+    write('src/lib/utils.ts', T.utilsCn());
 
     // .gitkeep files in storage directories
     for (const dir of ['storage/logs', 'storage/cache', 'storage/uploads', 'storage/sessions']) {
@@ -186,10 +190,7 @@ export class NewCommand extends Command {
     write('src/lib/database/migrations/00000006_create_audit_logs_table.ts', T.createAuditLogsTable());
     write('src/lib/database/migrations/00000007_create_notifications_table.ts', T.createNotificationsTable());
     write('src/lib/database/migrations/00000008_create_failed_jobs_table.ts', T.createFailedJobsTable());
-    write('src/lib/database/migrations/00000009_add_stripe_to_users.ts', T.addStripeToUsers());
-    write('src/lib/database/migrations/00000010_create_subscription_plans.ts', T.createSubscriptionPlansTable());
-    write('src/lib/database/migrations/00000011_create_subscriptions.ts', T.createSubscriptionsTable());
-    write('src/lib/database/migrations/00000012_create_invoices.ts', T.createInvoicesTable());
+
 
     // ── 5. Seeder ─────────────────────────────────────────
     write('src/lib/database/seeders/DatabaseSeeder.ts', T.databaseSeeder());
@@ -220,8 +221,6 @@ export class NewCommand extends Command {
     write('src/routes/dashboard/api-keys/+page.svelte', T.apiKeysPageSvelte());
     write('src/routes/dashboard/team/+page.server.ts', T.teamPageServer());
     write('src/routes/dashboard/team/+page.svelte', T.teamPageSvelte());
-    write('src/routes/dashboard/billing/+page.server.ts', T.billingPageServer());
-    write('src/routes/dashboard/billing/+page.svelte', T.billingPageSvelte());
 
     // ── 8. Admin pages ────────────────────────────────────
     this.info('Creating admin panel...');
@@ -263,10 +262,7 @@ export class NewCommand extends Command {
     write('src/routes/api/admin/scheduler/[name]/toggle/+server.ts', T.apiAdminSchedulerToggle());
     write('src/routes/api/admin/logs/+server.ts', T.apiAdminLogs());
     write('src/routes/api/admin/stats/+server.ts', T.apiAdminStats());
-    write('src/routes/api/admin/billing/subscriptions/+server.ts', T.apiAdminBillingSubscriptions());
-    write('src/routes/api/admin/billing/refund/+server.ts', T.apiAdminBillingRefund());
-    write('src/routes/api/admin/billing/cancel/+server.ts', T.apiAdminBillingCancel());
-    write('src/routes/api/webhooks/stripe/+server.ts', T.stripeWebhookRoute());
+
 
     // ── 10. Jobs ──────────────────────────────────────────
     this.info('Creating background jobs...');
@@ -312,7 +308,19 @@ export class NewCommand extends Command {
         this.warn('npm install failed — run it manually with: cd ' + projectName + ' && npm install');
       }
 
-      // ── 14. Run migrations and seed ─────────────────────
+      // ── 15. Install shadcn-svelte components ─────────────
+      this.info('Installing shadcn-svelte components...');
+      try {
+        execSync('npx shadcn-svelte@latest add --all --yes --no-changelog', {
+          cwd: projectDir,
+          stdio: 'inherit',
+        });
+        this.success('shadcn-svelte components installed');
+      } catch {
+        this.warn('shadcn-svelte setup failed — run manually: cd ' + projectName + ' && npx shadcn-svelte@latest add --all');
+      }
+
+      // ── 16. Run migrations and seed ─────────────────────
       this.info('Running migrations...');
       try {
         execSync('npx svelar migrate', {
@@ -343,6 +351,7 @@ export class NewCommand extends Command {
     this.log(`    cd ${projectName}`);
     if (flags['no-install']) {
       this.log('    npm install');
+      this.log('    npx shadcn-svelte@latest add --all');
       this.log('    npx svelar migrate');
       this.log('    npx svelar seed:run');
     }
