@@ -311,7 +311,7 @@ export class NewCommand extends Command {
       // ── 15. Install shadcn-svelte components ─────────────
       this.info('Installing shadcn-svelte components...');
       try {
-        execSync('npx shadcn-svelte@latest add --all --yes --no-changelog', {
+        execSync('npx shadcn-svelte@latest add --all --yes', {
           cwd: projectDir,
           stdio: 'inherit',
         });
