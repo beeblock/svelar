@@ -105,12 +105,19 @@ npx svelar migrate                     # run migrations
 npx svelar schedule:run                # start the scheduler
 npx svelar queue:work                  # process queue jobs
 npx svelar tinker                      # interactive REPL
-npx svelar plugin:list                 # list discovered plugins
 npx svelar plugin:install @beeblock/svelar-tags  # install + publish
-npx svelar plugin:publish @beeblock/svelar-tags  # publish migrations & routes
+
+# Deployment
+npx svelar make:deploy                 # scaffold Docker + CI/CD + infra
+npx svelar make:docker                 # Dockerfile, compose files, health endpoint
+npx svelar make:ci                     # GitHub Actions workflow
+npx svelar make:infra                  # droplet setup script + env template
+npx svelar dev:up                      # start dev containers (hot-reload)
+npx svelar dev:logs                    # follow dev container logs
+npx svelar prod:deploy                 # pull latest image + restart prod
 ```
 
-44 commands available. Run `npx svelar` to see all commands.
+53 commands available. Run `npx svelar` to see all commands.
 
 ## Database Support
 

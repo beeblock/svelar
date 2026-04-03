@@ -56,9 +56,23 @@ import { MakeCommandCommand } from './commands/MakeCommandCommand.js';
 import { MakeConfigCommand } from './commands/MakeConfigCommand.js';
 import { MakeChannelCommand } from './commands/MakeChannelCommand.js';
 import { MakeDockerCommand } from './commands/MakeDockerCommand.js';
+import { MakeCiCommand } from './commands/MakeCiCommand.js';
+import { MakeInfraCommand } from './commands/MakeInfraCommand.js';
+import { MakeDeployCommand } from './commands/MakeDeployCommand.js';
 import { MakeBroadcastingCommand } from './commands/MakeBroadcastingCommand.js';
 import { MakeTestCommand } from './commands/MakeTestCommand.js';
 import { MakeFactoryCommand } from './commands/MakeFactoryCommand.js';
+
+// Docker compose runtime commands
+import { DevUpCommand } from './commands/DevUpCommand.js';
+import { DevDownCommand } from './commands/DevDownCommand.js';
+import { DevLogsCommand } from './commands/DevLogsCommand.js';
+import { DevRestartCommand } from './commands/DevRestartCommand.js';
+import { ProdUpCommand } from './commands/ProdUpCommand.js';
+import { ProdDownCommand } from './commands/ProdDownCommand.js';
+import { ProdLogsCommand } from './commands/ProdLogsCommand.js';
+import { ProdRestartCommand } from './commands/ProdRestartCommand.js';
+import { ProdDeployCommand } from './commands/ProdDeployCommand.js';
 
 import { MakeResourceCommand } from './commands/MakeResourceCommand.js';
 import { MakeSchemaCommand } from './commands/MakeSchemaCommand.js';
@@ -123,6 +137,9 @@ cli.register(MakeCommandCommand);
 cli.register(MakeConfigCommand);
 cli.register(MakeChannelCommand);
 cli.register(MakeDockerCommand);
+cli.register(MakeCiCommand);
+cli.register(MakeInfraCommand);
+cli.register(MakeDeployCommand);
 cli.register(MakeBroadcastingCommand);
 cli.register(MakeTestCommand);
 cli.register(MakeFactoryCommand);
@@ -143,6 +160,17 @@ cli.register(TinkerCommand);
 cli.register(PluginListCommand);
 cli.register(PluginPublishCommand);
 cli.register(PluginInstallCommand);
+
+// Docker compose runtime commands
+cli.register(DevUpCommand);
+cli.register(DevDownCommand);
+cli.register(DevLogsCommand);
+cli.register(DevRestartCommand);
+cli.register(ProdUpCommand);
+cli.register(ProdDownCommand);
+cli.register(ProdLogsCommand);
+cli.register(ProdRestartCommand);
+cli.register(ProdDeployCommand);
 
 // ── Auto-discover user commands ─────────────────────────────
 // Scans src/lib/commands/ in the user's project for custom Command classes.

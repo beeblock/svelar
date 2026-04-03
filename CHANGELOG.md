@@ -4,6 +4,35 @@ All notable changes to `@beeblock/svelar` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3] - 2026-04-03
+
+### Added
+
+- **`make:deploy` command** — one-command scaffold for the full deployment pipeline: runs `make:docker` + `make:ci` + `make:infra`
+- **`make:ci` command** — generates `.github/workflows/deploy.yml` (GitHub Actions: build Docker image, push to registry, SSH deploy to droplet). Supports `--image` and `--registry` flags
+- **`make:infra` command** — generates `infra/setup-droplet.sh` (create deploy user, install Docker, configure UFW) and `infra/droplet.env.example` (production `.env` template)
+- **Docker compose runtime commands** — 9 new CLI commands wrapping `docker compose` with the correct dev/prod override files:
+  - `dev:up`, `dev:down`, `dev:logs`, `dev:restart` — development containers (hot-reload, port 5173)
+  - `prod:up`, `prod:down`, `prod:logs`, `prod:restart`, `prod:deploy` — production containers (pre-built image, port 3000)
+  - All accept `--service <name>` to target a specific service
+- **Multi-stage Dockerfile** — replaces the old 2-stage PM2 Dockerfile with a 5-stage build: `base` (Node 20 Alpine + dumb-init + non-root user `sveltekit:1001`), `deps` (production-only `npm ci --omit=dev`), `builder` (full build), `production` (lean image with healthcheck + dumb-init entrypoint), `development` (hot-reload with `npm run dev`)
+- **`docker-compose.dev.yml`** — development override: builds the `development` Dockerfile target, bind-mounts source for hot-reload, maps port 5173
+- **`docker-compose.prod.yml`** — production override: uses pre-built image from Docker Hub / registry instead of local build
+- **Health endpoint** — `make:docker` now generates `src/routes/api/health/+server.ts` returning `{ status, timestamp, uptime }`, used by Docker HEALTHCHECK and Traefik
+- **`--image` and `--registry` flags** on `make:docker` for configuring Docker image name and registry prefix
+
+## [0.6.2] - 2026-04-03
+
+### Changed
+
+- Version bump
+
+## [0.6.1] - 2026-04-03
+
+### Added
+
+- **`<Seo>` component** for meta tags, Open Graph, Twitter Cards, and JSON-LD structured data
+
 ## [0.6.0] - 2026-04-03
 
 ### Added

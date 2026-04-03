@@ -1,19 +1,25 @@
 /**
  * make:docker — Generate Docker deployment files
  *
- * Creates Dockerfile, docker-compose.yml, .dockerignore, and PM2 ecosystem config.
+ * Creates Dockerfile (multi-stage), docker-compose.yml, dev/prod overrides,
+ * .dockerignore, PM2 ecosystem config, and health endpoint.
  */
 
 import { Command } from '../Command.js';
-import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { DeployTemplates } from './DeployTemplates.js';
 
 export class MakeDockerCommand extends Command {
   name = 'make:docker';
-  description = 'Scaffold Docker deployment files (Dockerfile, docker-compose.yml, PM2 config)';
+  description = 'Scaffold Docker deployment files (Dockerfile, docker-compose, PM2, health endpoint)';
   arguments = [];
   flags = [
     { name: 'db', alias: 'd', description: 'Database driver: postgres, mysql, sqlite (default: postgres)', type: 'string' as const },
+    { name: 'image', alias: 'i', description: 'Docker image name (default: package.json name)', type: 'string' as const },
+    { name: 'registry', description: 'Docker registry prefix (default: Docker Hub)', type: 'string' as const },
+    { name: 'port', description: 'Production port (default: 3000)', type: 'string' as const },
+    { name: 'dev-port', description: 'Development port (default: 5173)', type: 'string' as const },
     { name: 'soketi', alias: 's', description: 'Include Soketi WebSocket server', type: 'boolean' as const },
     { name: 'redis', alias: 'r', description: 'Include Redis service', type: 'boolean' as const },
     { name: 'gotenberg', alias: 'g', description: 'Include Gotenberg PDF service (default: true)', type: 'boolean' as const },
@@ -25,12 +31,17 @@ export class MakeDockerCommand extends Command {
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
     const cwd = process.cwd();
     const db = (flags.db as string) ?? 'postgres';
-    const includeSoketi = flags.soketi ?? true; // default: include Soketi
-    const includeRedis = flags.redis ?? true; // default: include Redis (BullMQ queues)
-    const includeGotenberg = flags.gotenberg ?? true; // default: include Gotenberg
-    const includeRustFS = flags.rustfs ?? true; // default: include RustFS object storage
-    const includeMeilisearch = flags.meilisearch ?? false; // default: not included (opt-in)
+    const includeSoketi = flags.soketi ?? true;
+    const includeRedis = flags.redis ?? true;
+    const includeGotenberg = flags.gotenberg ?? true;
+    const includeRustFS = flags.rustfs ?? true;
+    const includeMeilisearch = flags.meilisearch ?? false;
     const force = flags.force ?? false;
+
+    const appName = this.resolveAppName(cwd);
+    const image = (flags.image as string) ?? appName;
+    const registry = flags.registry as string | undefined;
+    const fullImage = registry ? `${registry}/${image}` : image;
 
     const validDbs = ['postgres', 'mysql', 'sqlite'];
     if (!validDbs.includes(db)) {
@@ -38,16 +49,30 @@ export class MakeDockerCommand extends Command {
       return;
     }
 
+    // Ensure health endpoint directory exists
+    const healthDir = join(cwd, 'src', 'routes', 'api', 'health');
+    mkdirSync(healthDir, { recursive: true });
+
     const files: Array<{ path: string; content: string; label: string }> = [
       {
         path: join(cwd, 'Dockerfile'),
-        content: this.dockerfileTemplate(),
+        content: DeployTemplates.dockerfile(),
         label: 'Dockerfile',
       },
       {
         path: join(cwd, 'docker-compose.yml'),
         content: this.composeTemplate(db, includeSoketi, includeRedis, includeGotenberg, includeRustFS, includeMeilisearch),
         label: 'docker-compose.yml',
+      },
+      {
+        path: join(cwd, 'docker-compose.dev.yml'),
+        content: DeployTemplates.composeDevOverride(),
+        label: 'docker-compose.dev.yml',
+      },
+      {
+        path: join(cwd, 'docker-compose.prod.yml'),
+        content: DeployTemplates.composeProdOverride(fullImage),
+        label: 'docker-compose.prod.yml',
       },
       {
         path: join(cwd, '.dockerignore'),
@@ -58,6 +83,11 @@ export class MakeDockerCommand extends Command {
         path: join(cwd, 'ecosystem.config.cjs'),
         content: this.pm2Template(),
         label: 'ecosystem.config.cjs',
+      },
+      {
+        path: join(healthDir, '+server.ts'),
+        content: DeployTemplates.healthEndpoint(),
+        label: 'src/routes/api/health/+server.ts',
       },
     ];
 
@@ -75,7 +105,7 @@ export class MakeDockerCommand extends Command {
       created++;
     }
 
-    // Also create a docker/ directory with an nginx config if not sqlite
+    // Create docker/ directory if using a non-sqlite DB
     if (db !== 'sqlite') {
       const dockerDir = join(cwd, 'docker');
       mkdirSync(dockerDir, { recursive: true });
@@ -90,79 +120,40 @@ export class MakeDockerCommand extends Command {
 
     this.newLine();
     this.info('Quick start:');
-    this.log('  # Build and start all services');
+    this.log('  # Development (with hot-reload)');
+    this.log('  npx svelar dev:up');
+    this.newLine();
+    this.log('  # Production (local build)');
     this.log('  docker compose up -d --build');
     this.newLine();
     this.log('  # Run migrations inside the container');
     this.log('  docker compose exec app npx svelar migrate');
     this.newLine();
     this.log('  # View logs');
-    this.log('  docker compose logs -f app');
+    this.log('  npx svelar dev:logs');
     this.newLine();
     this.log('  # Stop services');
-    this.log('  docker compose down');
+    this.log('  npx svelar dev:down');
     this.newLine();
     this.info('Make sure to update .env with production values before deploying.');
   }
 
-  // ── Templates ──────────────────────────────────────────────
+  // ── Helpers ──────────────────────────────────────────────
 
-  private dockerfileTemplate(): string {
-    return `# ── Svelar Production Dockerfile ──────────────────────────
-# Multi-stage build for a lean production image.
-
-# Stage 1: Install dependencies & build
-FROM node:20-alpine AS builder
-
-WORKDIR /app
-
-# Copy package files first for better layer caching
-COPY package*.json ./
-RUN npm ci
-
-# Copy source and build
-COPY . .
-RUN npm run build
-
-# Prune dev dependencies
-RUN npm prune --production
-
-# ──────────────────────────────────────────────────────────
-# Stage 2: Production image
-FROM node:20-alpine AS production
-
-WORKDIR /app
-
-# Install PM2 globally for process management
-RUN npm install -g pm2
-
-# Copy built app and production deps from builder
-COPY --from=builder /app/build ./build
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./
-COPY --from=builder /app/ecosystem.config.cjs ./
-
-# Copy Svelar CLI + migrations/seeders (needed at runtime)
-COPY --from=builder /app/src/lib/database ./src/lib/database
-
-# Create storage directories
-RUN mkdir -p storage/logs storage/public
-
-# Environment
-ENV NODE_ENV=production
-ENV HOST=0.0.0.0
-ENV PORT=3000
-
-EXPOSE 3000
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \\
-  CMD wget -qO- http://localhost:3000/api/health || exit 1
-
-# Start with PM2
-CMD ["pm2-runtime", "ecosystem.config.cjs"]
-`;
+  private resolveAppName(cwd: string): string {
+    try {
+      const pkg = JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf-8'));
+      if (pkg.name && typeof pkg.name === 'string') {
+        // Strip scope (e.g. @org/name → name)
+        return pkg.name.replace(/^@[^/]+\//, '');
+      }
+    } catch {
+      // No package.json or invalid
+    }
+    return 'svelar-app';
   }
+
+  // ── Templates ──────────────────────────────────────────────
 
   private composeTemplate(db: string, soketi: boolean, redis: boolean, gotenberg: boolean, rustfs: boolean = true, meilisearch: boolean = false): string {
     const lines: string[] = [];

@@ -1,18 +1,23 @@
 # Deployment
 
-Svelar ships with a production-grade Docker deployment pipeline out of the box. One command generates everything you need — Dockerfile, docker-compose.yml, PM2 process manager config, and a tuned `.dockerignore`.
+Svelar provides a complete Docker-based deployment pipeline. A single `npx svelar make:deploy` scaffolds everything: multi-stage Dockerfile, docker-compose with dev/prod overrides, GitHub Actions CI/CD, DigitalOcean droplet setup, health endpoint, PM2 config, and `.dockerignore`.
 
-This guide covers the full journey from development to multi-instance production deployments with zero-downtime updates.
+CLI wrapper commands (`dev:up`, `prod:deploy`, etc.) let you manage containers without memorizing long compose flags.
 
 ---
 
 ## Table of Contents
 
-- [When Do You Need Docker?](#when-do-you-need-docker)
-- [Development with Docker Services](#development-with-docker-services)
 - [Quick Start](#quick-start)
+- [Scaffold Commands](#scaffold-commands)
+- [Runtime Commands](#runtime-commands)
 - [Generated Files](#generated-files)
+- [Architecture: Dev vs Prod](#architecture-dev-vs-prod)
 - [Dockerfile](#dockerfile)
+- [Docker Compose Files](#docker-compose-files)
+- [Health Endpoint](#health-endpoint)
+- [GitHub Actions CI/CD](#github-actions-cicd)
+- [Infrastructure Setup](#infrastructure-setup)
 - [Docker Compose Services](#docker-compose-services)
 - [PM2 Process Management](#pm2-process-management)
 - [Environment Variables Reference](#environment-variables-reference)
@@ -25,123 +30,67 @@ This guide covers the full journey from development to multi-instance production
 - [Database Management](#database-management)
 - [Monitoring & Logging](#monitoring-and-logging)
 - [Security Best Practices](#security-best-practices)
-- [CI/CD Pipeline](#cicd-pipeline)
 - [Troubleshooting](#troubleshooting)
-
----
-
-## When Do You Need Docker?
-
-| Scenario | Recommendation |
-|----------|---------------|
-| Local development (SQLite only) | **Optional** — `npm run dev` works without Docker if you only need SQLite |
-| Local development (full stack) | **Yes** — PostgreSQL, MySQL, Redis, Soketi, Gotenberg, RustFS all run as containers |
-| Staging/preview environments | **Yes** — mirrors production exactly |
-| Single-server production | **Yes** — PM2 manages all processes |
-| Multi-server / load-balanced | **Yes** — Swarm or Compose with Traefik |
-| CI/CD testing | **Yes** — integration tests against real services |
-
-If your production stack uses PostgreSQL, Redis, Soketi, Gotenberg, or RustFS, you should use Docker from day one so your development environment matches production. Running `npm run dev` against containerized services gives you hot-reload speed with production-grade infrastructure.
-
-### Development with Docker Services
-
-Generate the Docker files, then run only the **infrastructure services** while keeping your SvelteKit dev server running natively for hot reload:
-
-```bash
-# Generate Docker files
-npx svelar make:docker
-
-# Start only infrastructure (not the app container)
-docker compose up -d postgres redis soketi gotenberg rustfs
-
-# Run your app with hot reload, connecting to Docker services
-npm run dev
-```
-
-Your `.env` should point to the Docker services:
-
-```bash
-# Database (PostgreSQL running in Docker)
-DB_DRIVER=postgres
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=svelar
-DB_USER=svelar
-DB_PASSWORD=secret
-
-# Redis (for queue + cache)
-REDIS_HOST=localhost
-REDIS_PORT=6379
-QUEUE_DRIVER=redis
-
-# Soketi (WebSockets)
-PUSHER_HOST=localhost
-PUSHER_PORT=6001
-PUSHER_KEY=svelar-key
-PUSHER_SECRET=svelar-secret
-PUSHER_APP_ID=svelar-app
-
-# Gotenberg (PDF)
-GOTENBERG_URL=http://localhost:3001
-
-# RustFS (S3 storage)
-S3_ENDPOINT=http://localhost:9000
-S3_ACCESS_KEY=svelar
-S3_SECRET_KEY=svelarsecret
-S3_BUCKET=svelar
-STORAGE_DISK=s3
-```
-
-This gives you the best of both worlds: instant hot reload from SvelteKit's dev server and real production services running locally. When you're ready to deploy, the same `docker compose up` starts everything including the app container.
-
-You can also deploy without Docker (bare Node.js + PM2 + systemd), but Docker gives you reproducible builds, isolated services, and one-command deployments.
 
 ---
 
 ## Quick Start
 
 ```bash
-# Generate Docker deployment files
-npx svelar make:docker
+# 1. Scaffold all deployment files
+npx svelar make:deploy
 
-# Build and start all services
-docker compose up -d --build
+# 2. Start development (hot-reload + all services)
+npx svelar dev:up
 
-# Run migrations
-docker compose exec app npx svelar migrate
+# 3. Run migrations
+docker compose -f docker-compose.yml -f docker-compose.dev.yml exec app npx svelar migrate
 
-# Seed the database
-docker compose exec app npx svelar seed:run
+# 4. View logs
+npx svelar dev:logs
 
-# View logs
-docker compose logs -f app
-
-# Stop everything
-docker compose down
+# 5. Stop everything
+npx svelar dev:down
 ```
 
-Your app is now running at `http://localhost:3000` with PostgreSQL, Redis, queue workers, scheduler, WebSockets (Soketi), PDF generation (Gotenberg), and S3-compatible storage (RustFS).
+Your app is now running at `http://localhost:5173` with hot-reload, backed by PostgreSQL, Redis, Soketi, Gotenberg, and RustFS.
+
+For production:
+
+```bash
+# Build and start production containers locally
+npx svelar prod:up
+
+# Or deploy latest image from registry
+npx svelar prod:deploy
+```
 
 ---
 
-## Generated Files
+## Scaffold Commands
 
-Running `npx svelar make:docker` generates four files:
+| Command | What it generates |
+|---------|-------------------|
+| `npx svelar make:deploy` | Runs all three commands below |
+| `npx svelar make:docker` | `Dockerfile`, `docker-compose.yml`, `docker-compose.dev.yml`, `docker-compose.prod.yml`, `.dockerignore`, `ecosystem.config.cjs`, `src/routes/api/health/+server.ts` |
+| `npx svelar make:ci` | `.github/workflows/deploy.yml` |
+| `npx svelar make:infra` | `infra/setup-droplet.sh`, `infra/droplet.env.example` |
 
-| File | Purpose |
-|------|---------|
-| `Dockerfile` | Multi-stage Node 20 Alpine build with PM2 |
-| `docker-compose.yml` | Full stack with all services |
-| `ecosystem.config.cjs` | PM2 config for web, worker, scheduler processes |
-| `.dockerignore` | Excludes node_modules, .env, build artifacts, db files |
-
-### Customization Flags
+### Flags
 
 ```bash
 # Database driver (default: postgres)
 npx svelar make:docker --db=postgres
 npx svelar make:docker --db=mysql
 npx svelar make:docker --db=sqlite
+
+# Docker image name (default: package.json name)
+npx svelar make:docker --image=myapp
+npx svelar make:ci --image=myapp
+
+# Registry prefix (default: Docker Hub)
+npx svelar make:docker --registry=ghcr.io/myorg
+npx svelar make:ci --registry=ghcr.io/myorg
 
 # Exclude optional services
 npx svelar make:docker --no-redis       # No Redis (uses in-memory queue)
@@ -153,61 +102,386 @@ npx svelar make:docker --no-rustfs       # No S3 storage
 npx svelar make:docker --no-redis --no-soketi --no-gotenberg --no-rustfs
 
 # Overwrite existing files
-npx svelar make:docker --force
+npx svelar make:deploy --force
+```
+
+---
+
+## Runtime Commands
+
+All commands are docker compose wrappers. They automatically use the correct compose override file (dev or prod) so you don't need to type `-f docker-compose.yml -f docker-compose.dev.yml` every time.
+
+### Development (`dev:*`)
+
+Uses `docker-compose.yml` + `docker-compose.dev.yml`. Builds the `development` Dockerfile target with source bind-mount and hot-reload on port 5173.
+
+| Command | What it runs |
+|---------|-------------|
+| `npx svelar dev:up` | `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build` |
+| `npx svelar dev:down` | `docker compose -f docker-compose.yml -f docker-compose.dev.yml down` |
+| `npx svelar dev:logs` | `docker compose -f docker-compose.yml -f docker-compose.dev.yml logs -f` |
+| `npx svelar dev:restart` | `dev:down` then `dev:up` |
+
+### Production (`prod:*`)
+
+Uses `docker-compose.yml` + `docker-compose.prod.yml`. Pulls a pre-built image from your registry instead of building locally.
+
+| Command | What it runs |
+|---------|-------------|
+| `npx svelar prod:up` | `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d` |
+| `npx svelar prod:down` | `docker compose -f docker-compose.yml -f docker-compose.prod.yml down` |
+| `npx svelar prod:logs` | `docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f` |
+| `npx svelar prod:restart` | `prod:down` then `prod:up` |
+| `npx svelar prod:deploy` | `pull` then `up -d` (pull latest image and restart) |
+
+### Targeting a specific service
+
+All runtime commands accept `--service <name>`:
+
+```bash
+npx svelar dev:logs --service=postgres
+npx svelar prod:restart --service=app
+npx svelar dev:up --service=redis
+```
+
+---
+
+## Generated Files
+
+### File Overview
+
+```
+your-project/
+├── Dockerfile                          # Multi-stage (base, deps, builder, production, development)
+├── docker-compose.yml                  # Base compose — all services (app, postgres, redis, etc.)
+├── docker-compose.dev.yml              # Dev override — builds development target, bind-mounts source
+├── docker-compose.prod.yml             # Prod override — uses pre-built image from registry
+├── .dockerignore                       # Excludes node_modules, .env, build artifacts
+├── ecosystem.config.cjs                # PM2 config (web, worker, scheduler)
+├── src/routes/api/health/+server.ts    # Health endpoint
+├── .github/workflows/deploy.yml        # GitHub Actions CI/CD
+└── infra/
+    ├── setup-droplet.sh                # Droplet provisioning script
+    └── droplet.env.example             # Production .env template
+```
+
+---
+
+## Architecture: Dev vs Prod
+
+Svelar uses **docker compose override files** to keep one `docker-compose.yml` (shared services) with environment-specific overrides.
+
+### How it works
+
+```
+docker-compose.yml           Base config — app service + infrastructure (postgres, redis, etc.)
+  + docker-compose.dev.yml   Dev override — builds FROM Dockerfile target=development
+  + docker-compose.prod.yml  Prod override — pulls pre-built image from registry
+```
+
+**Development** (`dev:up`):
+- Builds the `development` stage of the Dockerfile
+- Bind-mounts your source code into the container (`.:/app`)
+- Runs `npm run dev -- --host 0.0.0.0` with hot-reload
+- Exposes port **5173** (Vite dev server)
+- `node_modules` is an anonymous volume (not bind-mounted, so container uses its own)
+
+**Production** (`prod:up`):
+- Uses a **pre-built image** from Docker Hub / your registry
+- Runs `node build/index.js` via dumb-init as a non-root user
+- Exposes port **3000**
+- PM2 manages web, worker, and scheduler processes
+- Health check on `/api/health`
+
+### Development without Docker (hybrid approach)
+
+If you prefer running SvelteKit natively for hot-reload speed but want Docker for infrastructure:
+
+```bash
+# Start only infrastructure services
+npx svelar dev:up --service=postgres
+npx svelar dev:up --service=redis
+
+# Run your app natively
+npm run dev
+```
+
+Your `.env` should point to the Docker services on `localhost`:
+
+```bash
+DB_HOST=localhost
+DB_PORT=5432
+REDIS_HOST=localhost
+REDIS_PORT=6379
 ```
 
 ---
 
 ## Dockerfile
 
-The generated Dockerfile uses a multi-stage build for lean production images:
+The generated Dockerfile has **5 stages**: `base`, `deps`, `builder`, `production`, and `development`.
 
 ```dockerfile
-# Stage 1: Build
-FROM node:20-alpine AS builder
+# ── Base ──────────────────────────────────────────────────
+FROM node:20-alpine AS base
+RUN apk add --no-cache dumb-init
+RUN addgroup -g 1001 sveltekit && adduser -u 1001 -G sveltekit -s /bin/sh -D sveltekit
+
+# ── Dependencies (production only) ───────────────────────
+FROM base AS deps
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --omit=dev
+
+# ── Builder (full install + build) ───────────────────────
+FROM base AS builder
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
 RUN npm run build
-RUN npm prune --production
 
-# Stage 2: Production
-FROM node:20-alpine AS production
+# ── Production ───────────────────────────────────────────
+FROM base AS production
 WORKDIR /app
-RUN npm install -g pm2
+ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000
+COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/build ./build
-COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/ecosystem.config.cjs ./
 COPY --from=builder /app/src/lib/database ./src/lib/database
-
-RUN mkdir -p storage/logs storage/public
-
-ENV NODE_ENV=production
-ENV HOST=0.0.0.0
-ENV PORT=3000
+RUN mkdir -p storage/logs storage/public && chown -R sveltekit:sveltekit /app
+USER sveltekit
 EXPOSE 3000
-
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget -qO- http://localhost:3000/api/health || exit 1
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["node", "build/index.js"]
 
-CMD ["pm2-runtime", "ecosystem.config.cjs"]
+# ── Development (hot-reload) ─────────────────────────────
+FROM base AS development
+WORKDIR /app
+ENV NODE_ENV=development
+COPY package*.json ./
+RUN npm ci
+COPY . .
+EXPOSE 5173
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
 ```
 
 **Key design decisions:**
 
-- **Multi-stage** — builder stage installs all deps and compiles; production stage copies only what's needed. Final image is ~150MB instead of ~800MB.
-- **Layer caching** — `package*.json` is copied first so `npm ci` is cached unless dependencies change.
-- **Migrations at runtime** — `src/lib/database` is copied so you can run `npx svelar migrate` inside the container.
-- **Health check** — Docker monitors `/api/health` every 30s. Failed containers are restarted automatically.
-- **PM2** — manages web server, queue workers, and scheduler as child processes within a single container.
+| Feature | Why |
+|---------|-----|
+| **dumb-init** | Proper PID 1 signal handling — Node.js doesn't handle SIGTERM/SIGINT correctly as PID 1 |
+| **Non-root user** (`sveltekit:1001`) | Security — container never runs as root |
+| **Separate deps stage** | `npm ci --omit=dev` creates a lean `node_modules` without devDependencies |
+| **Multi-stage** | Final production image is ~150MB instead of ~800MB |
+| **Layer caching** | `package*.json` is copied first so `npm ci` is cached unless dependencies change |
+| **Migrations at runtime** | `src/lib/database` is copied so you can run `npx svelar migrate` inside the container |
+| **Health check** | Docker monitors `/api/health` every 30s. Failed containers are restarted automatically |
+| **Development target** | `docker compose.dev.yml` builds this stage for hot-reload in Docker |
+
+---
+
+## Docker Compose Files
+
+### `docker-compose.yml` (base)
+
+The base compose file defines all services — app, database, Redis, Soketi, Gotenberg, RustFS. It uses `build: .` for the app service (builds the production Dockerfile target by default).
+
+The dev and prod override files **replace** the app service's build/image configuration.
+
+### `docker-compose.dev.yml`
+
+```yaml
+services:
+  app:
+    build:
+      context: .
+      target: development          # Uses the 'development' Dockerfile stage
+    ports:
+      - "${DEV_PORT:-5173}:5173"   # Vite dev server port
+    volumes:
+      - .:/app                     # Bind-mount source for hot-reload
+      - /app/node_modules          # Anonymous volume — container keeps its own node_modules
+    environment:
+      - NODE_ENV=development
+```
+
+This overrides the `app` service from the base compose file:
+- **Builds the `development` target** instead of `production`
+- **Bind-mounts your source code** so file changes trigger hot-reload
+- **Maps port 5173** (Vite dev server) instead of 3000
+- All infrastructure services (postgres, redis, etc.) come from the base compose file unchanged
+
+### `docker-compose.prod.yml`
+
+```yaml
+services:
+  app:
+    image: ${DOCKER_IMAGE:-myapp}:latest
+    # No build — uses pre-built image from registry
+```
+
+This overrides the `app` service to:
+- **Pull a pre-built image** from Docker Hub (or your registry) instead of building locally
+- Set `DOCKER_IMAGE` in your `.env` to your Docker Hub username/image name
+- The image was built and pushed by GitHub Actions (or `docker build -t myapp . && docker push myapp`)
+
+---
+
+## Health Endpoint
+
+`make:docker` generates `src/routes/api/health/+server.ts`:
+
+```typescript
+import { json } from '@sveltejs/kit';
+
+export const GET = () => json({
+  status: 'ok',
+  timestamp: new Date().toISOString(),
+  uptime: process.uptime(),
+});
+```
+
+Used by:
+- **Dockerfile HEALTHCHECK** — Docker restarts the container if this endpoint fails
+- **Traefik load balancer** — routes traffic only to healthy containers
+- **GitHub Actions deploy** — can verify deployment success
+- **Monitoring** — external uptime checks
+
+---
+
+## GitHub Actions CI/CD
+
+`npx svelar make:ci` generates `.github/workflows/deploy.yml` — a complete build, push, and SSH deploy pipeline.
+
+### What it does
+
+1. **Triggers** on push to `main`
+2. **Builds** the Docker image (production target) with Buildx + layer caching
+3. **Pushes** to Docker Hub with `:latest` and `:sha` tags
+4. **SSHs** into your droplet and runs `docker compose pull && up -d`
+
+### Required GitHub Secrets
+
+| Secret | Description |
+|--------|-------------|
+| `DOCKER_USERNAME` | Docker Hub username |
+| `DOCKER_TOKEN` | Docker Hub access token (not password) |
+| `DROPLET_HOST` | Droplet IP address or hostname |
+| `DROPLET_USER` | SSH user on the droplet (e.g. `deploy`) |
+| `DROPLET_SSH_KEY` | Private SSH key for the deploy user |
+
+### Generated workflow
+
+```yaml
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+env:
+  DOCKER_IMAGE: ${{ secrets.DOCKER_USERNAME }}/myapp
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: production
+          push: true
+          tags: |
+            ${{ env.DOCKER_IMAGE }}:latest
+            ${{ env.DOCKER_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DROPLET_HOST }}
+          username: ${{ secrets.DROPLET_USER }}
+          key: ${{ secrets.DROPLET_SSH_KEY }}
+          script: |
+            cd ~/app
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+            docker image prune -f
+```
+
+### Custom registries
+
+To use GitHub Container Registry instead of Docker Hub:
+
+```bash
+npx svelar make:ci --registry=ghcr.io/myorg --image=myapp
+```
+
+---
+
+## Infrastructure Setup
+
+`npx svelar make:infra` generates two files for provisioning a DigitalOcean droplet (or any Ubuntu 22.04+ server).
+
+### `infra/setup-droplet.sh`
+
+Run this on a fresh droplet as root:
+
+```bash
+ssh root@your-droplet 'bash -s' < infra/setup-droplet.sh
+```
+
+It does:
+1. Creates a `deploy` user with sudo access
+2. Copies SSH authorized keys from root
+3. Installs Docker + Docker Compose plugin
+4. Creates the project directory (`~/app`) with correct permissions
+5. Configures UFW firewall (allow SSH, HTTP, HTTPS)
+
+### `infra/droplet.env.example`
+
+A commented `.env` template with all production variables. Copy it to the droplet:
+
+```bash
+scp infra/droplet.env.example deploy@your-droplet:~/app/.env
+# Then edit with real values
+ssh deploy@your-droplet 'nano ~/app/.env'
+```
+
+### Full deployment flow
+
+```bash
+# 1. Scaffold everything
+npx svelar make:deploy
+
+# 2. Provision the droplet
+ssh root@your-droplet 'bash -s' < infra/setup-droplet.sh
+
+# 3. Copy compose files to the droplet
+scp docker-compose.yml docker-compose.prod.yml deploy@your-droplet:~/app/
+
+# 4. Copy and edit the .env
+scp infra/droplet.env.example deploy@your-droplet:~/app/.env
+ssh deploy@your-droplet 'nano ~/app/.env'
+
+# 5. Push to GitHub — the workflow handles the rest
+git push origin main
+```
 
 ---
 
 ## Docker Compose Services
 
-The default `docker-compose.yml` includes up to 7 services:
+The base `docker-compose.yml` includes up to 7 services depending on your flags:
 
 ### App
 
@@ -242,8 +516,8 @@ postgres:
     - pgdata:/var/lib/postgresql/data
   healthcheck:
     test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-svelar}"]
-    interval: 5s
-    timeout: 3s
+    interval: 10s
+    timeout: 5s
     retries: 5
 ```
 
@@ -259,8 +533,8 @@ redis:
     - redisdata:/data
   healthcheck:
     test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-svelarsecret}", "ping"]
-    interval: 5s
-    timeout: 3s
+    interval: 10s
+    timeout: 5s
     retries: 5
 ```
 
@@ -271,14 +545,11 @@ soketi:
   image: quay.io/soketi/soketi:1.6-16-debian
   restart: unless-stopped
   # No ports exposed — only reachable by app via Docker network
-  # Uncomment below if browser clients connect directly to Soketi
-  # ports:
-  #   - "${SOKETI_PORT:-6001}:6001"
   environment:
-    SOKETI_DEFAULT_APP_ID: ${PUSHER_APP_ID:-svelar-app}
-    SOKETI_DEFAULT_APP_KEY: ${PUSHER_KEY:-svelar-key}
-    SOKETI_DEFAULT_APP_SECRET: ${PUSHER_SECRET:-svelar-secret}
-    SOKETI_DEFAULT_APP_MAX_CONNS: ${SOKETI_MAX_CONNS:-1000}
+    SOKETI_DEFAULT_APP_ID: ${PUSHER_APP_ID}
+    SOKETI_DEFAULT_APP_KEY: ${PUSHER_KEY}
+    SOKETI_DEFAULT_APP_SECRET: ${PUSHER_SECRET}
+    SOKETI_DEFAULT_APP_MAX_CONNS: "${SOKETI_MAX_CONNS:-1000}"
     SOKETI_DEFAULT_APP_ENABLE_CLIENT_MESSAGES: "true"
 ```
 
@@ -288,10 +559,9 @@ soketi:
 gotenberg:
   image: gotenberg/gotenberg:8
   restart: unless-stopped
-  # No ports exposed — only reachable by app via Docker network
   environment:
     CHROMIUM_DISABLE_JAVASCRIPT: "false"
-    API_TIMEOUT: ${GOTENBERG_TIMEOUT:-60s}
+    API_TIMEOUT: "${GOTENBERG_TIMEOUT:-60s}"
 ```
 
 ### RustFS (S3-Compatible Storage)
@@ -310,7 +580,7 @@ rustfs:
     - rustfs_data:/data
 ```
 
-RustFS web console is available at `http://localhost:9001` for browsing buckets and managing files.
+RustFS web console is available at `http://localhost:9001`.
 
 ### Meilisearch (Full-Text Search)
 
@@ -320,10 +590,6 @@ Opt-in with `npx svelar make:docker --meilisearch`:
 meilisearch:
   image: getmeili/meilisearch:v1.13
   restart: unless-stopped
-  # No ports exposed — only reachable by app via Docker network
-  # Uncomment below to access the dashboard from the host
-  # ports:
-  #   - "${MEILI_PORT:-7700}:7700"
   environment:
     MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-svelar-meili-master-key}
     MEILI_ENV: production
@@ -338,35 +604,11 @@ meilisearch:
     retries: 5
 ```
 
-The app connects via the Docker network using `MEILISEARCH_HOST=http://meilisearch:7700`. Install the JS SDK in your project:
-
-```bash
-npm install meilisearch
-```
-
-Basic usage:
-
-```typescript
-import { MeiliSearch } from 'meilisearch';
-
-const client = new MeiliSearch({
-  host: process.env.MEILISEARCH_HOST ?? 'http://localhost:7700',
-  apiKey: process.env.MEILISEARCH_KEY,
-});
-
-// Index documents
-const index = client.index('posts');
-await index.addDocuments(posts);
-
-// Search
-const results = await index.search('query');
-```
-
 ---
 
 ## PM2 Process Management
 
-The `ecosystem.config.cjs` runs three processes inside the app container:
+The `ecosystem.config.cjs` runs three processes inside the production container:
 
 | Process | Mode | Instances | Purpose |
 |---------|------|-----------|---------|
@@ -386,8 +628,6 @@ module.exports = {
       kill_timeout: 5000,
       listen_timeout: 10000,
       wait_ready: true,
-      error_file: 'storage/logs/web-error.log',
-      out_file: 'storage/logs/web-out.log',
     },
     {
       name: 'worker',
@@ -396,8 +636,6 @@ module.exports = {
       instances: 2,
       exec_mode: 'fork',
       autorestart: true,
-      error_file: 'storage/logs/worker-error.log',
-      out_file: 'storage/logs/worker-out.log',
     },
     {
       name: 'scheduler',
@@ -407,8 +645,6 @@ module.exports = {
       exec_mode: 'fork',
       autorestart: true,
       cron_restart: '0 */6 * * *',  // Restart every 6h
-      error_file: 'storage/logs/scheduler-error.log',
-      out_file: 'storage/logs/scheduler-out.log',
     },
   ],
 };
@@ -444,10 +680,12 @@ docker compose exec app pm2 scale worker 4
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NODE_ENV` | `production` | Node environment |
-| `APP_PORT` | `3000` | Host port mapping |
+| `APP_PORT` | `3000` | Host port mapping (production) |
+| `DEV_PORT` | `5173` | Host port mapping (development) |
 | `APP_URL` | — | Public URL (for email links, OAuth callbacks) |
 | `APP_KEY` | — | Secret key for session encryption |
 | `INTERNAL_SECRET` | — | Secret for internal API bridge (scheduler broadcasts) |
+| `DOCKER_IMAGE` | package.json name | Docker image for `docker-compose.prod.yml` |
 
 ### Database
 
@@ -536,7 +774,7 @@ For production deployments, put Traefik in front of your app for SSL termination
 
 ### Basic Traefik Setup
 
-Create a `docker-compose.traefik.yml` alongside your generated `docker-compose.yml`:
+Create a `docker-compose.traefik.yml` alongside your generated compose files:
 
 ```yaml
 # docker-compose.traefik.yml
@@ -550,7 +788,7 @@ services:
       - "--providers.docker.exposedByDefault=false"
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
-      # Redirect HTTP → HTTPS
+      # Redirect HTTP -> HTTPS
       - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
       - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
       # Let's Encrypt
@@ -583,7 +821,6 @@ services:
       - web
       - default
 
-  # Expose Soketi through Traefik (WebSocket support)
   soketi:
     extends:
       file: docker-compose.yml
@@ -617,26 +854,10 @@ export APP_DOMAIN=myapp.example.com
 export ACME_EMAIL=admin@example.com
 
 # Start with Traefik
-docker compose -f docker-compose.yml -f docker-compose.traefik.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.traefik.yml up -d
 ```
 
 Your app is now available at `https://myapp.example.com` with auto-renewing Let's Encrypt certificates. WebSocket connections go through `wss://ws.myapp.example.com`.
-
-### Traefik Dashboard
-
-To access the Traefik dashboard, add these labels to the traefik service:
-
-```yaml
-labels:
-  - "traefik.http.routers.dashboard.rule=Host(`traefik.${APP_DOMAIN}`)"
-  - "traefik.http.routers.dashboard.service=api@internal"
-  - "traefik.http.routers.dashboard.entrypoints=websecure"
-  - "traefik.http.routers.dashboard.tls.certresolver=letsencrypt"
-  - "traefik.http.routers.dashboard.middlewares=auth"
-  - "traefik.http.middlewares.auth.basicauth.users=${TRAEFIK_AUTH}"
-```
-
-Generate the auth string: `htpasswd -nb admin your-password`.
 
 ### Rate Limiting and Headers
 
@@ -666,11 +887,8 @@ labels:
 Traefik handles SSL automatically through Let's Encrypt. For custom certificates:
 
 ```yaml
-# Static configuration
 command:
   - "--providers.file.filename=/etc/traefik/dynamic.yml"
-
-# Mount your certificates
 volumes:
   - ./certs:/certs:ro
   - ./traefik-dynamic.yml:/etc/traefik/dynamic.yml:ro
@@ -709,7 +927,7 @@ Traefik automatically detects new containers and distributes traffic across them
 
 ### Sticky Sessions
 
-If your app uses server-side sessions, enable sticky sessions so each user always hits the same container:
+If your app uses server-side sessions, enable sticky sessions:
 
 ```yaml
 labels:
@@ -719,11 +937,11 @@ labels:
   - "traefik.http.services.app.loadbalancer.sticky.cookie.secure=true"
 ```
 
-> **Note:** If you use `DatabaseSessionStore` (the default), sticky sessions are not strictly required since all instances read from the same database. Sticky sessions are mainly needed with `MemorySessionStore` or file-based sessions.
+> **Note:** If you use `DatabaseSessionStore` (the default), sticky sessions are not strictly required since all instances read from the same database.
 
 ### Scheduler with Multiple Instances
 
-When scaling to multiple containers, **only one scheduler should run tasks at a time**. Svelar's `SchedulerLock` handles this automatically — it uses database-backed distributed locking to prevent duplicate execution. Every container can run a scheduler process; only one will acquire the lock and execute each task.
+When scaling to multiple containers, **only one scheduler should run tasks at a time**. Svelar's `SchedulerLock` handles this automatically with database-backed distributed locking.
 
 ---
 
@@ -739,133 +957,8 @@ production/
 ├── docker-compose.blue.yml     # Blue environment
 ├── docker-compose.green.yml    # Green environment
 ├── docker-compose.traefik.yml  # Traefik load balancer
-├── .env                        # Shared environment variables
-└── deploy.sh                   # Deployment script
-```
-
-### Shared Services
-
-```yaml
-# docker-compose.yml
-services:
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${DB_NAME:-svelar}
-      POSTGRES_USER: ${DB_USER:-svelar}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-svelar}"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-    networks:
-      - backend
-
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    volumes:
-      - redisdata:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-    networks:
-      - backend
-
-volumes:
-  pgdata:
-  redisdata:
-
-networks:
-  backend:
-  web:
-    external: true
-```
-
-### Blue Environment
-
-```yaml
-# docker-compose.blue.yml
-services:
-  app-blue:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      NODE_ENV: production
-      DB_HOST: postgres
-      REDIS_HOST: redis
-      DEPLOYMENT_COLOR: blue
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    volumes:
-      - app_storage:/app/storage
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.app-blue.rule=Host(`${APP_DOMAIN}`)"
-      - "traefik.http.routers.app-blue.entrypoints=websecure"
-      - "traefik.http.routers.app-blue.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.app-blue.priority=10"
-      - "traefik.http.services.app-blue.loadbalancer.server.port=3000"
-      - "traefik.http.services.app-blue.loadbalancer.healthcheck.path=/api/health"
-      - "traefik.http.services.app-blue.loadbalancer.healthcheck.interval=5s"
-    networks:
-      - backend
-      - web
-
-volumes:
-  app_storage:
-```
-
-### Green Environment
-
-```yaml
-# docker-compose.green.yml
-services:
-  app-green:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      NODE_ENV: production
-      DB_HOST: postgres
-      REDIS_HOST: redis
-      DEPLOYMENT_COLOR: green
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    volumes:
-      - app_storage:/app/storage
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.app-green.rule=Host(`${APP_DOMAIN}`)"
-      - "traefik.http.routers.app-green.entrypoints=websecure"
-      - "traefik.http.routers.app-green.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.app-green.priority=10"
-      - "traefik.http.services.app-green.loadbalancer.server.port=3000"
-      - "traefik.http.services.app-green.loadbalancer.healthcheck.path=/api/health"
-      - "traefik.http.services.app-green.loadbalancer.healthcheck.interval=5s"
-    networks:
-      - backend
-      - web
-
-volumes:
-  app_storage:
+├── .env
+└── deploy.sh
 ```
 
 ### Deployment Script
@@ -878,27 +971,21 @@ set -euo pipefail
 APP_DOMAIN="${APP_DOMAIN:?Set APP_DOMAIN}"
 CURRENT_FILE=".current-deployment"
 
-# Determine current and next color
 if [ -f "$CURRENT_FILE" ] && [ "$(cat $CURRENT_FILE)" = "blue" ]; then
-  CURRENT="blue"
-  NEXT="green"
+  CURRENT="blue"; NEXT="green"
 else
-  CURRENT="green"
-  NEXT="blue"
+  CURRENT="green"; NEXT="blue"
 fi
 
 echo "==> Current: $CURRENT | Deploying: $NEXT"
 
 # 1. Build the new environment
-echo "==> Building $NEXT..."
 docker compose -f docker-compose.yml -f docker-compose.${NEXT}.yml build
 
-# 2. Start the new environment (Traefik won't route to it until healthy)
-echo "==> Starting $NEXT..."
+# 2. Start (Traefik won't route until healthy)
 docker compose -f docker-compose.yml -f docker-compose.${NEXT}.yml up -d
 
-# 3. Wait for the new environment to be healthy
-echo "==> Waiting for $NEXT to become healthy..."
+# 3. Wait for health check
 RETRIES=30
 until docker compose -f docker-compose.yml -f docker-compose.${NEXT}.yml \
   exec app-${NEXT} wget -qO- http://localhost:3000/api/health > /dev/null 2>&1; do
@@ -911,65 +998,25 @@ until docker compose -f docker-compose.yml -f docker-compose.${NEXT}.yml \
   sleep 2
 done
 
-# 4. Run migrations on the new environment
-echo "==> Running migrations on $NEXT..."
+# 4. Run migrations
 docker compose -f docker-compose.yml -f docker-compose.${NEXT}.yml \
   exec app-${NEXT} npx svelar migrate
 
-# 5. Increase priority so Traefik routes to the new environment
-echo "==> Switching traffic to $NEXT..."
+# 5. Switch traffic
 docker compose -f docker-compose.yml -f docker-compose.${NEXT}.yml up -d
 
 # 6. Stop the old environment
-echo "==> Stopping $CURRENT..."
 docker compose -f docker-compose.yml -f docker-compose.${CURRENT}.yml down
 
-# 7. Record current deployment
 echo "$NEXT" > "$CURRENT_FILE"
-
 echo "==> Deployment complete. Active: $NEXT"
-```
-
-### Usage
-
-```bash
-chmod +x deploy.sh
-
-# First deployment (starts blue)
-docker compose -f docker-compose.yml up -d                # shared services
-docker compose -f docker-compose.traefik.yml up -d        # traefik
-./deploy.sh                                               # deploys blue
-
-# Subsequent deployments (alternates blue ↔ green)
-git pull
-./deploy.sh    # builds green, health checks, migrates, switches, stops blue
-./deploy.sh    # builds blue, health checks, migrates, switches, stops green
-```
-
-### Rollback
-
-If something goes wrong after switching:
-
-```bash
-# Read current color and swap back
-CURRENT=$(cat .current-deployment)
-if [ "$CURRENT" = "blue" ]; then PREVIOUS="green"; else PREVIOUS="blue"; fi
-
-# Start the previous environment
-docker compose -f docker-compose.yml -f docker-compose.${PREVIOUS}.yml up -d
-
-# Stop the broken one
-docker compose -f docker-compose.yml -f docker-compose.${CURRENT}.yml down
-
-# Update state
-echo "$PREVIOUS" > .current-deployment
 ```
 
 ---
 
 ## Docker Swarm
 
-Docker Swarm provides native container orchestration with built-in service discovery, rolling updates, and multi-node clustering. It's simpler than Kubernetes and works well for Svelar deployments.
+Docker Swarm provides native container orchestration with rolling updates and multi-node clustering.
 
 ### Initialize Swarm
 
@@ -977,160 +1024,8 @@ Docker Swarm provides native container orchestration with built-in service disco
 # On the manager node
 docker swarm init --advertise-addr <MANAGER_IP>
 
-# On worker nodes (use the token from swarm init output)
+# On worker nodes
 docker swarm join --token <TOKEN> <MANAGER_IP>:2377
-```
-
-### Swarm Stack File
-
-Create a `docker-stack.yml`:
-
-```yaml
-# docker-stack.yml
-version: "3.8"
-
-services:
-  traefik:
-    image: traefik:v3
-    command:
-      - "--api.dashboard=true"
-      - "--providers.docker.swarmMode=true"
-      - "--providers.docker.exposedByDefault=false"
-      - "--entrypoints.web.address=:80"
-      - "--entrypoints.websecure.address=:443"
-      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
-      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
-      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
-      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
-      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
-      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - letsencrypt:/letsencrypt
-    networks:
-      - web
-    deploy:
-      placement:
-        constraints:
-          - node.role == manager
-      restart_policy:
-        condition: any
-
-  app:
-    image: ${REGISTRY}/svelar-app:${TAG:-latest}
-    env_file: .env
-    environment:
-      NODE_ENV: production
-      DB_HOST: postgres
-      REDIS_HOST: redis
-    volumes:
-      - app_storage:/app/storage
-    networks:
-      - web
-      - backend
-    deploy:
-      replicas: 3
-      update_config:
-        parallelism: 1
-        delay: 30s
-        order: start-first
-        failure_action: rollback
-        monitor: 60s
-      rollback_config:
-        parallelism: 1
-        delay: 10s
-      restart_policy:
-        condition: any
-        delay: 5s
-        max_attempts: 3
-      labels:
-        - "traefik.enable=true"
-        - "traefik.http.routers.app.rule=Host(`${APP_DOMAIN}`)"
-        - "traefik.http.routers.app.entrypoints=websecure"
-        - "traefik.http.routers.app.tls.certresolver=letsencrypt"
-        - "traefik.http.services.app.loadbalancer.server.port=3000"
-        - "traefik.http.services.app.loadbalancer.healthcheck.path=/api/health"
-        - "traefik.http.services.app.loadbalancer.healthcheck.interval=10s"
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
-      interval: 30s
-      timeout: 5s
-      start_period: 10s
-      retries: 3
-
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: ${DB_NAME:-svelar}
-      POSTGRES_USER: ${DB_USER:-svelar}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    networks:
-      - backend
-    deploy:
-      replicas: 1
-      placement:
-        constraints:
-          - node.role == manager
-      restart_policy:
-        condition: any
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-svelar}"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
-  redis:
-    image: redis:7-alpine
-    volumes:
-      - redisdata:/data
-    networks:
-      - backend
-    deploy:
-      replicas: 1
-      restart_policy:
-        condition: any
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
-  soketi:
-    image: quay.io/soketi/soketi:1.6-16-debian
-    environment:
-      SOKETI_DEFAULT_APP_ID: ${PUSHER_APP_ID:-svelar-app}
-      SOKETI_DEFAULT_APP_KEY: ${PUSHER_KEY:-svelar-key}
-      SOKETI_DEFAULT_APP_SECRET: ${PUSHER_SECRET:-svelar-secret}
-      SOKETI_DEFAULT_APP_MAX_CONNS: ${SOKETI_MAX_CONNS:-1000}
-      SOKETI_DEFAULT_APP_ENABLE_CLIENT_MESSAGES: "true"
-    networks:
-      - web
-      - backend
-    deploy:
-      replicas: 1
-      labels:
-        - "traefik.enable=true"
-        - "traefik.http.routers.soketi.rule=Host(`ws.${APP_DOMAIN}`)"
-        - "traefik.http.routers.soketi.entrypoints=websecure"
-        - "traefik.http.routers.soketi.tls.certresolver=letsencrypt"
-        - "traefik.http.services.soketi.loadbalancer.server.port=6001"
-
-volumes:
-  letsencrypt:
-  pgdata:
-  redisdata:
-  app_storage:
-
-networks:
-  web:
-    driver: overlay
-  backend:
-    driver: overlay
 ```
 
 ### Deploy the Stack
@@ -1140,10 +1035,10 @@ networks:
 docker build -t ${REGISTRY}/svelar-app:v1.0.0 .
 docker push ${REGISTRY}/svelar-app:v1.0.0
 
-# Deploy the stack
+# Deploy
 TAG=v1.0.0 docker stack deploy -c docker-stack.yml svelar
 
-# Run migrations (on any running app container)
+# Run migrations
 docker exec $(docker ps -q -f name=svelar_app | head -1) npx svelar migrate
 
 # Check status
@@ -1151,129 +1046,7 @@ docker stack services svelar
 docker service logs svelar_app -f
 ```
 
-### Key Swarm Configuration
-
-The `update_config` section controls rolling updates:
-
-| Setting | Value | Purpose |
-|---------|-------|---------|
-| `parallelism: 1` | — | Update one container at a time |
-| `delay: 30s` | — | Wait 30s between each container update |
-| `order: start-first` | — | Start new container before stopping old one (zero downtime) |
-| `failure_action: rollback` | — | Auto-rollback if update fails |
-| `monitor: 60s` | — | Watch new container for 60s before proceeding |
-
-### Scaling in Swarm
-
-```bash
-# Scale app to 5 replicas
-docker service scale svelar_app=5
-
-# Scale workers
-docker service scale svelar_worker=4
-
-# Check placement across nodes
-docker service ps svelar_app
-```
-
----
-
-## Blue-Green Deployments with Docker Swarm
-
-Swarm's built-in rolling updates already provide zero-downtime deployments. For full blue-green isolation (where you can test the new version before switching traffic), use service labels:
-
-### Strategy
-
-1. Deploy the new version as a separate service (`app-green`)
-2. Test it on an internal URL
-3. Update Traefik labels to route production traffic to green
-4. Remove the old blue service
-
-```bash
-#!/usr/bin/env bash
-# swarm-blue-green.sh
-set -euo pipefail
-
-REGISTRY="${REGISTRY:?Set REGISTRY}"
-TAG="${TAG:?Set TAG}"
-APP_DOMAIN="${APP_DOMAIN:?Set APP_DOMAIN}"
-CURRENT_FILE=".current-deployment"
-
-if [ -f "$CURRENT_FILE" ] && [ "$(cat $CURRENT_FILE)" = "blue" ]; then
-  CURRENT="blue"; NEXT="green"
-else
-  CURRENT="green"; NEXT="blue"
-fi
-
-echo "==> Current: $CURRENT | Deploying: $NEXT"
-
-# 1. Build and push
-echo "==> Building and pushing image..."
-docker build -t ${REGISTRY}/svelar-app:${TAG} .
-docker push ${REGISTRY}/svelar-app:${TAG}
-
-# 2. Deploy new version as a staging service (internal only, no Traefik)
-echo "==> Deploying $NEXT as staging..."
-docker service create \
-  --name svelar_app-${NEXT} \
-  --replicas 3 \
-  --network svelar_web \
-  --network svelar_backend \
-  --env-file .env \
-  --env NODE_ENV=production \
-  --env DB_HOST=svelar_postgres \
-  --env REDIS_HOST=svelar_redis \
-  --env DEPLOYMENT_COLOR=${NEXT} \
-  --mount type=volume,source=svelar_app_storage,target=/app/storage \
-  --health-cmd "wget -qO- http://localhost:3000/api/health || exit 1" \
-  --health-interval 10s \
-  --health-retries 3 \
-  --health-start-period 15s \
-  ${REGISTRY}/svelar-app:${TAG}
-
-# 3. Wait for all replicas to be healthy
-echo "==> Waiting for $NEXT to become healthy..."
-RETRIES=60
-while true; do
-  RUNNING=$(docker service ps svelar_app-${NEXT} --filter "desired-state=running" -q | wc -l)
-  HEALTHY=$(docker service ps svelar_app-${NEXT} --filter "desired-state=running" --format "{{.CurrentState}}" | grep -c "Running" || true)
-  if [ "$HEALTHY" -ge 3 ]; then break; fi
-  RETRIES=$((RETRIES - 1))
-  if [ $RETRIES -le 0 ]; then
-    echo "==> ERROR: $NEXT failed to start. Removing."
-    docker service rm svelar_app-${NEXT}
-    exit 1
-  fi
-  sleep 5
-done
-
-# 4. Run migrations
-echo "==> Running migrations on $NEXT..."
-CONTAINER=$(docker ps -q -f name=svelar_app-${NEXT} | head -1)
-docker exec "$CONTAINER" npx svelar migrate
-
-# 5. Switch Traefik labels to the new service
-echo "==> Switching traffic to $NEXT..."
-docker service update \
-  --label-add "traefik.enable=true" \
-  --label-add "traefik.http.routers.app.rule=Host(\`${APP_DOMAIN}\`)" \
-  --label-add "traefik.http.routers.app.entrypoints=websecure" \
-  --label-add "traefik.http.routers.app.tls.certresolver=letsencrypt" \
-  --label-add "traefik.http.services.app.loadbalancer.server.port=3000" \
-  svelar_app-${NEXT}
-
-# 6. Remove old service
-echo "==> Removing $CURRENT..."
-docker service rm svelar_app-${CURRENT} 2>/dev/null || true
-
-# 7. Record state
-echo "$NEXT" > "$CURRENT_FILE"
-echo "==> Deployment complete. Active: $NEXT"
-```
-
-### Rolling Update Alternative
-
-If full blue-green isolation isn't necessary, Swarm's built-in rolling updates are simpler and equally zero-downtime:
+### Rolling Updates
 
 ```bash
 # Update the image (Swarm handles the rest)
@@ -1285,12 +1058,22 @@ docker service update \
   --update-failure-action rollback \
   svelar_app
 
-# Watch the rollout
-docker service ps svelar_app
-
 # Manual rollback if needed
 docker service rollback svelar_app
 ```
+
+### Scaling
+
+```bash
+docker service scale svelar_app=5
+docker service scale svelar_worker=4
+```
+
+---
+
+## Blue-Green Deployments with Docker Swarm
+
+Swarm's built-in rolling updates already provide zero-downtime deployments. For full blue-green isolation, deploy the new version as a separate service, test it, then switch Traefik labels.
 
 ---
 
@@ -1298,11 +1081,12 @@ docker service rollback svelar_app
 
 ### Migrations in Docker
 
-Always run migrations before starting the new version:
-
 ```bash
-# Docker Compose
-docker compose exec app npx svelar migrate
+# Development
+docker compose -f docker-compose.yml -f docker-compose.dev.yml exec app npx svelar migrate
+
+# Production
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec app npx svelar migrate
 
 # Docker Swarm
 docker exec $(docker ps -q -f name=svelar_app | head -1) npx svelar migrate
@@ -1319,35 +1103,6 @@ docker compose exec -T postgres psql -U svelar svelar < backup.sql
 
 # MySQL backup
 docker compose exec mysql mysqldump -u svelar -psecret svelar > backup.sql
-
-# SQLite backup (copy the file)
-docker compose exec app cp database.db /app/storage/backup_$(date +%Y%m%d).db
-docker compose cp app:/app/storage/backup_$(date +%Y%m%d).db ./
-```
-
-### Automated Backup Schedule
-
-Add a backup service to your compose file:
-
-```yaml
-backup:
-  image: postgres:16-alpine
-  environment:
-    PGHOST: postgres
-    PGUSER: ${DB_USER:-svelar}
-    PGPASSWORD: ${DB_PASSWORD:-secret}
-    PGDATABASE: ${DB_NAME:-svelar}
-  volumes:
-    - ./backups:/backups
-  entrypoint: >
-    sh -c 'while true; do
-      pg_dump > /backups/svelar_$$(date +%Y%m%d_%H%M%S).sql
-      find /backups -name "*.sql" -mtime +7 -delete
-      sleep 86400
-    done'
-  depends_on:
-    postgres:
-      condition: service_healthy
 ```
 
 ---
@@ -1357,41 +1112,15 @@ backup:
 ### Application Logs
 
 ```bash
-# All PM2 process logs
-docker compose logs -f app
+# Using Svelar CLI
+npx svelar dev:logs                    # All dev services
+npx svelar dev:logs --service=app      # Just the app
+npx svelar prod:logs                   # All prod services
 
-# Specific process logs
+# PM2 logs inside the container
 docker compose exec app pm2 logs web
 docker compose exec app pm2 logs worker
 docker compose exec app pm2 logs scheduler
-
-# Log files on the host (via volume mount)
-ls storage/logs/
-# web-out.log, web-error.log, worker-out.log, scheduler-out.log
-```
-
-### Svelar Log Viewer
-
-Svelar's built-in log viewer is available through the admin dashboard. You can also access logs programmatically:
-
-```typescript
-import { LogViewer } from '@beeblock/svelar/logging/LogViewer';
-
-const stats = LogViewer.getStats();
-const errors = LogViewer.search({ level: 'error', limit: 50 });
-```
-
-### PM2 Monitoring
-
-```bash
-# Real-time process metrics
-docker compose exec app pm2 monit
-
-# Process list with CPU/memory
-docker compose exec app pm2 list
-
-# JSON metrics (for external monitoring)
-docker compose exec app pm2 jlist
 ```
 
 ### Container Health
@@ -1402,17 +1131,14 @@ docker compose ps
 
 # Inspect health check details
 docker inspect --format='{{json .State.Health}}' <container_id> | jq
-
-# Service health in Swarm
-docker service ps svelar_app --no-trunc
 ```
 
-### Soketi Metrics
-
-Soketi exposes Prometheus-compatible metrics on port 9601:
+### PM2 Monitoring
 
 ```bash
-curl http://localhost:9601/metrics
+docker compose exec app pm2 monit      # Real-time metrics
+docker compose exec app pm2 list       # Process list with CPU/memory
+docker compose exec app pm2 jlist      # JSON metrics for external monitoring
 ```
 
 ---
@@ -1421,7 +1147,7 @@ curl http://localhost:9601/metrics
 
 ### Secrets Management
 
-Never commit secrets to your repository. Use Docker secrets or environment files:
+Never commit secrets to your repository:
 
 ```bash
 # Docker Compose — use .env file (not committed to git)
@@ -1429,26 +1155,6 @@ echo ".env" >> .gitignore
 
 # Docker Swarm — use Docker secrets
 echo "my-secret-key" | docker secret create app_key -
-echo "my-jwt-secret" | docker secret create jwt_secret -
-```
-
-In your stack file:
-
-```yaml
-services:
-  app:
-    secrets:
-      - app_key
-      - jwt_secret
-    environment:
-      APP_KEY_FILE: /run/secrets/app_key
-      JWT_SECRET_FILE: /run/secrets/jwt_secret
-
-secrets:
-  app_key:
-    external: true
-  jwt_secret:
-    external: true
 ```
 
 ### Production `.env` Checklist
@@ -1471,9 +1177,7 @@ APP_DOMAIN=myapp.example.com
 
 # RECOMMENDED
 NODE_ENV=production
-MAIL_DRIVER=postmark   # or resend, smtp
-AUTH_OTP_ENABLED=true
-AUTH_EMAIL_VERIFICATION_REQUIRED=true
+MAIL_DRIVER=postmark
 ```
 
 ### Network Isolation
@@ -1482,131 +1186,17 @@ Only expose what's needed:
 
 ```yaml
 services:
-  # Only Traefik gets external ports
   traefik:
     ports:
       - "80:80"
       - "443:443"
-
-  # App has NO published ports — only accessible through Traefik
   app:
     expose:
-      - "3000"
-
-  # Database, Redis — internal only, no published ports
+      - "3000"     # No published ports — only through Traefik
   postgres:
-    # No ports section
+    # No ports section — internal only
   redis:
-    # No ports section
-```
-
-### Read-Only Filesystem
-
-For maximum security, run containers with a read-only root filesystem:
-
-```yaml
-app:
-  read_only: true
-  tmpfs:
-    - /tmp
-  volumes:
-    - app_storage:/app/storage  # Writable storage only
-```
-
----
-
-## CI/CD Pipeline
-
-### GitHub Actions Example
-
-```yaml
-# .github/workflows/deploy.yml
-name: Deploy
-
-on:
-  push:
-    branches: [main]
-
-env:
-  REGISTRY: ghcr.io/${{ github.repository }}
-
-jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}:${{ github.sha }}
-            ${{ env.REGISTRY }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Deploy to production
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_KEY }}
-          script: |
-            cd /opt/svelar
-            export TAG=${{ github.sha }}
-            export REGISTRY=${{ env.REGISTRY }}
-            docker pull ${REGISTRY}:${TAG}
-            docker service update --image ${REGISTRY}:${TAG} svelar_app
-            docker exec $(docker ps -q -f name=svelar_app | head -1) \
-              npx svelar migrate
-```
-
-### GitLab CI Example
-
-```yaml
-# .gitlab-ci.yml
-stages:
-  - build
-  - deploy
-
-build:
-  stage: build
-  image: docker:24
-  services:
-    - docker:24-dind
-  script:
-    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
-    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
-
-deploy:
-  stage: deploy
-  image: alpine
-  only:
-    - main
-  before_script:
-    - apk add --no-cache openssh-client
-    - eval $(ssh-agent -s)
-    - echo "$SSH_PRIVATE_KEY" | ssh-add -
-  script:
-    - ssh $DEPLOY_USER@$DEPLOY_HOST "
-        cd /opt/svelar &&
-        docker pull $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA &&
-        docker service update --image $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA svelar_app &&
-        docker exec \$(docker ps -q -f name=svelar_app | head -1) npx svelar migrate
-      "
+    # No ports section — internal only
 ```
 
 ---
@@ -1616,13 +1206,12 @@ deploy:
 ### Container Won't Start
 
 ```bash
-# Check logs
-docker compose logs app
+npx svelar dev:logs --service=app
 
 # Common issues:
 # 1. Database not ready — ensure depends_on + healthcheck
 # 2. Missing APP_KEY — generate with: openssl rand -hex 32
-# 3. Port conflict — change APP_PORT in .env
+# 3. Port conflict — change APP_PORT/DEV_PORT in .env
 # 4. Build failure — check Dockerfile COPY paths
 ```
 
@@ -1632,10 +1221,10 @@ docker compose logs app
 # Test health endpoint manually
 docker compose exec app wget -qO- http://localhost:3000/api/health
 
-# Check if the build exists
+# Check if the build exists (production)
 docker compose exec app ls -la build/
 
-# Check PM2 processes
+# Check PM2 processes (production)
 docker compose exec app pm2 list
 ```
 
@@ -1659,13 +1248,6 @@ docker compose exec app env | grep DB_
 # Check worker status
 docker compose exec app pm2 list
 
-# Verify Redis connection
-docker compose exec app node -e "
-  const Redis = require('ioredis');
-  const r = new Redis({ host: 'redis' });
-  r.ping().then(console.log).catch(console.error);
-"
-
 # Check queue stats
 docker compose exec app pm2 logs worker
 ```
@@ -1673,19 +1255,12 @@ docker compose exec app pm2 logs worker
 ### Out of Disk Space
 
 ```bash
-# Clean up Docker artifacts
 docker system prune -a --volumes
-
-# Check volume sizes
 docker system df -v
-
-# Remove old images
 docker image prune -a
 ```
 
 ### Scheduler Running Duplicate Tasks
-
-This should not happen with Svelar's `SchedulerLock`, but if it does:
 
 ```bash
 # Verify only ONE scheduler per container
