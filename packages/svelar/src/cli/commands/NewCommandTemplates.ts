@@ -5839,7 +5839,6 @@ export default class QueueHealthCheck extends ScheduledTask {
   static rootLayoutSvelte(name: string): string {
     return `<script lang="ts">
   import '../app.css';
-  import { ModeWatcher } from 'mode-watcher';
   import { Button, Toaster, toast, Seo } from '@beeblock/svelar/ui';
   import { registerToast } from '@beeblock/svelar/http';
 
@@ -5908,7 +5907,6 @@ export default class QueueHealthCheck extends ScheduledTask {
   </footer>
 </div>
 
-<ModeWatcher defaultMode="light" />
 <Toaster position="bottom-right" />
 
 <style>
