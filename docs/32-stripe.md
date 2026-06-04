@@ -80,13 +80,15 @@ const BILLABLE_TABLE = 'teams'; // <-- your model's table
 
 export default class AddStripeCustomerIdToTeams extends Migration {
   async up() {
-    await this.schema.addColumn(BILLABLE_TABLE, (table) => {
+    await this.schema.table(BILLABLE_TABLE, (table) => {
       table.string('stripe_customer_id').nullable();
     });
   }
 
   async down() {
-    await this.schema.dropColumn(BILLABLE_TABLE, 'stripe_customer_id');
+    await this.schema.table(BILLABLE_TABLE, (table) => {
+      table.dropColumn('stripe_customer_id');
+    });
   }
 }
 ```

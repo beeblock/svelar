@@ -194,7 +194,7 @@ await Post.configureSearchIndex({
 });
 ```
 
-You can also create a CLI command for this:
+You can also create a project CLI command for this. In a DDD project, put it in `src/lib/shared/commands`; in a flat project, use `src/lib/commands`.
 
 ```typescript
 // src/lib/shared/commands/SetupSearchCommand.ts

@@ -177,7 +177,7 @@ cli.register(ProdRestartCommand);
 cli.register(ProdDeployCommand);
 
 // ── Auto-discover user commands ─────────────────────────────
-// Scans src/lib/commands/ in the user's project for custom Command classes.
+// Scans user command folders for custom Command classes.
 // Each .ts/.js file should export a class extending Command as default or named export.
 
 async function discoverUserCommands(): Promise<void> {
@@ -185,29 +185,33 @@ async function discoverUserCommands(): Promise<void> {
   const { existsSync, readdirSync } = await import('node:fs');
   const { pathToFileURL } = await import('node:url');
 
-  const commandsDir = join(process.cwd(), 'src', 'lib', 'shared', 'commands');
-  if (!existsSync(commandsDir)) return;
+  const commandDirs = [
+    join(process.cwd(), 'src', 'lib', 'shared', 'commands'),
+    join(process.cwd(), 'src', 'lib', 'commands'),
+  ].filter((dir, index, dirs) => existsSync(dir) && dirs.indexOf(dir) === index);
 
-  const files = readdirSync(commandsDir).filter(
-    (f) => (f.endsWith('.ts') || f.endsWith('.js')) && !f.startsWith('.')
-  );
+  for (const commandsDir of commandDirs) {
+    const files = readdirSync(commandsDir).filter(
+      (f) => (f.endsWith('.ts') || f.endsWith('.js')) && !f.startsWith('.')
+    );
 
-  for (const file of files) {
-    try {
-      const filePath = join(commandsDir, file);
-      const fileUrl = pathToFileURL(filePath).href;
-      const mod = await import(fileUrl);
+    for (const file of files) {
+      try {
+        const filePath = join(commandsDir, file);
+        const fileUrl = pathToFileURL(filePath).href;
+        const mod = await import(fileUrl);
 
-      // Try default export first, then named exports
-      const CommandClass = mod.default ?? Object.values(mod).find(
-        (v: any) => typeof v === 'function' && v.prototype && 'handle' in v.prototype
-      );
+        // Try default export first, then named exports
+        const CommandClass = mod.default ?? Object.values(mod).find(
+          (v: any) => typeof v === 'function' && v.prototype && 'handle' in v.prototype
+        );
 
-      if (CommandClass && typeof CommandClass === 'function') {
-        cli.add(new (CommandClass as any)());
+        if (CommandClass && typeof CommandClass === 'function') {
+          cli.add(new (CommandClass as any)());
+        }
+      } catch {
+        // Skip files that fail to import (may need compilation, etc.)
       }
-    } catch {
-      // Skip files that fail to import (may need compilation, etc.)
     }
   }
 }

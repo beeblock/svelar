@@ -2356,13 +2356,15 @@ export default class CreatePostsTable extends Migration {
 
 export default class AddRoleToUsers extends Migration {
   async up() {
-    await this.schema.addColumn('users', (table) => {
+    await this.schema.table('users', (table) => {
       table.string('role').default('user');
     });
   }
 
   async down() {
-    await this.schema.dropColumn('users', 'role');
+    await this.schema.table('users', (table) => {
+      table.dropColumn('role');
+    });
   }
 }
 `;

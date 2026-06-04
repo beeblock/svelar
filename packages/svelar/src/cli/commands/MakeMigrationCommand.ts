@@ -26,12 +26,13 @@ export class MakeMigrationCommand extends Command {
     mkdirSync(migrationsDir, { recursive: true });
 
     const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
-    const fileName = `${timestamp}_${name}`;
+    const normalizedName = this.toSnakeCase(name);
+    const fileName = `${timestamp}_${normalizedName}`;
     const className = this.toPascalCase(name);
 
     // Detect if this is a create or alter migration
-    const createTable = flags.create ?? this.detectTableName(name, 'create');
-    const alterTable = flags.table ?? this.detectTableName(name, 'add');
+    const createTable = flags.create ?? this.detectCreateTableName(normalizedName);
+    const alterTable = flags.table ?? this.detectAlterTableName(normalizedName);
 
     let content: string;
 
@@ -57,14 +58,16 @@ export default class ${className} extends Migration {
 
 export default class ${className} extends Migration {
   async up() {
-    await this.schema.addColumn('${alterTable}', (table) => {
+    await this.schema.table('${alterTable}', (table) => {
       // Add new columns here
       // table.string('new_column');
     });
   }
 
   async down() {
-    await this.schema.dropColumn('${alterTable}', 'new_column');
+    await this.schema.table('${alterTable}', (table) => {
+      table.dropColumn('new_column');
+    });
   }
 }
 `;
@@ -87,15 +90,28 @@ export default class ${className} extends Migration {
     this.success(`Migration created: src/lib/database/migrations/${fileName}.ts`);
   }
 
-  private detectTableName(name: string, prefix: string): string | null {
-    const match = name.match(new RegExp(`${prefix}_(.+?)_table`));
+  private detectCreateTableName(name: string): string | null {
+    const match = name.match(/^create_(.+)_table$/);
+    return match ? match[1] : null;
+  }
+
+  private detectAlterTableName(name: string): string | null {
+    const match = name.match(/^(?:add|change|update|remove|drop)_.+_(?:to|from|on)_(.+)$/);
     return match ? match[1] : null;
   }
 
   private toPascalCase(str: string): string {
-    return str
+    return this.toSnakeCase(str)
       .split('_')
       .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
       .join('');
+  }
+
+  private toSnakeCase(str: string): string {
+    return str
+      .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+      .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
+      .replace(/[-\s]+/g, '_')
+      .toLowerCase();
   }
 }

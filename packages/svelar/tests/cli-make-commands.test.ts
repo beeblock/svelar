@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 // Import all make commands
@@ -25,6 +25,7 @@ import { MakeFactoryCommand } from '../src/cli/commands/MakeFactoryCommand.js';
 import { MakeDeployCommand } from '../src/cli/commands/MakeDeployCommand.js';
 import { MakeDockerCommand } from '../src/cli/commands/MakeDockerCommand.js';
 import { MakeRouteCommand } from '../src/cli/commands/MakeRouteCommand.js';
+import { MakeMigrationCommand } from '../src/cli/commands/MakeMigrationCommand.js';
 
 let originalCwd: string;
 let tmpDir: string;
@@ -161,6 +162,37 @@ describe('Make commands — Flat structure', () => {
       const cmd = new MakeModelCommand();
       await cmd.handle([], {});
       expect(errorSpy).toHaveBeenCalled();
+    });
+  });
+
+  describe('MakeMigrationCommand', () => {
+    it('should create a table migration from a PascalCase Laravel-style name', async () => {
+      const cmd = new MakeMigrationCommand();
+      await cmd.handle(['CreateInvoicesTable'], {});
+
+      const migrationsDir = join(tmpDir, 'src', 'lib', 'database', 'migrations');
+      const created = readdirSync(migrationsDir).find((file) => file.endsWith('_create_invoices_table.ts'));
+      expect(created).toBeDefined();
+
+      const content = readFileSync(join(migrationsDir, created!), 'utf-8');
+      expect(content).toContain('export default class CreateInvoicesTable extends Migration');
+      expect(content).toContain("await this.schema.createTable('invoices'");
+      expect(content).not.toContain('// Write your migration here');
+    });
+
+    it('should create an alter migration using schema.table', async () => {
+      const cmd = new MakeMigrationCommand();
+      await cmd.handle(['AddRoleToUsers'], {});
+
+      const migrationsDir = join(tmpDir, 'src', 'lib', 'database', 'migrations');
+      const created = readdirSync(migrationsDir).find((file) => file.endsWith('_add_role_to_users.ts'));
+      expect(created).toBeDefined();
+
+      const content = readFileSync(join(migrationsDir, created!), 'utf-8');
+      expect(content).toContain('export default class AddRoleToUsers extends Migration');
+      expect(content).toContain("await this.schema.table('users'");
+      expect(content).toContain("table.dropColumn('new_column')");
+      expect(content).not.toContain('this.schema.addColumn');
     });
   });
 

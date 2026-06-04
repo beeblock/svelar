@@ -5,7 +5,7 @@
  * Database-agnostic: produces the right SQL for SQLite, PostgreSQL, or MySQL.
  */
 
-import { Connection, type DatabaseDriver } from './Connection.js';
+import { assertSqlIdentifier, Connection, type DatabaseDriver } from './Connection.js';
 
 // ── Column Definition ──────────────────────────────────────
 
@@ -84,6 +84,8 @@ export class ForeignKeyBuilder {
 
 export class TableBuilder {
   private columns: ColumnDefinition[] = [];
+  private droppedColumns: string[] = [];
+  private renamedColumns: { from: string; to: string }[] = [];
   private indices: { columns: string[]; unique: boolean; name?: string }[] = [];
   private compositePrimary: string[] | null = null;
 
@@ -225,10 +227,19 @@ export class TableBuilder {
     return new ColumnBuilder(existing);
   }
 
+  dropColumn(name: string): void {
+    this.droppedColumns.push(name);
+  }
+
+  renameColumn(from: string, to: string): void {
+    this.renamedColumns.push({ from, to });
+  }
+
   // ── SQL Generation ──
 
   /** @internal */
   toSQL(tableName: string, driver: DatabaseDriver): string[] {
+    const table = this.quoteIdentifier(tableName, driver);
     const statements: string[] = [];
     const columnDefs: string[] = [];
 
@@ -237,35 +248,39 @@ export class TableBuilder {
     }
 
     if (this.compositePrimary) {
-      columnDefs.push(`PRIMARY KEY (${this.compositePrimary.join(', ')})`);
+      columnDefs.push(`PRIMARY KEY (${this.compositePrimary.map((column) => this.quoteIdentifier(column, driver)).join(', ')})`);
     }
 
     // Add foreign key constraints
     for (const col of this.columns) {
       if (col.references) {
-        let fk = `FOREIGN KEY (${col.name}) REFERENCES ${col.references.table}(${col.references.column})`;
+        const column = this.quoteIdentifier(col.name, driver);
+        const referencedTable = this.quoteIdentifier(col.references.table, driver);
+        const referencedColumn = this.quoteIdentifier(col.references.column, driver);
+        let fk = `FOREIGN KEY (${column}) REFERENCES ${referencedTable}(${referencedColumn})`;
         if (col.references.onDelete) fk += ` ON DELETE ${col.references.onDelete}`;
         if (col.references.onUpdate) fk += ` ON UPDATE ${col.references.onUpdate}`;
         columnDefs.push(fk);
       }
     }
 
-    statements.push(`CREATE TABLE ${tableName} (\n  ${columnDefs.join(',\n  ')}\n)`);
+    statements.push(`CREATE TABLE ${table} (\n  ${columnDefs.join(',\n  ')}\n)`);
 
     // Create indices
     for (const idx of this.indices) {
       const idxName = idx.name ?? `idx_${tableName}_${idx.columns.join('_')}`;
       const uniqueStr = idx.unique ? 'UNIQUE ' : '';
       statements.push(
-        `CREATE ${uniqueStr}INDEX ${idxName} ON ${tableName} (${idx.columns.join(', ')})`
+        `CREATE ${uniqueStr}INDEX ${this.quoteIdentifier(idxName, driver)} ON ${table} (${idx.columns.map((column) => this.quoteIdentifier(column, driver)).join(', ')})`
       );
     }
 
     return statements;
   }
 
-  private columnToSQL(col: ColumnDefinition, driver: DatabaseDriver): string {
-    let sql = col.name;
+  /** @internal */
+  columnToSQL(col: ColumnDefinition, driver: DatabaseDriver): string {
+    let sql = this.quoteIdentifier(col.name, driver);
 
     // Map types per driver
     let type = col.type;
@@ -313,6 +328,26 @@ export class TableBuilder {
     return sql;
   }
 
+  /** @internal */
+  getColumns(): ColumnDefinition[] {
+    return [...this.columns];
+  }
+
+  /** @internal */
+  getDroppedColumns(): string[] {
+    return [...this.droppedColumns];
+  }
+
+  /** @internal */
+  getRenamedColumns(): { from: string; to: string }[] {
+    return [...this.renamedColumns];
+  }
+
+  private quoteIdentifier(identifier: string, driver: DatabaseDriver): string {
+    const clean = assertSqlIdentifier(identifier);
+    return driver === 'mysql' ? `\`${clean}\`` : `"${clean}"`;
+  }
+
   private mapSQLiteType(type: string, col: ColumnDefinition): string {
     if (type === 'BOOLEAN') return 'INTEGER';
     if (type === 'UUID' || type === 'ULID') return 'TEXT';
@@ -352,6 +387,7 @@ export class Schema {
   constructor(private connectionName?: string) {}
 
   async createTable(name: string, callback: (table: TableBuilder) => void): Promise<void> {
+    name = assertSqlIdentifier(name, 'Table name');
     const builder = new TableBuilder();
     callback(builder);
 
@@ -364,19 +400,19 @@ export class Schema {
   }
 
   async dropTable(name: string): Promise<void> {
-    await Connection.raw(`DROP TABLE IF EXISTS ${name}`, [], this.connectionName);
+    await Connection.raw(`DROP TABLE IF EXISTS ${this.quoteIdentifier(name, 'Table name')}`, [], this.connectionName);
   }
 
   async dropTableIfExists(name: string): Promise<void> {
-    await Connection.raw(`DROP TABLE IF EXISTS ${name}`, [], this.connectionName);
+    await Connection.raw(`DROP TABLE IF EXISTS ${this.quoteIdentifier(name, 'Table name')}`, [], this.connectionName);
   }
 
   async renameTable(from: string, to: string): Promise<void> {
     const driver = Connection.getDriver(this.connectionName);
     if (driver === 'mysql') {
-      await Connection.raw(`RENAME TABLE ${from} TO ${to}`, [], this.connectionName);
+      await Connection.raw(`RENAME TABLE ${this.quoteIdentifier(from, 'Source table name')} TO ${this.quoteIdentifier(to, 'Target table name')}`, [], this.connectionName);
     } else {
-      await Connection.raw(`ALTER TABLE ${from} RENAME TO ${to}`, [], this.connectionName);
+      await Connection.raw(`ALTER TABLE ${this.quoteIdentifier(from, 'Source table name')} RENAME TO ${this.quoteIdentifier(to, 'Target table name')}`, [], this.connectionName);
     }
   }
 
@@ -413,31 +449,51 @@ export class Schema {
     return rows.length > 0;
   }
 
-  async addColumn(table: string, callback: (tb: TableBuilder) => void): Promise<void> {
+  async table(name: string, callback: (table: TableBuilder) => void): Promise<void> {
     const builder = new TableBuilder();
     callback(builder);
 
     const driver = Connection.getDriver(this.connectionName);
-    // We'll use the builder's internal columns via toSQL hack
-    // For ALTER TABLE, we generate ADD COLUMN statements
-    const cols = (builder as any).columns as ColumnDefinition[];
+    const tableName = this.quoteIdentifier(name, 'Table name');
 
-    for (const col of cols) {
-      const colSQL = (builder as any).columnToSQL(col, driver);
+    for (const col of builder.getColumns()) {
+      const colSQL = builder.columnToSQL(col, driver);
       await Connection.raw(
-        `ALTER TABLE ${table} ADD COLUMN ${colSQL}`,
+        `ALTER TABLE ${tableName} ADD COLUMN ${colSQL}`,
+        [],
+        this.connectionName
+      );
+    }
+
+    for (const rename of builder.getRenamedColumns()) {
+      await Connection.raw(
+        `ALTER TABLE ${tableName} RENAME COLUMN ${this.quoteIdentifier(rename.from, 'Column name')} TO ${this.quoteIdentifier(rename.to, 'Column name')}`,
+        [],
+        this.connectionName
+      );
+    }
+
+    for (const column of builder.getDroppedColumns()) {
+      await Connection.raw(
+        `ALTER TABLE ${tableName} DROP COLUMN ${this.quoteIdentifier(column, 'Column name')}`,
         [],
         this.connectionName
       );
     }
   }
 
+  async addColumn(table: string, callback: (tb: TableBuilder) => void): Promise<void> {
+    await this.table(table, callback);
+  }
+
   async dropColumn(table: string, column: string): Promise<void> {
-    await Connection.raw(
-      `ALTER TABLE ${table} DROP COLUMN ${column}`,
-      [],
-      this.connectionName
-    );
+    await this.table(table, (tb) => tb.dropColumn(column));
+  }
+
+  private quoteIdentifier(identifier: string, label: string = 'SQL identifier'): string {
+    const driver = Connection.getDriver(this.connectionName);
+    const clean = assertSqlIdentifier(identifier, label);
+    return driver === 'mysql' ? `\`${clean}\`` : `"${clean}"`;
   }
 }
 

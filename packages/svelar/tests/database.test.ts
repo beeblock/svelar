@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Connection, normalizeDatabaseDriver } from '../src/database/Connection';
 import { Migration, Migrator } from '../src/database/Migration';
+import { Schema } from '../src/database/SchemaBuilder';
 
 class NoopMigration extends Migration {
   async up(): Promise<void> {}
@@ -61,6 +62,58 @@ describe('Database configuration', () => {
     } finally {
       await Connection.disconnect();
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('supports Laravel-style schema.table column changes', async () => {
+    await Connection.disconnect();
+    Connection.configure({
+      default: 'sqlite',
+      connections: {
+        sqlite: { driver: 'sqlite', filename: ':memory:' },
+      },
+    });
+
+    try {
+      const schema = new Schema();
+      await schema.createTable('users', (table) => {
+        table.increments('id');
+        table.string('name');
+      });
+
+      await schema.table('users', (table) => {
+        table.string('phone').nullable();
+        table.renameColumn('name', 'full_name');
+      });
+
+      let columns = await Connection.raw('PRAGMA table_info("users")');
+      expect(columns.map((column: any) => column.name)).toEqual(['id', 'full_name', 'phone']);
+
+      await schema.table('users', (table) => {
+        table.dropColumn('phone');
+      });
+
+      columns = await Connection.raw('PRAGMA table_info("users")');
+      expect(columns.map((column: any) => column.name)).toEqual(['id', 'full_name']);
+    } finally {
+      await Connection.disconnect();
+    }
+  });
+
+  it('rejects invalid schema identifiers', async () => {
+    await Connection.disconnect();
+    Connection.configure({
+      default: 'sqlite',
+      connections: {
+        sqlite: { driver: 'sqlite', filename: ':memory:' },
+      },
+    });
+
+    try {
+      const schema = new Schema();
+      await expect(schema.dropTable('users; DROP TABLE users')).rejects.toThrow('Table name contains invalid characters');
+    } finally {
+      await Connection.disconnect();
     }
   });
 });

@@ -379,7 +379,7 @@ export class SyncUsersCommand extends Command {
 }
 ```
 
-Commands are auto-discovered from `src/lib/commands/` — no registration needed.
+Commands are auto-discovered from `src/lib/commands/` in flat projects and `src/lib/shared/commands/` in DDD projects — no registration needed.
 
 ## Admin Dashboard
 

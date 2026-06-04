@@ -138,7 +138,7 @@ await this.schema.createTable('posts', (table) => {
 ### Adding Columns
 
 ```typescript
-await this.schema.addColumn('users', (table) => {
+await this.schema.table('users', (table) => {
   table.string('phone');
   table.string('avatar_url').nullable();
 });
@@ -147,7 +147,9 @@ await this.schema.addColumn('users', (table) => {
 ### Dropping Columns
 
 ```typescript
-await this.schema.dropColumn('users', 'nickname');
+await this.schema.table('users', (table) => {
+  table.dropColumn('nickname');
+});
 ```
 
 ### Dropping Tables
@@ -572,7 +574,7 @@ Each connection maintains its own `migrations` table by default, so migration hi
 
 2. **One change per migration** - Keep migrations small and focused. Don't create multiple tables in one migration.
 
-3. **Use meaningful names** - Migration names should describe what they do: `create_users_table`, `add_email_to_users`, `create_posts_comments_relationship`.
+3. **Use meaningful names** - Migration names should describe what they do: `CreateUsersTable`, `AddEmailToUsers`, `create_posts_comments_relationship`.
 
 4. **Test seeders** - Seeders should be idempotent and work on a fresh database. Test them regularly.
 
