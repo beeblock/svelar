@@ -25,7 +25,11 @@
     "lint": "npm run lint --workspaces --if-present",
     "release": "node scripts/publish-svelar.mjs",
     "release:dry-run": "node scripts/publish-svelar.mjs --dry-run --skip-validation",
-    "sync:svelar-cli": "node scripts/publish-svelar.mjs --sync-only"
+    "sync:svelar-cli": "node scripts/publish-svelar.mjs --sync-only",
+    "smoke": "node scripts/release-smoke.mjs",
+    "smoke:ddd": "node scripts/release-smoke.mjs --app ddd",
+    "smoke:flat": "node scripts/release-smoke.mjs --app flat",
+    "smoke:fast": "node scripts/release-smoke.mjs --skip-shadcn --skip-tests --skip-build"
   },
   "devDependencies": {
     "typescript": "^5.7.0"

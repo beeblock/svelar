@@ -34,11 +34,13 @@ npm install @beeblock/svelar
 Run the monorepo release script from the repository root:
 
 ```bash
+npm run smoke:ddd
+npm run smoke:flat
 npm run release:dry-run
 npm run release
 ```
 
-It syncs and publishes both `@beeblock/svelar` and the unscoped `svelar` CLI shim used by `npx svelar`.
+Run the smoke checks before publishing. They build and pack the local core package, scaffold real apps into the sibling `svelar-testing-area`, install UI components, run migrations and seeders, execute generated tests, and verify production builds. The release script syncs and publishes both `@beeblock/svelar` and the unscoped `svelar` CLI shim used by `npx svelar`.
 
 See the [Getting Started guide](https://svelar.dev/docs/getting-started) for a complete walkthrough.
 

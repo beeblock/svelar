@@ -10,7 +10,6 @@ Svelar brings the developer experience of Laravel to the modern TypeScript/Svelt
 # Scaffold a new project
 npx svelar new my-app
 cd my-app
-npm install
 npm run dev
 ```
 
@@ -27,11 +26,13 @@ npm install @beeblock/svelar drizzle-orm better-sqlite3
 `npx svelar` is provided by a tiny unscoped npm shim package. The framework still lives in `@beeblock/svelar`; publish both packages with one release command:
 
 ```bash
+npm run smoke:ddd
+npm run smoke:flat
 npm run release:dry-run
 npm run release
 ```
 
-The release script syncs the shim version and dependency from `packages/svelar`, publishes `@beeblock/svelar` first, then publishes the `svelar` shim.
+Run the smoke checks before publishing. They build and pack the local core package, scaffold real apps into the sibling `svelar-testing-area`, install UI components, run migrations and seeders, execute generated tests, and verify production builds. The release script syncs the shim version and dependency from `packages/svelar`, publishes `@beeblock/svelar` first, then publishes the `svelar` shim.
 
 ## Features
 
