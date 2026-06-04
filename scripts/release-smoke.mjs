@@ -18,6 +18,9 @@ const skipShadcn = args.has('--skip-shadcn');
 const skipMigrate = args.has('--skip-migrate');
 const skipTests = args.has('--skip-tests');
 const skipBuild = args.has('--skip-build');
+const runBrowser = args.has('--browser');
+const headed = args.has('--headed');
+const slowMo = valueFor('--slow-mo');
 const keepExisting = args.has('--keep-existing');
 
 if (args.has('--help') || args.has('-h')) {
@@ -31,6 +34,9 @@ Options:
   --skip-migrate         Skip migrations and seeders.
   --skip-tests           Skip generated app tests.
   --skip-build           Skip generated app production build.
+  --browser              Run real browser smoke after app checks.
+  --headed               Open a visible Chromium window for browser smoke.
+  --slow-mo <ms>         Delay browser actions during browser smoke.
 `);
 	process.exit(0);
 }
@@ -106,6 +112,20 @@ function smokeApp(target, tarballPath) {
 	if (!skipBuild) {
 		section(`Building ${target.name}`);
 		run('npm', ['run', 'build'], { cwd: appDir });
+	}
+
+	if (runBrowser) {
+		section(`Browser smoke ${target.name}`);
+		const browserArgs = [
+			join(repoRoot, 'scripts/browser-smoke.mjs'),
+			'--app-dir',
+			appDir,
+			'--port',
+			String(target.port),
+		];
+		if (headed) browserArgs.push('--headed');
+		if (slowMo) browserArgs.push('--slow-mo', slowMo);
+		run(process.execPath, browserArgs);
 	}
 }
 

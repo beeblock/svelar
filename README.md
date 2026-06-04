@@ -28,11 +28,13 @@ npm install @beeblock/svelar drizzle-orm better-sqlite3
 ```bash
 npm run smoke:ddd
 npm run smoke:flat
+npm run smoke:browser
+npm run smoke:browser:headed
 npm run release:dry-run
 npm run release
 ```
 
-Run the smoke checks before publishing. They build and pack the local core package, scaffold real apps into the sibling `svelar-testing-area`, install UI components, run migrations and seeders, execute generated tests, and verify production builds. The release script syncs the shim version and dependency from `packages/svelar`, publishes `@beeblock/svelar` first, then publishes the `svelar` shim.
+Run the smoke checks before publishing. They build and pack the local core package, scaffold real apps into the sibling `svelar-testing-area`, install UI components, run migrations and seeders, execute generated tests, verify production builds, and exercise the generated app in a real browser. Use `npm run smoke:browser:headed` when you want to watch Chromium open and step through the browser smoke flow locally. If Playwright has not downloaded Chromium locally yet, run `cd ../svelar-testing-area/apps/svelar-smoke-ddd && npx playwright install chromium`. The release script syncs the shim version and dependency from `packages/svelar`, publishes `@beeblock/svelar` first, then publishes the `svelar` shim.
 
 ## Features
 

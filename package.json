@@ -29,7 +29,9 @@
     "smoke": "node scripts/release-smoke.mjs",
     "smoke:ddd": "node scripts/release-smoke.mjs --app ddd",
     "smoke:flat": "node scripts/release-smoke.mjs --app flat",
-    "smoke:fast": "node scripts/release-smoke.mjs --skip-shadcn --skip-tests --skip-build"
+    "smoke:fast": "node scripts/release-smoke.mjs --skip-shadcn --skip-tests --skip-build",
+    "smoke:browser": "node scripts/release-smoke.mjs --app ddd --browser",
+    "smoke:browser:headed": "node scripts/release-smoke.mjs --app ddd --browser --headed --slow-mo 350"
   },
   "devDependencies": {
     "typescript": "^5.7.0"
