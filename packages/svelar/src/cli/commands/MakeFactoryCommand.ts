@@ -3,7 +3,7 @@
  */
 
 import { Command } from '../Command.js';
-import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { writeFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 export class MakeFactoryCommand extends Command {
@@ -12,6 +12,7 @@ export class MakeFactoryCommand extends Command {
   arguments = ['name'];
   flags = [
     { name: 'model', alias: 'm', description: 'The model class name', type: 'string' as const },
+    { name: 'module', description: 'DDD module name containing the model', type: 'string' as const },
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
@@ -34,7 +35,7 @@ export class MakeFactoryCommand extends Command {
     }
 
     // Resolve the model import path based on project structure
-    const modelImport = this.resolveModelImport(modelName);
+    const modelImport = this.resolveModelImport(modelName, flags.module);
 
     const content = `import { Factory } from '@beeblock/svelar/testing';
 import { ${modelName} } from '${modelImport}';
@@ -60,18 +61,44 @@ export default new ${factoryName}();
     this.success(`Factory created: src/lib/factories/${factoryName}.ts`);
   }
 
-  private resolveModelImport(modelName: string): string {
+  private resolveModelImport(modelName: string, moduleName?: string): string {
     if (this.isDDD()) {
-      // Try to find the module — default to lowercase model name
-      const moduleName = modelName.toLowerCase();
-      // Common modules: auth has User, posts has Post, etc.
-      const moduleMap: Record<string, string> = {
-        User: 'auth',
-        Post: 'posts',
-      };
-      const mod = moduleMap[modelName] || moduleName;
+      const mod = moduleName ?? this.findModelModule(modelName) ?? this.defaultModelModule(modelName);
       return `$lib/modules/${mod}/${modelName}`;
     }
     return `$lib/models/${modelName}`;
+  }
+
+  private findModelModule(modelName: string): string | null {
+    const modulesDir = join(process.cwd(), 'src', 'lib', 'modules');
+    if (!existsSync(modulesDir)) return null;
+
+    const matches = readdirSync(modulesDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .filter((moduleName) =>
+        existsSync(join(modulesDir, moduleName, `${modelName}.ts`)) ||
+        existsSync(join(modulesDir, moduleName, `${modelName}.js`))
+      );
+
+    if (matches.length === 1) {
+      return matches[0];
+    }
+
+    if (matches.length > 1) {
+      this.warn(`Model ${modelName} exists in multiple modules. Use --module to choose one.`);
+      return matches[0];
+    }
+
+    return null;
+  }
+
+  private defaultModelModule(modelName: string): string {
+    const moduleMap: Record<string, string> = {
+      User: 'auth',
+      Post: 'posts',
+    };
+
+    return moduleMap[modelName] ?? modelName.toLowerCase();
   }
 }

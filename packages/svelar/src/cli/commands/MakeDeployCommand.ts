@@ -7,17 +7,13 @@ import { MakeDockerCommand } from './MakeDockerCommand.js';
 import { MakeCiCommand } from './MakeCiCommand.js';
 import { MakeInfraCommand } from './MakeInfraCommand.js';
 
+const dockerFlags = new MakeDockerCommand().flags;
+
 export class MakeDeployCommand extends Command {
   name = 'make:deploy';
   description = 'Scaffold all deployment files (Docker, CI/CD, infrastructure)';
   arguments = [];
-  flags = [
-    { name: 'db', alias: 'd', description: 'Database driver: postgres, mysql, sqlite (default: postgres)', type: 'string' as const },
-    { name: 'image', alias: 'i', description: 'Docker image name for compose fallback (default: package.json name)', type: 'string' as const },
-    { name: 'port', description: 'Production port (default: 3000)', type: 'string' as const },
-    { name: 'dev-port', description: 'Development port (default: 5173)', type: 'string' as const },
-    { name: 'force', alias: 'f', description: 'Overwrite existing files', type: 'boolean' as const },
-  ];
+  flags = dockerFlags;
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
     this.info('Scaffolding all deployment files...');

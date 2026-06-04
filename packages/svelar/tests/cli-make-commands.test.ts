@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 // Import all make commands
@@ -21,6 +21,9 @@ import { MakeChannelCommand } from '../src/cli/commands/MakeChannelCommand.js';
 import { MakeCommandCommand } from '../src/cli/commands/MakeCommandCommand.js';
 import { MakeProviderCommand } from '../src/cli/commands/MakeProviderCommand.js';
 import { MakePluginCommand } from '../src/cli/commands/MakePluginCommand.js';
+import { MakeFactoryCommand } from '../src/cli/commands/MakeFactoryCommand.js';
+import { MakeDeployCommand } from '../src/cli/commands/MakeDeployCommand.js';
+import { MakeDockerCommand } from '../src/cli/commands/MakeDockerCommand.js';
 
 let originalCwd: string;
 let tmpDir: string;
@@ -370,6 +373,39 @@ describe('Make commands — DDD structure', () => {
       const filePath = join(tmpDir, 'src', 'lib', 'shared', 'plugins', 'AnalyticsPlugin.ts');
       expect(existsSync(filePath)).toBe(true);
     });
+  });
+
+  describe('MakeFactoryCommand (DDD)', () => {
+    it('should use an explicit module for model imports', async () => {
+      const cmd = new MakeFactoryCommand();
+      await cmd.handle(['Invoice'], { model: 'Invoice', module: 'billing' });
+
+      const filePath = join(tmpDir, 'src', 'lib', 'factories', 'InvoiceFactory.ts');
+      const content = readFileSync(filePath, 'utf-8');
+      expect(content).toContain("import { Invoice } from '$lib/modules/billing/Invoice';");
+    });
+
+    it('should detect the module that contains the model', async () => {
+      const modelDir = join(tmpDir, 'src', 'lib', 'modules', 'billing');
+      mkdirSync(modelDir, { recursive: true });
+      writeFileSync(join(modelDir, 'Invoice.ts'), 'export class Invoice {}');
+
+      const cmd = new MakeFactoryCommand();
+      await cmd.handle(['Invoice'], { model: 'Invoice' });
+
+      const filePath = join(tmpDir, 'src', 'lib', 'factories', 'InvoiceFactory.ts');
+      const content = readFileSync(filePath, 'utf-8');
+      expect(content).toContain("import { Invoice } from '$lib/modules/billing/Invoice';");
+    });
+  });
+});
+
+describe('MakeDeployCommand', () => {
+  it('should expose the same Docker flags as make:docker', () => {
+    const deployFlags = new MakeDeployCommand().flags.map((flag) => flag.name).sort();
+    const dockerFlags = new MakeDockerCommand().flags.map((flag) => flag.name).sort();
+
+    expect(deployFlags).toEqual(dockerFlags);
   });
 });
 

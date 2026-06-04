@@ -96,6 +96,9 @@ npx svelar make:docker --no-rustfs       # No S3 storage
 # Minimal setup (just app + database)
 npx svelar make:docker --no-redis --no-soketi --no-gotenberg --no-rustfs
 
+# The same Docker options work with the all-in-one deploy scaffold
+npx svelar make:deploy --db=mysql --no-redis --no-soketi
+
 # Overwrite existing files
 npx svelar make:deploy --force
 ```

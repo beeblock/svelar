@@ -218,16 +218,16 @@ await Queue.dispatch(new SendEmail(1));
 ## CLI Commands
 
 ```bash
-svelar make:model User -a          # Model + migration + resource controller
-svelar make:migration create_posts_table
-svelar make:controller PostController --resource
-svelar make:middleware Auth
-svelar make:provider AppServiceProvider
-svelar make:seeder UsersSeeder
-svelar migrate                     # Run pending migrations
-svelar migrate --rollback          # Rollback last batch
-svelar migrate --status            # Show migration status
-svelar tinker                      # Interactive REPL
+npx svelar make:model User -a          # Model + migration + resource controller
+npx svelar make:migration create_posts_table
+npx svelar make:controller PostController --resource
+npx svelar make:middleware Auth
+npx svelar make:provider AppServiceProvider
+npx svelar make:seeder UsersSeeder
+npx svelar migrate                     # Run pending migrations
+npx svelar migrate --rollback          # Rollback last batch
+npx svelar migrate --status            # Show migration status
+npx svelar tinker                      # Interactive REPL
 ```
 
 ## Project Structure

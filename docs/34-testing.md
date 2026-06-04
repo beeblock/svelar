@@ -119,9 +119,10 @@ const users = UserFactory.makeMany(3);
 ```bash
 npx svelar make:factory User --model User
 npx svelar make:factory Post --model Post
+npx svelar make:factory Invoice --model Invoice --module billing
 ```
 
-The `--model` flag specifies which model class to import. The command auto-detects DDD vs flat project structure for the import path.
+The `--model` flag specifies which model class to import. In DDD projects, use `--module` when the model lives in a specific module. If omitted, the command scans `src/lib/modules/*/{Model}.ts` and falls back to the conventional module name.
 
 ## Database Assertions
 
@@ -356,7 +357,7 @@ export default defineConfig({
 | `make:test Name --unit` | Unit test in `tests/unit/Name.test.ts` (default) |
 | `make:test Name --feature` | Feature test in `tests/feature/Name.test.ts` |
 | `make:test Name --e2e` | Playwright test in `tests/e2e/Name.spec.ts` |
-| `make:factory Name --model Model` | Factory in `src/lib/factories/NameFactory.ts` |
+| `make:factory Name --model Model --module module` | Factory in `src/lib/factories/NameFactory.ts` |
 
 ## API Reference
 

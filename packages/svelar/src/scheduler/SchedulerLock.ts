@@ -5,10 +5,11 @@
  * Prevents duplicate task execution across multiple scheduler instances.
  * Supports SQLite, PostgreSQL, and MySQL via the Connection abstraction.
  *
- * The `scheduler_locks` table is created by Svelar core migrations.
+ * The `scheduler_locks` table is managed by Svelar core migrations.
  */
 
 import { hostname } from 'node:os';
+import { QueryBuilder } from '../orm/QueryBuilder.js';
 
 const ownerId = `${hostname()}:${process.pid}:${Math.random().toString(36).slice(2, 10)}`;
 
@@ -17,9 +18,8 @@ async function getConnection() {
   return Connection;
 }
 
-async function getDriver(): Promise<string> {
-  const conn = await getConnection();
-  return conn.getDriver();
+function locksQuery(): QueryBuilder<any> {
+  return new QueryBuilder('scheduler_locks');
 }
 
 export class SchedulerLock {
@@ -36,48 +36,21 @@ export class SchedulerLock {
    */
   static async acquire(taskKey: string, ttlMinutes: number = 5): Promise<boolean> {
     const conn = await getConnection();
-    const driver = await getDriver();
     const now = new Date().toISOString();
     const expiresAt = new Date(Date.now() + ttlMinutes * 60_000).toISOString();
 
     try {
       await conn.transaction(async () => {
-        // Clean up expired locks for this task
-        await conn.raw(
-          'DELETE FROM scheduler_locks WHERE task_key = ? AND expires_at < ?',
-          [taskKey, now],
+        await locksQuery().where('task_key', taskKey).where('expires_at', '<', now).delete();
+        await locksQuery().upsert(
+          { task_key: taskKey, owner: ownerId, expires_at: expiresAt },
+          'task_key',
+          [],
         );
-
-        // Attempt to insert — fails with unique constraint if lock is held
-        switch (driver) {
-          case 'sqlite':
-            await conn.raw(
-              'INSERT OR IGNORE INTO scheduler_locks (task_key, owner, expires_at) VALUES (?, ?, ?)',
-              [taskKey, ownerId, expiresAt],
-            );
-            break;
-          case 'postgres':
-            await conn.raw(
-              'INSERT INTO scheduler_locks (task_key, owner, expires_at) VALUES ($1, $2, $3) ON CONFLICT (task_key) DO NOTHING',
-              [taskKey, ownerId, expiresAt],
-            );
-            break;
-          case 'mysql':
-            await conn.raw(
-              'INSERT IGNORE INTO scheduler_locks (task_key, owner, expires_at) VALUES (?, ?, ?)',
-              [taskKey, ownerId, expiresAt],
-            );
-            break;
-        }
       });
 
-      // Verify we own the lock
-      const rows: any[] = await conn.raw(
-        'SELECT owner FROM scheduler_locks WHERE task_key = ?',
-        [taskKey],
-      );
-
-      return rows.length > 0 && rows[0].owner === ownerId;
+      const row = await locksQuery().select('owner').where('task_key', taskKey).first();
+      return row?.owner === ownerId;
     } catch {
       return false;
     }
@@ -88,11 +61,7 @@ export class SchedulerLock {
    */
   static async release(taskKey: string): Promise<void> {
     try {
-      const conn = await getConnection();
-      await conn.raw(
-        'DELETE FROM scheduler_locks WHERE task_key = ? AND owner = ?',
-        [taskKey, ownerId],
-      );
+      await locksQuery().where('task_key', taskKey).where('owner', ownerId).delete();
     } catch {
       // Best-effort release — TTL will handle cleanup if this fails
     }
@@ -104,11 +73,7 @@ export class SchedulerLock {
    */
   static async releaseAll(): Promise<void> {
     try {
-      const conn = await getConnection();
-      await conn.raw(
-        'DELETE FROM scheduler_locks WHERE owner = ?',
-        [ownerId],
-      );
+      await locksQuery().where('owner', ownerId).delete();
     } catch {
       // Best-effort
     }

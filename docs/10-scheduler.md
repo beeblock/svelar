@@ -228,7 +228,7 @@ schedule() {
 }
 ```
 
-The lock uses the shared database (SQLite, PostgreSQL, or MySQL) — no Redis required. Locks auto-expire via TTL, so crashed processes don't block future executions. The `scheduler_locks` table is created automatically on first use.
+The lock uses the shared database (SQLite, PostgreSQL, or MySQL) — no Redis required. Locks auto-expire via TTL, so crashed processes don't block future executions. The `scheduler_locks` table is managed by Svelar core migrations.
 
 ## Task Examples
 
