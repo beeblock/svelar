@@ -4,7 +4,7 @@
 
 Monorepo with packages:
 - `packages/svelar` — Core framework (Laravel-inspired on SvelteKit 2)
-- `packages/create-svelar` — `npx create-svelar` scaffolding
+- Project scaffolding is part of core through `npx svelar new`
 
 ## Build & Run
 

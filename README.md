@@ -8,7 +8,7 @@ Svelar brings the developer experience of Laravel to the modern TypeScript/Svelt
 
 ```bash
 # Scaffold a new project
-npm create svelar@latest my-app
+npx svelar new my-app
 cd my-app
 npm install
 npm run dev
@@ -258,8 +258,7 @@ Connection.configure({
 
 | Package | Description |
 |---------|-------------|
-| `svelar` | Core framework (ORM, CLI, middleware, auth, etc.) |
-| `create-svelar` | Project scaffolding CLI |
+| `@beeblock/svelar` | Core framework, CLI, project scaffolder, middleware, auth, ORM, and utilities |
 
 ## License
 
