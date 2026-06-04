@@ -34,31 +34,31 @@ export class NewCommandTemplates {
 						"@sveltejs/kit": "^2.55.0",
 						"@sveltejs/vite-plugin-svelte": "^5.0.0",
 						"@tailwindcss/vite": "^4.2.2",
-						"lucide-svelte": "^0.468.0",
+						"@lucide/svelte": "^1.17.0",
 						svelte: "^5.0.0",
 						"svelte-check": "^4.0.0",
 						tailwindcss: "^4.2.2",
 						typescript: "^5.7.0",
 						vite: "^6.0.0",
-						vitest: "^2.1.0",
+						vitest: "^4.1.8",
 						"@playwright/test": "^1.48.0",
 					},
 						dependencies: {
 							"better-sqlite3": "^11.0.0",
-							"drizzle-orm": "^0.38.0",
+							"drizzle-orm": "^0.45.2",
 							mysql2: "^3.11.0",
 							postgres: "^3.4.5",
 							"@beeblock/svelar": `^${svelarVersion}`,
 						"bits-ui": "^1.0.0",
 						clsx: "^2.1.0",
-						exceljs: "^4.4.0",
 						"mode-watcher": "^0.5.0",
 						pdfkit: "^0.18.0",
 						"sveltekit-superforms": "^2.22.0",
 						"tailwind-merge": "^3.0.0",
 						"tailwind-variants": "^1.0.0",
 						"tw-animate-css": "^1.2.0",
-						zod: "^3.23.0",
+						valibot: "^1.2.0",
+						zod: "^3.25.0",
 					},
 				},
 				null,
@@ -131,15 +131,15 @@ export default defineConfig({
       '@beeblock/svelar/notifications': resolve(svelarRoot, 'dist/notifications/index.js'),
       '@beeblock/svelar/orm': resolve(svelarRoot, 'dist/orm/index.js'),
       '@beeblock/svelar/pagination': resolve(svelarRoot, 'src/pagination'),
-      '@beeblock/svelar/pdf': resolve(svelarRoot, 'dist/pdf/index.js'),
       '@beeblock/svelar/pdf/GeneratePdfJob': resolve(svelarRoot, 'dist/pdf/GeneratePdfJob.js'),
+      '@beeblock/svelar/pdf': resolve(svelarRoot, 'dist/pdf/index.js'),
       '@beeblock/svelar/permissions': resolve(svelarRoot, 'dist/permissions/index.js'),
       '@beeblock/svelar/plugins/PluginInstaller': resolve(svelarRoot, 'dist/plugins/PluginInstaller.js'),
       '@beeblock/svelar/plugins/PluginPublisher': resolve(svelarRoot, 'dist/plugins/PluginPublisher.js'),
       '@beeblock/svelar/plugins/PluginRegistry': resolve(svelarRoot, 'dist/plugins/PluginRegistry.js'),
       '@beeblock/svelar/plugins': resolve(svelarRoot, 'dist/plugins/index.js'),
-      '@beeblock/svelar/queue': resolve(svelarRoot, 'dist/queue/index.js'),
       '@beeblock/svelar/queue/JobMonitor': resolve(svelarRoot, 'dist/queue/JobMonitor.js'),
+      '@beeblock/svelar/queue': resolve(svelarRoot, 'dist/queue/index.js'),
       '@beeblock/svelar/repositories': resolve(svelarRoot, 'dist/repositories/index.js'),
       '@beeblock/svelar/routing': resolve(svelarRoot, 'dist/routing/index.js'),
       '@beeblock/svelar/scheduler/ScheduleMonitor': resolve(svelarRoot, 'dist/scheduler/ScheduleMonitor.js'),
@@ -170,11 +170,11 @@ export default defineConfig({
   ssr: {
     // Native password hashing drivers must stay external for Node production builds.
     external: ['bcrypt', 'argon2'],
-    // Process lucide-svelte during SSR (Svelte components must be compiled)
-    noExternal: ['lucide-svelte', '@tabler/icons-svelte', 'bits-ui'],
+    // Process Svelte icon components during SSR.
+    noExternal: ['@lucide/svelte', '@tabler/icons-svelte', 'bits-ui'],
   },
   optimizeDeps: {
-    exclude: ['lucide-svelte', '@tabler/icons-svelte', 'bits-ui'],
+    exclude: ['@lucide/svelte', '@tabler/icons-svelte', 'bits-ui'],
   },
 });
 `;
@@ -2518,6 +2518,7 @@ export const actions: Actions = {
 
   let { data } = $props();
 
+  // svelte-ignore state_referenced_locally
   const { form, errors, message, enhance, delayed } = superForm(data.form, {
     onResult: ({ result }) => {
       if (result.type === 'failure') {
@@ -2668,6 +2669,7 @@ export const actions: Actions = {
 
   let { data } = $props();
 
+  // svelte-ignore state_referenced_locally
   const { form, errors, message, enhance, delayed } = superForm(data.form);
 </script>
 
@@ -2823,6 +2825,7 @@ export const actions: Actions = {
 
   let { data } = $props();
 
+  // svelte-ignore state_referenced_locally
   const { form, errors, message, enhance, delayed } = superForm(data.form);
 
   // Track if form was submitted successfully
@@ -2932,6 +2935,7 @@ export const actions: Actions = {
 
   let { data } = $props();
 
+  // svelte-ignore state_referenced_locally
   const { form, errors, message, enhance, delayed } = superForm(data.form);
 </script>
 
@@ -3062,6 +3066,7 @@ export const actions: Actions = {
   let codeSent = $state(false);
   let email = $state('');
 
+  // svelte-ignore state_referenced_locally
   const { form: requestForm, errors: requestErrors, enhance: requestEnhance, delayed: requestDelayed } = superForm(data.requestForm, {
     onResult: ({ result }) => {
       if (result.type === 'success' && result.data?.codeSent) {
@@ -3071,6 +3076,7 @@ export const actions: Actions = {
     },
   });
 
+  // svelte-ignore state_referenced_locally
   const { form: verifyForm, errors: verifyErrors, enhance: verifyEnhance, delayed: verifyDelayed, message: verifyMessage } = superForm(data.verifyForm);
 </script>
 
@@ -3256,10 +3262,10 @@ export const load = guardAuth();
   import { page } from '\$app/stores';
   import type { Snippet } from 'svelte';
   import { Icon } from '@beeblock/svelar/ui';
-  import LayoutDashboard from 'lucide-svelte/icons/layout-dashboard';
-  import KeyRound from 'lucide-svelte/icons/key-round';
-  import Users from 'lucide-svelte/icons/users';
-  import Settings from 'lucide-svelte/icons/settings';
+  import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
+  import KeyRound from '@lucide/svelte/icons/key-round';
+  import Users from '@lucide/svelte/icons/users';
+  import Settings from '@lucide/svelte/icons/settings';
 
   interface Props {
     data: any;
@@ -3488,7 +3494,7 @@ export const actions: Actions = {
   import { Button, Badge, Card, CardHeader, CardTitle, CardContent, Input, Label, Alert } from '@beeblock/svelar/ui';
 
   let { data, form: actionData } = $props();
-  let apiKeys = $state(data.apiKeys);
+  let apiKeys = $state<any[]>([]);
   let showCreateForm = $state(false);
   let newKeyName = $state('');
   let newKeyPermissions = $state('read');
@@ -3744,9 +3750,9 @@ export const actions: Actions = {
   import { Button, Badge, Card, CardHeader, CardTitle, CardDescription, CardContent, Input, Label, Alert } from '@beeblock/svelar/ui';
 
   let { data, form: actionData } = $props();
-  let members = $state(data.members);
-  let invitations = $state(data.invitations);
-  let teamName = $state(data.team?.name ?? '');
+  let members = $state<any[]>([]);
+  let invitations = $state<any[]>([]);
+  let teamName = $state('');
   let showInviteForm = $state(false);
   let alertMessage = $state('');
   let alertType = $state<'success' | 'error'>('success');
@@ -3922,14 +3928,14 @@ export const load = guardAuth('/dashboard', { role: 'admin' });
   import { page } from '\$app/stores';
   import type { Snippet } from 'svelte';
   import { Icon } from '@beeblock/svelar/ui';
-  import LayoutDashboard from 'lucide-svelte/icons/layout-dashboard';
-  import Users from 'lucide-svelte/icons/users';
-  import ShieldCheck from 'lucide-svelte/icons/shield-check';
-  import Lock from 'lucide-svelte/icons/lock';
-  import ListTodo from 'lucide-svelte/icons/list-todo';
-  import Clock from 'lucide-svelte/icons/clock';
-  import FileText from 'lucide-svelte/icons/file-text';
-  import ArrowLeft from 'lucide-svelte/icons/arrow-left';
+  import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
+  import Users from '@lucide/svelte/icons/users';
+  import ShieldCheck from '@lucide/svelte/icons/shield-check';
+  import Lock from '@lucide/svelte/icons/lock';
+  import ListTodo from '@lucide/svelte/icons/list-todo';
+  import Clock from '@lucide/svelte/icons/clock';
+  import FileText from '@lucide/svelte/icons/file-text';
+  import ArrowLeft from '@lucide/svelte/icons/arrow-left';
 
   interface Props {
     data: any;
@@ -4143,23 +4149,23 @@ export async function load(event: ServerLoadEvent) {
   import { Button, Badge, Card, CardHeader, CardTitle, CardDescription, CardContent, Alert, Input, Label } from '@beeblock/svelar/ui';
 
   let { data } = \$props();
-  let users = \$state(data.users);
+  let users = \$state<any[]>([]);
   let message = \$state('');
   let messageType = \$state<'success' | 'error'>('success');
 
   // Real data from server
-  let queueCounts = \$state(data.queueCounts);
-  let scheduledTasks = \$state(data.scheduledTasks);
-  let recentLogs = \$state(data.recentLogs);
-  let logStats = \$state(data.logStats);
-  let health = \$state(data.health);
+  let queueCounts = \$state({ waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0, total: 0 });
+  let scheduledTasks = \$state<any[]>([]);
+  let recentLogs = \$state<any[]>([]);
+  let logStats = \$state({ totalEntries: 0, byLevel: {}, byChannel: {} });
+  let health = \$state({ status: 'ok', uptime: 0, memoryUsedMB: 0, memoryTotalMB: 0, memoryPercent: 0 });
 
   // Roles & Permissions
-  let roles = \$state(data.roles ?? []);
-  let permissions = \$state(data.permissions ?? []);
-  let rolePermissionsMap = \$state<Record<number, number[]>>(data.rolePermissionsMap ?? {});
-  let userRolesMap = \$state<Record<number, { id: number; name: string }[]>>(data.userRolesMap ?? {});
-  let userDirectPermsMap = \$state<Record<number, { id: number; name: string }[]>>(data.userDirectPermsMap ?? {});
+  let roles = \$state<any[]>([]);
+  let permissions = \$state<any[]>([]);
+  let rolePermissionsMap = \$state<Record<number, number[]>>({});
+  let userRolesMap = \$state<Record<number, { id: number; name: string }[]>>({});
+  let userDirectPermsMap = \$state<Record<number, { id: number; name: string }[]>>({});
 
   // Form state
   let newRoleName = \$state('');
@@ -4176,6 +4182,20 @@ export async function load(event: ServerLoadEvent) {
   const filteredLogs = \$derived(
     logFilter === 'all' ? recentLogs : recentLogs.filter((log: any) => log.level === logFilter)
   );
+
+  \$effect(() => {
+    users = data.users;
+    queueCounts = data.queueCounts;
+    scheduledTasks = data.scheduledTasks;
+    recentLogs = data.recentLogs;
+    logStats = data.logStats;
+    health = data.health;
+    roles = data.roles ?? [];
+    permissions = data.permissions ?? [];
+    rolePermissionsMap = data.rolePermissionsMap ?? {};
+    userRolesMap = data.userRolesMap ?? {};
+    userDirectPermsMap = data.userDirectPermsMap ?? {};
+  });
 
   function flash(msg: string, type: 'success' | 'error' = 'success') {
     message = msg;
