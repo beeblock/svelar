@@ -31,7 +31,10 @@
     "smoke:flat": "node scripts/release-smoke.mjs --app flat",
     "smoke:fast": "node scripts/release-smoke.mjs --skip-shadcn --skip-tests --skip-build",
     "smoke:browser": "node scripts/release-smoke.mjs --app ddd --browser",
-    "smoke:browser:headed": "node scripts/release-smoke.mjs --app ddd --browser --headed --slow-mo 350"
+    "smoke:browser:headed": "node scripts/release-smoke.mjs --app ddd --browser --headed --slow-mo 350",
+    "smoke:prod": "node scripts/release-smoke.mjs --app ddd --browser --prod",
+    "smoke:db": "node scripts/release-smoke.mjs --app ddd --db all --services",
+    "smoke:db:prod": "node scripts/release-smoke.mjs --app ddd --db all --services --browser --prod"
   },
   "devDependencies": {
     "typescript": "^5.7.0"

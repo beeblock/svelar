@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createRequire } from 'node:module';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +13,7 @@ const appDir = resolve(valueFor('--app-dir') ?? defaultAppDir);
 const port = Number(valueFor('--port') ?? 5179);
 const baseUrl = valueFor('--base-url') ?? `http://127.0.0.1:${port}`;
 const noServer = has('--no-server');
+const serverScript = valueFor('--server-script') ?? 'smoke:serve';
 const headed = has('--headed');
 const slowMo = Number(valueFor('--slow-mo') ?? (headed ? 250 : 0));
 
@@ -24,6 +25,7 @@ Options:
   --port <port>          Port used by npm run smoke:serve. Default: 5179.
   --base-url <url>       Existing app URL. Default: http://127.0.0.1:<port>.
   --no-server            Do not start npm run smoke:serve; test the existing base URL.
+  --server-script <name> npm script used to start the app. Default: smoke:serve.
   --headed               Open a visible Chromium window instead of running headless.
   --slow-mo <ms>         Delay browser actions. Default: 250 in headed mode, 0 otherwise.
 `);
@@ -53,7 +55,7 @@ try {
 	console.log(`Browser smoke passed for ${baseUrl}`);
 } finally {
 	if (server) {
-		server.kill('SIGTERM');
+		await stopServer(server);
 	}
 }
 
@@ -172,21 +174,66 @@ async function visible(locator, label) {
 }
 
 function startServer() {
-	const child = spawn('npm', ['run', 'smoke:serve'], {
+	const child = spawn('npm', ['run', serverScript], {
 		cwd: appDir,
-		env: { ...process.env, PORT: String(port) },
+		env: {
+			...loadDotEnv(appDir),
+			...process.env,
+			HOST: '127.0.0.1',
+			PORT: String(port),
+			ORIGIN: baseUrl,
+		},
 		stdio: ['ignore', 'pipe', 'pipe'],
+		detached: true,
 	});
 
 	child.stdout.on('data', (data) => process.stdout.write(data));
 	child.stderr.on('data', (data) => process.stderr.write(data));
 	child.on('exit', (code) => {
 		if (code !== null && code !== 0) {
-			console.error(`smoke:serve exited with code ${code}`);
+			console.error(`${serverScript} exited with code ${code}`);
 		}
 	});
 
 	return child;
+}
+
+async function stopServer(child) {
+	const pid = child.pid;
+	if (!pid) return;
+
+	try {
+		process.kill(-pid, 'SIGTERM');
+	} catch {
+		child.kill('SIGTERM');
+	}
+
+	await new Promise((resolve) => setTimeout(resolve, 1000));
+
+	if (child.exitCode === null && child.signalCode === null) {
+		try {
+			process.kill(-pid, 'SIGKILL');
+		} catch {
+			child.kill('SIGKILL');
+		}
+	}
+}
+
+function loadDotEnv(dir) {
+	const envPath = join(dir, '.env');
+	if (!existsSync(envPath)) return {};
+
+	const env = {};
+	for (const line of readFileSync(envPath, 'utf8').split(/\r?\n/)) {
+		const trimmed = line.trim();
+		if (!trimmed || trimmed.startsWith('#')) continue;
+		const separator = trimmed.indexOf('=');
+		if (separator === -1) continue;
+		const key = trimmed.slice(0, separator).trim();
+		const value = trimmed.slice(separator + 1).trim().replace(/^(['"])(.*)\1$/, '$2');
+		env[key] = value;
+	}
+	return env;
 }
 
 async function waitForServer(url) {
