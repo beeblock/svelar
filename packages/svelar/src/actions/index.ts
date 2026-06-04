@@ -6,7 +6,7 @@
  *
  * @example
  * ```ts
- * import { Action } from 'svelar/actions';
+ * import { Action } from '@beeblock/svelar/actions';
  *
  * class RegisterUserAction extends Action<RegisterDTO, User> {
  *   constructor(

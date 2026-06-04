@@ -880,7 +880,7 @@ export class RequireAuthMiddleware extends Middleware {
  * @example
  * ```ts
  * // In +layout.server.ts to protect an entire route group:
- * import { guardAuth } from 'svelar/auth';
+ * import { guardAuth } from '@beeblock/svelar/auth';
  *
  * export const load = guardAuth();
  * // or with a custom redirect:
@@ -911,15 +911,15 @@ export class RedirectIfNotAuthenticated extends Middleware {
  * @example
  * ```ts
  * // src/routes/dashboard/+layout.server.ts
- * import { guardAuth } from 'svelar/auth';
+ * import { guardAuth } from '@beeblock/svelar/auth';
  * export const load = guardAuth();
  *
  * // src/routes/admin/+layout.server.ts — custom redirect
- * import { guardAuth } from 'svelar/auth';
+ * import { guardAuth } from '@beeblock/svelar/auth';
  * export const load = guardAuth('/login');
  *
  * // With role check
- * import { guardAuth } from 'svelar/auth';
+ * import { guardAuth } from '@beeblock/svelar/auth';
  * export const load = guardAuth('/dashboard', { role: 'admin' });
  * ```
  */

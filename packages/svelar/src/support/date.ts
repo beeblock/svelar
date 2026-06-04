@@ -8,7 +8,7 @@
  *
  * @example
  * ```ts
- * import { formatDate, formatRelative, parseLocalDate, toLocal } from 'svelar/dates';
+ * import { formatDate, formatRelative, parseLocalDate, toLocal } from '@beeblock/svelar/dates';
  *
  * // Safe date formatting (locale-aware)
  * formatDate(user.createdAt);                    // "Mar 27, 2026"

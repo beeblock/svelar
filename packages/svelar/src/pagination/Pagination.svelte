@@ -4,7 +4,7 @@
   @example
   ```svelte
   <script>
-    import Pagination from 'svelar/pagination/Pagination.svelte';
+    import Pagination from '@beeblock/svelar/pagination/Pagination.svelte';
     let { data } = $props();
   </script>
 

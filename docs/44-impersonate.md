@@ -189,7 +189,7 @@ service.getImpersonatedUserId(event);
 Adds a `canImpersonate()` method to your User model. By default, checks for `admin` or `super-admin` role:
 
 ```ts
-import { Model } from '@beeblock/svelar/database';
+import { Model } from '@beeblock/svelar/orm';
 import { CanImpersonate } from '@beeblock/svelar-impersonate';
 
 class User extends CanImpersonate(Model) {
@@ -207,7 +207,7 @@ class User extends CanImpersonate(Model) {
 Adds a `canBeImpersonated()` method. By default, prevents impersonation of admin and super-admin users:
 
 ```ts
-import { Model } from '@beeblock/svelar/database';
+import { Model } from '@beeblock/svelar/orm';
 import { CanImpersonate, CanBeImpersonated } from '@beeblock/svelar-impersonate';
 
 class User extends CanImpersonate(CanBeImpersonated(Model)) {
@@ -355,7 +355,7 @@ A button to start impersonation for a specific user:
 
 ```ts
 // src/lib/models/User.ts
-import { Model } from '@beeblock/svelar/database';
+import { Model } from '@beeblock/svelar/orm';
 import { CanImpersonate, CanBeImpersonated } from '@beeblock/svelar-impersonate';
 
 export class User extends CanImpersonate(CanBeImpersonated(Model)) {

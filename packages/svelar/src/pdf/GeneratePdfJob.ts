@@ -6,8 +6,8 @@
  *
  * @example
  * ```ts
- * import { Queue } from 'svelar/queue';
- * import { GeneratePdfJob } from 'svelar/pdf/GeneratePdfJob';
+ * import { Queue } from '@beeblock/svelar/queue';
+ * import { GeneratePdfJob } from '@beeblock/svelar/pdf/GeneratePdfJob';
  *
  * // Register once in src/app.ts
  * Queue.register(GeneratePdfJob);

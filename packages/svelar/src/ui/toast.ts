@@ -7,11 +7,11 @@
  * Import { toast } anywhere to show notifications.
  * Import { Toaster } in your layout to render them.
  *
- * @module svelar/ui
+ * @module @beeblock/svelar/ui
  *
  * @example
  * ```ts
- * import { toast } from 'svelar/ui';
+ * import { toast } from '@beeblock/svelar/ui';
  *
  * toast('Hello');
  * toast.success('Saved!');

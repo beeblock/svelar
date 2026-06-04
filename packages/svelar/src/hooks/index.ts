@@ -4,12 +4,12 @@
  * Integration with SvelteKit's hooks system.
  * Provides a Laravel-like middleware pipeline for all incoming requests.
  *
- * @module svelar/hooks
+ * @module @beeblock/svelar/hooks
  *
  * @example Simple (auto-wired defaults)
  * ```ts
  * // src/hooks.server.ts
- * import { createSvelarApp } from 'svelar/hooks';
+ * import { createSvelarApp } from '@beeblock/svelar/hooks';
  * import { auth } from './app';
  *
  * export const { handle, handleError } = createSvelarApp({ auth });
@@ -17,8 +17,8 @@
  *
  * @example Advanced (manual pipeline)
  * ```ts
- * import { createSvelarHooks } from 'svelar/hooks';
- * import { CorsMiddleware } from 'svelar/middleware';
+ * import { createSvelarHooks } from '@beeblock/svelar/hooks';
+ * import { CorsMiddleware } from '@beeblock/svelar/middleware';
  *
  * export const handle = createSvelarHooks({
  *   middleware: [CorsMiddleware],
@@ -120,7 +120,7 @@ export interface SvelarAppConfig {
  *
  * @example
  * ```ts
- * import { createSvelarApp } from 'svelar/hooks';
+ * import { createSvelarApp } from '@beeblock/svelar/hooks';
  * import { auth } from './app';
  *
  * export const { handle, handleError } = createSvelarApp({ auth });
@@ -128,7 +128,7 @@ export interface SvelarAppConfig {
  *
  * @example With i18n
  * ```ts
- * import { createSvelarApp } from 'svelar/hooks';
+ * import { createSvelarApp } from '@beeblock/svelar/hooks';
  * import { auth } from './app';
  * import { paraglideMiddleware } from '$lib/paraglide/server';
  * import { getTextDirection } from '$lib/paraglide/runtime';

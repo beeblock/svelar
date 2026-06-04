@@ -10,7 +10,7 @@
  *
  * @example
  * ```ts
- * import { Permission, Role, HasRoles } from 'svelar/permissions';
+ * import { Permission, Role, HasRoles } from '@beeblock/svelar/permissions';
  *
  * // Models are auto-configured after migrations run
  * const admin = await Role.create({ name: 'admin', guard: 'web' });

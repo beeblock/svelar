@@ -156,7 +156,7 @@ const allUserSettings = await userSettings.all();
 Add settings directly to any Model:
 
 ```ts
-import { Model } from '@beeblock/svelar/database';
+import { Model } from '@beeblock/svelar/orm';
 import { HasSettings } from '@beeblock/svelar-settings';
 
 class User extends HasSettings(Model, 'user') {

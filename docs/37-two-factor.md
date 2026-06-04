@@ -52,7 +52,7 @@ export const twoFactorPlugin = new SvelarTwoFactorPlugin({
 ### 2. Add to Your User Model
 
 ```ts
-import { Model } from '@beeblock/svelar/database';
+import { Model } from '@beeblock/svelar/orm';
 import { HasTwoFactor } from '@beeblock/svelar-two-factor';
 
 class User extends HasTwoFactor(Model) {

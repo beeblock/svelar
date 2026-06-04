@@ -5,7 +5,7 @@
  *
  * @example
  * ```ts
- * import { Storage } from 'svelar/storage';
+ * import { Storage } from '@beeblock/svelar/storage';
  *
  * // Configure
  * Storage.configure({

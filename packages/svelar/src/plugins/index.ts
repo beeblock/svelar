@@ -7,7 +7,7 @@
  *
  * @example
  * ```ts
- * import { Plugin, PluginManager } from 'svelar/plugins';
+ * import { Plugin, PluginManager } from '@beeblock/svelar/plugins';
  *
  * // Define a plugin
  * class StripePlugin extends Plugin {

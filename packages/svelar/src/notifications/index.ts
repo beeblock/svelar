@@ -5,7 +5,7 @@
  *
  * @example
  * ```ts
- * import { Notification, Notifier } from 'svelar/notifications';
+ * import { Notification, Notifier } from '@beeblock/svelar/notifications';
  *
  * class InvoicePaid extends Notification {
  *   constructor(private invoice: Invoice) { super(); }

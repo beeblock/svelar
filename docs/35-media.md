@@ -55,7 +55,7 @@ export const mediaPlugin = new SvelarMediaPlugin({
 ### 2. Add Media to a Model
 
 ```ts
-import { Model } from '@beeblock/svelar/database';
+import { Model } from '@beeblock/svelar/orm';
 import { HasMedia } from '@beeblock/svelar-media';
 
 class Post extends HasMedia(Model) {

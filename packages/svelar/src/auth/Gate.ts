@@ -6,7 +6,7 @@
  *
  * @example
  * ```ts
- * import { Gate } from 'svelar/auth';
+ * import { Gate } from '@beeblock/svelar/auth';
  *
  * // Define gates
  * Gate.define('edit-post', (user, post) => {

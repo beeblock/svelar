@@ -4,12 +4,12 @@
  * Bridges sveltekit-superforms with Svelar's validation layer.
  * Provides helpers for creating forms with Zod schemas and server-side validation.
  *
- * @module svelar/forms
+ * @module @beeblock/svelar/forms
  *
  * @example
  * ```ts
  * // +page.server.ts
- * import { createFormAction, loadForm } from 'svelar/forms';
+ * import { createFormAction, loadForm } from '@beeblock/svelar/forms';
  * import { z } from 'zod';
  *
  * const schema = z.object({ title: z.string().min(3), body: z.string().min(10) });
@@ -28,7 +28,7 @@
 
 import { z } from 'zod';
 
-// Re-export FormRequest so `import { FormRequest } from 'svelar/forms'` works
+// Re-export FormRequest so `import { FormRequest } from '@beeblock/svelar/forms'` works
 export { FormRequest, FormValidationError, FormAuthorizationError } from '../routing/FormRequest.js';
 
 // ── Types ──────────────────────────────────────────────────
@@ -52,7 +52,7 @@ export interface FormActionOptions<T extends z.ZodTypeAny> {
  *
  * @example
  * ```ts
- * import { createFormAction } from 'svelar/forms';
+ * import { createFormAction } from '@beeblock/svelar/forms';
  * import { createPostSchema } from '$lib/schemas/post';
  *
  * export const actions = {

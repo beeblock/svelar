@@ -4,12 +4,12 @@
  * Helpers for integrating paraglide-js 2.x with SvelteKit.
  * Provides middleware composers, reroute hook creators, and the LanguageSwitcher component.
  *
- * @module svelar/i18n
+ * @module @beeblock/svelar/i18n
  *
  * @example
  * ```ts
  * // hooks.server.ts
- * import { createI18nHandle } from 'svelar/i18n';
+ * import { createI18nHandle } from '@beeblock/svelar/i18n';
  * import { paraglideMiddleware } from '$lib/paraglide/server';
  * import { getTextDirection } from '$lib/paraglide/runtime';
  *
@@ -64,7 +64,7 @@ export interface RerouteConfig {
  *
  * @example
  * ```ts
- * import { createI18nHandle } from 'svelar/i18n';
+ * import { createI18nHandle } from '@beeblock/svelar/i18n';
  * import { paraglideMiddleware } from '$lib/paraglide/server';
  * import { getTextDirection } from '$lib/paraglide/runtime';
  *
@@ -96,7 +96,7 @@ export function createI18nHandle(config: I18nHandleConfig): Handle {
  * @example
  * ```ts
  * // hooks.ts (client-side)
- * import { createReroute } from 'svelar/i18n';
+ * import { createReroute } from '@beeblock/svelar/i18n';
  * import { deLocalizeUrl } from '$lib/paraglide/runtime';
  *
  * export const reroute = createReroute({ deLocalizeUrl });
@@ -109,5 +109,5 @@ export function createReroute(config: RerouteConfig) {
 }
 
 // Note: LanguageSwitcher is a Svelte component, imported separately:
-// import LanguageSwitcher from 'svelar/i18n/LanguageSwitcher.svelte';
+// import LanguageSwitcher from '@beeblock/svelar/i18n/LanguageSwitcher.svelte';
 // or via the Svelte-aware entry point (svelte condition in package.json)

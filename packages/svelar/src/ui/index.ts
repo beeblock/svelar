@@ -4,7 +4,7 @@
  * A minimal, composable component library built on Svelte 5 runes.
  * Uses CSS custom properties (--color-brand, --color-brand-dark) for theming.
  *
- * @module svelar/ui
+ * @module @beeblock/svelar/ui
  */
 
 export { default as Button } from './Button.svelte';

@@ -7,7 +7,7 @@
  *
  * @example
  * ```ts
- * import { Queue, Job } from 'svelar/queue';
+ * import { Queue, Job } from '@beeblock/svelar/queue';
  *
  * class SendWelcomeEmail extends Job {
  *   constructor(private userId: number) { super(); }

@@ -7,8 +7,8 @@
  *
  * @example
  * ```ts
- * import { Scheduler, ScheduledTask } from 'svelar/scheduler';
- * import { QueryBuilder } from 'svelar/orm';
+ * import { Scheduler, ScheduledTask } from '@beeblock/svelar/scheduler';
+ * import { QueryBuilder } from '@beeblock/svelar/orm';
  *
  * // Define tasks
  * class PruneExpiredTokens extends ScheduledTask {

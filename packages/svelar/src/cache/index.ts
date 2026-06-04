@@ -5,7 +5,7 @@
  *
  * @example
  * ```ts
- * import { Cache } from 'svelar/cache';
+ * import { Cache } from '@beeblock/svelar/cache';
  *
  * Cache.configure({ default: 'memory', stores: { memory: { driver: 'memory' } } });
  *

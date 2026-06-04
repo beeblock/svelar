@@ -8,7 +8,7 @@
  * @example
  * ```svelte
  * <script>
- * import { usePusher, useChannel, usePresenceChannel } from 'svelar/broadcasting/client';
+ * import { usePusher, useChannel, usePresenceChannel } from '@beeblock/svelar/broadcasting/client';
  *
  * // Initialize once (e.g. in +layout.svelte)
  * const echo = usePusher({
@@ -32,7 +32,7 @@
  * </script>
  * ```
  *
- * @module svelar/broadcasting/client
+ * @module @beeblock/svelar/broadcasting/client
  */
 
 // ── Types ──────────────────────────────────────────────────
@@ -108,7 +108,7 @@ let _pusherOptions: PusherOptions | null = null;
  * ```svelte
  * <!-- +layout.svelte -->
  * <script>
- * import { usePusher } from 'svelar/broadcasting/client';
+ * import { usePusher } from '@beeblock/svelar/broadcasting/client';
  *
  * const echo = usePusher({
  *   key: 'svelar-key',
@@ -187,7 +187,7 @@ export function getPusher(): any {
  * @example
  * ```svelte
  * <script>
- * import { useChannel } from 'svelar/broadcasting/client';
+ * import { useChannel } from '@beeblock/svelar/broadcasting/client';
  *
  * const channel = useChannel('private-orders.123');
  *
@@ -214,7 +214,7 @@ export function useChannel(channelName: string): ChannelInstance {
  * @example
  * ```svelte
  * <script>
- * import { usePresenceChannel } from 'svelar/broadcasting/client';
+ * import { usePresenceChannel } from '@beeblock/svelar/broadcasting/client';
  *
  * let members = $state([]);
  *
@@ -288,7 +288,7 @@ export function leaveChannel(channelName: string): void {
  * @example
  * ```svelte
  * <script>
- * import { useSSE } from 'svelar/broadcasting/client';
+ * import { useSSE } from '@beeblock/svelar/broadcasting/client';
  *
  * const channel = useSSE('private-orders.123');
  *

@@ -5,7 +5,7 @@
  *
  * @example
  * ```ts
- * import { Log } from 'svelar/logging';
+ * import { Log } from '@beeblock/svelar/logging';
  *
  * Log.configure({
  *   default: 'stack',

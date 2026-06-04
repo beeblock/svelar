@@ -71,7 +71,7 @@ export const commentsPlugin = new SvelarCommentsPlugin({
 ### 2. Add to Your Model
 
 ```ts
-import { Model } from '@beeblock/svelar/database';
+import { Model } from '@beeblock/svelar/orm';
 import { HasComments } from '@beeblock/svelar-comments';
 
 class Post extends HasComments(Model) {

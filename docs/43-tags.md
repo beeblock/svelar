@@ -85,7 +85,7 @@ CREATE INDEX IF NOT EXISTS idx_tags_slug_type ON tags(slug, type);
 ### 3. Add Tags to a Model
 
 ```ts
-import { Model } from '@beeblock/svelar/database';
+import { Model } from '@beeblock/svelar/orm';
 import { HasTags } from '@beeblock/svelar-tags';
 
 class Post extends HasTags(Model) {
@@ -167,7 +167,7 @@ const merged = await TagService.merge(
 Adds tagging methods to any Svelar Model:
 
 ```ts
-import { Model } from '@beeblock/svelar/database';
+import { Model } from '@beeblock/svelar/orm';
 import { HasTags } from '@beeblock/svelar-tags';
 
 class Article extends HasTags(Model) {
@@ -403,7 +403,7 @@ for (const sql of TAGS_MIGRATION_SQL.down) {
 
 ```ts
 // src/lib/models/Post.ts
-import { Model } from '@beeblock/svelar/database';
+import { Model } from '@beeblock/svelar/orm';
 import { HasTags } from '@beeblock/svelar-tags';
 
 export class Post extends HasTags(Model) {

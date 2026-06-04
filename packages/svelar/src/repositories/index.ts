@@ -7,7 +7,7 @@
  *
  * @example
  * ```ts
- * import { Repository } from 'svelar/repositories';
+ * import { Repository } from '@beeblock/svelar/repositories';
  * import { User } from '../models/User';
  *
  * class UserRepository extends Repository<User> {

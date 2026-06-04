@@ -12,7 +12,7 @@
  *
  * @example
  * ```ts
- * import { Broadcast } from 'svelar/broadcasting';
+ * import { Broadcast } from '@beeblock/svelar/broadcasting';
  *
  * // Configure
  * Broadcast.configure({

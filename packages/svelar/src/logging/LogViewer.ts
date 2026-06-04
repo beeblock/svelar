@@ -6,7 +6,7 @@
  *
  * @example
  * ```ts
- * import { LogViewer } from 'svelar/logging';
+ * import { LogViewer } from '@beeblock/svelar/logging';
  *
  * // Query logs with filtering
  * const errors = LogViewer.getRecentErrors(10);

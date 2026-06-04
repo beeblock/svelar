@@ -7,7 +7,7 @@
  *
  * @example
  * ```ts
- * import { Service } from 'svelar/services';
+ * import { Service } from '@beeblock/svelar/services';
  *
  * class UserService extends Service {
  *   constructor(private userRepo: UserRepository) {

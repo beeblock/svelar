@@ -1,7 +1,7 @@
 /**
  * Svelar — Laravel-inspired framework on top of SvelteKit 2
  *
- * @module svelar
+ * @module @beeblock/svelar
  */
 
 // ORM

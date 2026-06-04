@@ -10,7 +10,7 @@
  * @example
  * ```ts
  * // hooks.server.ts
- * import { ErrorHandler } from 'svelar/errors';
+ * import { ErrorHandler } from '@beeblock/svelar/errors';
  *
  * const handler = new ErrorHandler({
  *   debug: process.env.NODE_ENV !== 'production',

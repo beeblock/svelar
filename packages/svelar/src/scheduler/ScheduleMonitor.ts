@@ -7,7 +7,7 @@
  *
  * @example
  * ```ts
- * import { ScheduleMonitor } from 'svelar/scheduler';
+ * import { ScheduleMonitor } from '@beeblock/svelar/scheduler';
  *
  * // Configure with your scheduler instance
  * ScheduleMonitor.configure(scheduler);

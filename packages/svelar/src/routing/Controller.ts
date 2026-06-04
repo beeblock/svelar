@@ -291,7 +291,7 @@ export abstract class Controller {
  * @example
  * ```ts
  * // src/routes/api/users/+server.ts
- * import { resource } from 'svelar/routing';
+ * import { resource } from '@beeblock/svelar/routing';
  * import { UserController } from '$lib/controllers/UserController';
  *
  * const { GET, POST } = resource(UserController);

@@ -17,7 +17,7 @@ npm run dev
 Or add to an existing SvelteKit project:
 
 ```bash
-npm install svelar drizzle-orm better-sqlite3
+npm install /svelar drizzle-orm better-sqlite3
 ```
 
 ## Features
@@ -59,7 +59,7 @@ npm install svelar drizzle-orm better-sqlite3
 ### Models & ORM
 
 ```typescript
-import { Model } from 'svelar/orm';
+import { Model } from '@beeblock/svelar/orm';
 
 class User extends Model {
   static table = 'users';
@@ -94,8 +94,8 @@ const usersWithPosts = await User.with('posts').get();
 
 ```typescript
 // src/lib/controllers/UserController.ts
-import { Controller, type RequestEvent } from 'svelar/routing';
-import { z } from 'svelar/validation';
+import { Controller, type RequestEvent } from '@beeblock/svelar/routing';
+import { z } from '@beeblock/svelar/validation';
 
 class UserController extends Controller {
   async index(event: RequestEvent) {
@@ -112,7 +112,7 @@ class UserController extends Controller {
 }
 
 // src/routes/api/users/+server.ts
-import { resource } from 'svelar/routing';
+import { resource } from '@beeblock/svelar/routing';
 const { GET, POST } = resource(UserController);
 export { GET, POST };
 ```
@@ -121,8 +121,8 @@ export { GET, POST };
 
 ```typescript
 // src/hooks.server.ts
-import { createSvelarHooks, LoggingMiddleware, CorsMiddleware } from 'svelar';
-import { SessionMiddleware, MemorySessionStore } from 'svelar/session';
+import { createSvelarHooks, LoggingMiddleware, CorsMiddleware } from '@beeblock/svelar';
+import { SessionMiddleware, MemorySessionStore } from '@beeblock/svelar/session';
 
 export const handle = createSvelarHooks({
   middleware: [
@@ -136,7 +136,7 @@ export const handle = createSvelarHooks({
 ### Authentication
 
 ```typescript
-import { AuthManager, Hash } from 'svelar';
+import { AuthManager, Hash } from '@beeblock/svelar';
 
 const auth = new AuthManager({
   guard: 'jwt',
@@ -162,7 +162,7 @@ const result = await auth.attemptJwt({
 ### Events
 
 ```typescript
-import { Event } from 'svelar/events';
+import { Event } from '@beeblock/svelar/events';
 
 class UserRegistered {
   constructor(public readonly user: User) {}
@@ -178,7 +178,7 @@ await Event.dispatch(new UserRegistered(user));
 ### Cache
 
 ```typescript
-import { Cache } from 'svelar/cache';
+import { Cache } from '@beeblock/svelar/cache';
 
 await Cache.put('key', 'value', 3600);
 const value = await Cache.get('key', 'default');
@@ -189,7 +189,7 @@ const users = await Cache.remember('all-users', 600, () => User.all());
 ### Queue
 
 ```typescript
-import { Queue, Job } from 'svelar/queue';
+import { Queue, Job } from '@beeblock/svelar/queue';
 
 class SendEmail extends Job {
   constructor(private userId: number) { super(); }
@@ -242,7 +242,7 @@ my-app/
 Svelar supports SQLite, PostgreSQL, and MySQL out of the box through Drizzle ORM:
 
 ```typescript
-import { Connection } from 'svelar';
+import { Connection } from '@beeblock/svelar';
 
 Connection.configure({
   default: 'sqlite',

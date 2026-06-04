@@ -5,7 +5,7 @@
  *
  * @example
  * ```ts
- * import { Event } from 'svelar/events';
+ * import { Event } from '@beeblock/svelar/events';
  *
  * // Define an event
  * class UserRegistered {

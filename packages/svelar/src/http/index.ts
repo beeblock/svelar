@@ -4,7 +4,7 @@
  * Client-side: CSRF-aware fetch wrapper, automatic error toast handling.
  * Server-side: Fluent HTTP client for third-party API calls (Postmark, Stripe, etc.)
  *
- * @module svelar/http
+ * @module @beeblock/svelar/http
  *
  * @example
  * ```ts
@@ -99,7 +99,7 @@ function showToast(variant: 'success' | 'error' | 'warning' | 'info', title: str
  *
  * @example
  * ```ts
- * import { apiFetch } from 'svelar/http';
+ * import { apiFetch } from '@beeblock/svelar/http';
  *
  * // POST with auto error toast
  * const res = await apiFetch('/api/posts', {
@@ -170,7 +170,7 @@ export async function apiFetch(url: string, options: ApiFetchOptions = {}): Prom
  *
  * @example
  * ```ts
- * import { apiFetchJson } from 'svelar/http';
+ * import { apiFetchJson } from '@beeblock/svelar/http';
  *
  * const { data, error, ok } = await apiFetchJson<User[]>('/api/users');
  * if (ok) {
@@ -279,7 +279,7 @@ export function getCsrfToken(cookieName = 'XSRF-TOKEN'): string | null {
  *
  * @example
  * ```ts
- * import { signedFetch } from 'svelar/http';
+ * import { signedFetch } from '@beeblock/svelar/http';
  *
  * const res = await signedFetch('/api/webhooks', {
  *   method: 'POST',

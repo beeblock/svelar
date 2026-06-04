@@ -6,7 +6,7 @@
  *
  * @example
  * ```ts
- * import { Dashboard, configureDashboard, getDashboardHealth } from 'svelar/dashboard';
+ * import { Dashboard, configureDashboard, getDashboardHealth } from '@beeblock/svelar/dashboard';
  *
  * // Configure the dashboard
  * configureDashboard({

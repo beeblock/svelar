@@ -33,44 +33,44 @@ See the [Getting Started guide](https://svelar.dev/docs/getting-started) for a c
 
 | Module | Import | Description |
 |--------|--------|-------------|
-| **ORM** | `svelar/orm` | Eloquent-style models with relationships, soft deletes, scopes, eager loading |
-| **Database** | `svelar/database` | Schema builder, migrations, seeders (SQLite, PostgreSQL, MySQL) |
-| **Auth** | `svelar/auth` | Session, JWT (with refresh tokens), API tokens, password reset, email verification, OTP login |
-| **Middleware** | `svelar/middleware` | CORS, CSRF, rate limiting, origin validation, request signatures |
-| **Routing** | `svelar/routing` | Controllers, form requests, API resources, response helpers |
-| **Validation** | `svelar/validation` | Zod-based validation with FormRequest DTOs |
-| **Session** | `svelar/session` | Cookie, memory, Redis, and database session stores |
-| **Hashing** | `svelar/hashing` | scrypt (zero-dep), bcrypt, argon2 |
-| **Queue** | `svelar/queue` | Job dispatching with sync, memory, and Redis (BullMQ) drivers |
-| **Scheduler** | `svelar/scheduler` | Cron-based task scheduling with distributed locking and DB history |
-| **Events** | `svelar/events` | Typed event dispatcher with listeners and subscribers |
-| **Broadcasting** | `svelar/broadcasting` | Server-Sent Events and Pusher/Soketi WebSocket support |
-| **Cache** | `svelar/cache` | Memory and Redis cache with TTL and remember pattern |
-| **Storage** | `svelar/storage` | Local and S3-compatible file storage |
-| **Mail** | `svelar/mail` | SMTP, Postmark, Resend, log, and null transports with Mailable classes |
-| **Excel** | `svelar/excel` | Import/export Excel files with streaming support for large datasets |
-| **Notifications** | `svelar/notifications` | Multi-channel notifications (mail, database, broadcast) |
-| **Logging** | `svelar/logging` | File-based logger with levels and rotation |
-| **HTTP Client** | `svelar/http` | Client-side CSRF fetch + server-side fluent HTTP client for third-party APIs |
-| **Permissions** | `svelar/permissions` | Role-based access control with permissions and gates |
-| **i18n** | `svelar/i18n` | Paraglide-js integration with language switcher |
-| **Forms** | `svelar/forms` | SvelteKit Superforms integration helpers |
-| **UI Components** | `svelar/ui` | Minimal built-in components + [shadcn-svelte](https://shadcn-svelte.com) pre-installed |
-| **SEO** | `svelar/ui` | `<Seo>` component for meta tags, Open Graph, Twitter Cards, JSON-LD structured data |
-| **Hooks** | `svelar/hooks` | One-line SvelteKit hooks setup with sensible defaults |
-| **Container** | `svelar/container` | IoC container with singleton/transient bindings |
-| **Plugins** | `svelar/plugins` | Plugin discovery, publishing, and CLI management |
-| **PDF** | `svelar/pdf` | PDF generation with PDFKit (default) and Gotenberg drivers |
-| **Feature Flags** | `svelar/feature-flags` | Per-user, per-team, and percentage rollout feature flags |
-| **Audit** | `svelar/audit` | Model change tracking |
-| **API Keys** | `svelar/api-keys` | API key generation, validation, and management |
-| **Webhooks** | `svelar/webhooks` | Webhook dispatch and signature verification |
-| **Teams** | `svelar/teams` | Multi-tenant team management with database-backed storage |
-| **Email Templates** | `svelar/email-templates` | Database-stored templates with variable interpolation |
-| **Uploads** | `svelar/uploads` | File upload handling with validation (local + S3) |
-| **Dashboard** | `svelar/dashboard` | Admin dashboard with job/scheduler monitoring and log viewer |
-| **Search** | `svelar/search` | Meilisearch integration with auto-syncing `Searchable` mixin |
-| **Testing** | `svelar/testing` | Factory, `useSvelarTest()`, `refreshDatabase()`, `actingAs()`, database assertions |
+| **ORM** | `@beeblock/svelar/orm` | Eloquent-style models with relationships, soft deletes, scopes, eager loading |
+| **Database** | `@beeblock/svelar/database` | Schema builder, migrations, seeders (SQLite, PostgreSQL, MySQL) |
+| **Auth** | `@beeblock/svelar/auth` | Session, JWT (with refresh tokens), API tokens, password reset, email verification, OTP login |
+| **Middleware** | `@beeblock/svelar/middleware` | CORS, CSRF, rate limiting, origin validation, request signatures |
+| **Routing** | `@beeblock/svelar/routing` | Controllers, form requests, API resources, response helpers |
+| **Validation** | `@beeblock/svelar/validation` | Zod-based validation with FormRequest DTOs |
+| **Session** | `@beeblock/svelar/session` | Cookie, memory, Redis, and database session stores |
+| **Hashing** | `@beeblock/svelar/hashing` | scrypt (zero-dep), bcrypt, argon2 |
+| **Queue** | `@beeblock/svelar/queue` | Job dispatching with sync, memory, and Redis (BullMQ) drivers |
+| **Scheduler** | `@beeblock/svelar/scheduler` | Cron-based task scheduling with distributed locking and DB history |
+| **Events** | `@beeblock/svelar/events` | Typed event dispatcher with listeners and subscribers |
+| **Broadcasting** | `@beeblock/svelar/broadcasting` | Server-Sent Events and Pusher/Soketi WebSocket support |
+| **Cache** | `@beeblock/svelar/cache` | Memory and Redis cache with TTL and remember pattern |
+| **Storage** | `@beeblock/svelar/storage` | Local and S3-compatible file storage |
+| **Mail** | `@beeblock/svelar/mail` | SMTP, Postmark, Resend, log, and null transports with Mailable classes |
+| **Excel** | `@beeblock/svelar/excel` | Import/export Excel files with streaming support for large datasets |
+| **Notifications** | `@beeblock/svelar/notifications` | Multi-channel notifications (mail, database, broadcast) |
+| **Logging** | `@beeblock/svelar/logging` | File-based logger with levels and rotation |
+| **HTTP Client** | `@beeblock/svelar/http` | Client-side CSRF fetch + server-side fluent HTTP client for third-party APIs |
+| **Permissions** | `@beeblock/svelar/permissions` | Role-based access control with permissions and gates |
+| **i18n** | `@beeblock/svelar/i18n` | Paraglide-js integration with language switcher |
+| **Forms** | `@beeblock/svelar/forms` | SvelteKit Superforms integration helpers |
+| **UI Components** | `@beeblock/svelar/ui` | Minimal built-in components + [shadcn-svelte](https://shadcn-svelte.com) pre-installed |
+| **SEO** | `@beeblock/svelar/ui` | `<Seo>` component for meta tags, Open Graph, Twitter Cards, JSON-LD structured data |
+| **Hooks** | `@beeblock/svelar/hooks` | One-line SvelteKit hooks setup with sensible defaults |
+| **Container** | `@beeblock/svelar/container` | IoC container with singleton/transient bindings |
+| **Plugins** | `@beeblock/svelar/plugins` | Plugin discovery, publishing, and CLI management |
+| **PDF** | `@beeblock/svelar/pdf` | PDF generation with PDFKit (default) and Gotenberg drivers |
+| **Feature Flags** | `@beeblock/svelar/feature-flags` | Per-user, per-team, and percentage rollout feature flags |
+| **Audit** | `@beeblock/svelar/audit` | Model change tracking |
+| **API Keys** | `@beeblock/svelar/api-keys` | API key generation, validation, and management |
+| **Webhooks** | `@beeblock/svelar/webhooks` | Webhook dispatch and signature verification |
+| **Teams** | `@beeblock/svelar/teams` | Multi-tenant team management with database-backed storage |
+| **Email Templates** | `@beeblock/svelar/email-templates` | Database-stored templates with variable interpolation |
+| **Uploads** | `@beeblock/svelar/uploads` | File upload handling with validation (local + S3) |
+| **Dashboard** | `@beeblock/svelar/dashboard` | Admin dashboard with job/scheduler monitoring and log viewer |
+| **Search** | `@beeblock/svelar/search` | Meilisearch integration with auto-syncing `Searchable` mixin |
+| **Testing** | `@beeblock/svelar/testing` | Factory, `useSvelarTest()`, `refreshDatabase()`, `actingAs()`, database assertions |
 
 ## Official Plugins
 

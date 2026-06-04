@@ -6,7 +6,7 @@
  *
  * @example
  * ```ts
- * import { Hash } from 'svelar';
+ * import { Hash } from '@beeblock/svelar';
  *
  * const hashed = await Hash.make('my-password');
  * const valid = await Hash.verify('my-password', hashed);

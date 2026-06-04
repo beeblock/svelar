@@ -7,7 +7,7 @@
  * @example
  * ```ts
  * // In hooks.server.ts
- * import { SessionMiddleware, MemorySessionStore } from 'svelar/session';
+ * import { SessionMiddleware, MemorySessionStore } from '@beeblock/svelar/session';
  *
  * export const handle = createSvelarHooks({
  *   middleware: [

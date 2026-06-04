@@ -236,7 +236,7 @@ const count = await ActivityService.query()
 Automatically logs `created`, `updated`, and `deleted` events on any Model:
 
 ```ts
-import { Model } from '@beeblock/svelar/database';
+import { Model } from '@beeblock/svelar/orm';
 import { LogsActivity } from '@beeblock/svelar-activity-log';
 
 class Post extends LogsActivity(Model) {
@@ -432,7 +432,7 @@ A filter panel with inputs for log name, subject type, causer ID, description, a
 
 ```ts
 // src/lib/models/Post.ts
-import { Model } from '@beeblock/svelar/database';
+import { Model } from '@beeblock/svelar/orm';
 import { LogsActivity } from '@beeblock/svelar-activity-log';
 
 export class Post extends LogsActivity(Model) {

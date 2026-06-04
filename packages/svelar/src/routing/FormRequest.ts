@@ -6,8 +6,8 @@
  *
  * @example
  * ```ts
- * import { FormRequest } from 'svelar/routing';
- * import { z } from 'svelar/validation';
+ * import { FormRequest } from '@beeblock/svelar/routing';
+ * import { z } from '@beeblock/svelar/validation';
  *
  * class CreateUserRequest extends FormRequest {
  *   rules() {
