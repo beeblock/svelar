@@ -61,6 +61,7 @@ import { MakeInfraCommand } from './commands/MakeInfraCommand.js';
 import { InfraSetupCommand } from './commands/InfraSetupCommand.js';
 import { MakeDeployCommand } from './commands/MakeDeployCommand.js';
 import { MakeBroadcastingCommand } from './commands/MakeBroadcastingCommand.js';
+import { MakeDashboardCommand } from './commands/MakeDashboardCommand.js';
 import { MakeTestCommand } from './commands/MakeTestCommand.js';
 import { MakeFactoryCommand } from './commands/MakeFactoryCommand.js';
 
@@ -143,6 +144,7 @@ cli.register(MakeInfraCommand);
 cli.register(InfraSetupCommand);
 cli.register(MakeDeployCommand);
 cli.register(MakeBroadcastingCommand);
+cli.register(MakeDashboardCommand);
 cli.register(MakeTestCommand);
 cli.register(MakeFactoryCommand);
 

@@ -285,12 +285,15 @@
 		"@aws-sdk/client-s3": ">=3.0.0",
 		"@aws-sdk/s3-request-presigner": ">=3.0.0",
 		"@sveltejs/kit": "^2.0.0",
+		"argon2": "*",
 		"better-sqlite3": "*",
+		"bcrypt": "*",
 		"bullmq": ">=5.0.0",
 		"exceljs": ">=4.4.0",
 		"ioredis": ">=5.0.0",
 		"meilisearch": ">=0.44.0",
 		"mysql2": "*",
+		"nodemailer": ">=6.0.0",
 		"pdfkit": ">=0.18.0",
 		"postgres": "*",
 		"pusher-js": ">=8.0.0",
@@ -304,7 +307,13 @@
 		"@aws-sdk/s3-request-presigner": {
 			"optional": true
 		},
+		"argon2": {
+			"optional": true
+		},
 		"better-sqlite3": {
+			"optional": true
+		},
+		"bcrypt": {
 			"optional": true
 		},
 		"bullmq": {
@@ -314,6 +323,9 @@
 			"optional": true
 		},
 		"mysql2": {
+			"optional": true
+		},
+		"nodemailer": {
 			"optional": true
 		},
 		"postgres": {

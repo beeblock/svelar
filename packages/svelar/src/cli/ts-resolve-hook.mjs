@@ -1,7 +1,7 @@
 /**
  * ESM resolve hook for Svelar CLI:
- * 1. Resolves 'svelar' and 'svelar/*' imports directly from THIS package's dist/
- *    (bypasses node_modules entirely — no symlinks, junctions, or platform issues)
+ * 1. Resolves '@beeblock/svelar' and '@beeblock/svelar/*' imports directly
+ *    from THIS package's dist/ (bypasses node_modules entirely)
  * 2. Rewrites .js → .ts when the .js file doesn't exist
  */
 
@@ -15,22 +15,24 @@ const thisFileDir = dirname(fileURLToPath(import.meta.url));
 const svelarRoot = pathResolve(thisFileDir, '..', '..');
 
 /**
- * Resolve 'svelar' or 'svelar/<subpath>' by pointing directly at our own dist/.
+ * Resolve '@beeblock/svelar' or '@beeblock/svelar/<subpath>' by pointing directly at our own dist/.
  * This works on every OS because it never touches node_modules or symlinks.
  */
 function resolveSvelar(specifier) {
-  if (specifier === 'svelar') {
+  const packageName = '@beeblock/svelar';
+
+  if (specifier === packageName) {
     const target = pathResolve(svelarRoot, 'dist', 'index.js');
     if (existsSync(target)) return pathToFileURL(target).href;
     return null;
   }
 
-  if (specifier.startsWith('svelar/')) {
-    const subpath = specifier.slice('svelar/'.length); // e.g. 'database', 'orm', 'auth'
+  if (specifier.startsWith(`${packageName}/`)) {
+    const subpath = specifier.slice(`${packageName}/`.length); // e.g. 'database', 'orm', 'auth'
     const target = pathResolve(svelarRoot, 'dist', subpath, 'index.js');
     if (existsSync(target)) return pathToFileURL(target).href;
 
-    // Also try direct file (e.g. svelar/something.js)
+    // Also try direct file (e.g. @beeblock/svelar/something.js)
     const directTarget = pathResolve(svelarRoot, 'dist', subpath + '.js');
     if (existsSync(directTarget)) return pathToFileURL(directTarget).href;
 
@@ -41,8 +43,8 @@ function resolveSvelar(specifier) {
 }
 
 export async function resolve(specifier, context, nextResolve) {
-  // 1. Intercept svelar imports FIRST — before Node tries (and fails) to resolve them
-  if (specifier === 'svelar' || specifier.startsWith('svelar/')) {
+  // 1. Intercept Svelar imports FIRST — before Node tries (and fails) to resolve them
+  if (specifier === '@beeblock/svelar' || specifier.startsWith('@beeblock/svelar/')) {
     const resolved = resolveSvelar(specifier);
     if (resolved) {
       return { url: resolved, shortCircuit: true };
