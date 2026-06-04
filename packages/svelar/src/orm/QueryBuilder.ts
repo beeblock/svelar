@@ -5,7 +5,7 @@
  * Works across SQLite, PostgreSQL, and MySQL through the Connection manager.
  */
 
-import { Connection, type DatabaseDriver } from '../database/Connection.js';
+import { assertSqlIdentifier, Connection, type DatabaseDriver } from '../database/Connection.js';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -78,6 +78,7 @@ export class QueryBuilder<TModel = any> {
   private connectionName?: string;
   private cteClauses: CTEClause[] = [];
   private unionClauses: UnionClause[] = [];
+  private rawSelectColumns = new Set<string>();
 
   // Model class reference for hydrating results
   private modelClass?: any;
@@ -127,6 +128,7 @@ export class QueryBuilder<TModel = any> {
         boolean: 'AND',
       });
     } else {
+      this.assertOperator(operatorOrValue);
       this.whereClauses.push({
         type: 'basic',
         column,
@@ -148,6 +150,7 @@ export class QueryBuilder<TModel = any> {
         boolean: 'OR',
       });
     } else {
+      this.assertOperator(operatorOrValue);
       this.whereClauses.push({
         type: 'basic',
         column,
@@ -247,6 +250,7 @@ export class QueryBuilder<TModel = any> {
   }
 
   whereSub(column: string, operator: string, callback: (query: QueryBuilder) => void): this {
+    this.assertOperator(operator);
     const sub = new QueryBuilder('__placeholder__', undefined, this.connectionName);
     callback(sub);
     const { sql, bindings } = sub.toSQL();
@@ -366,6 +370,7 @@ export class QueryBuilder<TModel = any> {
   }
 
   having(column: string, operator: string, value: any): this {
+    this.assertOperator(operator);
     this.havingClauses.push({
       type: 'basic',
       column,
@@ -439,31 +444,31 @@ export class QueryBuilder<TModel = any> {
   }
 
   async count(column: string = '*'): Promise<number> {
-    const { sql, bindings } = this.buildAggregate(`COUNT(${column})`);
+    const { sql, bindings } = this.buildAggregate('COUNT', column);
     const rows = await Connection.raw(sql, bindings, this.connectionName);
     return Number(rows[0]?.aggregate ?? 0);
   }
 
   async sum(column: string): Promise<number> {
-    const { sql, bindings } = this.buildAggregate(`SUM(${column})`);
+    const { sql, bindings } = this.buildAggregate('SUM', column);
     const rows = await Connection.raw(sql, bindings, this.connectionName);
     return Number(rows[0]?.aggregate ?? 0);
   }
 
   async avg(column: string): Promise<number> {
-    const { sql, bindings } = this.buildAggregate(`AVG(${column})`);
+    const { sql, bindings } = this.buildAggregate('AVG', column);
     const rows = await Connection.raw(sql, bindings, this.connectionName);
     return Number(rows[0]?.aggregate ?? 0);
   }
 
   async max(column: string): Promise<any> {
-    const { sql, bindings } = this.buildAggregate(`MAX(${column})`);
+    const { sql, bindings } = this.buildAggregate('MAX', column);
     const rows = await Connection.raw(sql, bindings, this.connectionName);
     return rows[0]?.aggregate ?? null;
   }
 
   async min(column: string): Promise<any> {
-    const { sql, bindings } = this.buildAggregate(`MIN(${column})`);
+    const { sql, bindings } = this.buildAggregate('MIN', column);
     const rows = await Connection.raw(sql, bindings, this.connectionName);
     return rows[0]?.aggregate ?? null;
   }
@@ -530,6 +535,7 @@ export class QueryBuilder<TModel = any> {
     } else {
       this.selectColumns.push(expression);
     }
+    this.rawSelectColumns.add(expression);
     return this;
   }
 
@@ -551,19 +557,22 @@ export class QueryBuilder<TModel = any> {
     const values = rows.flatMap((row) => columns.map((column) => row[column]));
 
     let sql: string;
+    const table = this.quoteIdentifier(this.tableName, 'Table name');
+    const quotedColumns = columns.map((column) => this.quoteIdentifier(column, 'Column name'));
+    const quotedConflict = conflict.map((column) => this.quoteIdentifier(column, 'Conflict column'));
 
     if (driver === 'postgres') {
-      const updateSet = toUpdate.map((c) => `${c} = EXCLUDED.${c}`).join(', ');
-      sql = `INSERT INTO ${this.tableName} (${columns.join(', ')}) VALUES ${rowPlaceholders} ON CONFLICT (${conflict.join(', ')}) ${updateSet ? `DO UPDATE SET ${updateSet}` : 'DO NOTHING'}`;
+      const updateSet = toUpdate.map((c) => `${this.quoteIdentifier(c, 'Update column')} = EXCLUDED.${this.quoteIdentifier(c, 'Update column')}`).join(', ');
+      sql = `INSERT INTO ${table} (${quotedColumns.join(', ')}) VALUES ${rowPlaceholders} ON CONFLICT (${quotedConflict.join(', ')}) ${updateSet ? `DO UPDATE SET ${updateSet}` : 'DO NOTHING'}`;
     } else if (driver === 'mysql') {
-      const updateSet = toUpdate.map((c) => `${c} = VALUES(${c})`).join(', ');
+      const updateSet = toUpdate.map((c) => `${this.quoteIdentifier(c, 'Update column')} = VALUES(${this.quoteIdentifier(c, 'Update column')})`).join(', ');
       sql = updateSet
-        ? `INSERT INTO ${this.tableName} (${columns.join(', ')}) VALUES ${rowPlaceholders} ON DUPLICATE KEY UPDATE ${updateSet}`
-        : `INSERT IGNORE INTO ${this.tableName} (${columns.join(', ')}) VALUES ${rowPlaceholders}`;
+        ? `INSERT INTO ${table} (${quotedColumns.join(', ')}) VALUES ${rowPlaceholders} ON DUPLICATE KEY UPDATE ${updateSet}`
+        : `INSERT IGNORE INTO ${table} (${quotedColumns.join(', ')}) VALUES ${rowPlaceholders}`;
     } else {
       // SQLite
-      const updateSet = toUpdate.map((c) => `${c} = excluded.${c}`).join(', ');
-      sql = `INSERT INTO ${this.tableName} (${columns.join(', ')}) VALUES ${rowPlaceholders} ON CONFLICT (${conflict.join(', ')}) ${updateSet ? `DO UPDATE SET ${updateSet}` : 'DO NOTHING'}`;
+      const updateSet = toUpdate.map((c) => `${this.quoteIdentifier(c, 'Update column')} = excluded.${this.quoteIdentifier(c, 'Update column')}`).join(', ');
+      sql = `INSERT INTO ${table} (${quotedColumns.join(', ')}) VALUES ${rowPlaceholders} ON CONFLICT (${quotedConflict.join(', ')}) ${updateSet ? `DO UPDATE SET ${updateSet}` : 'DO NOTHING'}`;
     }
 
     return Connection.raw(sql, values, this.connectionName);
@@ -581,7 +590,7 @@ export class QueryBuilder<TModel = any> {
       rowPlaceholders.push(`(${values.map(() => '?').join(', ')})`);
     }
 
-    const sql = `INSERT INTO ${this.tableName} (${columns.join(', ')}) VALUES ${rowPlaceholders.join(', ')}`;
+    const sql = `INSERT INTO ${this.quoteIdentifier(this.tableName, 'Table name')} (${columns.map((column) => this.quoteIdentifier(column, 'Column name')).join(', ')}) VALUES ${rowPlaceholders.join(', ')}`;
     return Connection.raw(sql, bindings, this.connectionName);
   }
 
@@ -621,14 +630,15 @@ export class QueryBuilder<TModel = any> {
     if (second === undefined) {
       this.whereClauses.push({
         type: 'raw',
-        raw: `${first} = ${operatorOrSecond}`,
+        raw: `${this.quoteIdentifier(first, 'Column name')} = ${this.quoteIdentifier(operatorOrSecond, 'Column name')}`,
         values: [],
         boolean: 'AND',
       });
     } else {
+      this.assertOperator(operatorOrSecond);
       this.whereClauses.push({
         type: 'raw',
-        raw: `${first} ${operatorOrSecond} ${second}`,
+        raw: `${this.quoteIdentifier(first, 'Column name')} ${operatorOrSecond} ${this.quoteIdentifier(second, 'Column name')}`,
         values: [],
         boolean: 'AND',
       });
@@ -658,7 +668,7 @@ export class QueryBuilder<TModel = any> {
     callback(sub);
     const { sql, bindings } = sub.toSQL();
     // We store bindings in a special way — they'll be prepended
-    const expr = `(${sql}) as ${alias}`;
+    const expr = `(${sql}) as ${this.quoteIdentifier(alias, 'Alias')}`;
     if (this.selectColumns[0] === '*') {
       this.selectColumns = [expr];
     } else {
@@ -674,11 +684,12 @@ export class QueryBuilder<TModel = any> {
 
   async truncate(): Promise<void> {
     const driver = Connection.getDriver(this.connectionName);
+    const table = this.quoteIdentifier(this.tableName, 'Table name');
     if (driver === 'sqlite') {
-      await Connection.raw(`DELETE FROM ${this.tableName}`, [], this.connectionName);
+      await Connection.raw(`DELETE FROM ${table}`, [], this.connectionName);
       await Connection.raw(`DELETE FROM sqlite_sequence WHERE name = ?`, [this.tableName], this.connectionName);
     } else {
-      await Connection.raw(`TRUNCATE TABLE ${this.tableName}`, [], this.connectionName);
+      await Connection.raw(`TRUNCATE TABLE ${table}`, [], this.connectionName);
     }
   }
 
@@ -707,7 +718,7 @@ export class QueryBuilder<TModel = any> {
     const values = Object.values(data);
     const placeholders = values.map(() => '?').join(', ');
 
-    const sql = `INSERT INTO ${this.tableName} (${columns.join(', ')}) VALUES (${placeholders})`;
+    const sql = `INSERT INTO ${this.quoteIdentifier(this.tableName, 'Table name')} (${columns.map((column) => this.quoteIdentifier(column, 'Column name')).join(', ')}) VALUES (${placeholders})`;
     return Connection.raw(sql, values, this.connectionName);
   }
 
@@ -717,10 +728,10 @@ export class QueryBuilder<TModel = any> {
     const values = Object.values(data);
     const placeholders = values.map(() => '?').join(', ');
 
-    let sql = `INSERT INTO ${this.tableName} (${columns.join(', ')}) VALUES (${placeholders})`;
+    let sql = `INSERT INTO ${this.quoteIdentifier(this.tableName, 'Table name')} (${columns.map((column) => this.quoteIdentifier(column, 'Column name')).join(', ')}) VALUES (${placeholders})`;
 
     if (driver === 'postgres') {
-      sql += ` RETURNING ${primaryKey}`;
+      sql += ` RETURNING ${this.quoteIdentifier(primaryKey, 'Primary key')}`;
       const rows = await Connection.raw(sql, values, this.connectionName);
       return rows[0]?.[primaryKey];
     }
@@ -743,10 +754,10 @@ export class QueryBuilder<TModel = any> {
   async update(data: Record<string, any>): Promise<number> {
     const columns = Object.keys(data);
     const values = Object.values(data);
-    const setClause = columns.map((c) => `${c} = ?`).join(', ');
+    const setClause = columns.map((c) => `${this.quoteIdentifier(c, 'Column name')} = ?`).join(', ');
 
     const { whereSQL, whereBindings } = this.buildWhere();
-    const sql = `UPDATE ${this.tableName} SET ${setClause}${whereSQL ? ` ${whereSQL}` : ''}`;
+    const sql = `UPDATE ${this.quoteIdentifier(this.tableName, 'Table name')} SET ${setClause}${whereSQL ? ` ${whereSQL}` : ''}`;
 
     const result = await Connection.raw(sql, [...values, ...whereBindings], this.connectionName);
     return this.affectedRows(result);
@@ -754,14 +765,15 @@ export class QueryBuilder<TModel = any> {
 
   async delete(): Promise<number> {
     const { whereSQL, whereBindings } = this.buildWhere();
-    const sql = `DELETE FROM ${this.tableName}${whereSQL ? ` ${whereSQL}` : ''}`;
+    const sql = `DELETE FROM ${this.quoteIdentifier(this.tableName, 'Table name')}${whereSQL ? ` ${whereSQL}` : ''}`;
     const result = await Connection.raw(sql, whereBindings, this.connectionName);
     return this.affectedRows(result);
   }
 
   async increment(column: string, amount: number = 1): Promise<void> {
     const { whereSQL, whereBindings } = this.buildWhere();
-    const sql = `UPDATE ${this.tableName} SET ${column} = ${column} + ?${whereSQL ? ` ${whereSQL}` : ''}`;
+    const quotedColumn = this.quoteIdentifier(column, 'Column name');
+    const sql = `UPDATE ${this.quoteIdentifier(this.tableName, 'Table name')} SET ${quotedColumn} = ${quotedColumn} + ?${whereSQL ? ` ${whereSQL}` : ''}`;
     await Connection.raw(sql, [amount, ...whereBindings], this.connectionName);
   }
 
@@ -790,7 +802,7 @@ export class QueryBuilder<TModel = any> {
       const cteKeyword = hasRecursive ? 'WITH RECURSIVE' : 'WITH';
       const cteParts = this.cteClauses.map((c) => {
         bindings.push(...c.bindings);
-        return `${c.name} AS (${c.sql})`;
+        return `${this.quoteIdentifier(c.name, 'CTE name')} AS (${c.sql})`;
       });
       parts.push(`${cteKeyword} ${cteParts.join(', ')}`);
     }
@@ -800,17 +812,18 @@ export class QueryBuilder<TModel = any> {
       bindings.push(...this._selectBindings);
     }
     const distinctStr = this.isDistinct ? 'DISTINCT ' : '';
-    parts.push(`SELECT ${distinctStr}${this.selectColumns.join(', ')}`);
+    parts.push(`SELECT ${distinctStr}${this.selectColumns.map((column) => this.formatSelectColumn(column)).join(', ')}`);
 
     // FROM
-    parts.push(`FROM ${this.tableName}`);
+    parts.push(`FROM ${this.quoteIdentifier(this.tableName, 'Table name')}`);
 
     // JOINs
     for (const join of this.joinClauses) {
       if (join.type === 'CROSS') {
-        parts.push(`CROSS JOIN ${join.table}`);
+        parts.push(`CROSS JOIN ${this.quoteIdentifier(join.table, 'Join table')}`);
       } else {
-        parts.push(`${join.type} JOIN ${join.table} ON ${join.first} ${join.operator} ${join.second}`);
+        this.assertOperator(join.operator);
+        parts.push(`${join.type} JOIN ${this.quoteIdentifier(join.table, 'Join table')} ON ${this.quoteIdentifier(join.first, 'Join column')} ${join.operator} ${this.quoteIdentifier(join.second, 'Join column')}`);
       }
     }
 
@@ -823,7 +836,7 @@ export class QueryBuilder<TModel = any> {
 
     // GROUP BY
     if (this.groupByColumns.length > 0) {
-      parts.push(`GROUP BY ${this.groupByColumns.join(', ')}`);
+      parts.push(`GROUP BY ${this.groupByColumns.map((column) => this.quoteIdentifier(column, 'Group column')).join(', ')}`);
     }
 
     // HAVING
@@ -834,7 +847,8 @@ export class QueryBuilder<TModel = any> {
           havingParts.push(clause.raw!);
           if (clause.values) bindings.push(...clause.values);
         } else {
-          havingParts.push(`${clause.column} ${clause.operator} ?`);
+          this.assertOperator(clause.operator!);
+          havingParts.push(`${this.quoteIdentifier(clause.column!, 'Having column')} ${clause.operator} ?`);
           bindings.push(clause.value);
         }
       }
@@ -844,7 +858,7 @@ export class QueryBuilder<TModel = any> {
     // ORDER BY
     if (this.orderClauses.length > 0) {
       const orderParts = this.orderClauses.map((o) =>
-        (o as any).__raw ? o.column : `${o.column} ${o.direction.toUpperCase()}`
+        (o as any).__raw ? o.column : `${this.quoteIdentifier(o.column, 'Order column')} ${o.direction.toUpperCase()}`
       );
       parts.push(`ORDER BY ${orderParts.join(', ')}`);
     }
@@ -887,6 +901,8 @@ export class QueryBuilder<TModel = any> {
     cloned.isDistinct = this.isDistinct;
     cloned.cteClauses = [...this.cteClauses];
     cloned.unionClauses = [...this.unionClauses];
+    cloned.rawSelectColumns = new Set(this.rawSelectColumns);
+    cloned._selectBindings = this._selectBindings ? [...this._selectBindings] : undefined;
     return cloned;
   }
 
@@ -906,38 +922,39 @@ export class QueryBuilder<TModel = any> {
 
       switch (clause.type) {
         case 'basic':
+          this.assertOperator(clause.operator!);
           // Handle IS/IS NOT operators with null values specially
           if ((clause.operator === 'IS' || clause.operator === 'IS NOT') && clause.value === null) {
             const nullKeyword = clause.operator === 'IS' ? 'null' : 'null';
-            parts.push(`${prefix} ${clause.column} ${clause.operator} ${nullKeyword}`);
+            parts.push(`${prefix} ${this.quoteIdentifier(clause.column!, 'Where column')} ${clause.operator} ${nullKeyword}`);
           } else {
-            parts.push(`${prefix} ${clause.column} ${clause.operator} ?`);
+            parts.push(`${prefix} ${this.quoteIdentifier(clause.column!, 'Where column')} ${clause.operator} ?`);
             bindings.push(clause.value);
           }
           break;
 
         case 'in':
           const inPlaceholders = clause.values!.map(() => '?').join(', ');
-          parts.push(`${prefix} ${clause.column} IN (${inPlaceholders})`);
+          parts.push(`${prefix} ${this.quoteIdentifier(clause.column!, 'Where column')} IN (${inPlaceholders})`);
           bindings.push(...clause.values!);
           break;
 
         case 'notIn':
           const notInPlaceholders = clause.values!.map(() => '?').join(', ');
-          parts.push(`${prefix} ${clause.column} NOT IN (${notInPlaceholders})`);
+          parts.push(`${prefix} ${this.quoteIdentifier(clause.column!, 'Where column')} NOT IN (${notInPlaceholders})`);
           bindings.push(...clause.values!);
           break;
 
         case 'null':
-          parts.push(`${prefix} ${clause.column} IS NULL`);
+          parts.push(`${prefix} ${this.quoteIdentifier(clause.column!, 'Where column')} IS NULL`);
           break;
 
         case 'notNull':
-          parts.push(`${prefix} ${clause.column} IS NOT NULL`);
+          parts.push(`${prefix} ${this.quoteIdentifier(clause.column!, 'Where column')} IS NOT NULL`);
           break;
 
         case 'between':
-          parts.push(`${prefix} ${clause.column} BETWEEN ? AND ?`);
+          parts.push(`${prefix} ${this.quoteIdentifier(clause.column!, 'Where column')} BETWEEN ? AND ?`);
           bindings.push(clause.values![0], clause.values![1]);
           break;
 
@@ -957,7 +974,8 @@ export class QueryBuilder<TModel = any> {
           break;
 
         case 'sub':
-          parts.push(`${prefix} ${clause.column} ${clause.operator} (${clause.subSQL})`);
+          this.assertOperator(clause.operator!);
+          parts.push(`${prefix} ${this.quoteIdentifier(clause.column!, 'Where column')} ${clause.operator} (${clause.subSQL})`);
           if (clause.subBindings) bindings.push(...clause.subBindings);
           break;
       }
@@ -966,12 +984,61 @@ export class QueryBuilder<TModel = any> {
     return { whereSQL: parts.join(' '), whereBindings: bindings };
   }
 
-  private buildAggregate(fn: string): { sql: string; bindings: any[] } {
+  private buildAggregate(fn: string, column: string): { sql: string; bindings: any[] } {
     const savedSelect = this.selectColumns;
-    this.selectColumns = [`${fn} as aggregate`];
+    this.selectColumns = [`${fn}(${this.quoteIdentifier(column, 'Aggregate column')}) as aggregate`];
     const result = this.toSQL();
     this.selectColumns = savedSelect;
     return result;
+  }
+
+  private currentDriver(): DatabaseDriver {
+    try {
+      return Connection.getDriver(this.connectionName);
+    } catch {
+      return 'sqlite';
+    }
+  }
+
+  private quoteIdentifier(identifier: string, label: string = 'SQL identifier'): string {
+    if (identifier === '*') return '*';
+
+    const aliasMatch = identifier.match(/^(.+?)\s+as\s+(.+)$/i);
+    if (aliasMatch) {
+      return `${this.quoteIdentifier(aliasMatch[1].trim(), label)} as ${this.quoteIdentifier(aliasMatch[2].trim(), 'Alias')}`;
+    }
+
+    const implicitAliasMatch = identifier.match(/^([A-Za-z_][A-Za-z0-9_$.]*)\s+([A-Za-z_][A-Za-z0-9_]*)$/);
+    if (implicitAliasMatch) {
+      return `${this.quoteIdentifier(implicitAliasMatch[1], label)} ${this.quoteIdentifier(implicitAliasMatch[2], 'Alias')}`;
+    }
+
+    const driver = this.currentDriver();
+    return identifier
+      .split('.')
+      .map((part) => {
+        if (part === '*') return '*';
+        const clean = assertSqlIdentifier(part, label);
+        return driver === 'mysql' ? `\`${clean}\`` : `"${clean}"`;
+      })
+      .join('.');
+  }
+
+  private formatSelectColumn(column: string): string {
+    if (column === '*') return '*';
+    if (this.rawSelectColumns.has(column)) return column;
+    if (/^[A-Z]+\(.+\)\s+as\s+[A-Za-z_][A-Za-z0-9_]*$/i.test(column)) {
+      return column.replace(/\s+as\s+([A-Za-z_][A-Za-z0-9_]*)$/i, (_match, alias) => ` as ${this.quoteIdentifier(alias, 'Alias')}`);
+    }
+    if (column.trim().startsWith('(')) return column;
+    return this.quoteIdentifier(column, 'Select column');
+  }
+
+  private assertOperator(operator: string): void {
+    const allowed = ['=', '!=', '<>', '>', '>=', '<', '<=', 'LIKE', 'NOT LIKE', 'IN', 'NOT IN', 'IS', 'IS NOT', 'BETWEEN'];
+    if (!allowed.includes(operator.toUpperCase())) {
+      throw new Error(`SQL operator contains invalid characters: "${operator}"`);
+    }
   }
 
   private hydrateMany(rows: any[]): TModel[] {

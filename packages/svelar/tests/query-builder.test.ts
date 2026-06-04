@@ -11,7 +11,7 @@ describe('QueryBuilder - SQL Generation', () => {
       const qb = new QueryBuilder('users');
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users');
+      expect(sql).toBe('SELECT * FROM "users"');
       expect(bindings).toEqual([]);
     });
 
@@ -20,7 +20,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.select('id', 'name', 'email');
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT id, name, email FROM users');
+      expect(sql).toBe('SELECT "id", "name", "email" FROM "users"');
       expect(bindings).toEqual([]);
     });
 
@@ -29,7 +29,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.distinct().select('role');
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT DISTINCT role FROM users');
+      expect(sql).toBe('SELECT DISTINCT "role" FROM "users"');
       expect(bindings).toEqual([]);
     });
 
@@ -39,7 +39,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.addSelect('email', 'phone');
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT id, name, email, phone FROM users');
+      expect(sql).toBe('SELECT "id", "name", "email", "phone" FROM "users"');
       expect(bindings).toEqual([]);
     });
   });
@@ -50,7 +50,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.where('name', 'John');
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users WHERE name = ?');
+      expect(sql).toBe('SELECT * FROM "users" WHERE "name" = ?');
       expect(bindings).toEqual(['John']);
     });
 
@@ -59,7 +59,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.where('age', '>', 18);
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users WHERE age > ?');
+      expect(sql).toBe('SELECT * FROM "users" WHERE "age" > ?');
       expect(bindings).toEqual([18]);
     });
 
@@ -69,7 +69,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.where('role', 'admin');
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users WHERE status = ? AND role = ?');
+      expect(sql).toBe('SELECT * FROM "users" WHERE "status" = ? AND "role" = ?');
       expect(bindings).toEqual(['active', 'admin']);
     });
 
@@ -79,7 +79,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.orWhere('role', 'moderator');
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users WHERE role = ? OR role = ?');
+      expect(sql).toBe('SELECT * FROM "users" WHERE "role" = ? OR "role" = ?');
       expect(bindings).toEqual(['admin', 'moderator']);
     });
 
@@ -88,7 +88,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.whereIn('status', ['active', 'pending']);
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users WHERE status IN (?, ?)');
+      expect(sql).toBe('SELECT * FROM "users" WHERE "status" IN (?, ?)');
       expect(bindings).toEqual(['active', 'pending']);
     });
 
@@ -97,7 +97,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.whereNotIn('id', [1, 2, 3]);
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users WHERE id NOT IN (?, ?, ?)');
+      expect(sql).toBe('SELECT * FROM "users" WHERE "id" NOT IN (?, ?, ?)');
       expect(bindings).toEqual([1, 2, 3]);
     });
 
@@ -106,7 +106,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.whereNull('deleted_at');
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users WHERE deleted_at IS NULL');
+      expect(sql).toBe('SELECT * FROM "users" WHERE "deleted_at" IS NULL');
       expect(bindings).toEqual([]);
     });
 
@@ -115,7 +115,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.whereNotNull('email_verified_at');
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users WHERE email_verified_at IS NOT NULL');
+      expect(sql).toBe('SELECT * FROM "users" WHERE "email_verified_at" IS NOT NULL');
       expect(bindings).toEqual([]);
     });
 
@@ -124,7 +124,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.whereBetween('age', [18, 65]);
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users WHERE age BETWEEN ? AND ?');
+      expect(sql).toBe('SELECT * FROM "users" WHERE "age" BETWEEN ? AND ?');
       expect(bindings).toEqual([18, 65]);
     });
 
@@ -133,7 +133,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.whereRaw('age > ? AND status = ?', [18, 'active']);
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users WHERE age > ? AND status = ?');
+      expect(sql).toBe('SELECT * FROM "users" WHERE age > ? AND status = ?');
       expect(bindings).toEqual([18, 'active']);
     });
   });
@@ -144,7 +144,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.join('posts', 'users.id', '=', 'posts.user_id');
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users INNER JOIN posts ON users.id = posts.user_id');
+      expect(sql).toBe('SELECT * FROM "users" INNER JOIN "posts" ON "users"."id" = "posts"."user_id"');
       expect(bindings).toEqual([]);
     });
 
@@ -153,7 +153,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.leftJoin('posts', 'users.id', '=', 'posts.user_id');
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users LEFT JOIN posts ON users.id = posts.user_id');
+      expect(sql).toBe('SELECT * FROM "users" LEFT JOIN "posts" ON "users"."id" = "posts"."user_id"');
       expect(bindings).toEqual([]);
     });
 
@@ -162,7 +162,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.rightJoin('posts', 'users.id', '=', 'posts.user_id');
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users RIGHT JOIN posts ON users.id = posts.user_id');
+      expect(sql).toBe('SELECT * FROM "users" RIGHT JOIN "posts" ON "users"."id" = "posts"."user_id"');
       expect(bindings).toEqual([]);
     });
 
@@ -172,8 +172,8 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.leftJoin('comments', 'posts.id', '=', 'comments.post_id');
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toContain('INNER JOIN posts ON users.id = posts.user_id');
-      expect(sql).toContain('LEFT JOIN comments ON posts.id = comments.post_id');
+      expect(sql).toContain('INNER JOIN "posts" ON "users"."id" = "posts"."user_id"');
+      expect(sql).toContain('LEFT JOIN "comments" ON "posts"."id" = "comments"."post_id"');
       expect(bindings).toEqual([]);
     });
   });
@@ -184,7 +184,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.orderBy('name', 'asc');
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users ORDER BY name ASC');
+      expect(sql).toBe('SELECT * FROM "users" ORDER BY "name" ASC');
       expect(bindings).toEqual([]);
     });
 
@@ -193,7 +193,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.orderBy('created_at', 'desc');
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users ORDER BY created_at DESC');
+      expect(sql).toBe('SELECT * FROM "users" ORDER BY "created_at" DESC');
       expect(bindings).toEqual([]);
     });
 
@@ -203,7 +203,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.orderBy('name', 'desc');
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users ORDER BY status ASC, name DESC');
+      expect(sql).toBe('SELECT * FROM "users" ORDER BY "status" ASC, "name" DESC');
       expect(bindings).toEqual([]);
     });
 
@@ -212,7 +212,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.latest('updated_at');
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users ORDER BY updated_at DESC');
+      expect(sql).toBe('SELECT * FROM "users" ORDER BY "updated_at" DESC');
       expect(bindings).toEqual([]);
     });
 
@@ -221,7 +221,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.oldest('created_at');
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users ORDER BY created_at ASC');
+      expect(sql).toBe('SELECT * FROM "users" ORDER BY "created_at" ASC');
       expect(bindings).toEqual([]);
     });
   });
@@ -232,7 +232,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.limit(10);
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users LIMIT 10');
+      expect(sql).toBe('SELECT * FROM "users" LIMIT 10');
       expect(bindings).toEqual([]);
     });
 
@@ -241,7 +241,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.offset(20);
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users OFFSET 20');
+      expect(sql).toBe('SELECT * FROM "users" OFFSET 20');
       expect(bindings).toEqual([]);
     });
 
@@ -250,7 +250,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.limit(10).offset(20);
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users LIMIT 10 OFFSET 20');
+      expect(sql).toBe('SELECT * FROM "users" LIMIT 10 OFFSET 20');
       expect(bindings).toEqual([]);
     });
 
@@ -259,7 +259,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.take(15);
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users LIMIT 15');
+      expect(sql).toBe('SELECT * FROM "users" LIMIT 15');
       expect(bindings).toEqual([]);
     });
 
@@ -268,7 +268,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.skip(50);
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users OFFSET 50');
+      expect(sql).toBe('SELECT * FROM "users" OFFSET 50');
       expect(bindings).toEqual([]);
     });
   });
@@ -279,7 +279,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.select('role', 'COUNT(*) as count').groupBy('role');
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toContain('GROUP BY role');
+      expect(sql).toContain('GROUP BY "role"');
       expect(bindings).toEqual([]);
     });
 
@@ -288,7 +288,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.groupBy('role', 'status');
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toContain('GROUP BY role, status');
+      expect(sql).toContain('GROUP BY "role", "status"');
       expect(bindings).toEqual([]);
     });
 
@@ -297,8 +297,8 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.groupBy('role').having('count', '>', 5);
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toContain('GROUP BY role');
-      expect(sql).toContain('HAVING count > ?');
+      expect(sql).toContain('GROUP BY "role"');
+      expect(sql).toContain('HAVING "count" > ?');
       expect(bindings).toContain(5);
     });
 
@@ -309,9 +309,9 @@ describe('QueryBuilder - SQL Generation', () => {
         .having('count', '>=', 10);
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toContain('WHERE status = ?');
-      expect(sql).toContain('GROUP BY role');
-      expect(sql).toContain('HAVING count >= ?');
+      expect(sql).toContain('WHERE "status" = ?');
+      expect(sql).toContain('GROUP BY "role"');
+      expect(sql).toContain('HAVING "count" >= ?');
       expect(bindings).toEqual(['active', 10]);
     });
   });
@@ -330,13 +330,13 @@ describe('QueryBuilder - SQL Generation', () => {
 
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toContain('SELECT users.id, users.name, COUNT(posts.id) as post_count');
-      expect(sql).toContain('FROM users');
-      expect(sql).toContain('INNER JOIN posts');
-      expect(sql).toContain('WHERE users.status = ? AND users.deleted_at IS null');
-      expect(sql).toContain('GROUP BY users.id');
-      expect(sql).toContain('HAVING post_count > ?');
-      expect(sql).toContain('ORDER BY post_count DESC');
+      expect(sql).toContain('SELECT "users"."id", "users"."name", COUNT(posts.id) as "post_count"');
+      expect(sql).toContain('FROM "users"');
+      expect(sql).toContain('INNER JOIN "posts"');
+      expect(sql).toContain('WHERE "users"."status" = ? AND "users"."deleted_at" IS null');
+      expect(sql).toContain('GROUP BY "users"."id"');
+      expect(sql).toContain('HAVING "post_count" > ?');
+      expect(sql).toContain('ORDER BY "post_count" DESC');
       expect(sql).toContain('LIMIT 10');
 
       expect(bindings).toEqual(['active', 5]);
@@ -355,8 +355,8 @@ describe('QueryBuilder - SQL Generation', () => {
 
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toContain('WHERE active = ?');
-      expect(sql).toContain('ORDER BY created_at DESC');
+      expect(sql).toContain('WHERE "active" = ?');
+      expect(sql).toContain('ORDER BY "created_at" DESC');
       expect(sql).toContain('LIMIT 15');
       expect(sql).toContain('OFFSET 15');
 
@@ -375,8 +375,8 @@ describe('QueryBuilder - SQL Generation', () => {
 
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toContain('WHERE category = ? AND price < ? AND brand IN (?, ?)');
-      expect(sql).toContain('ORDER BY price ASC, name ASC');
+      expect(sql).toContain('WHERE "category" = ? AND "price" < ? AND "brand" IN (?, ?)');
+      expect(sql).toContain('ORDER BY "price" ASC, "name" ASC');
       expect(sql).toContain('LIMIT 20');
 
       expect(bindings).toEqual(['electronics', 1000, 'Apple', 'Samsung']);
@@ -389,7 +389,7 @@ describe('QueryBuilder - SQL Generation', () => {
       qb.select();
       const { sql } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users');
+      expect(sql).toBe('SELECT * FROM "users"');
     });
 
     it('should handle WHERE with operators', () => {
@@ -400,9 +400,9 @@ describe('QueryBuilder - SQL Generation', () => {
 
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toContain('id != ?');
-      expect(sql).toContain('created_at >= ?');
-      expect(sql).toContain('status <> ?');
+      expect(sql).toContain('"id" != ?');
+      expect(sql).toContain('"created_at" >= ?');
+      expect(sql).toContain('"status" <> ?');
 
       expect(bindings).toEqual([1, '2024-01-01', 'deleted']);
     });
@@ -453,10 +453,10 @@ describe('QueryBuilder - SQL Generation', () => {
       const { sql: sql2 } = qb2.toSQL();
 
       expect(sql1).not.toBe(sql2);
-      expect(sql1).toContain('WHERE role = ?');
+      expect(sql1).toContain('WHERE "role" = ?');
       expect(sql1).not.toContain('status');
 
-      expect(sql2).toContain('WHERE role = ? AND status = ?');
+      expect(sql2).toContain('WHERE "role" = ? AND "status" = ?');
     });
   });
 
@@ -467,9 +467,33 @@ describe('QueryBuilder - SQL Generation', () => {
 
       const { sql, bindings } = qb.toSQL();
 
-      expect(sql).toBe('SELECT * FROM users WHERE name = ?');
+      expect(sql).toBe('SELECT * FROM "users" WHERE "name" = ?');
       expect(bindings).toEqual(["'; DROP TABLE users; --"]);
       expect(sql).not.toContain('DROP');
+    });
+
+    it('should reject unsafe structured table and column identifiers', () => {
+      expect(() => new QueryBuilder('users; DROP TABLE users').toSQL()).toThrow(
+        'Table name contains invalid characters',
+      );
+
+      expect(() => new QueryBuilder('users').where('name; DROP TABLE users', 'Ada').toSQL()).toThrow(
+        'Where column contains invalid characters',
+      );
+    });
+
+    it('should keep raw clauses explicit while still quoting structured identifiers', () => {
+      const qb = new QueryBuilder('users');
+      qb.selectRaw('LOWER(email) as normalized_email')
+        .whereRaw('LOWER(email) = ?', ['ada@example.com'])
+        .orderByRaw('LOWER(email) DESC');
+
+      const { sql, bindings } = qb.toSQL();
+
+      expect(sql).toBe(
+        'SELECT LOWER(email) as normalized_email FROM "users" WHERE LOWER(email) = ? ORDER BY LOWER(email) DESC',
+      );
+      expect(bindings).toEqual(['ada@example.com']);
     });
   });
 });
@@ -557,17 +581,17 @@ describe('QueryBuilder - database mutations', () => {
       {
         driver: 'sqlite',
         expected:
-          'INSERT INTO settings (name, value, updated_at) VALUES (?, ?, ?) ON CONFLICT (name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
+          'INSERT INTO "settings" ("name", "value", "updated_at") VALUES (?, ?, ?) ON CONFLICT ("name") DO UPDATE SET "value" = excluded."value", "updated_at" = excluded."updated_at"',
       },
       {
         driver: 'postgres',
         expected:
-          'INSERT INTO settings (name, value, updated_at) VALUES (?, ?, ?) ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at',
+          'INSERT INTO "settings" ("name", "value", "updated_at") VALUES (?, ?, ?) ON CONFLICT ("name") DO UPDATE SET "value" = EXCLUDED."value", "updated_at" = EXCLUDED."updated_at"',
       },
       {
         driver: 'mysql',
         expected:
-          'INSERT INTO settings (name, value, updated_at) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = VALUES(updated_at)',
+          'INSERT INTO `settings` (`name`, `value`, `updated_at`) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE `value` = VALUES(`value`), `updated_at` = VALUES(`updated_at`)',
       },
     ] as const;
 
@@ -599,17 +623,17 @@ describe('QueryBuilder - database mutations', () => {
       {
         driver: 'sqlite',
         expected:
-          'INSERT INTO role_has_permissions (role_id, permission_id) VALUES (?, ?) ON CONFLICT (role_id, permission_id) DO NOTHING',
+          'INSERT INTO "role_has_permissions" ("role_id", "permission_id") VALUES (?, ?) ON CONFLICT ("role_id", "permission_id") DO NOTHING',
       },
       {
         driver: 'postgres',
         expected:
-          'INSERT INTO role_has_permissions (role_id, permission_id) VALUES (?, ?) ON CONFLICT (role_id, permission_id) DO NOTHING',
+          'INSERT INTO "role_has_permissions" ("role_id", "permission_id") VALUES (?, ?) ON CONFLICT ("role_id", "permission_id") DO NOTHING',
       },
       {
         driver: 'mysql',
         expected:
-          'INSERT IGNORE INTO role_has_permissions (role_id, permission_id) VALUES (?, ?)',
+          'INSERT IGNORE INTO `role_has_permissions` (`role_id`, `permission_id`) VALUES (?, ?)',
       },
     ] as const;
 
