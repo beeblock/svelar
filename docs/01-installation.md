@@ -16,7 +16,7 @@ cd my-app
 npm run dev
 ```
 
-That's it. The CLI scaffolds a complete SvelteKit + Svelar project, installs dependencies, and you're ready to go.
+That's it. The CLI scaffolds a complete SvelteKit + Svelar project, installs dependencies, and you're ready to go. The short `npx svelar` command is provided by the unscoped `svelar` CLI shim; generated apps install the framework package as `@beeblock/svelar`.
 
 ### What's Scaffolded
 

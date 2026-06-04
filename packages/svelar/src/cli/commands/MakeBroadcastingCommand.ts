@@ -95,15 +95,14 @@ export class MakeBroadcastingCommand extends Command {
     this.info('Next steps:');
 
     if (both || pusherOnly) {
-      this.log('  1. Install pusher-js: npm install pusher-js');
-      this.log('  2. Add Pusher env vars to .env:');
+      this.log('  1. Add Pusher env vars to .env:');
       this.log('       BROADCAST_DRIVER=pusher');
       this.log('       PUSHER_KEY=svelar-key');
       this.log('       PUSHER_SECRET=svelar-secret');
       this.log('       PUSHER_APP_ID=svelar-app');
       this.log('       PUSHER_HOST=localhost    # or "soketi" in Docker');
       this.log('       PUSHER_PORT=6001');
-      this.log('  3. Import broadcasting in your root layout:');
+      this.log('  2. Import broadcasting in your root layout:');
       this.log("       import '$lib/broadcasting';");
     } else {
       this.log("  1. Import broadcasting in your root layout:");

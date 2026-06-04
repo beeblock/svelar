@@ -2,16 +2,13 @@
 
 Real-time event broadcasting with public, private, and presence channels. Soketi (a self-hosted Pusher-compatible WebSocket server) is the default driver and ships in the Docker Compose setup out of the box.
 
-### Quick Start (3 commands)
+### Quick Start
 
 ```bash
 # 1. Scaffold everything: routes, config, client initialization
 npx svelar make:broadcasting
 
-# 2. Install the client-side WebSocket library
-npm install pusher-js
-
-# 3. Start Soketi (included in docker-compose)
+# 2. Start Soketi (included in docker-compose)
 docker compose up -d soketi
 ```
 
@@ -136,9 +133,9 @@ Clean up when the component unmounts:
 </script>
 ```
 
-### SSE Client (No pusher-js)
+### SSE Client
 
-For the SSE driver, use `useSSE` instead — no external dependencies:
+For the SSE driver, use `useSSE` instead — no Soketi or Pusher server required:
 
 ```svelte
 <script>

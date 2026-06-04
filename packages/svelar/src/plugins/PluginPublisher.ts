@@ -7,6 +7,7 @@
 
 import { singleton } from '../support/singleton.js';
 import type { Plugin } from './index.js';
+import { join as joinPath } from 'node:path';
 
 export interface PublishResult {
   configs: string[]; // paths of published config files
@@ -94,7 +95,7 @@ class PluginPublisherService {
 
     for (const [key, files] of Object.entries(publishables)) {
       for (const file of files) {
-        const path = require('node:path').join(process.cwd(), file.dest);
+        const path = joinPath(process.cwd(), file.dest);
 
         if (file.type === 'config') {
           result.configs.push(path);

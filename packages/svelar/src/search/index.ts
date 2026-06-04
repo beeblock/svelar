@@ -44,6 +44,10 @@
 
 import { singleton } from '../support/singleton.js';
 
+import { createRequire } from 'node:module';
+
+const requireOptionalPeer = createRequire(import.meta.url);
+
 // ── Types ──────────────────────────────────────────────────
 
 export interface SearchConfig {
@@ -107,8 +111,7 @@ class SearchManager {
     if (!this.client) {
       // Lazy-load meilisearch to avoid requiring it when not used
       try {
-        // Dynamic require — meilisearch is a peer dependency
-        const { MeiliSearch } = require('meilisearch');
+        const { MeiliSearch } = requireOptionalPeer('meilisearch');
         this.client = new MeiliSearch({
           host: this.config.host,
           apiKey: this.config.apiKey,

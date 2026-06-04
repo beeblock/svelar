@@ -14,11 +14,24 @@ npm install
 npm run dev
 ```
 
+The short `npx svelar` command is provided by the unscoped `svelar` CLI shim. Generated apps install the framework package as `@beeblock/svelar`.
+
 Or add to an existing SvelteKit project:
 
 ```bash
-npm install /svelar drizzle-orm better-sqlite3
+npm install @beeblock/svelar drizzle-orm better-sqlite3
 ```
+
+## Publishing
+
+`npx svelar` is provided by a tiny unscoped npm shim package. The framework still lives in `@beeblock/svelar`; publish both packages with one release command:
+
+```bash
+npm run release:dry-run
+npm run release
+```
+
+The release script syncs the shim version and dependency from `packages/svelar`, publishes `@beeblock/svelar` first, then publishes the `svelar` shim.
 
 ## Features
 

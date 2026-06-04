@@ -7,6 +7,7 @@
 import { singleton } from '../support/singleton.js';
 import { PluginRegistry, type PluginMeta } from './PluginRegistry.js';
 import { PluginPublisher, type PublishResult } from './PluginPublisher.js';
+import { spawn } from 'node:child_process';
 
 export interface InstallResult {
   success: boolean;
@@ -24,12 +25,6 @@ class PluginInstallerService {
     packageName: string,
     options?: { publish?: boolean }
   ): Promise<InstallResult> {
-    const { spawn } = await import('node:child_process');
-    const { promisify } = await import('node:util');
-    const { join } = await import('node:path');
-    const { readFile } = await import('node:fs/promises');
-    const { existsSync } = await import('node:fs');
-
     try {
       // 1. Run npm install <packageName>
       await this.runNpmInstall(packageName);
@@ -122,7 +117,6 @@ class PluginInstallerService {
 
   private async runNpmInstall(packageName: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      const { spawn } = require('node:child_process');
       const child = spawn('npm', ['install', packageName], {
         cwd: process.cwd(),
         stdio: 'inherit',
@@ -142,7 +136,6 @@ class PluginInstallerService {
 
   private async runNpmUninstall(packageName: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      const { spawn } = require('node:child_process');
       const child = spawn('npm', ['uninstall', packageName], {
         cwd: process.cwd(),
         stdio: 'inherit',

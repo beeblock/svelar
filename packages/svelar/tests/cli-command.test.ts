@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 // We can't import the abstract Command directly, so we create a concrete subclass
 import { Command, type CommandFlag } from '../src/cli/Command.js';
+import { Cli } from '../src/cli/Cli.js';
 
 class TestCommand extends Command {
   name = 'test:cmd';
@@ -39,6 +40,23 @@ class TestCommand extends Command {
   public testTable(headers: string[], rows: string[][]) { this.table(headers, rows); }
   public testNewLine() { this.newLine(); }
   public testBootstrap() { return this.bootstrap(); }
+}
+
+class CaptureCommand extends Command {
+  name = 'capture';
+  description = 'Capture parsed arguments';
+  flags: CommandFlag[] = [
+    { name: 'redis', description: 'Include Redis', type: 'boolean', default: true },
+    { name: 'soketi', description: 'Include Soketi', type: 'boolean', default: true },
+    { name: 'name', description: 'Name', type: 'string' },
+  ];
+  capturedArgs: string[] = [];
+  capturedFlags: Record<string, any> = {};
+
+  async handle(args: string[], flags: Record<string, any>): Promise<void> {
+    this.capturedArgs = args;
+    this.capturedFlags = flags;
+  }
 }
 
 describe('Command Base Class', () => {
@@ -168,6 +186,24 @@ describe('Command Base Class', () => {
       expect(logSpy).toHaveBeenCalledWith('args: test');
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Verbose mode'));
       logSpy.mockRestore();
+    });
+  });
+
+  describe('Cli argument parsing', () => {
+    it('supports --no-* syntax for boolean flags', async () => {
+      const cli = new Cli();
+      const command = new CaptureCommand();
+
+      cli.add(command);
+
+      await cli.run(['capture', '--no-redis', '--soketi', '--name', 'demo', 'arg']);
+
+      expect(command.capturedArgs).toEqual(['arg']);
+      expect(command.capturedFlags).toMatchObject({
+        redis: false,
+        soketi: true,
+        name: 'demo',
+      });
     });
   });
 

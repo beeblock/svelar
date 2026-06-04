@@ -53,6 +53,8 @@ hook-test/
 my-app/
 svelar-datatable/
 svelar-*/
+!packages/svelar-cli/
+!packages/svelar-cli/**
 
 # Claude
 .claude/

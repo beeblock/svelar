@@ -99,6 +99,15 @@ export class Cli {
           continue;
         }
 
+        if (raw.startsWith('no-')) {
+          const key = raw.slice(3);
+          const flagDef = command.flags.find((f) => f.name === key);
+          if (flagDef?.type === 'boolean') {
+            flags[key] = false;
+            continue;
+          }
+        }
+
         const key = raw;
         const flagDef = command.flags.find((f) => f.name === key);
 

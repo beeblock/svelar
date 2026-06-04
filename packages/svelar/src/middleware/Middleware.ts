@@ -16,6 +16,8 @@
  * ```
  */
 
+import { createHmac } from 'node:crypto';
+
 // ── Types ──────────────────────────────────────────────────
 
 export interface MiddlewareContext {
@@ -575,8 +577,6 @@ export class SignatureMiddleware extends Middleware {
     body: string,
     timestamp?: number
   ): { signature: string; timestamp: number } {
-    // Use dynamic import to avoid issues in non-Node environments
-    const { createHmac } = require('node:crypto');
     const ts = timestamp ?? Math.floor(Date.now() / 1000);
     const payload = `${ts}.${method.toUpperCase()}.${path}.${body}`;
     const signature = createHmac('sha256', secret).update(payload).digest('hex');

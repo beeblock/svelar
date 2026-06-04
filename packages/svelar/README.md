@@ -21,11 +21,24 @@ cd my-app
 npm run dev
 ```
 
+The short `npx svelar` command is provided by the unscoped `svelar` CLI shim. Generated apps install the framework package as `@beeblock/svelar`.
+
 Or add to an existing SvelteKit project:
 
 ```bash
 npm install @beeblock/svelar
 ```
+
+## Publishing
+
+Run the monorepo release script from the repository root:
+
+```bash
+npm run release:dry-run
+npm run release
+```
+
+It syncs and publishes both `@beeblock/svelar` and the unscoped `svelar` CLI shim used by `npx svelar`.
 
 See the [Getting Started guide](https://svelar.dev/docs/getting-started) for a complete walkthrough.
 

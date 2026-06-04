@@ -35,6 +35,8 @@
  * @module @beeblock/svelar/broadcasting/client
  */
 
+import Pusher from 'pusher-js';
+
 // ── Types ──────────────────────────────────────────────────
 
 export interface PusherOptions {
@@ -102,7 +104,7 @@ let _pusherOptions: PusherOptions | null = null;
  * Initialize and return a Pusher client singleton.
  * Call this once in your root layout or app init.
  *
- * Requires `pusher-js` to be installed: `npm install pusher-js`
+ * Uses the Pusher client bundled with Svelar.
  *
  * @example
  * ```svelte
@@ -127,17 +129,6 @@ export function usePusher(options: PusherOptions): { disconnect: () => void; raw
 
   _pusherOptions = options;
 
-  // Dynamic import — pusher-js is a peer dependency
-  let Pusher: any;
-  try {
-    // @ts-ignore — dynamic peer dependency
-    Pusher = (globalThis as any).__svelar_pusher ?? require('pusher-js');
-  } catch {
-    throw new Error(
-      'pusher-js is required for WebSocket broadcasting. Install it with: npm install pusher-js'
-    );
-  }
-
   const config: Record<string, any> = {
     cluster: options.cluster ?? 'mt1',
     authEndpoint: options.authEndpoint ?? '/api/broadcasting/auth',
@@ -157,10 +148,10 @@ export function usePusher(options: PusherOptions): { disconnect: () => void; raw
   }
 
   if (options.debug) {
-    Pusher.logToConsole = true;
+    (Pusher as any).logToConsole = true;
   }
 
-  _pusherInstance = new Pusher(options.key, config);
+  _pusherInstance = new (Pusher as any)(options.key, config);
 
   return {
     disconnect: () => {
@@ -280,7 +271,7 @@ export function leaveChannel(channelName: string): void {
 
 /**
  * Subscribe to an SSE channel (for the SSE broadcast driver).
- * No pusher-js dependency needed.
+ * No Soketi or Pusher server required.
  *
  * @param channelName - The channel to subscribe to
  * @param baseUrl - Base URL for the SSE endpoint (default: '/api/broadcasting')

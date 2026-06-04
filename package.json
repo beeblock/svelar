@@ -3,6 +3,7 @@
   "private": true,
   "workspaces": [
     "packages/svelar",
+    "packages/svelar-cli",
     "packages/svelar-datatable",
     "packages/svelar-media",
     "packages/svelar-social-auth",
@@ -21,7 +22,10 @@
     "build": "npm run build -w packages/svelar",
     "dev": "npm run dev -w packages/svelar",
     "test": "npm run test -w packages/svelar",
-    "lint": "npm run lint --workspaces --if-present"
+    "lint": "npm run lint --workspaces --if-present",
+    "release": "node scripts/publish-svelar.mjs",
+    "release:dry-run": "node scripts/publish-svelar.mjs --dry-run --skip-validation",
+    "sync:svelar-cli": "node scripts/publish-svelar.mjs --sync-only"
   },
   "devDependencies": {
     "typescript": "^5.7.0"

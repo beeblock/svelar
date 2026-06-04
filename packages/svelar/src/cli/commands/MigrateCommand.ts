@@ -97,6 +97,7 @@ export class MigrateCommand extends Command {
       for (const name of result.migrated) {
         this.success(`Migrated: ${name}`);
       }
+      await this.runSeedersIfRequested(flags);
       return;
     }
 
@@ -114,6 +115,7 @@ export class MigrateCommand extends Command {
       for (const name of result.migrated) {
         this.success(`Migrated: ${name}`);
       }
+      await this.runSeedersIfRequested(flags);
       return;
     }
 
@@ -128,6 +130,8 @@ export class MigrateCommand extends Command {
         this.success(`Migrated: ${name}`);
       }
     }
+
+    await this.runSeedersIfRequested(flags);
   }
 
   /**
@@ -211,5 +215,12 @@ export class MigrateCommand extends Command {
     }
 
     return migrations;
+  }
+
+  private async runSeedersIfRequested(flags: Record<string, any>): Promise<void> {
+    if (!flags.seed) return;
+
+    const { SeedCommand } = await import('./SeedCommand.js');
+    await new SeedCommand().handle([], {});
   }
 }

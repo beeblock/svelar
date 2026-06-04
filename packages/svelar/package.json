@@ -6,7 +6,7 @@
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"bin": {
-		"svelar": "./dist/cli/bin.js"
+		"svelar": "dist/cli/bin.js"
 	},
 	"files": [
 		"dist",
@@ -268,6 +268,7 @@
 		"date-fns": "^4.1.0",
 		"drizzle-orm": "^0.38.0",
 		"lucide-svelte": "^1.0.1",
+		"pusher-js": "^8.5.0",
 		"zod": "^3.23.0"
 	},
 	"devDependencies": {
@@ -286,8 +287,8 @@
 		"@aws-sdk/s3-request-presigner": ">=3.0.0",
 		"@sveltejs/kit": "^2.0.0",
 		"argon2": "*",
-		"better-sqlite3": "*",
 		"bcrypt": "*",
+		"better-sqlite3": "*",
 		"bullmq": ">=5.0.0",
 		"exceljs": ">=4.4.0",
 		"ioredis": ">=5.0.0",
@@ -296,7 +297,6 @@
 		"nodemailer": ">=6.0.0",
 		"pdfkit": ">=0.18.0",
 		"postgres": "*",
-		"pusher-js": ">=8.0.0",
 		"sveltekit-superforms": ">=2.0.0",
 		"vitest": ">=1.0.0"
 	},
@@ -331,9 +331,6 @@
 		"postgres": {
 			"optional": true
 		},
-		"pusher-js": {
-			"optional": true
-		},
 		"pdfkit": {
 			"optional": true
 		},
@@ -366,10 +363,13 @@
 		"billing"
 	],
 	"license": "MIT",
+	"publishConfig": {
+		"access": "public"
+	},
 	"author": "Raoni <alephtus@gmail.com>",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/beeblock/svelar.git"
+		"url": "git+https://github.com/beeblock/svelar.git"
 	},
 	"homepage": "https://github.com/beeblock/svelar#readme"
 }
