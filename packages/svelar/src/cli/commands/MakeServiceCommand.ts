@@ -3,7 +3,7 @@
  */
 
 import { Command } from '../Command.js';
-import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { writeFileSync, mkdirSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export class MakeServiceCommand extends Command {
@@ -39,11 +39,12 @@ export class MakeServiceCommand extends Command {
       return;
     }
 
-    const modelImportPath = flags.model
-      ? (this.isDDD() ? `./${flags.model}.js` : `../models/${flags.model}.js`)
+    const modelName = flags.crud ? this.resolveCrudModel(baseName, moduleName, flags.model) : undefined;
+    const modelImportPath = modelName
+      ? (this.isDDD() ? `./${modelName}.js` : `../models/${modelName}.js`)
       : undefined;
     const content = flags.crud
-      ? this.generateCrudService(serviceName, flags.model, modelImportPath)
+      ? this.generateCrudService(serviceName, modelName!, modelImportPath!)
       : this.generateBasicService(serviceName);
 
     writeFileSync(filePath, content);
@@ -51,20 +52,65 @@ export class MakeServiceCommand extends Command {
     this.success(`Service created: ${relDir}/${serviceName}.ts`);
   }
 
-  private generateCrudService(name: string, model?: string, modelPath?: string): string {
-    const modelName = model || 'Model';
-    const importPath = modelPath || `./${modelName}.js`;
-    return `import { CrudService, type ServiceResult } from '@beeblock/svelar/services';
+  private resolveCrudModel(serviceBaseName: string, moduleName: string, explicitModel?: string): string {
+    if (explicitModel) return explicitModel;
+
+    const modelDir = this.isDDD()
+      ? join(process.cwd(), 'src', 'lib', 'modules', moduleName)
+      : join(process.cwd(), 'src', 'lib', 'models');
+    const models = this.findModelsInDir(modelDir);
+
+    if (models.length === 1) {
+      return models[0];
+    }
+
+    const fallback = serviceBaseName;
+    const reason = models.length > 1
+      ? `multiple models were found (${models.join(', ')})`
+      : 'no model was found';
+    this.warn(`No --model specified and ${reason}. Using "${fallback}".`);
+    return fallback;
+  }
+
+  private findModelsInDir(dir: string): string[] {
+    if (!existsSync(dir)) return [];
+
+    return readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && /\.(ts|js)$/.test(entry.name))
+      .filter((entry) => !entry.name.endsWith('.d.ts'))
+      .filter((entry) => {
+        const content = readFileSync(join(dir, entry.name), 'utf-8');
+        return /\bextends\s+Model\b/.test(content)
+          || /@beeblock\/svelar\/orm/.test(content)
+          || /@beeblock\/svelar\/models/.test(content);
+      })
+      .map((entry) => entry.name.replace(/\.(ts|js)$/, ''));
+  }
+
+  private repositoryVariableName(modelName: string): string {
+    return modelName.charAt(0).toLowerCase() + modelName.slice(1) + 'Repository';
+  }
+
+  private generateCrudService(name: string, modelName: string, modelPath: string): string {
+    const importPath = modelPath;
+    const repositoryVariable = this.repositoryVariableName(modelName);
+    return `import { CrudService, Repository } from '@beeblock/svelar/services';
 import { ${modelName} } from '${importPath}';
 
+const ${repositoryVariable} = new class extends Repository<${modelName}> {
+  model() {
+    return ${modelName};
+  }
+}();
+
 export class ${name} extends CrudService<${modelName}> {
-  protected model = ${modelName};
+  protected repository(): Repository<${modelName}> {
+    return ${repositoryVariable};
+  }
 
   // Override or add custom methods:
-  // async findByEmail(email: string): Promise<ServiceResult<${modelName}>> {
-  //   const record = await ${modelName}.where('email', email).first();
-  //   if (!record) return this.fail('Not found');
-  //   return this.ok(record);
+  // async findByEmail(email: string): Promise<${modelName} | null> {
+  //   return ${repositoryVariable}.findFirstWhere('email', email);
   // }
 }
 `;

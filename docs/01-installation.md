@@ -329,7 +329,7 @@ npx svelar seed:run                # Run database seeders
 # Code Generation — Domain (goes into src/lib/modules/<module>/)
 npx svelar make:model User --module=auth        # Model
 npx svelar make:controller User --module=auth   # Controller
-npx svelar make:service Billing --module=billing # Service (--crud)
+npx svelar make:service Billing --module=billing --crud # CRUD Service
 npx svelar make:repository User --module=auth   # Repository (--model=X)
 npx svelar make:action CreateUser --module=auth  # Action
 npx svelar make:request StoreUser --module=auth  # FormRequest DTO

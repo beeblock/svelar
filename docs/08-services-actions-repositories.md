@@ -336,7 +336,7 @@ Actions encapsulate single, well-defined use cases. Each action does one thing w
 npx svelar make:action RegisterUser --module=auth
 ```
 
-This creates `src/lib/modules/auth/RegisterUser.ts`:
+This creates `src/lib/modules/auth/RegisterUserAction.ts`:
 
 ```typescript
 import { Action } from '@beeblock/svelar/actions';
@@ -349,7 +349,7 @@ interface RegisterInput {
   password: string;
 }
 
-export class RegisterUser extends Action<RegisterInput, User> {
+export class RegisterUserAction extends Action<RegisterInput, User> {
   async execute(input: RegisterInput): Promise<User> {
     const user = await User.create({
       name: input.name,
@@ -364,7 +364,7 @@ export class RegisterUser extends Action<RegisterInput, User> {
 ### Using Actions
 
 ```typescript
-const action = new RegisterUser();
+const action = new RegisterUserAction();
 
 // Standard execution — throws on error
 const user = await action.run({
@@ -407,7 +407,7 @@ await sendEmail.run({ to: 'user@example.com', body: 'Hello!' });
 Attach hooks that run before or after the action executes:
 
 ```typescript
-const action = new RegisterUser();
+const action = new RegisterUserAction();
 
 // Before hook — runs before execute()
 action.before(async (input) => {
@@ -427,7 +427,7 @@ const user = await action.run({ name: 'Jane', email: 'jane@test.com', password: 
 Hooks are chainable:
 
 ```typescript
-const user = await new RegisterUser()
+const user = await new RegisterUserAction()
   .before((input) => { input.email = input.email.toLowerCase(); })
   .after((input, user) => { console.log('Created user:', user.getAttribute('id')); })
   .run(data);
@@ -444,7 +444,7 @@ import type { ActionMiddleware } from '@beeblock/svelar/actions';
 const timingMiddleware: ActionMiddleware<RegisterInput> = async (input, next) => {
   const start = Date.now();
   const result = await next(input);
-  console.log(`RegisterUser took ${Date.now() - start}ms`);
+  console.log(`RegisterUserAction took ${Date.now() - start}ms`);
   return result;
 };
 
@@ -456,7 +456,7 @@ const validateMiddleware: ActionMiddleware<RegisterInput> = async (input, next) 
   return next(input);
 };
 
-const user = await new RegisterUser()
+const user = await new RegisterUserAction()
   .through(validateMiddleware)
   .through(timingMiddleware)
   .run(data);

@@ -24,6 +24,7 @@ import { MakePluginCommand } from '../src/cli/commands/MakePluginCommand.js';
 import { MakeFactoryCommand } from '../src/cli/commands/MakeFactoryCommand.js';
 import { MakeDeployCommand } from '../src/cli/commands/MakeDeployCommand.js';
 import { MakeDockerCommand } from '../src/cli/commands/MakeDockerCommand.js';
+import { MakeRouteCommand } from '../src/cli/commands/MakeRouteCommand.js';
 
 let originalCwd: string;
 let tmpDir: string;
@@ -228,6 +229,8 @@ describe('Make commands — Flat structure', () => {
       expect(existsSync(filePath)).toBe(true);
       const content = readFileSync(filePath, 'utf-8');
       expect(content).toContain('class CreatePostAction');
+      expect(content).toContain('async execute(input: CreatePostActionInput)');
+      expect(content).not.toContain('async handle(input');
     });
   });
 
@@ -336,6 +339,25 @@ describe('Make commands — DDD structure', () => {
       await cmd.handle(['PostService'], { module: 'blog' });
       const filePath = join(tmpDir, 'src', 'lib', 'modules', 'blog', 'PostService.ts');
       expect(existsSync(filePath)).toBe(true);
+    });
+
+    it('should create a CRUD service using the module model when no --model is provided', async () => {
+      const modelDir = join(tmpDir, 'src', 'lib', 'modules', 'billing');
+      mkdirSync(modelDir, { recursive: true });
+      writeFileSync(join(modelDir, 'Invoice.ts'), `import { Model } from '@beeblock/svelar/orm';
+
+export class Invoice extends Model {}
+`);
+
+      const cmd = new MakeServiceCommand();
+      await cmd.handle(['Billing'], { module: 'billing', crud: true });
+
+      const filePath = join(tmpDir, 'src', 'lib', 'modules', 'billing', 'BillingService.ts');
+      const content = readFileSync(filePath, 'utf-8');
+      expect(content).toContain("import { Invoice } from './Invoice.js';");
+      expect(content).toContain('extends CrudService<Invoice>');
+      expect(content).toContain('protected repository(): Repository<Invoice>');
+      expect(content).not.toContain('./Model.js');
     });
   });
 
@@ -449,6 +471,19 @@ describe('Make commands — Cross-type imports', () => {
       const filePath = join(tmpDir, 'src', 'lib', 'modules', 'blog', 'SendNotification.ts');
       const content = readFileSync(filePath, 'utf-8');
       expect(content).toContain('./PostCreated.js');
+    });
+
+    it('MakeRouteCommand should import from the module that contains the controller', async () => {
+      const controllerDir = join(tmpDir, 'src', 'lib', 'modules', 'billing');
+      mkdirSync(controllerDir, { recursive: true });
+      writeFileSync(join(controllerDir, 'InvoiceController.ts'), 'export class InvoiceController {}');
+
+      const cmd = new MakeRouteCommand();
+      await cmd.handle(['invoices'], { api: true, resource: true, controller: 'InvoiceController' });
+
+      const filePath = join(tmpDir, 'src', 'routes', 'api', 'invoices', '+server.ts');
+      const content = readFileSync(filePath, 'utf-8');
+      expect(content).toContain("$lib/modules/billing/InvoiceController.js");
     });
   });
 });

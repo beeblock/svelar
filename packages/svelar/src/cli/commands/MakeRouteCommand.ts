@@ -6,7 +6,7 @@
  */
 
 import { Command } from '../Command.js';
-import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { writeFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 export class MakeRouteCommand extends Command {
@@ -35,7 +35,7 @@ export class MakeRouteCommand extends Command {
     }
 
     const controllerName = flags.controller || this.inferControllerName(routePath);
-    const moduleName = flags.module || this.inferModuleName(routePath);
+    const moduleName = flags.module || this.detectControllerModule(controllerName) || this.inferModuleName(routePath);
 
     if (flags.resource) {
       this.generateResourceRoutes(routePath, controllerName, moduleName);
@@ -145,6 +145,32 @@ ${exports}
       .filter((s) => !s.startsWith('['));
 
     return segments[0] || 'app';
+  }
+
+  private detectControllerModule(controllerName: string): string | undefined {
+    if (!this.isDDD()) return undefined;
+
+    const modulesDir = join(process.cwd(), 'src', 'lib', 'modules');
+    if (!existsSync(modulesDir)) return undefined;
+
+    const matches = readdirSync(modulesDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .filter((moduleName) =>
+        existsSync(join(modulesDir, moduleName, `${controllerName}.ts`))
+        || existsSync(join(modulesDir, moduleName, `${controllerName}.js`))
+      );
+
+    if (matches.length === 1) {
+      return matches[0];
+    }
+
+    if (matches.length > 1) {
+      this.warn(`Controller ${controllerName} exists in multiple modules (${matches.join(', ')}). Using "${matches[0]}".`);
+      return matches[0];
+    }
+
+    return undefined;
   }
 
   private inferParamName(routePath: string): string {

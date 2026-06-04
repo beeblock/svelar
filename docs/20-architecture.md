@@ -14,7 +14,7 @@ src/lib/modules/
 │   ├── AuthController.ts     # Controller
 │   ├── AuthService.ts        # Service (business logic)
 │   ├── UserRepository.ts     # Repository (data access)
-│   ├── RegisterUser.ts       # Action (single use-case)
+│   ├── RegisterUserAction.ts # Action (single use-case)
 │   ├── StoreUserRequest.ts   # FormRequest DTO (validation)
 │   └── UserResource.ts       # API resource (response shaping)
 ├── billing/
