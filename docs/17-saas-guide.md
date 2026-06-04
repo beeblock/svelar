@@ -352,7 +352,7 @@ Svelar's built-in Teams system handles multi-tenancy. It's configured out of the
 
 ```typescript
 import { Teams } from '@beeblock/svelar/teams';
-Teams.configure({ driver: 'memory' });
+Teams.configure({ driver: 'database' });
 ```
 
 ### Team Operations
@@ -405,7 +405,7 @@ API keys are configured in `app.ts` and managed via the `/dashboard/api-keys` pa
 
 ```typescript
 import { ApiKeys } from '@beeblock/svelar/api-keys';
-ApiKeys.configure({ driver: 'memory', prefix: 'sk_' });
+ApiKeys.configure({ driver: 'database', prefix: 'sk_' });
 ```
 
 ### Programmatic Usage
@@ -553,13 +553,13 @@ Send and receive webhooks:
 ```typescript
 import { Webhooks } from '@beeblock/svelar/webhooks';
 
-Webhooks.configure({ driver: 'memory', maxAttempts: 5 });
+Webhooks.configure({ driver: 'database', maxAttempts: 5 });
 
 // Register a webhook endpoint
-await Webhooks.create({
+await Webhooks.register({
   url: 'https://example.com/webhook',
   events: ['invoice.paid', 'user.created'],
-  secret: 'whsec_...',
+  active: true,
 });
 
 // Dispatch a webhook event
@@ -617,7 +617,7 @@ Track user actions:
 ```typescript
 import { Audit } from '@beeblock/svelar/audit';
 
-Audit.configure({ driver: 'memory', enabled: true });
+Audit.configure({ driver: 'database', enabled: true });
 
 // Log an action
 await Audit.log({
@@ -637,7 +637,7 @@ const entries = await Audit.query({ limit: 50 });
 ```typescript
 import { EmailTemplates } from '@beeblock/svelar/email-templates';
 
-EmailTemplates.configure({ driver: 'memory' });
+EmailTemplates.configure({ driver: 'database' });
 EmailTemplates.registerDefaults(); // registers welcome, reset-password, etc.
 ```
 
@@ -670,7 +670,7 @@ await Features.enableFor('beta-api', userId);    // Force on for a user
 await Features.disableForTeam('beta-api', teamId); // Force off for a team
 ```
 
-Tables (`feature_flags`, `feature_flag_overrides`) are auto-created — no migration required.
+Tables (`feature_flags`, `feature_flag_overrides`) are managed by Svelar core migrations.
 
 See [Feature Flags](./21-feature-flags.md) for the full guide including percentage rollouts, admin APIs, and Svelte page integration.
 
@@ -710,7 +710,7 @@ For large datasets, use `Excel.stream()` with async generators to keep memory lo
 ```typescript
 import { Uploads } from '@beeblock/svelar/uploads';
 
-Uploads.configure({ driver: 'memory', maxFileSize: 10 * 1024 * 1024 }); // 10MB
+Uploads.configure({ driver: 'database', maxFileSize: 10 * 1024 * 1024 }); // 10MB
 ```
 
 ## Production Checklist

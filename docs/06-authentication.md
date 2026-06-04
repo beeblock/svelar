@@ -36,7 +36,7 @@ import { SessionMiddleware, DatabaseSessionStore } from '@beeblock/svelar/sessio
 import { AuthenticateMiddleware } from '@beeblock/svelar/auth';
 import { auth } from './app.js';
 
-const sessionStore = new DatabaseSessionStore();  // auto-creates sessions table
+const sessionStore = new DatabaseSessionStore();  // requires the sessions migration
 
 export const handle = createSvelarHooks({
   middleware: [
@@ -858,6 +858,16 @@ This lets you transparently migrate from bcrypt to argon2 (or increase cost) wit
 | **bcrypt** | `npm install bcrypt` | Apps migrating from other frameworks |
 | **argon2** | `npm install argon2` | Maximum security — memory-hard, GPU-resistant |
 
+The scaffolded `vite.config.ts` marks `bcrypt` and `argon2` as SSR externals so Vite does not try to bundle their native Node modules for production. Keep that setting if you use either driver:
+
+```typescript
+export default defineConfig({
+  ssr: {
+    external: ['bcrypt', 'argon2'],
+  },
+});
+```
+
 ### Cost Parameters
 
 Higher cost = slower hashing = harder to brute force, but also slower login:
@@ -1004,7 +1014,7 @@ export class AuthController extends Controller {
 
 ## Password Reset
 
-Built-in password reset flow with token generation, email sending, and token validation. All tables are auto-created on first use.
+Built-in password reset flow with token generation, email sending, and token validation. Required tables are managed by Svelar core migrations.
 
 ### How It Works
 

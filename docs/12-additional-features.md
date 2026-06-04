@@ -246,6 +246,8 @@ import { config } from '@beeblock/svelar/config';
 await config.loadFromDirectory('./config');
 ```
 
+Scaffolded apps call `config.loadFromDirectory('config')` in `src/app.ts`, so generated config files are loaded automatically when the web server or a Svelar CLI runtime command boots the application.
+
 ### Using Configuration
 
 ```typescript
@@ -389,6 +391,8 @@ npx svelar make:dashboard
 
 This creates API routes (`/api/admin/*`) and a dashboard page with system health, queue monitoring, scheduler management, and log viewing.
 
+Generated admin API routes require `event.locals.user.role === 'admin'` by default. Adjust the generated check if your app uses a different admin contract.
+
 ```typescript
 import { configureDashboard } from '@beeblock/svelar/dashboard';
 import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
@@ -445,9 +449,13 @@ const entries = await Audit.query()
 Secure token-based authentication:
 
 ```typescript
-import { ApiKey } from '@beeblock/svelar/api-keys';
+import { ApiKeys } from '@beeblock/svelar/api-keys';
 
-const key = await ApiKey.create('My Integration', ['users:read', 'posts:write']);
+const { plainTextKey, record } = await ApiKeys.create({
+  name: 'My Integration',
+  userId: user.id,
+  permissions: ['users:read', 'posts:write'],
+});
 ```
 
 Keys are hashed and can be revoked at any time.
@@ -457,13 +465,15 @@ Keys are hashed and can be revoked at any time.
 Send events to external services:
 
 ```typescript
-import { Webhook } from '@beeblock/svelar/webhooks';
+import { Webhooks } from '@beeblock/svelar/webhooks';
 
-await Webhook.register('https://example.com/events', {
+await Webhooks.register({
+  url: 'https://example.com/events',
   events: ['user:created', 'order:shipped'],
+  active: true,
 });
 
-await Webhook.dispatch('user:created', { id: user.id, email: user.email });
+await Webhooks.dispatch('user:created', { id: user.id, email: user.email });
 ```
 
 Events are signed with HMAC and retried automatically.
@@ -473,31 +483,34 @@ Events are signed with HMAC and retried automatically.
 Multi-tenant team management:
 
 ```typescript
-import { Team } from '@beeblock/svelar/teams';
+import { Teams } from '@beeblock/svelar/teams';
 
-const team = await Team.create({
+const team = await Teams.create({
   name: 'Acme Corp',
   ownerId: user.id,
 });
 
-await team.invite('member@example.com', 'editor');
+await Teams.invite(team.id, 'member@example.com', 'editor');
 ```
 
-Tables are auto-created. Supports role-based access control (owner, admin, member, viewer).
+Tables are managed by Svelar core migrations. Supports role-based access control (owner, admin, member, viewer).
 
 ## Email Templates
 
 Manage and render email templates:
 
 ```typescript
-import { EmailTemplate } from '@beeblock/svelar/email-templates';
+import { EmailTemplates } from '@beeblock/svelar/email-templates';
 
-await EmailTemplate.register('welcome', {
+await EmailTemplates.register({
+  name: 'welcome',
   subject: 'Welcome to {{ appName }}',
-  body: `<p>Hello {{ userName }},</p>...`,
+  html: `<p>Hello {{ userName }},</p>...`,
+  variables: ['appName', 'userName'],
+  active: true,
 });
 
-const html = await EmailTemplate.render('welcome', {
+const { html } = await EmailTemplates.render('welcome', {
   appName: 'My App',
   userName: user.name,
 });
@@ -508,15 +521,15 @@ const html = await EmailTemplate.render('welcome', {
 Track and serve user-uploaded files:
 
 ```typescript
-import { Upload } from '@beeblock/svelar/uploads';
+import { Uploads } from '@beeblock/svelar/uploads';
 
-const upload = await Upload.store(formFile, {
+const upload = await Uploads.store(formFile, {
   disk: 'local',
-  path: `users/${user.id}`,
-  visibility: 'private',
+  directory: `users/${user.id}`,
+  userId: user.id,
 });
 
-const url = await upload.url({ expiresIn: 3600 });
+const url = await Uploads.getUrl(upload.id, 3600);
 ```
 
 ## Billing with Stripe

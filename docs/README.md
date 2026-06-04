@@ -185,11 +185,29 @@ import { User } from './lib/models/User.js';
 
 // Database
 Connection.configure({
-  default: 'sqlite',
+  default: process.env.DB_DRIVER ?? 'sqlite',
   connections: {
     sqlite: {
       driver: 'sqlite',
       filename: process.env.DB_PATH ?? 'database.db',
+    },
+    postgres: {
+      driver: 'postgres',
+      url: process.env.DATABASE_URL,
+      host: process.env.DB_HOST ?? 'localhost',
+      port: Number(process.env.DB_PORT ?? 5432),
+      database: process.env.DB_NAME ?? 'svelar_db',
+      user: process.env.DB_USER ?? 'postgres',
+      password: process.env.DB_PASSWORD ?? '',
+    },
+    mysql: {
+      driver: 'mysql',
+      url: process.env.DATABASE_URL,
+      host: process.env.DB_HOST ?? 'localhost',
+      port: Number(process.env.DB_PORT ?? 3306),
+      database: process.env.DB_NAME ?? 'svelar_db',
+      user: process.env.DB_USER ?? 'root',
+      password: process.env.DB_PASSWORD ?? '',
     },
   },
 });
@@ -240,7 +258,7 @@ export const handle = createSvelarHooks({
     new RateLimitMiddleware({ maxRequests: 100, windowMs: 60_000 }),
     new CsrfMiddleware({ onlyPaths: ['/api/'] }),
     new SessionMiddleware({
-      store: new DatabaseSessionStore(),  // auto-creates sessions table
+      store: new DatabaseSessionStore(),  // requires the sessions migration
       secret: process.env.APP_KEY!,
       lifetime: 60 * 60 * 24,
     }),

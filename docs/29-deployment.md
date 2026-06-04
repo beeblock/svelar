@@ -254,7 +254,6 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/build ./build
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/ecosystem.config.cjs ./
-COPY --from=builder /app/src/lib/database ./src/lib/database
 RUN mkdir -p storage/logs storage/public && chown -R sveltekit:sveltekit /app
 USER sveltekit
 EXPOSE 3000
@@ -283,7 +282,8 @@ CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
 | **Separate deps stage** | `npm ci --omit=dev` creates a lean `node_modules` without devDependencies |
 | **Multi-stage** | Final production image is ~150MB instead of ~800MB |
 | **Layer caching** | `package*.json` is copied first so `npm ci` is cached unless dependencies change |
-| **Migrations at runtime** | `src/lib/database` is copied so you can run `npx svelar migrate` inside the container |
+| **Node adapter output** | The scaffold uses `@sveltejs/adapter-node`, so production runs the explicit Node server from `build/index.js` |
+| **Migrations at runtime** | Run `npx svelar migrate` inside the container after deploy; the CLI boots `src/app.ts` before falling back to config |
 | **Health check** | Docker monitors `/api/health` every 30s. Failed containers are restarted automatically |
 | **Development target** | `docker compose.dev.yml` builds this stage for hot-reload in Docker |
 
@@ -813,7 +813,7 @@ docker compose exec app pm2 scale worker 4
 | `REDIS_HOST` | `redis` | Redis hostname (auto-set in Docker) |
 | `REDIS_PORT` | `6379` | Redis port |
 | `REDIS_PASSWORD` | `svelarsecret` | Redis authentication password |
-| `QUEUE_DRIVER` | `redis` | Queue driver (`redis`, `memory`, `sync`) |
+| `QUEUE_DRIVER` | `redis` | Queue driver (`redis`, `database`, `memory`, `sync`) |
 
 ### WebSockets (Soketi)
 
@@ -1379,7 +1379,7 @@ npx svelar dev:logs --service=app
 # 1. Database not ready — ensure depends_on + healthcheck
 # 2. Missing APP_KEY — generate with: openssl rand -hex 32
 # 3. Port conflict — change APP_PORT/DEV_PORT in .env
-# 4. Build failure — check Dockerfile COPY paths
+# 4. Build failure — verify adapter-node is installed and native hashing packages are externalized in vite.config.ts
 ```
 
 ### Health Check Failing

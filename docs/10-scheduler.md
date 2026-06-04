@@ -112,7 +112,7 @@ schedule() {
 }
 ```
 
-The `scheduler_locks` table is auto-created on first use — no migration required.
+The `scheduler_locks` table is managed by Svelar core migrations.
 
 ### onSuccess()
 
@@ -134,9 +134,9 @@ async onFailure(error: Error): Promise<void> {
 }
 ```
 
-## Task Discovery
+## Task Registry
 
-The CLI auto-discovers task files from `src/lib/scheduler/`. Each file must contain a single class with a **default export**:
+New scaffolded apps register tasks in `src/lib/shared/scheduler/index.ts`. Older projects can still rely on CLI task auto-discovery from `src/lib/shared/scheduler/` or `src/lib/scheduler/`. Each task file should contain a single class with a **default export**:
 
 ```
 src/lib/scheduler/
@@ -187,7 +187,7 @@ Run the scheduler in development:
 npx svelar schedule:run
 ```
 
-This auto-discovers task files from `src/lib/scheduler/`, aligns to the top of each minute (like crontab), and runs due tasks every 60 seconds. Task execution history is persisted to the `scheduled_task_runs` database table so the admin dashboard can display accurate run times.
+This boots `src/app.ts`, then uses the scheduler registry from `src/lib/shared/scheduler/index.ts` or `src/lib/scheduler/index.ts` when present. Older projects without a registry fall back to auto-discovering task files from `src/lib/shared/scheduler/` or `src/lib/scheduler/`. The runner aligns to the top of each minute and persists task execution history to `scheduled_task_runs` so the admin dashboard can display accurate run times.
 
 To run due tasks once and exit (useful for cron):
 
@@ -488,7 +488,7 @@ scheduler.register(cleanupTask);
 
 Task execution history is automatically persisted to the `scheduled_task_runs` database table. This is shared across all processes — the CLI scheduler writes to it, and the admin dashboard reads from it.
 
-Both the `scheduled_task_runs` and `scheduler_locks` tables are auto-created by the framework on first use — no migration required.
+Both the `scheduled_task_runs` and `scheduler_locks` tables are managed by Svelar core migrations.
 
 ## Monitoring Scheduled Tasks
 
@@ -497,7 +497,8 @@ The `ScheduleMonitor` provides a real-time view of all tasks for use in admin da
 ```typescript
 import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
 
-// Configure once with your scheduler instance
+// Configure once with your scheduler instance.
+// New scaffolded apps do this in src/lib/shared/scheduler/index.ts.
 ScheduleMonitor.configure(scheduler);
 
 // List all tasks with status, last run, next run, history

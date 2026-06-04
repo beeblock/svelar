@@ -425,31 +425,7 @@ Queue.configure({
 });
 ```
 
-Create the jobs table migration:
-
-```typescript
-import { Migration } from '@beeblock/svelar/database';
-
-export default class CreateSvelarJobsTable extends Migration {
-  async up() {
-    await this.schema.createTable('svelar_jobs', (table) => {
-      table.string('id', 36).primary();
-      table.string('queue').default('default');
-      table.text('payload');
-      table.integer('attempts').default(0);
-      table.integer('max_attempts').default(3);
-      table.integer('available_at');
-      table.integer('reserved_at').nullable();
-      table.integer('created_at');
-    });
-
-  }
-
-  async down() {
-    await this.schema.dropTable('svelar_jobs');
-  }
-}
-```
+The `svelar_jobs` table is managed by Svelar core migrations.
 
 > **Important**: Remember to call `Queue.registerAll([...])` with all your job classes when using the database driver. Without this, the worker can't reconstruct jobs from the database.
 
@@ -517,6 +493,8 @@ npx svelar queue:work
 
 The worker pulls jobs from the queue, executes `handle()`, retries on failure up to `maxAttempts`, deletes completed jobs, and calls `failed()` when all retries are exhausted.
 
+`queue:work` boots `src/app.ts` before processing jobs. Configure `Queue.configure()` and `Queue.registerAll([...])` in `src/app.ts` so the worker uses the same queue driver and job registry as the web process.
+
 ### Worker Options
 
 ```bash
@@ -567,36 +545,7 @@ await Queue.clear('default');
 
 When a job exceeds its `maxAttempts`, Svelar persists it to a `svelar_failed_jobs` database table so you can inspect, retry, or discard it later. This works with all queue drivers (sync, memory, database, redis).
 
-### Migration
-
-Projects scaffolded with `npx svelar new` include the migration automatically. For existing projects, create it manually:
-
-```bash
-npx svelar make:migration CreateFailedJobsTable
-```
-
-```typescript
-import { Migration } from '@beeblock/svelar/database';
-
-export default class CreateFailedJobsTable extends Migration {
-  async up() {
-    await this.schema.createTable('svelar_failed_jobs', (table) => {
-      table.string('id').primary();
-      table.string('queue');
-      table.string('job_class');
-      table.text('payload');
-      table.text('exception');
-      table.integer('failed_at');
-    });
-  }
-
-  async down() {
-    await this.schema.dropTable('svelar_failed_jobs');
-  }
-}
-```
-
-Then run `npx svelar migrate`.
+The `svelar_failed_jobs` table is managed by Svelar core migrations.
 
 > If the `svelar_failed_jobs` table doesn't exist, Svelar falls back to logging failures to the console instead of crashing.
 
@@ -814,7 +763,7 @@ Queue.configure({
   },
 });
 
-// Register all jobs (required for database driver)
+// Register all jobs (required for database and Redis drivers)
 Queue.registerAll([
   SendWelcomeEmail,
   ProcessImageJob,

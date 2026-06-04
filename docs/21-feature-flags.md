@@ -21,7 +21,7 @@ import { Features } from '@beeblock/svelar/feature-flags';
 Features.configure({ driver: 'database' });
 ```
 
-Tables (`feature_flags` and `feature_flag_overrides`) are auto-created on first use — no migration required. Supports SQLite, PostgreSQL, and MySQL.
+Tables (`feature_flags` and `feature_flag_overrides`) are managed by Svelar core migrations. Supports SQLite, PostgreSQL, and MySQL.
 
 For development or testing, use the in-memory driver:
 

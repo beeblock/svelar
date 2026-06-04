@@ -68,6 +68,8 @@ describe('UserService', () => {
 |--------|------|---------|-------------|
 | `refreshDatabase` | `boolean` | `false` | Drop all tables and re-run migrations before each test |
 | `connectionName` | `string` | `undefined` | Database connection name (uses default if omitted) |
+| `migrationsPath` | `string` | `svelar.database.json` or `src/lib/database/migrations` | Migration directory |
+| `migrationsTable` | `string` | `svelar.database.json` or `migrations` | Migration repository table |
 
 ## Factories
 
@@ -143,13 +145,21 @@ await assertDatabaseCount('users', 2, { role: 'admin' });
 
 ## refreshDatabase()
 
-Drops all tables and re-runs migrations from `src/lib/database/migrations/`. Called automatically when `useSvelarTest({ refreshDatabase: true })` is set, but can also be used standalone:
+Drops all tables and re-runs migrations from the configured migration directory. It reads `svelar.database.json` for `migrations.path` and `migrations.table`, then falls back to `src/lib/database/migrations/` and `migrations`. Called automatically when `useSvelarTest({ refreshDatabase: true })` is set, but can also be used standalone:
 
 ```typescript
 import { refreshDatabase } from '@beeblock/svelar/testing';
 
 beforeEach(async () => {
   await refreshDatabase();
+});
+
+// Override when a test needs a custom migration source
+beforeEach(async () => {
+  await refreshDatabase({
+    migrationsPath: 'tests/fixtures/migrations',
+    migrationsTable: 'test_migrations',
+  });
 });
 ```
 

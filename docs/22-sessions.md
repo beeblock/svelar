@@ -24,7 +24,7 @@ import { SessionMiddleware, DatabaseSessionStore } from '@beeblock/svelar/sessio
 export const handle = createSvelarHooks({
   middleware: [
     new SessionMiddleware({
-      store: new DatabaseSessionStore(),  // auto-creates sessions table
+      store: new DatabaseSessionStore(),  // requires the sessions migration
       secret: process.env.APP_KEY!,
       lifetime: 60 * 60 * 24,  // 24 hours
       name: 'svelar_session',   // Cookie name
@@ -82,7 +82,7 @@ new SessionMiddleware({
 });
 ```
 
-The `sessions` table is auto-created on first use (`CREATE TABLE IF NOT EXISTS`) — no migration needed. Works with SQLite, PostgreSQL, and MySQL.
+The `sessions` table is managed by Svelar core migrations. Works with SQLite, PostgreSQL, and MySQL.
 
 **FileSessionStore** (simple persistent storage, no database needed):
 

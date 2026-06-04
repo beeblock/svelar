@@ -10,27 +10,29 @@ Database configuration happens in `src/app.ts`:
 import { Connection } from '@beeblock/svelar/database';
 
 Connection.configure({
-  default: 'sqlite',
+  default: process.env.DB_DRIVER ?? 'sqlite',
   connections: {
     sqlite: {
       driver: 'sqlite',
       filename: process.env.DB_PATH ?? 'database.db',
     },
-    pgsql: {
-      driver: 'postgresql',
-      host: process.env.DB_HOST || 'localhost',
-      port: parseInt(process.env.DB_PORT || '5432'),
-      database: process.env.DB_NAME || 'svelar',
-      user: process.env.DB_USER || 'postgres',
-      password: process.env.DB_PASSWORD || '',
+    postgres: {
+      driver: 'postgres',
+      url: process.env.DATABASE_URL,
+      host: process.env.DB_HOST ?? 'localhost',
+      port: Number(process.env.DB_PORT ?? 5432),
+      database: process.env.DB_NAME ?? 'svelar_db',
+      user: process.env.DB_USER ?? 'postgres',
+      password: process.env.DB_PASSWORD ?? '',
     },
     mysql: {
-      driver: 'mysql2',
-      host: process.env.DB_HOST || 'localhost',
-      port: parseInt(process.env.DB_PORT || '3306'),
-      database: process.env.DB_NAME || 'svelar',
-      user: process.env.DB_USER || 'root',
-      password: process.env.DB_PASSWORD || '',
+      driver: 'mysql',
+      url: process.env.DATABASE_URL,
+      host: process.env.DB_HOST ?? 'localhost',
+      port: Number(process.env.DB_PORT ?? 3306),
+      database: process.env.DB_NAME ?? 'svelar_db',
+      user: process.env.DB_USER ?? 'root',
+      password: process.env.DB_PASSWORD ?? '',
     },
   },
 });
@@ -562,7 +564,7 @@ export default class CreateEventsTable extends Migration {
 }
 ```
 
-Each connection maintains its own `svelar_migrations` table, so migration history is tracked independently per database.
+Each connection maintains its own `migrations` table by default, so migration history is tracked independently per database. You can override the table name in `svelar.database.json` with `migrations.table`.
 
 ## Best Practices
 
