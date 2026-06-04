@@ -8,12 +8,12 @@ export class CreateApiKeysTable extends Migration {
       table.string('name');
       table.string('key').unique();
       table.string('prefix');
-      table.integer('last_used_at').nullable();
-      table.integer('expires_at').nullable();
+      table.bigInteger('last_used_at').nullable();
+      table.bigInteger('expires_at').nullable();
       table.text('permissions').nullable();
       table.text('metadata').nullable();
-      table.integer('created_at');
-      table.integer('revoked_at').nullable();
+      table.bigInteger('created_at');
+      table.bigInteger('revoked_at').nullable();
       table.index('user_id');
     });
   }

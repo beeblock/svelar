@@ -22,6 +22,8 @@ export interface ColumnDefinition {
   check?: string;
 }
 
+type ForeignKeyAction = 'cascade' | 'set null' | 'restrict' | 'no action' | 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION';
+
 export class ColumnBuilder {
   constructor(private column: ColumnDefinition) {}
 
@@ -69,13 +71,13 @@ export class ColumnBuilder {
 export class ForeignKeyBuilder {
   constructor(private column: ColumnDefinition) {}
 
-  onDelete(action: 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION'): ForeignKeyBuilder {
-    this.column.references!.onDelete = action;
+  onDelete(action: ForeignKeyAction): ForeignKeyBuilder {
+    this.column.references!.onDelete = action.toUpperCase();
     return this;
   }
 
-  onUpdate(action: 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION'): ForeignKeyBuilder {
-    this.column.references!.onUpdate = action;
+  onUpdate(action: ForeignKeyAction): ForeignKeyBuilder {
+    this.column.references!.onUpdate = action.toUpperCase();
     return this;
   }
 }
@@ -104,6 +106,10 @@ export class TableBuilder {
   }
 
   // ── Column Types ──
+
+  id(name: string = 'id'): ColumnBuilder {
+    return this.bigIncrements(name);
+  }
 
   increments(name: string = 'id'): ColumnBuilder {
     const col: ColumnDefinition = {
@@ -147,6 +153,10 @@ export class TableBuilder {
 
   bigInteger(name: string): ColumnBuilder {
     return this.addColumn(name, 'BIGINT');
+  }
+
+  foreignId(name: string): ColumnBuilder {
+    return this.bigInteger(name).unsigned();
   }
 
   float(name: string): ColumnBuilder {
@@ -316,13 +326,7 @@ export class TableBuilder {
     }
 
     if (col.defaultValue !== undefined) {
-      const val =
-        typeof col.defaultValue === 'string'
-          ? `'${col.defaultValue}'`
-          : col.defaultValue === null
-            ? 'NULL'
-            : col.defaultValue;
-      sql += ` DEFAULT ${val}`;
+      sql += ` DEFAULT ${this.defaultToSQL(col.defaultValue)}`;
     }
 
     return sql;
@@ -378,6 +382,23 @@ export class TableBuilder {
     if (type === 'TIMESTAMP') return 'DATETIME';
     if (col.unsigned && !type.startsWith('DECIMAL')) return `${type} UNSIGNED`;
     return type;
+  }
+
+  private defaultToSQL(value: any): string {
+    if (value === null) return 'NULL';
+    if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE';
+    if (typeof value === 'number' || typeof value === 'bigint') return String(value);
+
+    if (typeof value === 'string') {
+      const normalized = value.trim().toUpperCase();
+      if (['CURRENT_TIMESTAMP', 'CURRENT_DATE', 'CURRENT_TIME'].includes(normalized)) {
+        return normalized;
+      }
+
+      return `'${value.replaceAll("'", "''")}'`;
+    }
+
+    return String(value);
   }
 }
 

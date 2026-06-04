@@ -10,7 +10,7 @@ export class CreateWebhooksTable extends Migration {
       table.string('secret');
       table.boolean('active');
       table.text('metadata').nullable();
-      table.integer('created_at');
+      table.bigInteger('created_at');
       table.index('user_id');
     });
   }

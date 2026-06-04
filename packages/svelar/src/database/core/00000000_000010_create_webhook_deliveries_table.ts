@@ -12,9 +12,9 @@ export class CreateWebhookDeliveriesTable extends Migration {
       table.text('response').nullable();
       table.integer('attempts');
       table.integer('max_attempts');
-      table.integer('next_retry_at').nullable();
-      table.integer('delivered_at').nullable();
-      table.integer('created_at');
+      table.bigInteger('next_retry_at').nullable();
+      table.bigInteger('delivered_at').nullable();
+      table.bigInteger('created_at');
       table.index('webhook_id');
       table.index('status');
     });

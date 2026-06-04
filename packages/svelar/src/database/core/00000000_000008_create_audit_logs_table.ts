@@ -13,7 +13,7 @@ export class CreateAuditLogsTable extends Migration {
       table.text('metadata').nullable();
       table.string('ip_address').nullable();
       table.string('user_agent').nullable();
-      table.integer('timestamp');
+      table.bigInteger('timestamp');
       table.index(['model_type', 'model_id']);
       table.index('user_id');
     });

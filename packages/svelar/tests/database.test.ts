@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Connection, normalizeDatabaseDriver } from '../src/database/Connection';
+import { Connection, normalizeDatabaseBindings, normalizeDatabaseDriver } from '../src/database/Connection';
 import { Migration, Migrator } from '../src/database/Migration';
-import { Schema } from '../src/database/SchemaBuilder';
+import { Schema, TableBuilder } from '../src/database/SchemaBuilder';
+import { CreateApiKeysTable, CreateAuditLogsTable, CreateEmailTemplatesTable } from '../src/database/CoreMigrations';
 
 class NoopMigration extends Migration {
   async up(): Promise<void> {}
@@ -16,6 +17,18 @@ describe('Database configuration', () => {
     expect(normalizeDatabaseDriver('postgresql')).toBe('postgres');
     expect(normalizeDatabaseDriver('mysql2')).toBe('mysql');
     expect(normalizeDatabaseDriver('sqlite')).toBe('sqlite');
+  });
+
+  it('normalizes driver-specific database bindings', () => {
+    const iso = '2026-06-04T15:22:57.588Z';
+    const date = new Date(iso);
+
+    expect(normalizeDatabaseBindings([true, date], 'sqlite')).toEqual([1, iso]);
+    expect(normalizeDatabaseBindings([iso, date], 'mysql')).toEqual([
+      '2026-06-04 15:22:57',
+      '2026-06-04 15:22:57',
+    ]);
+    expect(normalizeDatabaseBindings([iso], 'postgres')).toEqual([iso]);
   });
 
   it('allows default connection names that are not driver names', async () => {
@@ -113,6 +126,65 @@ describe('Database configuration', () => {
       const schema = new Schema();
       await expect(schema.dropTable('users; DROP TABLE users')).rejects.toThrow('Table name contains invalid characters');
     } finally {
+      await Connection.disconnect();
+    }
+  });
+
+  it('renders SQL expression defaults without quoting them', () => {
+    const table = new TableBuilder();
+    table.timestamp('ran_at').default('CURRENT_TIMESTAMP');
+    table.string('status').default("waiting's turn");
+
+    const postgres = table.toSQL('migrations', 'postgres')[0];
+    expect(postgres).toContain('"ran_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP');
+    expect(postgres).toContain('"status" VARCHAR(255) NOT NULL DEFAULT \'waiting\'\'s turn\'');
+
+    const mysql = table.toSQL('migrations', 'mysql')[0];
+    expect(mysql).toContain('`ran_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP');
+    expect(mysql).toContain('`status` VARCHAR(255) NOT NULL DEFAULT \'waiting\'\'s turn\'');
+  });
+
+  it('renders Laravel-style id and foreignId columns with compatible MySQL types', () => {
+    const users = new TableBuilder();
+    users.id();
+
+    const posts = new TableBuilder();
+    posts.id();
+    posts.foreignId('user_id').references('id', 'users').onDelete('cascade');
+
+    expect(users.toSQL('users', 'mysql')[0]).toContain('`id` BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT');
+    expect(posts.toSQL('posts', 'mysql')[0]).toContain('`user_id` BIGINT UNSIGNED NOT NULL');
+    expect(posts.toSQL('posts', 'mysql')[0]).toContain(
+      'FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE'
+    );
+  });
+
+  it('uses bigint for core millisecond epoch columns on strict databases', async () => {
+    const statements: string[] = [];
+    await Connection.disconnect();
+    Connection.configure({
+      default: 'postgres',
+      connections: {
+        postgres: { driver: 'postgres', host: 'localhost', database: 'svelar_test' },
+      },
+    });
+
+    const originalRaw = Connection.raw.bind(Connection);
+    Connection.raw = (async (sql: string) => {
+      statements.push(sql);
+      return [];
+    }) as typeof Connection.raw;
+
+    try {
+      await new CreateApiKeysTable().up();
+      await new CreateAuditLogsTable().up();
+      await new CreateEmailTemplatesTable().up();
+
+      expect(statements.join('\n')).toContain('"created_at" BIGINT NOT NULL');
+      expect(statements.join('\n')).toContain('"timestamp" BIGINT NOT NULL');
+      expect(statements.join('\n')).not.toContain('"created_at" INTEGER NOT NULL');
+    } finally {
+      Connection.raw = originalRaw;
       await Connection.disconnect();
     }
   });

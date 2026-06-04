@@ -11,8 +11,8 @@ export class CreateEmailTemplatesTable extends Migration {
       table.text('variables');
       table.string('category').nullable();
       table.boolean('active');
-      table.integer('created_at');
-      table.integer('updated_at');
+      table.bigInteger('created_at');
+      table.bigInteger('updated_at');
       table.index('category');
     });
   }

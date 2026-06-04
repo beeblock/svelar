@@ -2373,7 +2373,7 @@ export default class ${className} extends Svelar${className} {}
 export default class CreateUsersTable extends Migration {
   async up() {
     await this.schema.createTable('users', (table) => {
-      table.increments('id');
+      table.id();
       table.string('name');
       table.string('email').unique();
       table.string('password');
@@ -2394,12 +2394,12 @@ export default class CreateUsersTable extends Migration {
 export default class CreatePostsTable extends Migration {
   async up() {
     await this.schema.createTable('posts', (table) => {
-      table.increments('id');
+      table.id();
       table.string('title');
       table.string('slug').unique();
       table.text('body');
       table.boolean('published').default(false);
-      table.integer('user_id').references('id', 'users');
+      table.foreignId('user_id').references('id', 'users');
       table.timestamps();
     });
   }

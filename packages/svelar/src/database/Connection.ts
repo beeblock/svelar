@@ -54,6 +54,33 @@ function postgresSql(sql: string): string {
   return sql.replace(/\?/g, () => `$${++index}`);
 }
 
+const ISO_DATE_TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/;
+
+export function normalizeDatabaseBindings(bindings: any[], driver: DatabaseDriver): any[] {
+  return bindings.map((value) => normalizeDatabaseBinding(value, driver));
+}
+
+function normalizeDatabaseBinding(value: any, driver: DatabaseDriver): any {
+  if (driver === 'sqlite') {
+    if (typeof value === 'boolean') return value ? 1 : 0;
+    if (value instanceof Date) return value.toISOString();
+    return value;
+  }
+
+  if (driver === 'mysql') {
+    if (value instanceof Date) return formatMySQLDateTime(value);
+    if (typeof value === 'string' && ISO_DATE_TIME_RE.test(value)) {
+      return formatMySQLDateTime(new Date(value));
+    }
+  }
+
+  return value;
+}
+
+function formatMySQLDateTime(date: Date): string {
+  return date.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, '');
+}
+
 // Drizzle instance type — we keep it loose since the actual type depends on the driver
 export type DrizzleInstance = any;
 
@@ -143,12 +170,7 @@ class ConnectionManager {
     switch (config.driver) {
       case 'sqlite': {
         const client = await this.rawClient(connectionName);
-        // Sanitize bindings: node:sqlite doesn't accept booleans or Date objects
-        const safeBindings = bindings.map((v) => {
-          if (typeof v === 'boolean') return v ? 1 : 0;
-          if (v instanceof Date) return v.toISOString();
-          return v;
-        });
+        const safeBindings = normalizeDatabaseBindings(bindings, 'sqlite');
         const stmt = client.prepare(sql);
         // DDL and mutation statements don't return rows — use run()
         // SELECT and PRAGMA return rows — use all()
@@ -168,7 +190,7 @@ class ConnectionManager {
       }
       case 'mysql': {
         const client = await this.rawClient(connectionName);
-        const [rows] = await client.execute(sql, bindings);
+        const [rows] = await client.execute(sql, normalizeDatabaseBindings(bindings, 'mysql'));
         return rows;
       }
       default:
