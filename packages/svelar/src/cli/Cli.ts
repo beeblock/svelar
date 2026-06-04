@@ -61,13 +61,51 @@ export class Cli {
     // Parse flags and args
     const { args, flags } = this.parseArgs(rest, command);
 
+    let exitCode = 0;
     try {
       await command.handle(args, flags);
     } catch (error: any) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error(`\x1b[31mError:\x1b[0m ${msg}`);
       if (error?.stack) console.error(error.stack);
-      process.exit(1);
+      exitCode = 1;
+    } finally {
+      await this.teardownRuntime();
+    }
+
+    if (exitCode !== 0) {
+      process.exit(exitCode);
+    }
+  }
+
+  /**
+   * Finite CLI commands bootstrap the user's app, which may open database
+   * connections or start monitoring intervals. Tear those down so commands
+   * like `svelar migrate` and `svelar seed:run` exit cleanly.
+   */
+  private async teardownRuntime(): Promise<void> {
+    const teardownTasks: Array<() => Promise<void>> = [
+      async () => {
+        const { Dashboard } = await import('../dashboard/index.js');
+        await Dashboard.shutdown();
+      },
+      async () => {
+        const { Queue } = await import('../queue/index.js');
+        await Queue.stop();
+      },
+      async () => {
+        const { Connection } = await import('../database/Connection.js');
+        await Connection.disconnect();
+      },
+    ];
+
+    for (const task of teardownTasks) {
+      try {
+        await task();
+      } catch {
+        // Best-effort cleanup: command success should not become failure
+        // because an optional runtime service was never configured.
+      }
     }
   }
 
