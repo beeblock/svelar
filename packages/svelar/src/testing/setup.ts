@@ -5,18 +5,31 @@
  * `refreshDatabase()` drops all tables and re-runs migrations.
  */
 
-import { readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Connection } from '../database/Connection.js';
 import { Migrator, type MigrationFile } from '../database/Migration.js';
 import { Factory } from './Factory.js';
 
+export interface RefreshDatabaseOptions {
+  /** Database connection name to use. Default: undefined (uses default) */
+  connectionName?: string;
+  /** Migration directory. Defaults to svelar.database.json, then src/lib/database/migrations */
+  migrationsPath?: string;
+  /** Migration repository table. Defaults to svelar.database.json, then migrations */
+  migrationsTable?: string;
+}
+
 export interface UseSvelarTestOptions {
   /** When true, calls refreshDatabase() before each test. Default: false */
   refreshDatabase?: boolean;
   /** Database connection name to use. Default: undefined (uses default) */
   connectionName?: string;
+  /** Migration directory override */
+  migrationsPath?: string;
+  /** Migration repository table override */
+  migrationsTable?: string;
 }
 
 /**
@@ -69,18 +82,33 @@ export function useSvelarTest(options: UseSvelarTestOptions = {}): void {
   _beforeEach(async () => {
     Factory.resetSequence();
     if (options.refreshDatabase) {
-      await refreshDatabase(options.connectionName);
+      await refreshDatabase({
+        connectionName: options.connectionName,
+        migrationsPath: options.migrationsPath,
+        migrationsTable: options.migrationsTable,
+      });
     }
   });
 }
 
 /**
- * Drop all tables and re-run all migrations from the project's
- * `src/lib/database/migrations/` directory.
+ * Drop all tables and re-run all migrations from the configured
+ * migrations directory.
  */
-export async function refreshDatabase(connectionName?: string): Promise<void> {
-  const migrator = new Migrator(connectionName);
-  const migrationsDir = join(process.cwd(), 'src', 'lib', 'database', 'migrations');
+export async function refreshDatabase(
+  optionsOrConnectionName?: string | RefreshDatabaseOptions,
+): Promise<void> {
+  const options = typeof optionsOrConnectionName === 'string'
+    ? { connectionName: optionsOrConnectionName }
+    : optionsOrConnectionName ?? {};
+  const migrationConfig = loadMigrationConfig();
+  const migrationsTable = options.migrationsTable ?? migrationConfig.table;
+  const migrationsPath = options.migrationsPath ?? migrationConfig.path;
+  const migrator = new Migrator({
+    connectionName: options.connectionName,
+    table: migrationsTable,
+  });
+  const migrationsDir = join(process.cwd(), migrationsPath);
 
   let files: string[];
   try {
@@ -117,4 +145,23 @@ export async function refreshDatabase(connectionName?: string): Promise<void> {
   }
 
   await migrator.fresh(migrations);
+}
+
+function loadMigrationConfig(): { table: string; path: string } {
+  const defaults = {
+    table: 'migrations',
+    path: 'src/lib/database/migrations',
+  };
+  const configPath = join(process.cwd(), 'svelar.database.json');
+  if (!existsSync(configPath)) return defaults;
+
+  try {
+    const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
+    return {
+      table: parsed?.migrations?.table ?? defaults.table,
+      path: parsed?.migrations?.path ?? defaults.path,
+    };
+  } catch {
+    return defaults;
+  }
 }

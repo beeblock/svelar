@@ -1,356 +1,363 @@
 {
-  "name": "@beeblock/svelar",
-  "version": "0.6.7",
-  "description": "Laravel-inspired framework on top of SvelteKit 2",
-  "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "bin": {
-    "svelar": "./dist/cli/bin.js"
-  },
-  "files": [
-    "dist",
-    "src/ui",
-    "src/i18n",
-    "LICENSE",
-    "README.md"
-  ],
-  "svelte": "./src/ui/index.ts",
-  "exports": {
-    "./package.json": "./package.json",
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    },
-    "./orm": {
-      "types": "./dist/orm/index.d.ts",
-      "import": "./dist/orm/index.js"
-    },
-    "./hooks": {
-      "types": "./dist/hooks/index.d.ts",
-      "import": "./dist/hooks/index.js"
-    },
-    "./cli": {
-      "types": "./dist/cli/index.d.ts",
-      "import": "./dist/cli/index.js"
-    },
-    "./container": {
-      "types": "./dist/container/index.d.ts",
-      "import": "./dist/container/index.js"
-    },
-    "./middleware": {
-      "types": "./dist/middleware/index.d.ts",
-      "import": "./dist/middleware/index.js"
-    },
-    "./routing": {
-      "types": "./dist/routing/index.d.ts",
-      "import": "./dist/routing/index.js"
-    },
-    "./database": {
-      "types": "./dist/database/index.d.ts",
-      "import": "./dist/database/index.js"
-    },
-    "./validation": {
-      "types": "./dist/validation/index.d.ts",
-      "import": "./dist/validation/index.js"
-    },
-    "./auth": {
-      "types": "./dist/auth/index.d.ts",
-      "import": "./dist/auth/index.js"
-    },
-    "./hashing": {
-      "types": "./dist/hashing/index.d.ts",
-      "import": "./dist/hashing/index.js"
-    },
-    "./session": {
-      "types": "./dist/session/index.d.ts",
-      "import": "./dist/session/index.js"
-    },
-    "./errors": {
-      "types": "./dist/errors/index.d.ts",
-      "import": "./dist/errors/index.js"
-    },
-    "./pagination": {
-      "types": "./dist/pagination/index.d.ts",
-      "import": "./dist/pagination/index.js"
-    },
-    "./events": {
-      "types": "./dist/events/index.d.ts",
-      "import": "./dist/events/index.js"
-    },
-    "./logging": {
-      "types": "./dist/logging/index.d.ts",
-      "import": "./dist/logging/index.js"
-    },
-    "./storage": {
-      "types": "./dist/storage/index.d.ts",
-      "import": "./dist/storage/index.js"
-    },
-    "./cache": {
-      "types": "./dist/cache/index.d.ts",
-      "import": "./dist/cache/index.js"
-    },
-    "./queue": {
-      "types": "./dist/queue/index.d.ts",
-      "import": "./dist/queue/index.js"
-    },
-    "./mail": {
-      "types": "./dist/mail/index.d.ts",
-      "import": "./dist/mail/index.js"
-    },
-    "./notifications": {
-      "types": "./dist/notifications/index.d.ts",
-      "import": "./dist/notifications/index.js"
-    },
-    "./broadcasting": {
-      "types": "./dist/broadcasting/index.d.ts",
-      "import": "./dist/broadcasting/index.js"
-    },
-    "./broadcasting/client": {
-      "types": "./dist/broadcasting/client.d.ts",
-      "import": "./dist/broadcasting/client.js"
-    },
-    "./config": {
-      "types": "./dist/config/index.d.ts",
-      "import": "./dist/config/index.js"
-    },
-    "./services": {
-      "types": "./dist/services/index.d.ts",
-      "import": "./dist/services/index.js"
-    },
-    "./actions": {
-      "types": "./dist/actions/index.d.ts",
-      "import": "./dist/actions/index.js"
-    },
-    "./repositories": {
-      "types": "./dist/repositories/index.d.ts",
-      "import": "./dist/repositories/index.js"
-    },
-    "./plugins": {
-      "types": "./dist/plugins/index.d.ts",
-      "import": "./dist/plugins/index.js"
-    },
-    "./plugins/PluginRegistry": {
-      "types": "./dist/plugins/PluginRegistry.d.ts",
-      "import": "./dist/plugins/PluginRegistry.js"
-    },
-    "./plugins/PluginPublisher": {
-      "types": "./dist/plugins/PluginPublisher.d.ts",
-      "import": "./dist/plugins/PluginPublisher.js"
-    },
-    "./plugins/PluginInstaller": {
-      "types": "./dist/plugins/PluginInstaller.d.ts",
-      "import": "./dist/plugins/PluginInstaller.js"
-    },
-    "./scheduler": {
-      "types": "./dist/scheduler/index.d.ts",
-      "import": "./dist/scheduler/index.js"
-    },
-    "./permissions": {
-      "types": "./dist/permissions/index.d.ts",
-      "import": "./dist/permissions/index.js"
-    },
-    "./search": {
-      "types": "./dist/search/index.d.ts",
-      "import": "./dist/search/index.js"
-    },
-    "./support": {
-      "types": "./dist/support/index.d.ts",
-      "import": "./dist/support/index.js"
-    },
-    "./dates": {
-      "types": "./dist/support/date.d.ts",
-      "import": "./dist/support/date.js"
-    },
-    "./ui": {
-      "types": "./src/ui/index.ts",
-      "svelte": "./src/ui/index.ts",
-      "import": "./src/ui/index.ts"
-    },
-    "./ui/*": {
-      "svelte": "./src/ui/*"
-    },
-    "./http": {
-      "types": "./dist/http/index.d.ts",
-      "import": "./dist/http/index.js"
-    },
-    "./i18n": {
-      "types": "./dist/i18n/index.d.ts",
-      "svelte": "./src/i18n/index.ts",
-      "import": "./dist/i18n/index.js"
-    },
-    "./i18n/LanguageSwitcher.svelte": {
-      "svelte": "./src/i18n/LanguageSwitcher.svelte"
-    },
-    "./forms": {
-      "types": "./dist/forms/index.d.ts",
-      "import": "./dist/forms/index.js"
-    },
-    "./pdf": {
-      "types": "./dist/pdf/index.d.ts",
-      "import": "./dist/pdf/index.js"
-    },
-    "./pdf/GeneratePdfJob": {
-      "types": "./dist/pdf/GeneratePdfJob.d.ts",
-      "import": "./dist/pdf/GeneratePdfJob.js"
-    },
-    "./dashboard": {
-      "types": "./dist/dashboard/index.d.ts",
-      "import": "./dist/dashboard/index.js"
-    },
-    "./queue/JobMonitor": {
-      "types": "./dist/queue/JobMonitor.d.ts",
-      "import": "./dist/queue/JobMonitor.js"
-    },
-    "./scheduler/ScheduleMonitor": {
-      "types": "./dist/scheduler/ScheduleMonitor.d.ts",
-      "import": "./dist/scheduler/ScheduleMonitor.js"
-    },
-    "./logging/LogViewer": {
-      "types": "./dist/logging/LogViewer.d.ts",
-      "import": "./dist/logging/LogViewer.js"
-    },
-    "./audit": {
-      "types": "./dist/audit/index.d.ts",
-      "import": "./dist/audit/index.js"
-    },
-    "./api-keys": {
-      "types": "./dist/api-keys/index.d.ts",
-      "import": "./dist/api-keys/index.js"
-    },
-    "./webhooks": {
-      "types": "./dist/webhooks/index.d.ts",
-      "import": "./dist/webhooks/index.js"
-    },
-    "./teams": {
-      "types": "./dist/teams/index.d.ts",
-      "import": "./dist/teams/index.js"
-    },
-    "./email-templates": {
-      "types": "./dist/email-templates/index.d.ts",
-      "import": "./dist/email-templates/index.js"
-    },
-    "./uploads": {
-      "types": "./dist/uploads/index.d.ts",
-      "import": "./dist/uploads/index.js"
-    },
-    "./feature-flags": {
-      "types": "./dist/feature-flags/index.d.ts",
-      "import": "./dist/feature-flags/index.js"
-    },
-    "./excel": {
-      "types": "./dist/excel/index.d.ts",
-      "import": "./dist/excel/index.js"
-    },
-    "./testing": {
-      "types": "./dist/testing/index.d.ts",
-      "import": "./dist/testing/index.js"
-    }
-  },
-  "scripts": {
-    "build": "tsup && (tsc --emitDeclarationOnly || echo 'Warning: tsc declaration emit had errors') && npm run copy-cli-scripts",
-    "copy-cli-scripts": "node -e \"const fs=require('fs');['ts-resolver.mjs','ts-resolve-hook.mjs'].forEach(f=>fs.copyFileSync('src/cli/'+f,'dist/cli/'+f))\"",
-    "dev": "tsup --watch",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "lint": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
-  },
-  "dependencies": {
-    "@tabler/icons-svelte": "^3.0.0",
-    "date-fns": "^4.1.0",
-    "drizzle-orm": "^0.38.0",
-    "lucide-svelte": "^1.0.1",
-    "zod": "^3.23.0"
-  },
-  "devDependencies": {
-    "@types/node": "^22.0.0",
-    "@types/pdfkit": "^0.17.5",
-    "@vitest/coverage-v8": "^2.1.9",
-    "better-sqlite3": "^11.0.0",
-    "exceljs": "^4.4.0",
-    "sveltekit-superforms": "^2.30.1",
-    "tsup": "^8.3.0",
-    "typescript": "^5.7.0",
-    "vitest": "^2.1.0"
-  },
-  "peerDependencies": {
-    "@aws-sdk/client-s3": ">=3.0.0",
-    "@aws-sdk/s3-request-presigner": ">=3.0.0",
-    "@sveltejs/kit": "^2.0.0",
-    "better-sqlite3": "*",
-    "bullmq": ">=5.0.0",
-    "exceljs": ">=4.4.0",
-    "ioredis": ">=5.0.0",
-    "meilisearch": ">=0.44.0",
-    "mysql2": "*",
-    "pdfkit": ">=0.18.0",
-    "postgres": "*",
-    "pusher-js": ">=8.0.0",
-    "sveltekit-superforms": ">=2.0.0",
-    "vitest": ">=1.0.0"
-  },
-  "peerDependenciesMeta": {
-    "@aws-sdk/client-s3": {
-      "optional": true
-    },
-    "@aws-sdk/s3-request-presigner": {
-      "optional": true
-    },
-    "better-sqlite3": {
-      "optional": true
-    },
-    "bullmq": {
-      "optional": true
-    },
-    "ioredis": {
-      "optional": true
-    },
-    "mysql2": {
-      "optional": true
-    },
-    "postgres": {
-      "optional": true
-    },
-    "pusher-js": {
-      "optional": true
-    },
-    "pdfkit": {
-      "optional": true
-    },
-    "exceljs": {
-      "optional": true
-    },
-    "sveltekit-superforms": {
-      "optional": true
-    },
-    "meilisearch": {
-      "optional": true
-    },
-    "vitest": {
-      "optional": true
-    }
-  },
-  "keywords": [
-    "svelte",
-    "sveltekit",
-    "laravel",
-    "orm",
-    "framework",
-    "drizzle",
-    "middleware",
-    "auth",
-    "session",
-    "cache",
-    "queue",
-    "mail",
-    "billing"
-  ],
-  "license": "MIT",
-  "author": "Raoni <alephtus@gmail.com>",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/beeblock/svelar.git"
-  },
-  "homepage": "https://github.com/beeblock/svelar#readme"
+	"name": "@beeblock/svelar",
+	"version": "0.6.7",
+	"description": "Laravel-inspired framework on top of SvelteKit 2",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"bin": {
+		"svelar": "./dist/cli/bin.js"
+	},
+	"files": [
+		"dist",
+		"src/ui",
+		"src/i18n",
+		"src/pagination",
+		"LICENSE",
+		"README.md"
+	],
+	"svelte": "./src/ui/index.ts",
+	"exports": {
+		"./package.json": "./package.json",
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./orm": {
+			"types": "./dist/orm/index.d.ts",
+			"import": "./dist/orm/index.js"
+		},
+		"./hooks": {
+			"types": "./dist/hooks/index.d.ts",
+			"import": "./dist/hooks/index.js"
+		},
+		"./cli": {
+			"types": "./dist/cli/index.d.ts",
+			"import": "./dist/cli/index.js"
+		},
+		"./container": {
+			"types": "./dist/container/index.d.ts",
+			"import": "./dist/container/index.js"
+		},
+		"./middleware": {
+			"types": "./dist/middleware/index.d.ts",
+			"import": "./dist/middleware/index.js"
+		},
+		"./routing": {
+			"types": "./dist/routing/index.d.ts",
+			"import": "./dist/routing/index.js"
+		},
+		"./database": {
+			"types": "./dist/database/index.d.ts",
+			"import": "./dist/database/index.js"
+		},
+		"./validation": {
+			"types": "./dist/validation/index.d.ts",
+			"import": "./dist/validation/index.js"
+		},
+		"./auth": {
+			"types": "./dist/auth/index.d.ts",
+			"import": "./dist/auth/index.js"
+		},
+		"./hashing": {
+			"types": "./dist/hashing/index.d.ts",
+			"import": "./dist/hashing/index.js"
+		},
+		"./session": {
+			"types": "./dist/session/index.d.ts",
+			"import": "./dist/session/index.js"
+		},
+		"./errors": {
+			"types": "./dist/errors/index.d.ts",
+			"import": "./dist/errors/index.js"
+		},
+		"./pagination": {
+			"types": "./dist/pagination/index.d.ts",
+			"import": "./dist/pagination/index.js"
+		},
+		"./pagination/Pagination.svelte": {
+			"svelte": "./src/pagination/Pagination.svelte"
+		},
+		"./pagination/*": {
+			"svelte": "./src/pagination/*"
+		},
+		"./events": {
+			"types": "./dist/events/index.d.ts",
+			"import": "./dist/events/index.js"
+		},
+		"./logging": {
+			"types": "./dist/logging/index.d.ts",
+			"import": "./dist/logging/index.js"
+		},
+		"./storage": {
+			"types": "./dist/storage/index.d.ts",
+			"import": "./dist/storage/index.js"
+		},
+		"./cache": {
+			"types": "./dist/cache/index.d.ts",
+			"import": "./dist/cache/index.js"
+		},
+		"./queue": {
+			"types": "./dist/queue/index.d.ts",
+			"import": "./dist/queue/index.js"
+		},
+		"./mail": {
+			"types": "./dist/mail/index.d.ts",
+			"import": "./dist/mail/index.js"
+		},
+		"./notifications": {
+			"types": "./dist/notifications/index.d.ts",
+			"import": "./dist/notifications/index.js"
+		},
+		"./broadcasting": {
+			"types": "./dist/broadcasting/index.d.ts",
+			"import": "./dist/broadcasting/index.js"
+		},
+		"./broadcasting/client": {
+			"types": "./dist/broadcasting/client.d.ts",
+			"import": "./dist/broadcasting/client.js"
+		},
+		"./config": {
+			"types": "./dist/config/index.d.ts",
+			"import": "./dist/config/index.js"
+		},
+		"./services": {
+			"types": "./dist/services/index.d.ts",
+			"import": "./dist/services/index.js"
+		},
+		"./actions": {
+			"types": "./dist/actions/index.d.ts",
+			"import": "./dist/actions/index.js"
+		},
+		"./repositories": {
+			"types": "./dist/repositories/index.d.ts",
+			"import": "./dist/repositories/index.js"
+		},
+		"./plugins": {
+			"types": "./dist/plugins/index.d.ts",
+			"import": "./dist/plugins/index.js"
+		},
+		"./plugins/PluginRegistry": {
+			"types": "./dist/plugins/PluginRegistry.d.ts",
+			"import": "./dist/plugins/PluginRegistry.js"
+		},
+		"./plugins/PluginPublisher": {
+			"types": "./dist/plugins/PluginPublisher.d.ts",
+			"import": "./dist/plugins/PluginPublisher.js"
+		},
+		"./plugins/PluginInstaller": {
+			"types": "./dist/plugins/PluginInstaller.d.ts",
+			"import": "./dist/plugins/PluginInstaller.js"
+		},
+		"./scheduler": {
+			"types": "./dist/scheduler/index.d.ts",
+			"import": "./dist/scheduler/index.js"
+		},
+		"./permissions": {
+			"types": "./dist/permissions/index.d.ts",
+			"import": "./dist/permissions/index.js"
+		},
+		"./search": {
+			"types": "./dist/search/index.d.ts",
+			"import": "./dist/search/index.js"
+		},
+		"./support": {
+			"types": "./dist/support/index.d.ts",
+			"import": "./dist/support/index.js"
+		},
+		"./dates": {
+			"types": "./dist/support/date.d.ts",
+			"import": "./dist/support/date.js"
+		},
+		"./ui": {
+			"types": "./src/ui/index.ts",
+			"svelte": "./src/ui/index.ts",
+			"import": "./src/ui/index.ts"
+		},
+		"./ui/*": {
+			"svelte": "./src/ui/*"
+		},
+		"./http": {
+			"types": "./dist/http/index.d.ts",
+			"import": "./dist/http/index.js"
+		},
+		"./i18n": {
+			"types": "./dist/i18n/index.d.ts",
+			"svelte": "./src/i18n/index.ts",
+			"import": "./dist/i18n/index.js"
+		},
+		"./i18n/LanguageSwitcher.svelte": {
+			"svelte": "./src/i18n/LanguageSwitcher.svelte"
+		},
+		"./forms": {
+			"types": "./dist/forms/index.d.ts",
+			"import": "./dist/forms/index.js"
+		},
+		"./pdf": {
+			"types": "./dist/pdf/index.d.ts",
+			"import": "./dist/pdf/index.js"
+		},
+		"./pdf/GeneratePdfJob": {
+			"types": "./dist/pdf/GeneratePdfJob.d.ts",
+			"import": "./dist/pdf/GeneratePdfJob.js"
+		},
+		"./dashboard": {
+			"types": "./dist/dashboard/index.d.ts",
+			"import": "./dist/dashboard/index.js"
+		},
+		"./queue/JobMonitor": {
+			"types": "./dist/queue/JobMonitor.d.ts",
+			"import": "./dist/queue/JobMonitor.js"
+		},
+		"./scheduler/ScheduleMonitor": {
+			"types": "./dist/scheduler/ScheduleMonitor.d.ts",
+			"import": "./dist/scheduler/ScheduleMonitor.js"
+		},
+		"./logging/LogViewer": {
+			"types": "./dist/logging/LogViewer.d.ts",
+			"import": "./dist/logging/LogViewer.js"
+		},
+		"./audit": {
+			"types": "./dist/audit/index.d.ts",
+			"import": "./dist/audit/index.js"
+		},
+		"./api-keys": {
+			"types": "./dist/api-keys/index.d.ts",
+			"import": "./dist/api-keys/index.js"
+		},
+		"./webhooks": {
+			"types": "./dist/webhooks/index.d.ts",
+			"import": "./dist/webhooks/index.js"
+		},
+		"./teams": {
+			"types": "./dist/teams/index.d.ts",
+			"import": "./dist/teams/index.js"
+		},
+		"./email-templates": {
+			"types": "./dist/email-templates/index.d.ts",
+			"import": "./dist/email-templates/index.js"
+		},
+		"./uploads": {
+			"types": "./dist/uploads/index.d.ts",
+			"import": "./dist/uploads/index.js"
+		},
+		"./feature-flags": {
+			"types": "./dist/feature-flags/index.d.ts",
+			"import": "./dist/feature-flags/index.js"
+		},
+		"./excel": {
+			"types": "./dist/excel/index.d.ts",
+			"import": "./dist/excel/index.js"
+		},
+		"./testing": {
+			"types": "./dist/testing/index.d.ts",
+			"import": "./dist/testing/index.js"
+		}
+	},
+	"scripts": {
+		"build": "tsup && (tsc --emitDeclarationOnly || echo 'Warning: tsc declaration emit had errors') && npm run copy-cli-scripts",
+		"copy-cli-scripts": "node -e \"const fs=require('fs');['ts-resolver.mjs','ts-resolve-hook.mjs'].forEach(f=>fs.copyFileSync('src/cli/'+f,'dist/cli/'+f))\"",
+		"dev": "tsup --watch",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"lint": "tsc --noEmit",
+		"prepublishOnly": "npm run build"
+	},
+	"dependencies": {
+		"@tabler/icons-svelte": "^3.0.0",
+		"date-fns": "^4.1.0",
+		"drizzle-orm": "^0.38.0",
+		"lucide-svelte": "^1.0.1",
+		"zod": "^3.23.0"
+	},
+	"devDependencies": {
+		"@types/node": "^22.0.0",
+		"@types/pdfkit": "^0.17.5",
+		"@vitest/coverage-v8": "^2.1.9",
+		"better-sqlite3": "^11.0.0",
+		"exceljs": "^4.4.0",
+		"sveltekit-superforms": "^2.30.1",
+		"tsup": "^8.3.0",
+		"typescript": "^5.7.0",
+		"vitest": "^2.1.0"
+	},
+	"peerDependencies": {
+		"@aws-sdk/client-s3": ">=3.0.0",
+		"@aws-sdk/s3-request-presigner": ">=3.0.0",
+		"@sveltejs/kit": "^2.0.0",
+		"better-sqlite3": "*",
+		"bullmq": ">=5.0.0",
+		"exceljs": ">=4.4.0",
+		"ioredis": ">=5.0.0",
+		"meilisearch": ">=0.44.0",
+		"mysql2": "*",
+		"pdfkit": ">=0.18.0",
+		"postgres": "*",
+		"pusher-js": ">=8.0.0",
+		"sveltekit-superforms": ">=2.0.0",
+		"vitest": ">=1.0.0"
+	},
+	"peerDependenciesMeta": {
+		"@aws-sdk/client-s3": {
+			"optional": true
+		},
+		"@aws-sdk/s3-request-presigner": {
+			"optional": true
+		},
+		"better-sqlite3": {
+			"optional": true
+		},
+		"bullmq": {
+			"optional": true
+		},
+		"ioredis": {
+			"optional": true
+		},
+		"mysql2": {
+			"optional": true
+		},
+		"postgres": {
+			"optional": true
+		},
+		"pusher-js": {
+			"optional": true
+		},
+		"pdfkit": {
+			"optional": true
+		},
+		"exceljs": {
+			"optional": true
+		},
+		"sveltekit-superforms": {
+			"optional": true
+		},
+		"meilisearch": {
+			"optional": true
+		},
+		"vitest": {
+			"optional": true
+		}
+	},
+	"keywords": [
+		"svelte",
+		"sveltekit",
+		"laravel",
+		"orm",
+		"framework",
+		"drizzle",
+		"middleware",
+		"auth",
+		"session",
+		"cache",
+		"queue",
+		"mail",
+		"billing"
+	],
+	"license": "MIT",
+	"author": "Raoni <alephtus@gmail.com>",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/beeblock/svelar.git"
+	},
+	"homepage": "https://github.com/beeblock/svelar#readme"
 }

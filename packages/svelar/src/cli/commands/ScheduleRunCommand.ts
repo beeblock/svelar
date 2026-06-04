@@ -18,23 +18,30 @@ export class ScheduleRunCommand extends Command {
     await this.bootstrap();
 
     const { Scheduler } = await import('../../scheduler/index.js');
-    const scheduler = new Scheduler();
-    scheduler.persistToDatabase();
+    let scheduler = await this.loadConfiguredScheduler();
 
-    // Load tasks from src/lib/shared/scheduler/ (DDD) or src/lib/scheduler/ (flat)
-    const dddDir = join(process.cwd(), 'src', 'lib', 'shared', 'scheduler');
-    const flatDir = join(process.cwd(), 'src', 'lib', 'scheduler');
-    const schedulerDir = existsSync(dddDir) ? dddDir : flatDir;
-    const tasks = await this.loadTasks(schedulerDir);
+    if (!scheduler) {
+      scheduler = new Scheduler().persistToDatabase();
 
-    if (tasks.length === 0) {
-      this.warn('No scheduled tasks found in src/lib/shared/scheduler/ or src/lib/scheduler/');
-      return;
-    }
+      // Load tasks from src/lib/shared/scheduler/ (DDD) or src/lib/scheduler/ (flat)
+      const dddDir = join(process.cwd(), 'src', 'lib', 'shared', 'scheduler');
+      const flatDir = join(process.cwd(), 'src', 'lib', 'scheduler');
+      const schedulerDir = existsSync(dddDir) ? dddDir : flatDir;
+      const tasks = await this.loadTasks(schedulerDir);
 
-    for (const task of tasks) {
-      scheduler.register(task);
-      this.info(`Registered task: ${task.name}`);
+      if (tasks.length === 0) {
+        this.warn('No scheduled tasks found in src/lib/shared/scheduler/ or src/lib/scheduler/');
+        return;
+      }
+
+      for (const task of tasks) {
+        scheduler.register(task);
+        this.info(`Registered task: ${task.name}`);
+      }
+    } else {
+      for (const task of scheduler.getTasks()) {
+        this.info(`Registered task: ${task.name}`);
+      }
     }
 
     this.newLine();
@@ -85,6 +92,33 @@ export class ScheduleRunCommand extends Command {
 
     // Keep process alive
     await new Promise(() => {});
+  }
+
+  private async loadConfiguredScheduler(): Promise<any | null> {
+    const candidates = [
+      join(process.cwd(), 'src', 'lib', 'shared', 'scheduler', 'index.ts'),
+      join(process.cwd(), 'src', 'lib', 'shared', 'scheduler', 'index.js'),
+      join(process.cwd(), 'src', 'lib', 'scheduler', 'index.ts'),
+      join(process.cwd(), 'src', 'lib', 'scheduler', 'index.js'),
+    ];
+
+    const entry = candidates.find((file) => existsSync(file));
+    if (!entry) return null;
+
+    try {
+      const mod = await import(pathToFileURL(entry).href);
+      if (typeof mod.createScheduler === 'function') {
+        return mod.createScheduler();
+      }
+      if (mod.scheduler && typeof mod.scheduler.run === 'function') {
+        return mod.scheduler;
+      }
+    } catch (err: any) {
+      this.error(`Failed to load scheduler registry: ${err.message ?? err}`);
+      process.exit(1);
+    }
+
+    return null;
   }
 
   private async loadTasks(dir: string): Promise<any[]> {

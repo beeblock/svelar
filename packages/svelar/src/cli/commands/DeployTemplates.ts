@@ -44,7 +44,6 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/build ./build
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/ecosystem.config.cjs ./
-COPY --from=builder /app/src/lib/database ./src/lib/database
 
 RUN mkdir -p storage/logs storage/public && chown -R sveltekit:sveltekit /app
 

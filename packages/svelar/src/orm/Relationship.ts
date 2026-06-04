@@ -6,7 +6,7 @@
  */
 
 import { QueryBuilder } from './QueryBuilder.js';
-import { Connection } from '../database/Connection.js';
+import { assertSqlIdentifier } from '../database/Connection.js';
 
 // ── Base Relation ──────────────────────────────────────────
 
@@ -190,17 +190,21 @@ export class BelongsToMany extends Relation {
     private relatedKey: string = 'id'
   ) {
     super(parent, related);
+    this.pivotTable = assertSqlIdentifier(this.pivotTable, 'Pivot table name');
+    this.foreignPivotKey = assertSqlIdentifier(this.foreignPivotKey, 'Foreign pivot key');
+    this.relatedPivotKey = assertSqlIdentifier(this.relatedPivotKey, 'Related pivot key');
+    this.parentKey = assertSqlIdentifier(this.parentKey, 'Parent key');
+    this.relatedKey = assertSqlIdentifier(this.relatedKey, 'Related key');
   }
 
   async load(parent: any): Promise<any[]> {
     const parentKeyValue = parent.getAttribute(this.parentKey);
-    const relatedTable = this.relatedModel.tableName;
 
     // Join through pivot table
-    const pivotRows = await Connection.raw(
-      `SELECT ${this.relatedPivotKey} FROM ${this.pivotTable} WHERE ${this.foreignPivotKey} = ?`,
-      [parentKeyValue]
-    );
+    const pivotRows = await new QueryBuilder(this.pivotTable)
+      .select(this.relatedPivotKey)
+      .where(this.foreignPivotKey, parentKeyValue)
+      .get();
 
     const relatedIds = pivotRows.map((r: any) => r[this.relatedPivotKey]);
     if (relatedIds.length === 0) return [];
@@ -219,11 +223,9 @@ export class BelongsToMany extends Relation {
     }
 
     // Get all pivot records
-    const placeholders = parentIds.map(() => '?').join(', ');
-    const pivotRows = await Connection.raw(
-      `SELECT * FROM ${this.pivotTable} WHERE ${this.foreignPivotKey} IN (${placeholders})`,
-      parentIds
-    );
+    const pivotRows = await new QueryBuilder(this.pivotTable)
+      .whereIn(this.foreignPivotKey, parentIds)
+      .get();
 
     // Get all related models
     const relatedIds = [...new Set(pivotRows.map((r: any) => r[this.relatedPivotKey]))];
@@ -264,29 +266,21 @@ export class BelongsToMany extends Relation {
       ...pivot,
     };
 
-    const columns = Object.keys(data);
-    const values = Object.values(data);
-    const placeholders = values.map(() => '?').join(', ');
-
-    await Connection.raw(
-      `INSERT INTO ${this.pivotTable} (${columns.join(', ')}) VALUES (${placeholders})`,
-      values
-    );
+    await new QueryBuilder(this.pivotTable).insert(data);
   }
 
   async detach(id?: any): Promise<void> {
     const parentKeyValue = this.parentModel.getAttribute(this.parentKey);
 
     if (id) {
-      await Connection.raw(
-        `DELETE FROM ${this.pivotTable} WHERE ${this.foreignPivotKey} = ? AND ${this.relatedPivotKey} = ?`,
-        [parentKeyValue, id]
-      );
+      await new QueryBuilder(this.pivotTable)
+        .where(this.foreignPivotKey, parentKeyValue)
+        .where(this.relatedPivotKey, id)
+        .delete();
     } else {
-      await Connection.raw(
-        `DELETE FROM ${this.pivotTable} WHERE ${this.foreignPivotKey} = ?`,
-        [parentKeyValue]
-      );
+      await new QueryBuilder(this.pivotTable)
+        .where(this.foreignPivotKey, parentKeyValue)
+        .delete();
     }
   }
 
@@ -301,12 +295,12 @@ export class BelongsToMany extends Relation {
     const parentKeyValue = this.parentModel.getAttribute(this.parentKey);
 
     for (const id of ids) {
-      const exists = await Connection.raw(
-        `SELECT 1 FROM ${this.pivotTable} WHERE ${this.foreignPivotKey} = ? AND ${this.relatedPivotKey} = ? LIMIT 1`,
-        [parentKeyValue, id]
-      );
+      const exists = await new QueryBuilder(this.pivotTable)
+        .where(this.foreignPivotKey, parentKeyValue)
+        .where(this.relatedPivotKey, id)
+        .exists();
 
-      if (exists.length > 0) {
+      if (exists) {
         await this.detach(id);
       } else {
         await this.attach(id);

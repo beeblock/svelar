@@ -261,7 +261,7 @@ export { useSSE } from 'svelar/broadcasting/client';
   }
 
   private configTemplate(): string {
-    return `import { env } from 'svelar/config';
+    return `import { env } from '@beeblock/svelar/config';
 
 export default {
   default: env('BROADCAST_DRIVER', 'pusher'),

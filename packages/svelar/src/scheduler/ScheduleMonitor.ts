@@ -28,6 +28,7 @@
 
 import { cronMatches } from './index.js';
 import type { Scheduler, ScheduledTask } from './index.js';
+import { QueryBuilder } from '../orm/QueryBuilder.js';
 import { singleton } from '../support/singleton.js';
 
 // ── Types ──────────────────────────────────────────────────
@@ -203,10 +204,12 @@ class ScheduleMonitorService {
     // Load recent errors from database
     const lastErrors: Array<{ task: string; error: string; timestamp: Date }> = [];
     try {
-      const { Connection } = await import('../database/Connection.js');
-      const rows: any[] = await Connection.raw(
-        'SELECT task, error, ran_at FROM scheduled_task_runs WHERE error IS NOT NULL ORDER BY ran_at DESC LIMIT 10',
-      );
+      const rows = await new QueryBuilder('scheduled_task_runs')
+        .select('task', 'error', 'ran_at')
+        .whereNotNull('error')
+        .orderBy('ran_at', 'desc')
+        .limit(10)
+        .get();
       for (const row of rows) {
         lastErrors.push({
           task: row.task,
@@ -243,12 +246,12 @@ class ScheduleMonitorService {
     if (taskNames.length === 0) return result;
 
     try {
-      const { Connection } = await import('../database/Connection.js');
-      const placeholders = taskNames.map(() => '?').join(', ');
-      const rows: any[] = await Connection.raw(
-        `SELECT task, success, duration, error, ran_at FROM scheduled_task_runs WHERE task IN (${placeholders}) ORDER BY ran_at DESC LIMIT ?`,
-        [...taskNames, taskNames.length * limit],
-      );
+      const rows = await new QueryBuilder('scheduled_task_runs')
+        .select('task', 'success', 'duration', 'error', 'ran_at')
+        .whereIn('task', taskNames)
+        .orderBy('ran_at', 'desc')
+        .limit(taskNames.length * limit)
+        .get();
 
       for (const row of rows) {
         if (!result.has(row.task)) {
@@ -275,11 +278,13 @@ class ScheduleMonitorService {
    * Persist a task result to the database
    */
   private async persistResult(result: { task: string; success: boolean; duration: number; error?: string; timestamp: Date }): Promise<void> {
-    const { Connection } = await import('../database/Connection.js');
-    await Connection.raw(
-      'INSERT INTO scheduled_task_runs (task, success, duration, error, ran_at) VALUES (?, ?, ?, ?, ?)',
-      [result.task, result.success, result.duration, result.error || null, result.timestamp.toISOString()],
-    );
+    await new QueryBuilder('scheduled_task_runs').insert({
+      task: result.task,
+      success: result.success ? 1 : 0,
+      duration: result.duration,
+      error: result.error || null,
+      ran_at: result.timestamp.toISOString(),
+    });
   }
 
   /**

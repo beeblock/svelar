@@ -10,9 +10,17 @@ export { QueryBuilder } from './orm/QueryBuilder.js';
 export { HasOne, HasMany, BelongsTo, BelongsToMany } from './orm/Relationship.js';
 
 // Database
-export { Connection, type DatabaseConfig, type DatabaseDriver, type ConnectionsConfig } from './database/Connection.js';
+export {
+  Connection,
+  normalizeDatabaseDriver,
+  type DatabaseConfig,
+  type DatabaseDriver,
+  type DatabaseDriverAlias,
+  type ConnectionsConfig,
+} from './database/Connection.js';
 export { Schema, schema, TableBuilder, ColumnBuilder } from './database/SchemaBuilder.js';
 export { Migration, Migrator } from './database/Migration.js';
+export * from './database/CoreMigrations.js';
 export { Seeder } from './database/Seeder.js';
 
 // Container & Providers
@@ -79,6 +87,10 @@ export type { QueueConfig, DispatchOptions } from './queue/index.js';
 // Mail
 export { Mailer, Mailable } from './mail/index.js';
 export type { MailerConfig, MailMessage, SendResult } from './mail/index.js';
+
+// Email Templates
+export { EmailTemplates, EmailTemplate } from './email-templates/index.js';
+export type { EmailTemplate as EmailTemplateRecord, RenderResult, TemplateConfig } from './email-templates/index.js';
 
 // Notifications
 export { Notifier, Notification } from './notifications/index.js';

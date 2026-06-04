@@ -31,6 +31,10 @@
  * ```
  */
 
+import { assertSqlIdentifier } from '../database/Connection.js';
+import { QueryBuilder } from '../orm/QueryBuilder.js';
+import { singleton } from '../support/singleton.js';
+
 // ── Types ──────────────────────────────────────────────────
 
 export type NotificationChannel = 'mail' | 'database' | string;
@@ -108,7 +112,7 @@ class DatabaseNotificationChannel implements NotificationChannelDriver {
   private table: string;
 
   constructor(table: string = 'notifications') {
-    this.table = table;
+    this.table = assertSqlIdentifier(table, 'Notifications table name');
   }
 
   async send(notifiable: Notifiable, notification: Notification): Promise<void> {
@@ -117,18 +121,14 @@ class DatabaseNotificationChannel implements NotificationChannelDriver {
     const dbData = notification.toDatabase(notifiable);
 
     try {
-      const { Connection } = await import('../database/Connection.js');
-      await Connection.raw(
-        `INSERT INTO ${this.table} (id, notifiable_id, type, data, read_at, created_at)
-         VALUES (?, ?, ?, ?, NULL, ?)`,
-        [
-          crypto.randomUUID(),
-          notifiable.getAttribute('id'),
-          dbData.type,
-          JSON.stringify(dbData.data),
-          new Date().toISOString(),
-        ]
-      );
+      await new QueryBuilder(this.table).insert({
+        id: crypto.randomUUID(),
+        notifiable_id: notifiable.getAttribute('id'),
+        type: dbData.type,
+        data: JSON.stringify(dbData.data),
+        read_at: null,
+        created_at: new Date().toISOString(),
+      });
     } catch (error) {
       console.error('[Notifications] Failed to store database notification:', error);
     }
@@ -197,8 +197,6 @@ class NotifierManager {
     }
   }
 }
-
-import { singleton } from '../support/singleton.js';
 
 /**
  * Global Notifier singleton

@@ -5,6 +5,8 @@
 
 import { randomUUID } from 'crypto';
 import { singleton } from '../support/singleton.js';
+import { assertSqlIdentifier } from '../database/Connection.js';
+import { QueryBuilder } from '../orm/QueryBuilder.js';
 
 export interface FileUpload {
   id: string;
@@ -21,6 +23,7 @@ export interface FileUpload {
 }
 
 export interface UploadOptions {
+  userId?: string | number;
   disk?: string;
   directory?: string;
   maxSize?: number; // bytes
@@ -46,6 +49,32 @@ class UploadManager {
 
   configure(config: UploadsConfig): void {
     this.config = { ...this.config, ...config };
+  }
+
+  private table(): string {
+    return assertSqlIdentifier(this.config.table ?? 'svelar_uploads', 'Uploads table name');
+  }
+
+  private query(): QueryBuilder<any> {
+    return new QueryBuilder(this.table());
+  }
+
+  private rowToUpload(row: any): FileUpload {
+    return {
+      id: row.id,
+      userId: row.user_id ?? row.userId ?? row.userid ?? undefined,
+      originalName: row.original_name ?? row.originalName ?? row.originalname,
+      storedName: row.stored_name ?? row.storedName ?? row.storedname,
+      path: row.path,
+      disk: row.disk,
+      mimeType: row.mime_type ?? row.mimeType ?? row.mimetype,
+      size: row.size,
+      publicUrl: row.public_url ?? row.publicUrl ?? row.publicurl ?? undefined,
+      metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+      createdAt: typeof row.created_at === 'number'
+        ? row.created_at * 1000
+        : row.createdAt ?? row.createdat,
+    };
   }
 
   /** Store an uploaded file */
@@ -86,6 +115,7 @@ class UploadManager {
     // Create upload record
     const upload: FileUpload = {
       id: randomUUID(),
+      userId: options?.userId,
       originalName: file.name,
       storedName,
       path,
@@ -109,19 +139,19 @@ class UploadManager {
     if (this.config.driver === 'memory') {
       this.uploads.push(upload);
     } else if (this.config.driver === 'database') {
-      try {
-        const { Connection } = await import('../database/Connection.js');
-        const conn = await Connection.connection();
-        const table = this.config.table ?? 'svelar_uploads';
-        await conn.raw(
-          `INSERT INTO ${table} (id, user_id, original_name, stored_name, path, disk, mime_type, size, public_url, metadata, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [upload.id, upload.userId ?? null, upload.originalName, upload.storedName, upload.path, upload.disk, upload.mimeType, upload.size, upload.publicUrl ?? null, JSON.stringify(upload.metadata ?? {}), Math.floor(upload.createdAt / 1000)]
-        );
-      } catch {
-        // Fallback to memory tracking
-        this.uploads.push(upload);
-      }
+      await this.query().insert({
+        id: upload.id,
+        user_id: upload.userId == null ? null : String(upload.userId),
+        original_name: upload.originalName,
+        stored_name: upload.storedName,
+        path: upload.path,
+        disk: upload.disk,
+        mime_type: upload.mimeType,
+        size: upload.size,
+        public_url: upload.publicUrl ?? null,
+        metadata: JSON.stringify(upload.metadata ?? {}),
+        created_at: Math.floor(upload.createdAt / 1000),
+      });
     }
 
     return upload;
@@ -153,6 +183,11 @@ class UploadManager {
 
   /** Get upload by ID */
   async get(id: string): Promise<FileUpload | null> {
+    if (this.config.driver === 'database') {
+      const row = await this.query().where('id', id).first();
+      return row ? this.rowToUpload(row) : null;
+    }
+
     return this.uploads.find((u) => u.id === id) || null;
   }
 
@@ -161,6 +196,15 @@ class UploadManager {
     userId: string | number,
     limit?: number
   ): Promise<FileUpload[]> {
+    if (this.config.driver === 'database') {
+      const rows = await this.query()
+        .where('user_id', String(userId))
+        .orderBy('created_at', 'desc')
+        .limit(limit || 100)
+        .get();
+      return rows.map((row: any) => this.rowToUpload(row));
+    }
+
     return this.uploads
       .filter((u) => u.userId === userId)
       .sort((a, b) => b.createdAt - a.createdAt)
@@ -169,10 +213,22 @@ class UploadManager {
 
   /** Delete an upload (removes file and record) */
   async delete(id: string): Promise<boolean> {
-    const index = this.uploads.findIndex((u) => u.id === id);
-    if (index === -1) return false;
+    const upload = await this.get(id);
+    if (!upload) return false;
 
-    // In production, would also delete from storage
+    try {
+      const { Storage } = await import('../storage/index.js');
+      await Storage.disk(upload.disk).delete(upload.path);
+    } catch {
+      // Storage may be unconfigured; still delete the tracking record.
+    }
+
+    if (this.config.driver === 'database') {
+      await this.query().where('id', id).delete();
+      return true;
+    }
+
+    const index = this.uploads.findIndex((u) => u.id === id);
     this.uploads.splice(index, 1);
     return true;
   }
@@ -182,8 +238,19 @@ class UploadManager {
     const upload = await this.get(id);
     if (!upload) return null;
 
-    // In production, would generate signed URL from storage
-    // For now, return a simple reference
+    if (upload.publicUrl) return upload.publicUrl;
+
+    try {
+      const { Storage } = await import('../storage/index.js');
+      const disk = Storage.disk(upload.disk) as any;
+      if (typeof disk.temporaryUrl === 'function' && expiresIn) {
+        return disk.temporaryUrl(upload.path, expiresIn);
+      }
+      return disk.url(upload.path);
+    } catch {
+      // Storage may be unconfigured; return a stable reference.
+    }
+
     return `/files/${upload.id}/${upload.storedName}`;
   }
 
@@ -193,6 +260,20 @@ class UploadManager {
     totalSize: number;
     byMimeType: Record<string, number>;
   }> {
+    if (this.config.driver === 'database') {
+      const rows = await this.query().select('mime_type', 'size').get();
+      const byMimeType: Record<string, number> = {};
+      let totalSize = 0;
+
+      for (const row of rows) {
+        const mime = row.mime_type ?? row.mimeType ?? row.mimetype;
+        byMimeType[mime] = (byMimeType[mime] || 0) + 1;
+        totalSize += row.size;
+      }
+
+      return { totalFiles: rows.length, totalSize, byMimeType };
+    }
+
     const byMimeType: Record<string, number> = {};
     let totalSize = 0;
 

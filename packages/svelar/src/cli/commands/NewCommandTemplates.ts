@@ -6,66 +6,69 @@
  */
 
 export class NewCommandTemplates {
+	// ─── Config ─────────────────────────────────────────────────
 
-  // ─── Config ─────────────────────────────────────────────────
+	static packageJson(name: string, svelarVersion: string = "0.4.0"): string {
+		return (
+			JSON.stringify(
+				{
+					name,
+					version: "0.0.1",
+					private: true,
+					type: "module",
+					scripts: {
+						dev: "vite dev",
+						build: "vite build",
+						preview: "vite preview",
+						migrate: "npx svelar migrate",
+						"migrate:rollback": "npx svelar migrate --rollback",
+						"migrate:refresh": "npx svelar migrate --refresh",
+						seed: "npx svelar seed:run",
+						test: "vitest run",
+						"test:watch": "vitest",
+						"test:e2e": "playwright test",
+						"test:coverage": "vitest run --coverage",
+					},
+					devDependencies: {
+						"@sveltejs/adapter-node": "^5.5.4",
+						"@sveltejs/kit": "^2.55.0",
+						"@sveltejs/vite-plugin-svelte": "^5.0.0",
+						"@tailwindcss/vite": "^4.2.2",
+						"lucide-svelte": "^0.468.0",
+						svelte: "^5.0.0",
+						"svelte-check": "^4.0.0",
+						tailwindcss: "^4.2.2",
+						typescript: "^5.7.0",
+						vite: "^6.0.0",
+						vitest: "^2.1.0",
+						"@playwright/test": "^1.48.0",
+					},
+						dependencies: {
+							"better-sqlite3": "^11.0.0",
+							"drizzle-orm": "^0.38.0",
+							mysql2: "^3.11.0",
+							postgres: "^3.4.5",
+							"@beeblock/svelar": `^${svelarVersion}`,
+						"bits-ui": "^1.0.0",
+						clsx: "^2.1.0",
+						exceljs: "^4.4.0",
+						"mode-watcher": "^0.5.0",
+						pdfkit: "^0.18.0",
+						"sveltekit-superforms": "^2.22.0",
+						"tailwind-merge": "^3.0.0",
+						"tailwind-variants": "^1.0.0",
+						"tw-animate-css": "^1.2.0",
+						zod: "^3.23.0",
+					},
+				},
+				null,
+				2,
+			) + "\n"
+		);
+	}
 
-  static packageJson(name: string, svelarVersion: string = '0.4.0'): string {
-    return JSON.stringify(
-      {
-        name,
-        version: '0.0.1',
-        private: true,
-        type: 'module',
-        scripts: {
-          dev: 'vite dev',
-          build: 'vite build',
-          preview: 'vite preview',
-          migrate: 'npx svelar migrate',
-          'migrate:rollback': 'npx svelar migrate --rollback',
-          'migrate:refresh': 'npx svelar migrate --refresh',
-          seed: 'npx svelar seed:run',
-          test: 'vitest run',
-          'test:watch': 'vitest',
-          'test:e2e': 'playwright test',
-          'test:coverage': 'vitest run --coverage',
-        },
-        devDependencies: {
-          '@sveltejs/adapter-auto': '^3.0.0',
-          '@sveltejs/kit': '^2.55.0',
-          '@sveltejs/vite-plugin-svelte': '^5.0.0',
-          '@tailwindcss/vite': '^4.2.2',
-          'lucide-svelte': '^0.468.0',
-          svelte: '^5.0.0',
-          'svelte-check': '^4.0.0',
-          tailwindcss: '^4.2.2',
-          typescript: '^5.7.0',
-          vite: '^6.0.0',
-          vitest: '^2.1.0',
-          '@playwright/test': '^1.48.0',
-        },
-        dependencies: {
-          'better-sqlite3': '^11.0.0',
-          'drizzle-orm': '^0.38.0',
-          '@beeblock/svelar': `^${svelarVersion}`,
-          'bits-ui': '^1.0.0',
-          clsx: '^2.1.0',
-          exceljs: '^4.4.0',
-          'mode-watcher': '^0.5.0',
-          pdfkit: '^0.18.0',
-          'sveltekit-superforms': '^2.22.0',
-          'tailwind-merge': '^3.0.0',
-          'tailwind-variants': '^1.0.0',
-          'tw-animate-css': '^1.2.0',
-          zod: '^3.23.0',
-        },
-      },
-      null,
-      2
-    ) + '\n';
-  }
-
-  static svelteConfig(): string {
-    return `import adapter from '@sveltejs/adapter-auto';
+	static svelteConfig(): string {
+		return `import adapter from '@sveltejs/adapter-node';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 
 /** @type {import('@sveltejs/kit').Config} */
@@ -82,10 +85,10 @@ const config = {
 
 export default config;
 `;
-  }
+	}
 
-  static viteConfig(): string {
-    return `import { sveltekit } from '@sveltejs/kit/vite';
+	static viteConfig(): string {
+		return `import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
 import { createRequire } from 'module';
@@ -164,6 +167,8 @@ export default defineConfig({
     },
   },
   ssr: {
+    // Native password hashing drivers must stay external for Node production builds.
+    external: ['bcrypt', 'argon2'],
     // Process lucide-svelte during SSR (Svelte components must be compiled)
     noExternal: ['lucide-svelte', '@tabler/icons-svelte', 'bits-ui'],
   },
@@ -172,31 +177,33 @@ export default defineConfig({
   },
 });
 `;
-  }
+	}
 
-  static tsConfig(): string {
-    return JSON.stringify(
-      {
-        extends: './.svelte-kit/tsconfig.json',
-        compilerOptions: {
-          allowJs: true,
-          checkJs: true,
-          esModuleInterop: true,
-          forceConsistentCasingInFileNames: true,
-          resolveJsonModule: true,
-          skipLibCheck: true,
-          sourceMap: true,
-          strict: true,
-          moduleResolution: 'bundler',
-        },
-      },
-      null,
-      2
-    ) + '\n';
-  }
+	static tsConfig(): string {
+		return (
+			JSON.stringify(
+				{
+					extends: "./.svelte-kit/tsconfig.json",
+					compilerOptions: {
+						allowJs: true,
+						checkJs: true,
+						esModuleInterop: true,
+						forceConsistentCasingInFileNames: true,
+						resolveJsonModule: true,
+						skipLibCheck: true,
+						sourceMap: true,
+						strict: true,
+						moduleResolution: "bundler",
+					},
+				},
+				null,
+				2,
+			) + "\n"
+		);
+	}
 
-  static appHtml(): string {
-    return `<!doctype html>
+	static appHtml(): string {
+		return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -209,10 +216,10 @@ export default defineConfig({
   </body>
 </html>
 `;
-  }
+	}
 
-  static faviconSvg(): string {
-    return `<svg width="459" height="540" viewBox="0 0 459 540" fill="none" xmlns="http://www.w3.org/2000/svg">
+	static faviconSvg(): string {
+		return `<svg width="459" height="540" viewBox="0 0 459 540" fill="none" xmlns="http://www.w3.org/2000/svg">
 <path d="M458.11 4.54057L457.86 5.97056C457.832 6.12139 457.772 6.2639 457.683 6.38823C457.595 6.51256 457.482 6.61574 457.35 6.69057C439.037 17.0172 418.88 24.5506 396.88 29.2906C385.494 31.7506 377.45 33.4239 372.75 34.3106C365.117 27.0639 359.18 21.9206 354.94 18.8806C353.98 18.1939 350.274 16.0072 343.82 12.3206C338.96 9.54057 334.68 8.33056 329.39 6.06056C327.504 5.25389 324.92 4.31723 321.64 3.25056C319.114 2.4239 316.5 1.56388 313.8 0.670546C316.34 0.210546 318.73 -0.0127699 320.97 0.00056342C371.304 0.213897 414.804 0.250549 451.47 0.110549C453.464 0.103882 455.454 0.127223 457.44 0.180556C457.585 0.185536 457.722 0.245097 457.824 0.347182C457.926 0.449268 457.985 0.58629 457.99 0.730574L458.11 4.54057Z" fill="#FDC509"/>
 <path d="M313.8 0.670478C316.5 1.56381 319.114 2.42383 321.64 3.25049C324.92 4.31716 327.504 5.25383 329.39 6.06049C334.68 8.33049 338.96 9.5405 343.82 12.3205C350.274 16.0072 353.98 18.1938 354.94 18.8805C359.18 21.9205 365.117 27.0638 372.75 34.3105C375.577 38.4505 378.604 42.4238 381.83 46.2305C383.057 47.6772 385.537 51.5605 389.27 57.8805L396.06 70.0305C396.13 70.1583 396.239 70.2603 396.373 70.3215C396.506 70.3827 396.656 70.3999 396.8 70.3705C419.49 66.0905 437.64 59.9005 457.92 53.4905L457.96 75.2105C443.294 83.5838 428.11 90.7371 412.41 96.6705C409.424 94.7438 406.304 92.9505 403.05 91.2905C390.21 84.7305 377.88 77.4205 364.48 71.9505C353.92 67.2305 343.067 63.2405 331.92 59.9805C321.187 56.8338 313.174 54.6038 307.88 53.2905C306.767 53.0172 305.637 52.8372 304.49 52.7505C304.349 52.7391 304.208 52.7713 304.085 52.8427C303.962 52.9141 303.863 53.0214 303.8 53.1505L301.91 57.0805C302.157 55.1338 302.094 53.2505 301.72 51.4305C301.681 51.2523 301.606 51.0824 301.5 50.9305L301.17 50.4305L301.45 0.900489C301.452 0.832197 301.466 0.764839 301.494 0.702246C301.521 0.639654 301.561 0.583042 301.61 0.535681C301.659 0.488321 301.717 0.451129 301.781 0.426215C301.844 0.4013 301.912 0.389153 301.98 0.390479L313.8 0.670478Z" fill="#FD8005"/>
 <path d="M457.98 36.2305C435.55 45.7705 412.84 52.1705 389.27 57.8805C385.537 51.5605 383.057 47.6772 381.83 46.2305C378.604 42.4239 375.577 38.4505 372.75 34.3105C377.45 33.4238 385.494 31.7505 396.88 29.2905C418.88 24.5505 439.037 17.0172 457.35 6.69052C457.482 6.61569 457.596 6.51252 457.684 6.38818C457.772 6.26385 457.832 6.12134 457.86 5.97052L458.11 4.54053L457.98 36.2305Z" fill="#FCB10A"/>
@@ -283,10 +290,10 @@ export default defineConfig({
 <path d="M149.69 502.791L149.72 510.591L148.37 522.611C148.356 522.743 148.298 522.867 148.206 522.963C148.114 523.059 147.992 523.121 147.86 523.141C124.52 526.731 101.33 528.021 78.1802 522.711C62.8802 519.204 46.2036 514.057 28.1502 507.271C19.3636 503.964 9.98359 499.657 0.0102539 494.351V477.591C12.2436 482.097 24.4902 486.477 36.7502 490.731C48.9236 494.951 61.2336 498.887 73.6802 502.541C98.8802 509.941 124.58 513.291 149.69 502.791Z" fill="#094A57"/>
 <path d="M149.72 510.591L149.83 538.721C149.83 538.851 149.78 538.975 149.69 539.067C149.6 539.159 149.478 539.211 149.35 539.211H0.270233C0.230451 539.211 0.192315 539.195 0.164185 539.167C0.136054 539.138 0.120239 539.1 0.120239 539.061L0.0102539 494.351C9.98359 499.657 19.3636 503.964 28.1502 507.271C46.2036 514.057 62.8802 519.204 78.1802 522.711C101.33 528.021 124.52 526.731 147.86 523.141C147.992 523.121 148.114 523.059 148.206 522.963C148.298 522.867 148.356 522.743 148.37 522.611L149.72 510.591Z" fill="#083747"/>
 </svg>`;
-  }
+	}
 
-  static appCss(): string {
-    return `@import "tailwindcss";
+	static appCss(): string {
+		return `@import "tailwindcss";
 @import "tw-animate-css";
 @source "../node_modules/@beeblock/svelar/src/ui";
 
@@ -414,43 +421,45 @@ export default defineConfig({
   }
 }
 `;
-  }
+	}
 
-  static componentsJson(): string {
-    return JSON.stringify(
-      {
-        $schema: 'https://shadcn-svelte.com/schema.json',
-        tailwind: {
-          css: 'src/app.css',
-          baseColor: 'slate',
-        },
-        aliases: {
-          lib: '$lib',
-          utils: '$lib/utils',
-          components: '$lib/components',
-          ui: '$lib/components/ui',
-          hooks: '$lib/hooks',
-        },
-        typescript: true,
-        registry: 'https://shadcn-svelte.com/registry',
-      },
-      null,
-      2
-    ) + '\n';
-  }
+	static componentsJson(): string {
+		return (
+			JSON.stringify(
+				{
+					$schema: "https://shadcn-svelte.com/schema.json",
+					tailwind: {
+						css: "src/app.css",
+						baseColor: "slate",
+					},
+					aliases: {
+						lib: "$lib",
+						utils: "$lib/utils",
+						components: "$lib/components",
+						ui: "$lib/components/ui",
+						hooks: "$lib/hooks",
+					},
+					typescript: true,
+					registry: "https://shadcn-svelte.com/registry",
+				},
+				null,
+				2,
+			) + "\n"
+		);
+	}
 
-  static utilsCn(): string {
-    return `import { type ClassValue, clsx } from "clsx";
+	static utilsCn(): string {
+		return `import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 `;
-  }
+	}
 
-  static appTs(): string {
-    return `/**
+	static appTs(): string {
+		return `/**
  * Svelar Application Bootstrap
  *
  * Configures database, hashing, auth, queue, audit, API keys,
@@ -459,9 +468,11 @@ export function cn(...inputs: ClassValue[]) {
  */
 
 import { Connection } from '@beeblock/svelar/database';
+import { config } from '@beeblock/svelar/config';
 import { Hash } from '@beeblock/svelar/hashing';
 import { AuthManager } from '@beeblock/svelar/auth';
 import { Queue } from '@beeblock/svelar/queue';
+import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
 import { Audit } from '@beeblock/svelar/audit';
 import { ApiKeys } from '@beeblock/svelar/api-keys';
 import { Webhooks } from '@beeblock/svelar/webhooks';
@@ -472,18 +483,38 @@ import { Features } from '@beeblock/svelar/feature-flags';
 import { PDF } from '@beeblock/svelar/pdf';
 import { configureDashboard } from '@beeblock/svelar/dashboard';
 import { Broadcast } from '@beeblock/svelar/broadcasting';
-import { Notifier } from '@beeblock/svelar/notifications';
+import { createScheduler } from './lib/shared/scheduler/index.js';
 import { User } from './lib/modules/auth/User.js';
 import { EventServiceProvider } from './lib/shared/providers/EventServiceProvider.js';
 import './lib/modules/auth/gates.js';
 
-// ── Database (SQLite) ─────────────────────────────────────
+await config.loadFromDirectory('config');
+
+// ── Database ───────────────────────────────────────────────
 Connection.configure({
-  default: 'sqlite',
+  default: config.get('database.default', process.env.DB_DRIVER ?? 'sqlite'),
   connections: {
     sqlite: {
       driver: 'sqlite',
-      filename: process.env.DB_PATH ?? 'database.db',
+      filename: config.get('database.connections.sqlite.filename', process.env.DB_PATH ?? 'database.db'),
+    },
+    postgres: {
+      driver: 'postgres',
+      url: config.get('database.connections.postgres.url', process.env.DATABASE_URL),
+      host: config.get('database.connections.postgres.host', process.env.DB_HOST ?? 'localhost'),
+      port: config.get('database.connections.postgres.port', Number(process.env.DB_PORT ?? 5432)),
+      database: config.get('database.connections.postgres.database', process.env.DB_NAME ?? 'svelar_db'),
+      user: config.get('database.connections.postgres.user', process.env.DB_USER ?? 'postgres'),
+      password: config.get('database.connections.postgres.password', process.env.DB_PASSWORD ?? ''),
+    },
+    mysql: {
+      driver: 'mysql',
+      url: config.get('database.connections.mysql.url', process.env.DATABASE_URL),
+      host: config.get('database.connections.mysql.host', process.env.DB_HOST ?? 'localhost'),
+      port: config.get('database.connections.mysql.port', Number(process.env.DB_PORT ?? 3306)),
+      database: config.get('database.connections.mysql.database', process.env.DB_NAME ?? 'svelar_db'),
+      user: config.get('database.connections.mysql.user', process.env.DB_USER ?? 'root'),
+      password: config.get('database.connections.mysql.password', process.env.DB_PASSWORD ?? ''),
     },
   },
 });
@@ -493,42 +524,54 @@ Hash.configure({ driver: 'scrypt' });
 
 // ── Auth (session-based with password reset, email verification, OTP) ──
 export const auth = new AuthManager({
-  guard: 'session',
+  guard: config.get('auth.guard', 'session'),
   model: User,
-  appUrl: process.env.APP_URL ?? 'http://localhost:5173',
-  appName: process.env.APP_NAME ?? 'Svelar',
+  appUrl: config.get('app.url', process.env.APP_URL ?? 'http://localhost:5173'),
+  appName: config.get('app.name', process.env.APP_NAME ?? 'Svelar'),
 });
 
-// ── Queue (with Redis support) ────────────────────────────
-Queue.configure({
-  default: process.env.QUEUE_DRIVER ?? 'sync',
-  connections: {
-    sync: { driver: 'sync' },
-    redis: {
-      driver: 'redis',
-      host: process.env.REDIS_HOST ?? 'localhost',
-      port: Number(process.env.REDIS_PORT ?? 6379),
-    },
+// ── Queue ─────────────────────────────────────────────────
+const queueConnections: Record<string, any> = {
+  sync: { driver: 'sync' },
+  memory: { driver: 'memory' },
+  database: {
+    driver: 'database',
+    table: config.get('queue.connections.database.table', 'svelar_jobs'),
   },
-});
+  redis: {
+    driver: 'redis',
+    url: config.get('queue.connections.redis.url', process.env.REDIS_URL),
+    host: config.get('queue.connections.redis.host', process.env.REDIS_HOST ?? 'localhost'),
+    port: config.get('queue.connections.redis.port', Number(process.env.REDIS_PORT ?? 6379)),
+    password: config.get('queue.connections.redis.password', process.env.REDIS_PASSWORD),
+    db: config.get('queue.connections.redis.db', Number(process.env.REDIS_DB ?? 0)),
+    prefix: config.get('queue.connections.redis.prefix', 'svelar'),
+  },
+};
+const queueConfig = {
+  default: config.get('queue.default', process.env.QUEUE_DRIVER ?? 'sync'),
+  connections: queueConnections,
+};
+Queue.configure(queueConfig);
+JobMonitor.configure({ driver: queueConfig.connections[queueConfig.default]?.driver ?? queueConfig.default, ...queueConfig });
 
 // ── Audit Logging ─────────────────────────────────────────
 Audit.configure({ driver: 'database', table: 'audit_logs', enabled: true });
 
 // ── API Keys ──────────────────────────────────────────────
-ApiKeys.configure({ driver: 'memory', prefix: 'sk_' });
+ApiKeys.configure({ driver: 'database', prefix: 'sk_' });
 
 // ── Webhooks ──────────────────────────────────────────────
-Webhooks.configure({ driver: 'memory', maxAttempts: 5 });
+Webhooks.configure({ driver: 'database', maxAttempts: 5 });
 
 // ── Teams ─────────────────────────────────────────────────
-Teams.configure({ driver: 'memory' });
+Teams.configure({ driver: 'database' });
 
 // ── Uploads ───────────────────────────────────────────────
-Uploads.configure({ driver: 'memory', maxFileSize: 10 * 1024 * 1024 });
+Uploads.configure({ driver: 'database', maxFileSize: 10 * 1024 * 1024 });
 
 // ── Email Templates ──────────────────────────────────────
-EmailTemplates.configure({ driver: 'memory' });
+EmailTemplates.configure({ driver: 'database' });
 EmailTemplates.registerDefaults();
 
 // ── Broadcasting (SSE) ────────────────────────────────────
@@ -559,24 +602,15 @@ PDF.configure({ driver: 'pdfkit' });
 // ── Dashboard ─────────────────────────────────────────────
 configureDashboard({ enabled: true, prefix: '/admin' });
 
+// ── Scheduler ─────────────────────────────────────────────
+export const scheduler = createScheduler();
+
 // ── Job Registration ──────────────────────────────────────
 import { SendWelcomeEmail } from './lib/shared/jobs/SendWelcomeEmail.js';
 import { DailyDigestJob } from './lib/shared/jobs/DailyDigestJob.js';
 import { ExportDataJob } from './lib/shared/jobs/ExportDataJob.js';
 
 Queue.registerAll([SendWelcomeEmail, DailyDigestJob, ExportDataJob]);
-
-// ── Notifications ────────────────────────────────────────
-Notifier.extend('database', {
-  async send(notifiable: any, notification: any) {
-    const data = notification.toDatabase(notifiable);
-    const { Connection: DB } = await import('@beeblock/svelar/database');
-    await DB.raw(
-      'INSERT INTO notifications (id, notifiable_id, type, data, created_at) VALUES (?, ?, ?, ?, ?)',
-      [crypto.randomUUID(), notifiable.id ?? notifiable.getAttribute?.('id'), data.type, JSON.stringify(data.data), new Date().toISOString()]
-    );
-  },
-});
 
 // ── Events (boot listeners + observers) ──────────────────
 const esp = new EventServiceProvider();
@@ -590,10 +624,10 @@ export const authConfig = {
 
 export { Connection, Hash, Broadcast };
 `;
-  }
+	}
 
-  static hooksServerTs(): string {
-    return `/**
+	static hooksServerTs(): string {
+		return `/**
  * SvelteKit Server Hooks — Svelar middleware pipeline
  */
 
@@ -611,10 +645,10 @@ export const { handle, handleError } = createSvelarApp({
   csrfExcludePaths: ['/api/webhooks', '/api/internal/'],
 });
 `;
-  }
+	}
 
-  static envExample(): string {
-    return `# ── App ────────────────────────────────────────────────────
+	static envExample(): string {
+		return `# ── App ────────────────────────────────────────────────────
 # APP_KEY: Encryption key for cookies, sessions, and tokens. Must be unique per environment.
 # Generate with: npx svelar key:generate
 APP_KEY=change-me-to-a-random-string
@@ -629,15 +663,17 @@ APP_URL=http://localhost:5173
 INTERNAL_SECRET=change-me-to-a-random-string
 
 # ── Database ──────────────────────────────────────────────
-# DB_DRIVER: sqlite | postgresql | mysql2
+# DB_DRIVER: sqlite | postgres | mysql
 # SQLite is the default — no extra config needed.
 DB_DRIVER=sqlite
 # DB_PATH: Path to SQLite file (relative to project root). Only used with sqlite driver.
 DB_PATH=database.db
+# DATABASE_URL: Optional connection URL for PostgreSQL or MySQL. When set, it takes precedence over DB_HOST/DB_PORT/etc.
+# DATABASE_URL=postgres://postgres:secret@localhost:5432/svelar_db
 
 # PostgreSQL (uncomment to switch)
 # In Docker: app connects through PgBouncer on port 6432, not directly to postgres.
-# DB_DRIVER=postgresql
+# DB_DRIVER=postgres
 # DB_HOST=pgbouncer
 # DB_PORT=6432
 # DB_NAME=svelar_db
@@ -645,7 +681,7 @@ DB_PATH=database.db
 # DB_PASSWORD=secret
 
 # MySQL (uncomment to switch)
-# DB_DRIVER=mysql2
+# DB_DRIVER=mysql
 # DB_HOST=localhost
 # DB_PORT=3306
 # DB_NAME=svelar_db
@@ -686,8 +722,9 @@ AUTH_EMAIL_VERIFICATION_REQUIRED=false
 # RESEND_API_KEY=re_your-resend-api-key
 
 # ── Queue ─────────────────────────────────────────────────
-# QUEUE_DRIVER: sync | redis
-# "sync" runs jobs immediately (dev). "redis" uses BullMQ for background processing.
+# QUEUE_DRIVER: sync | memory | database | redis
+# "sync" runs jobs immediately (dev). "database" uses the svelar_jobs migration.
+# "redis" uses BullMQ for background processing.
 # QUEUE_DRIVER=sync
 
 # ── Redis ─────────────────────────────────────────────────
@@ -783,10 +820,10 @@ AUTH_EMAIL_VERIFICATION_REQUIRED=false
 # REDIS_MEMORY_LIMIT: Redis container. Default: 256M.
 # REDIS_MEMORY_LIMIT=256M
 `;
-  }
+	}
 
-  static gitignore(): string {
-    return `node_modules
+	static gitignore(): string {
+		return `node_modules
 .svelte-kit
 build
 dist
@@ -810,28 +847,50 @@ test-results/
 playwright-report/
 coverage/
 `;
-  }
+	}
 
-  static svelarDatabaseJson(): string {
-    return JSON.stringify(
-      {
-        default: 'sqlite',
-        connections: {
-          sqlite: {
-            driver: 'sqlite',
-            filename: 'database.db',
-          },
-        },
-      },
-      null,
-      2
-    ) + '\n';
-  }
+	static svelarDatabaseJson(): string {
+		return (
+			JSON.stringify(
+				{
+					default: "sqlite",
+					connections: {
+						sqlite: {
+							driver: "sqlite",
+							filename: "database.db",
+						},
+						postgres: {
+							driver: "postgres",
+							host: "localhost",
+							port: 5432,
+							database: "svelar_db",
+							user: "postgres",
+							password: "secret",
+						},
+						mysql: {
+							driver: "mysql",
+							host: "localhost",
+							port: 3306,
+							database: "svelar_db",
+							user: "root",
+							password: "secret",
+						},
+					},
+					migrations: {
+						table: "migrations",
+						path: "src/lib/database/migrations",
+					},
+				},
+				null,
+				2,
+			) + "\n"
+		);
+	}
 
-  // ─── Domain Layer ──────────────────────────────────────────
+	// ─── Domain Layer ──────────────────────────────────────────
 
-  static userModel(): string {
-    return `import { Model } from '@beeblock/svelar/orm';
+	static userModel(): string {
+		return `import { Model } from '@beeblock/svelar/orm';
 import { HasRoles } from '@beeblock/svelar/permissions';
 import { auditable } from '@beeblock/svelar/audit';
 
@@ -866,10 +925,10 @@ auditable(User);
 
 import { Post } from '$lib/modules/posts/Post.js';
 `;
-  }
+	}
 
-  static postModel(): string {
-    return `import { Model } from '@beeblock/svelar/orm';
+	static postModel(): string {
+		return `import { Model } from '@beeblock/svelar/orm';
 import { auditable } from '@beeblock/svelar/audit';
 
 export class Post extends Model {
@@ -902,10 +961,10 @@ auditable(Post);
 
 import { User } from '$lib/modules/auth/User.js';
 `;
-  }
+	}
 
-  static userRepository(): string {
-    return `import { Repository } from '@beeblock/svelar/repositories';
+	static userRepository(): string {
+		return `import { Repository } from '@beeblock/svelar/repositories';
 import { User } from './User.js';
 
 export class UserRepository extends Repository<User> {
@@ -922,10 +981,10 @@ export class UserRepository extends Repository<User> {
   }
 }
 `;
-  }
+	}
 
-  static postRepository(): string {
-    return `import { Repository } from '@beeblock/svelar/repositories';
+	static postRepository(): string {
+		return `import { Repository } from '@beeblock/svelar/repositories';
 import { Post } from './Post.js';
 
 export class PostRepository extends Repository<Post> {
@@ -952,10 +1011,10 @@ export class PostRepository extends Repository<Post> {
   }
 }
 `;
-  }
+	}
 
-  static authService(): string {
-    return `import { Service } from '@beeblock/svelar/services';
+	static authService(): string {
+		return `import { Service } from '@beeblock/svelar/services';
 import { Hash } from '@beeblock/svelar/hashing';
 import { Event } from '@beeblock/svelar/events';
 import { UserRepository } from './UserRepository.js';
@@ -1024,10 +1083,10 @@ export class AuthService extends Service {
   }
 }
 `;
-  }
+	}
 
-  static postService(): string {
-    return `import { CrudService } from '@beeblock/svelar/services';
+	static postService(): string {
+		return `import { CrudService } from '@beeblock/svelar/services';
 import { Repository } from '@beeblock/svelar/repositories';
 import { Broadcast } from '@beeblock/svelar/broadcasting';
 import { PostRepository } from './PostRepository.js';
@@ -1069,10 +1128,10 @@ export class PostService extends CrudService<Post> {
   }
 }
 `;
-  }
+	}
 
-  static authController(): string {
-    return `import { Controller } from '@beeblock/svelar/routing';
+	static authController(): string {
+		return `import { Controller } from '@beeblock/svelar/routing';
 import { RegisterRequest } from './RegisterRequest.js';
 import { LoginRequest } from './LoginRequest.js';
 import { ForgotPasswordRequest } from './ForgotPasswordRequest.js';
@@ -1196,10 +1255,10 @@ export class AuthController extends Controller {
   }
 }
 `;
-  }
+	}
 
-  static postController(): string {
-    return `import { Controller } from '@beeblock/svelar/routing';
+	static postController(): string {
+		return `import { Controller } from '@beeblock/svelar/routing';
 import { CreatePostRequest } from './CreatePostRequest.js';
 import { UpdatePostRequest } from './UpdatePostRequest.js';
 import { PostService } from './PostService.js';
@@ -1274,10 +1333,10 @@ export class PostController extends Controller {
   }
 }
 `;
-  }
+	}
 
-  static adminController(): string {
-    return `import { Controller } from '@beeblock/svelar/routing';
+	static adminController(): string {
+		return `import { Controller } from '@beeblock/svelar/routing';
 import { Gate } from '@beeblock/svelar/auth';
 import { AdminService } from './AdminService.js';
 import { UserResource } from '$lib/modules/auth/UserResource.js';
@@ -1452,10 +1511,10 @@ export class AdminController extends Controller {
   }
 }
 `;
-  }
+	}
 
-  static registerRequest(): string {
-    return `import { FormRequest } from '@beeblock/svelar/forms';
+	static registerRequest(): string {
+		return `import { FormRequest } from '@beeblock/svelar/forms';
 import { registerSchema } from './schemas.js';
 
 export class RegisterRequest extends FormRequest {
@@ -1464,10 +1523,10 @@ export class RegisterRequest extends FormRequest {
   }
 }
 `;
-  }
+	}
 
-  static loginRequest(): string {
-    return `import { FormRequest } from '@beeblock/svelar/forms';
+	static loginRequest(): string {
+		return `import { FormRequest } from '@beeblock/svelar/forms';
 import { loginSchema } from './schemas.js';
 
 export class LoginRequest extends FormRequest {
@@ -1476,10 +1535,10 @@ export class LoginRequest extends FormRequest {
   }
 }
 `;
-  }
+	}
 
-  static forgotPasswordRequest(): string {
-    return `import { FormRequest } from '@beeblock/svelar/forms';
+	static forgotPasswordRequest(): string {
+		return `import { FormRequest } from '@beeblock/svelar/forms';
 import { forgotPasswordSchema } from './schemas.js';
 
 export class ForgotPasswordRequest extends FormRequest {
@@ -1488,10 +1547,10 @@ export class ForgotPasswordRequest extends FormRequest {
   }
 }
 `;
-  }
+	}
 
-  static resetPasswordRequest(): string {
-    return `import { FormRequest } from '@beeblock/svelar/forms';
+	static resetPasswordRequest(): string {
+		return `import { FormRequest } from '@beeblock/svelar/forms';
 import { resetPasswordSchema } from './schemas.js';
 
 export class ResetPasswordRequest extends FormRequest {
@@ -1500,10 +1559,10 @@ export class ResetPasswordRequest extends FormRequest {
   }
 }
 `;
-  }
+	}
 
-  static otpSendRequest(): string {
-    return `import { FormRequest } from '@beeblock/svelar/forms';
+	static otpSendRequest(): string {
+		return `import { FormRequest } from '@beeblock/svelar/forms';
 import { otpRequestSchema } from './schemas.js';
 
 export class OtpSendRequest extends FormRequest {
@@ -1512,10 +1571,10 @@ export class OtpSendRequest extends FormRequest {
   }
 }
 `;
-  }
+	}
 
-  static otpVerifyRequest(): string {
-    return `import { FormRequest } from '@beeblock/svelar/forms';
+	static otpVerifyRequest(): string {
+		return `import { FormRequest } from '@beeblock/svelar/forms';
 import { otpVerifySchema } from './schemas.js';
 
 export class OtpVerifyRequest extends FormRequest {
@@ -1524,10 +1583,10 @@ export class OtpVerifyRequest extends FormRequest {
   }
 }
 `;
-  }
+	}
 
-  static createPostRequest(): string {
-    return `import { FormRequest } from '@beeblock/svelar/forms';
+	static createPostRequest(): string {
+		return `import { FormRequest } from '@beeblock/svelar/forms';
 import { createPostSchema } from './schemas.js';
 
 export class CreatePostRequest extends FormRequest {
@@ -1550,10 +1609,10 @@ export class CreatePostRequest extends FormRequest {
   }
 }
 `;
-  }
+	}
 
-  static updatePostRequest(): string {
-    return `import { FormRequest } from '@beeblock/svelar/forms';
+	static updatePostRequest(): string {
+		return `import { FormRequest } from '@beeblock/svelar/forms';
 import { updatePostSchema } from './schemas.js';
 
 export class UpdatePostRequest extends FormRequest {
@@ -1566,10 +1625,10 @@ export class UpdatePostRequest extends FormRequest {
   }
 }
 `;
-  }
+	}
 
-  static registerUserAction(): string {
-    return `import { Action } from '@beeblock/svelar/actions';
+	static registerUserAction(): string {
+		return `import { Action } from '@beeblock/svelar/actions';
 import { AuthService } from './AuthService.js';
 import type { User } from './User.js';
 
@@ -1593,10 +1652,10 @@ export class RegisterUserAction extends Action<RegisterInput, ServiceResult<User
   }
 }
 `;
-  }
+	}
 
-  static createPostAction(): string {
-    return `import { Action } from '@beeblock/svelar/actions';
+	static createPostAction(): string {
+		return `import { Action } from '@beeblock/svelar/actions';
 import { PostService } from './PostService.js';
 import type { Post } from './Post.js';
 
@@ -1626,10 +1685,10 @@ export class CreatePostAction extends Action<CreatePostInput, Post> {
   }
 }
 `;
-  }
+	}
 
-  static userResource(): string {
-    return `import { Resource } from '@beeblock/svelar/routing';
+	static userResource(): string {
+		return `import { Resource } from '@beeblock/svelar/routing';
 import type { UserResponse } from './schemas.js';
 
 export class UserResource extends Resource {
@@ -1644,10 +1703,10 @@ export class UserResource extends Resource {
   }
 }
 `;
-  }
+	}
 
-  static postResource(): string {
-    return `import { Resource } from '@beeblock/svelar/routing';
+	static postResource(): string {
+		return `import { Resource } from '@beeblock/svelar/routing';
 import type { PostResponse } from './schemas.js';
 
 export class PostResource extends Resource {
@@ -1665,10 +1724,10 @@ export class PostResource extends Resource {
   }
 }
 `;
-  }
+	}
 
-  static adminSchema(): string {
-    return `import { z } from 'zod';
+	static adminSchema(): string {
+		return `import { z } from 'zod';
 
 export const updateUserRoleSchema = z.object({
   userId: z.number().int().positive(),
@@ -1752,12 +1811,12 @@ export const permissionResponseSchema = z.object({
 export type RoleResponse = z.infer<typeof roleResponseSchema>;
 export type PermissionResponse = z.infer<typeof permissionResponseSchema>;
 `;
-  }
+	}
 
-  // ─── Admin DTOs ──────────────────────────────────────────
+	// ─── Admin DTOs ──────────────────────────────────────────
 
-  static updateUserRoleRequest(): string {
-    return `import { FormRequest } from '@beeblock/svelar/forms';
+	static updateUserRoleRequest(): string {
+		return `import { FormRequest } from '@beeblock/svelar/forms';
 import { updateUserRoleSchema } from './schemas.js';
 
 export class UpdateUserRoleRequest extends FormRequest {
@@ -1770,10 +1829,10 @@ export class UpdateUserRoleRequest extends FormRequest {
   }
 }
 `;
-  }
+	}
 
-  static deleteUserRequest(): string {
-    return `import { FormRequest } from '@beeblock/svelar/forms';
+	static deleteUserRequest(): string {
+		return `import { FormRequest } from '@beeblock/svelar/forms';
 import { deleteUserSchema } from './schemas.js';
 
 export class DeleteUserRequest extends FormRequest {
@@ -1786,10 +1845,10 @@ export class DeleteUserRequest extends FormRequest {
   }
 }
 `;
-  }
+	}
 
-  static createRoleRequest(): string {
-    return `import { FormRequest } from '@beeblock/svelar/forms';
+	static createRoleRequest(): string {
+		return `import { FormRequest } from '@beeblock/svelar/forms';
 import { createRoleSchema } from './schemas.js';
 
 export class CreateRoleRequest extends FormRequest {
@@ -1802,10 +1861,10 @@ export class CreateRoleRequest extends FormRequest {
   }
 }
 `;
-  }
+	}
 
-  static deleteRoleRequest(): string {
-    return `import { FormRequest } from '@beeblock/svelar/forms';
+	static deleteRoleRequest(): string {
+		return `import { FormRequest } from '@beeblock/svelar/forms';
 import { deleteRoleSchema } from './schemas.js';
 
 export class DeleteRoleRequest extends FormRequest {
@@ -1818,10 +1877,10 @@ export class DeleteRoleRequest extends FormRequest {
   }
 }
 `;
-  }
+	}
 
-  static createPermissionRequest(): string {
-    return `import { FormRequest } from '@beeblock/svelar/forms';
+	static createPermissionRequest(): string {
+		return `import { FormRequest } from '@beeblock/svelar/forms';
 import { createPermissionSchema } from './schemas.js';
 
 export class CreatePermissionRequest extends FormRequest {
@@ -1834,10 +1893,10 @@ export class CreatePermissionRequest extends FormRequest {
   }
 }
 `;
-  }
+	}
 
-  static deletePermissionRequest(): string {
-    return `import { FormRequest } from '@beeblock/svelar/forms';
+	static deletePermissionRequest(): string {
+		return `import { FormRequest } from '@beeblock/svelar/forms';
 import { deletePermissionSchema } from './schemas.js';
 
 export class DeletePermissionRequest extends FormRequest {
@@ -1850,10 +1909,10 @@ export class DeletePermissionRequest extends FormRequest {
   }
 }
 `;
-  }
+	}
 
-  static rolePermissionRequest(): string {
-    return `import { FormRequest } from '@beeblock/svelar/forms';
+	static rolePermissionRequest(): string {
+		return `import { FormRequest } from '@beeblock/svelar/forms';
 import { rolePermissionSchema } from './schemas.js';
 
 export class RolePermissionRequest extends FormRequest {
@@ -1866,10 +1925,10 @@ export class RolePermissionRequest extends FormRequest {
   }
 }
 `;
-  }
+	}
 
-  static userRoleRequest(): string {
-    return `import { FormRequest } from '@beeblock/svelar/forms';
+	static userRoleRequest(): string {
+		return `import { FormRequest } from '@beeblock/svelar/forms';
 import { userRoleSchema } from './schemas.js';
 
 export class UserRoleRequest extends FormRequest {
@@ -1882,10 +1941,10 @@ export class UserRoleRequest extends FormRequest {
   }
 }
 `;
-  }
+	}
 
-  static userPermissionRequest(): string {
-    return `import { FormRequest } from '@beeblock/svelar/forms';
+	static userPermissionRequest(): string {
+		return `import { FormRequest } from '@beeblock/svelar/forms';
 import { userPermissionSchema } from './schemas.js';
 
 export class UserPermissionRequest extends FormRequest {
@@ -1898,10 +1957,10 @@ export class UserPermissionRequest extends FormRequest {
   }
 }
 `;
-  }
+	}
 
-  static exportDataRequest(): string {
-    return `import { FormRequest } from '@beeblock/svelar/forms';
+	static exportDataRequest(): string {
+		return `import { FormRequest } from '@beeblock/svelar/forms';
 import { exportDataSchema } from './schemas.js';
 
 export class ExportDataRequest extends FormRequest {
@@ -1914,12 +1973,12 @@ export class ExportDataRequest extends FormRequest {
   }
 }
 `;
-  }
+	}
 
-  // ─── Admin Resources ─────────────────────────────────────
+	// ─── Admin Resources ─────────────────────────────────────
 
-  static roleResource(): string {
-    return `import { Resource } from '@beeblock/svelar/routing';
+	static roleResource(): string {
+		return `import { Resource } from '@beeblock/svelar/routing';
 import type { RoleResponse } from './schemas.js';
 
 export class RoleResource extends Resource {
@@ -1933,10 +1992,10 @@ export class RoleResource extends Resource {
   }
 }
 `;
-  }
+	}
 
-  static permissionResource(): string {
-    return `import { Resource } from '@beeblock/svelar/routing';
+	static permissionResource(): string {
+		return `import { Resource } from '@beeblock/svelar/routing';
 import type { PermissionResponse } from './schemas.js';
 
 export class PermissionResource extends Resource {
@@ -1950,12 +2009,12 @@ export class PermissionResource extends Resource {
   }
 }
 `;
-  }
+	}
 
-  // ─── Admin Service ───────────────────────────────────────
+	// ─── Admin Service ───────────────────────────────────────
 
-  static adminService(): string {
-    return `import { Service } from '@beeblock/svelar/services';
+	static adminService(): string {
+		return `import { Service } from '@beeblock/svelar/services';
 import { Permissions } from '@beeblock/svelar/permissions';
 import { Queue } from '@beeblock/svelar/queue';
 import { UserRepository } from '$lib/modules/auth/UserRepository.js';
@@ -2073,10 +2132,10 @@ export class AdminService extends Service {
   }
 }
 `;
-  }
+	}
 
-  static gates(): string {
-    return `import { Gate } from '@beeblock/svelar/auth';
+	static gates(): string {
+		return `import { Gate } from '@beeblock/svelar/auth';
 
 Gate.define('admin-access', (user) => user?.role === 'admin');
 
@@ -2094,10 +2153,10 @@ Gate.define('manage-users', (user) => user?.role === 'admin');
 
 Gate.defineSuperUser((user) => user?.role === 'admin');
 `;
-  }
+	}
 
-  static authSchema(): string {
-    return `import { z } from 'zod';
+	static authSchema(): string {
+		return `import { z } from 'zod';
 
 // ── Input Schemas (DTOs + UI validation) ─────────────────
 
@@ -2160,10 +2219,10 @@ export const userResponseSchema = z.object({
 
 export type UserResponse = z.infer<typeof userResponseSchema>;
 `;
-  }
+	}
 
-  static postSchema(): string {
-    return `import { z } from 'zod';
+	static postSchema(): string {
+		return `import { z } from 'zod';
 
 // ── Input Schemas ────────────────────────────────────────
 
@@ -2201,12 +2260,54 @@ export const postResponseSchema = z.object({
 
 export type PostResponse = z.infer<typeof postResponseSchema>;
 `;
-  }
+	}
 
-  // ─── Migrations ────────────────────────────────────────────
+	// ─── Migrations ────────────────────────────────────────────
 
-  static createUsersTable(): string {
-    return `import { Migration } from '@beeblock/svelar/database';
+	static svelarCoreMigrations(): Array<{ path: string; className: string; label: string; content: string }> {
+		const migrations = [
+			['00000000_000001_create_sessions_table.ts', 'CreateSessionsTable', 'Sessions table'],
+			['00000000_000002_create_personal_access_tokens_table.ts', 'CreatePersonalAccessTokensTable', 'Personal access tokens table'],
+			['00000000_000003_create_refresh_tokens_table.ts', 'CreateRefreshTokensTable', 'Refresh tokens table'],
+			['00000000_000004_create_password_resets_table.ts', 'CreatePasswordResetsTable', 'Password resets table'],
+			['00000000_000005_create_email_verifications_table.ts', 'CreateEmailVerificationsTable', 'Email verifications table'],
+			['00000000_000006_create_otp_codes_table.ts', 'CreateOtpCodesTable', 'OTP codes table'],
+			['00000000_000007_create_api_keys_table.ts', 'CreateApiKeysTable', 'API keys table'],
+			['00000000_000008_create_audit_logs_table.ts', 'CreateAuditLogsTable', 'Audit logs table'],
+			['00000000_000009_create_webhooks_table.ts', 'CreateWebhooksTable', 'Webhooks table'],
+			['00000000_000010_create_webhook_deliveries_table.ts', 'CreateWebhookDeliveriesTable', 'Webhook deliveries table'],
+			['00000000_000011_create_svelar_uploads_table.ts', 'CreateSvelarUploadsTable', 'Uploads table'],
+			['00000000_000012_create_email_templates_table.ts', 'CreateEmailTemplatesTable', 'Email templates table'],
+			['00000000_000013_create_notifications_table.ts', 'CreateNotificationsTable', 'Notifications table'],
+			['00000000_000014_create_teams_table.ts', 'CreateTeamsTable', 'Teams table'],
+			['00000000_000015_create_team_members_table.ts', 'CreateTeamMembersTable', 'Team members table'],
+			['00000000_000016_create_team_invitations_table.ts', 'CreateTeamInvitationsTable', 'Team invitations table'],
+			['00000000_000017_create_feature_flags_table.ts', 'CreateFeatureFlagsTable', 'Feature flags table'],
+			['00000000_000018_create_feature_flag_overrides_table.ts', 'CreateFeatureFlagOverridesTable', 'Feature flag overrides table'],
+			['00000000_000019_create_permissions_table.ts', 'CreatePermissionsTable', 'Permissions table'],
+			['00000000_000020_create_roles_table.ts', 'CreateRolesTable', 'Roles table'],
+			['00000000_000021_create_role_has_permissions_table.ts', 'CreateRoleHasPermissionsTable', 'Role permissions table'],
+			['00000000_000022_create_model_has_roles_table.ts', 'CreateModelHasRolesTable', 'Model roles table'],
+			['00000000_000023_create_model_has_permissions_table.ts', 'CreateModelHasPermissionsTable', 'Model permissions table'],
+			['00000000_000024_create_scheduler_locks_table.ts', 'CreateSchedulerLocksTable', 'Scheduler locks table'],
+			['00000000_000025_create_scheduled_task_runs_table.ts', 'CreateScheduledTaskRunsTable', 'Scheduled task runs table'],
+			['00000000_000026_create_svelar_jobs_table.ts', 'CreateSvelarJobsTable', 'Queue jobs table'],
+			['00000000_000027_create_svelar_failed_jobs_table.ts', 'CreateSvelarFailedJobsTable', 'Failed jobs table'],
+		] as const;
+
+		return migrations.map(([file, className, label]) => ({
+			path: `src/lib/database/migrations/${file}`,
+			className,
+			label,
+			content: `import { ${className} as Svelar${className} } from '@beeblock/svelar/database';
+
+export default class ${className} extends Svelar${className} {}
+`,
+		}));
+	}
+
+	static createUsersTable(): string {
+		return `import { Migration } from '@beeblock/svelar/database';
 
 export default class CreateUsersTable extends Migration {
   async up() {
@@ -2224,10 +2325,10 @@ export default class CreateUsersTable extends Migration {
   }
 }
 `;
-  }
+	}
 
-  static createPostsTable(): string {
-    return `import { Migration } from '@beeblock/svelar/database';
+	static createPostsTable(): string {
+		return `import { Migration } from '@beeblock/svelar/database';
 
 export default class CreatePostsTable extends Migration {
   async up() {
@@ -2247,60 +2348,10 @@ export default class CreatePostsTable extends Migration {
   }
 }
 `;
-  }
+	}
 
-  static createPermissionsTables(): string {
-    return `import { Migration } from '@beeblock/svelar/database';
-
-export default class CreatePermissionsTables extends Migration {
-  async up() {
-    await this.schema.createTable('permissions', (table) => {
-      table.increments('id');
-      table.string('name');
-      table.string('guard').default('web');
-      table.text('description').nullable();
-      table.timestamps();
-    });
-
-    await this.schema.createTable('roles', (table) => {
-      table.increments('id');
-      table.string('name');
-      table.string('guard').default('web');
-      table.text('description').nullable();
-      table.timestamps();
-    });
-
-    await this.schema.createTable('role_has_permissions', (table) => {
-      table.integer('role_id').references('id', 'roles');
-      table.integer('permission_id').references('id', 'permissions');
-    });
-
-    await this.schema.createTable('model_has_roles', (table) => {
-      table.string('model_type');
-      table.integer('model_id');
-      table.integer('role_id').references('id', 'roles');
-    });
-
-    await this.schema.createTable('model_has_permissions', (table) => {
-      table.string('model_type');
-      table.integer('model_id');
-      table.integer('permission_id').references('id', 'permissions');
-    });
-  }
-
-  async down() {
-    await this.schema.dropTable('model_has_permissions');
-    await this.schema.dropTable('model_has_roles');
-    await this.schema.dropTable('role_has_permissions');
-    await this.schema.dropTable('roles');
-    await this.schema.dropTable('permissions');
-  }
-}
-`;
-  }
-
-  static addRoleToUsers(): string {
-    return `import { Migration } from '@beeblock/svelar/database';
+	static addRoleToUsers(): string {
+		return `import { Migration } from '@beeblock/svelar/database';
 
 export default class AddRoleToUsers extends Migration {
   async up() {
@@ -2314,102 +2365,12 @@ export default class AddRoleToUsers extends Migration {
   }
 }
 `;
-  }
+	}
 
-  static createSessionsTable(): string {
-    return `import { Migration } from '@beeblock/svelar/database';
+	// ─── Seeders ───────────────────────────────────────────────
 
-export default class CreateSessionsTable extends Migration {
-  async up() {
-    await this.schema.createTable('sessions', (table) => {
-      table.string('id').primary();
-      table.text('payload');
-      table.string('expires_at');
-    });
-  }
-
-  async down() {
-    await this.schema.dropTable('sessions');
-  }
-}
-`;
-  }
-
-  static createAuditLogsTable(): string {
-    return `import { Migration } from '@beeblock/svelar/database';
-
-export default class CreateAuditLogsTable extends Migration {
-  async up() {
-    await this.schema.createTable('audit_logs', (table) => {
-      table.string('id').primary();
-      table.integer('userId').nullable();
-      table.string('action');
-      table.string('modelType');
-      table.string('modelId');
-      table.text('oldValues').nullable();
-      table.text('newValues').nullable();
-      table.text('metadata').nullable();
-      table.string('ipAddress').nullable();
-      table.string('userAgent').nullable();
-      table.integer('timestamp');
-    });
-  }
-
-  async down() {
-    await this.schema.dropTable('audit_logs');
-  }
-}
-`;
-  }
-
-  static createNotificationsTable(): string {
-    return `import { Migration } from '@beeblock/svelar/database';
-
-export default class CreateNotificationsTable extends Migration {
-  async up() {
-    await this.schema.createTable('notifications', (table) => {
-      table.string('id').primary();
-      table.integer('notifiable_id');
-      table.string('type');
-      table.text('data');
-      table.string('read_at').nullable();
-      table.string('created_at');
-    });
-  }
-
-  async down() {
-    await this.schema.dropTable('notifications');
-  }
-}
-`;
-  }
-
-  static createFailedJobsTable(): string {
-    return `import { Migration } from '@beeblock/svelar/database';
-
-export default class CreateFailedJobsTable extends Migration {
-  async up() {
-    await this.schema.createTable('svelar_failed_jobs', (table) => {
-      table.string('id').primary();
-      table.string('queue');
-      table.string('job_class');
-      table.text('payload');
-      table.text('exception');
-      table.integer('failed_at');
-    });
-  }
-
-  async down() {
-    await this.schema.dropTable('svelar_failed_jobs');
-  }
-}
-`;
-  }
-
-  // ─── Seeders ───────────────────────────────────────────────
-
-  static databaseSeeder(): string {
-    return `import { Seeder } from '@beeblock/svelar/database';
+	static databaseSeeder(): string {
+		return `import { Seeder } from '@beeblock/svelar/database';
 import { Hash } from '@beeblock/svelar/hashing';
 import { Permissions } from '@beeblock/svelar/permissions';
 import { User } from '$lib/modules/auth/User.js';
@@ -2501,12 +2462,12 @@ export class DatabaseSeeder extends Seeder {
   }
 }
 `;
-  }
+	}
 
-  // ─── Auth Pages ────────────────────────────────────────────
+	// ─── Auth Pages ────────────────────────────────────────────
 
-  static loginPageServer(): string {
-    return `import type { Actions, PageServerLoad } from './$types';
+	static loginPageServer(): string {
+		return `import type { Actions, PageServerLoad } from './$types';
 import { fail, redirect } from '@sveltejs/kit';
 import { superValidate, message } from 'sveltekit-superforms';
 import { zod } from 'sveltekit-superforms/adapters';
@@ -2545,10 +2506,10 @@ export const actions: Actions = {
   },
 };
 `;
-  }
+	}
 
-  static loginPageSvelte(): string {
-    return `<script lang="ts">
+	static loginPageSvelte(): string {
+		return `<script lang="ts">
   import { superForm } from 'sveltekit-superforms';
   import { Button, Input, Label, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, Alert } from '@beeblock/svelar/ui';
 
@@ -2641,10 +2602,10 @@ export const actions: Actions = {
   </Card>
 </div>
 `;
-  }
+	}
 
-  static registerPageServer(): string {
-    return `import type { Actions, PageServerLoad } from './$types';
+	static registerPageServer(): string {
+		return `import type { Actions, PageServerLoad } from './$types';
 import { fail, redirect } from '@sveltejs/kit';
 import { superValidate, message, setError } from 'sveltekit-superforms';
 import { zod } from 'sveltekit-superforms/adapters';
@@ -2695,10 +2656,10 @@ export const actions: Actions = {
   },
 };
 `;
-  }
+	}
 
-  static registerPageSvelte(): string {
-    return `<script lang="ts">
+	static registerPageSvelte(): string {
+		return `<script lang="ts">
   import { superForm } from 'sveltekit-superforms';
   import { Button, Input, Label, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, Alert } from '@beeblock/svelar/ui';
 
@@ -2805,10 +2766,10 @@ export const actions: Actions = {
   </Card>
 </div>
 `;
-  }
+	}
 
-  static logoutPageServer(): string {
-    return `import { redirect } from '@sveltejs/kit';
+	static logoutPageServer(): string {
+		return `import { redirect } from '@sveltejs/kit';
 import type { Actions } from './$types.js';
 
 export const actions: Actions = {
@@ -2819,12 +2780,12 @@ export const actions: Actions = {
   },
 };
 `;
-  }
+	}
 
-  // ─── Forgot Password ────────────────────────────────────────
+	// ─── Forgot Password ────────────────────────────────────────
 
-  static forgotPasswordPageServer(): string {
-    return `import type { Actions, PageServerLoad } from './$types';
+	static forgotPasswordPageServer(): string {
+		return `import type { Actions, PageServerLoad } from './$types';
 import { fail } from '@sveltejs/kit';
 import { superValidate, message } from 'sveltekit-superforms';
 import { zod } from 'sveltekit-superforms/adapters';
@@ -2850,10 +2811,10 @@ export const actions: Actions = {
   },
 };
 `;
-  }
+	}
 
-  static forgotPasswordPageSvelte(): string {
-    return `<script lang="ts">
+	static forgotPasswordPageSvelte(): string {
+		return `<script lang="ts">
   import { superForm } from 'sveltekit-superforms';
   import { Button, Input, Label, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, Alert } from '@beeblock/svelar/ui';
 
@@ -2917,12 +2878,12 @@ export const actions: Actions = {
   </Card>
 </div>
 `;
-  }
+	}
 
-  // ─── Reset Password ────────────────────────────────────────
+	// ─── Reset Password ────────────────────────────────────────
 
-  static resetPasswordPageServer(): string {
-    return `import type { Actions, PageServerLoad } from './$types';
+	static resetPasswordPageServer(): string {
+		return `import type { Actions, PageServerLoad } from './$types';
 import { fail, redirect } from '@sveltejs/kit';
 import { superValidate, message } from 'sveltekit-superforms';
 import { zod } from 'sveltekit-superforms/adapters';
@@ -2959,10 +2920,10 @@ export const actions: Actions = {
   },
 };
 `;
-  }
+	}
 
-  static resetPasswordPageSvelte(): string {
-    return `<script lang="ts">
+	static resetPasswordPageSvelte(): string {
+		return `<script lang="ts">
   import { superForm } from 'sveltekit-superforms';
   import { Button, Input, Label, Card, CardHeader, CardTitle, CardDescription, CardContent, Alert } from '@beeblock/svelar/ui';
 
@@ -3033,12 +2994,12 @@ export const actions: Actions = {
   </Card>
 </div>
 `;
-  }
+	}
 
-  // ─── OTP Login ─────────────────────────────────────────────
+	// ─── OTP Login ─────────────────────────────────────────────
 
-  static otpLoginPageServer(): string {
-    return `import type { Actions, PageServerLoad } from './$types';
+	static otpLoginPageServer(): string {
+		return `import type { Actions, PageServerLoad } from './$types';
 import { fail, redirect } from '@sveltejs/kit';
 import { superValidate, message } from 'sveltekit-superforms';
 import { zod } from 'sveltekit-superforms/adapters';
@@ -3084,10 +3045,10 @@ export const actions: Actions = {
   },
 };
 `;
-  }
+	}
 
-  static otpLoginPageSvelte(): string {
-    return `<script lang="ts">
+	static otpLoginPageSvelte(): string {
+		return `<script lang="ts">
   import { superForm } from 'sveltekit-superforms';
   import { Button, Input, Label, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, Alert } from '@beeblock/svelar/ui';
   import { page } from '$app/state';
@@ -3204,12 +3165,12 @@ export const actions: Actions = {
   </Card>
 </div>
 `;
-  }
+	}
 
-  // ─── Verify Email ──────────────────────────────────────────
+	// ─── Verify Email ──────────────────────────────────────────
 
-  static verifyEmailPageServer(): string {
-    return `import type { PageServerLoad } from './$types';
+	static verifyEmailPageServer(): string {
+		return `import type { PageServerLoad } from './$types';
 import { auth } from '../../app.js';
 
 export const load: PageServerLoad = async ({ url }) => {
@@ -3229,10 +3190,10 @@ export const load: PageServerLoad = async ({ url }) => {
   return { success: false, message: 'Invalid or expired verification link. Please request a new one.' };
 };
 `;
-  }
+	}
 
-  static verifyEmailPageSvelte(): string {
-    return `<script lang="ts">
+	static verifyEmailPageSvelte(): string {
+		return `<script lang="ts">
   import { Card, CardHeader, CardTitle, CardContent, CardFooter, Alert, Button } from '@beeblock/svelar/ui';
 
   let { data } = $props();
@@ -3276,19 +3237,19 @@ export const load: PageServerLoad = async ({ url }) => {
   </Card>
 </div>
 `;
-  }
+	}
 
-  // ─── Dashboard Pages ──────────────────────────────────────
+	// ─── Dashboard Pages ──────────────────────────────────────
 
-  static dashboardLayoutServer(): string {
-    return `import { guardAuth } from '@beeblock/svelar/auth';
+	static dashboardLayoutServer(): string {
+		return `import { guardAuth } from '@beeblock/svelar/auth';
 
 export const load = guardAuth();
 `;
-  }
+	}
 
-  static dashboardLayoutSvelte(): string {
-    return `<script lang="ts">
+	static dashboardLayoutSvelte(): string {
+		return `<script lang="ts">
   import { page } from '\$app/stores';
   import type { Snippet } from 'svelte';
   import { Icon } from '@beeblock/svelar/ui';
@@ -3349,10 +3310,10 @@ export const load = guardAuth();
   </div>
 </div>
 `;
-  }
+	}
 
-  static dashboardPageServer(): string {
-    return `import type { PageServerLoad } from './$types';
+	static dashboardPageServer(): string {
+		return `import type { PageServerLoad } from './$types';
 import { ApiKeys } from '@beeblock/svelar/api-keys';
 import { Teams } from '@beeblock/svelar/teams';
 
@@ -3386,10 +3347,10 @@ export const load: PageServerLoad = async ({ locals }) => {
   };
 };
 `;
-  }
+	}
 
-  static dashboardPageSvelte(): string {
-    return `<script lang="ts">
+	static dashboardPageSvelte(): string {
+		return `<script lang="ts">
   import { Button, Badge, Card, CardHeader, CardTitle, CardContent } from '@beeblock/svelar/ui';
 
   let { data } = $props();
@@ -3444,10 +3405,10 @@ export const load: PageServerLoad = async ({ locals }) => {
   </Card>
 </div>
 `;
-  }
+	}
 
-  static apiKeysPageServer(): string {
-    return `import type { Actions, PageServerLoad } from './$types';
+	static apiKeysPageServer(): string {
+		return `import type { Actions, PageServerLoad } from './$types';
 import { fail } from '@sveltejs/kit';
 import { ApiKeys } from '@beeblock/svelar/api-keys';
 
@@ -3516,10 +3477,10 @@ export const actions: Actions = {
   },
 };
 `;
-  }
+	}
 
-  static apiKeysPageSvelte(): string {
-    return `<script lang="ts">
+	static apiKeysPageSvelte(): string {
+		return `<script lang="ts">
   import { enhance } from '$app/forms';
   import { Button, Badge, Card, CardHeader, CardTitle, CardContent, Input, Label, Alert } from '@beeblock/svelar/ui';
 
@@ -3666,10 +3627,10 @@ export const actions: Actions = {
   </Card>
 </div>
 `;
-  }
+	}
 
-  static teamPageServer(): string {
-    return `import type { Actions, PageServerLoad } from './$types';
+	static teamPageServer(): string {
+		return `import type { Actions, PageServerLoad } from './$types';
 import { fail } from '@sveltejs/kit';
 import { Teams } from '@beeblock/svelar/teams';
 
@@ -3772,10 +3733,10 @@ export const actions: Actions = {
   },
 };
 `;
-  }
+	}
 
-  static teamPageSvelte(): string {
-    return `<script lang="ts">
+	static teamPageSvelte(): string {
+		return `<script lang="ts">
   import { enhance } from '$app/forms';
   import { Button, Badge, Card, CardHeader, CardTitle, CardDescription, CardContent, Input, Label, Alert } from '@beeblock/svelar/ui';
 
@@ -3942,19 +3903,19 @@ export const actions: Actions = {
   {/if}
 </div>
 `;
-  }
+	}
 
-  // ─── Admin Pages ──────────────────────────────────────────
+	// ─── Admin Pages ──────────────────────────────────────────
 
-  static adminLayoutServer(): string {
-    return `import { guardAuth } from '@beeblock/svelar/auth';
+	static adminLayoutServer(): string {
+		return `import { guardAuth } from '@beeblock/svelar/auth';
 
 export const load = guardAuth('/dashboard', { role: 'admin' });
 `;
-  }
+	}
 
-  static adminLayoutSvelte(): string {
-    return `<script lang="ts">
+	static adminLayoutSvelte(): string {
+		return `<script lang="ts">
   import { page } from '\$app/stores';
   import type { Snippet } from 'svelte';
   import { Icon } from '@beeblock/svelar/ui';
@@ -4025,10 +3986,10 @@ export const load = guardAuth('/dashboard', { role: 'admin' });
   </div>
 </div>
 `;
-  }
+	}
 
-  static adminPageServer(): string {
-    return `import type { ServerLoadEvent } from '@sveltejs/kit';
+	static adminPageServer(): string {
+		return `import type { ServerLoadEvent } from '@sveltejs/kit';
 import { User } from '$lib/modules/auth/User.js';
 import { Post } from '$lib/modules/posts/Post.js';
 import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
@@ -4171,10 +4132,10 @@ export async function load(event: ServerLoadEvent) {
   };
 }
 `;
-  }
+	}
 
-  static adminPageSvelte(): string {
-    return `<script lang="ts">
+	static adminPageSvelte(): string {
+		return `<script lang="ts">
   import { page } from '\$app/stores';
   import { Button, Badge, Card, CardHeader, CardTitle, CardDescription, CardContent, Alert, Input, Label } from '@beeblock/svelar/ui';
 
@@ -5128,12 +5089,12 @@ export async function load(event: ServerLoadEvent) {
   {/if}
 </div>
 `;
-  }
+	}
 
-  // ─── API Routes ───────────────────────────────────────────
+	// ─── API Routes ───────────────────────────────────────────
 
-  static apiHealth(): string {
-    return `import type { RequestHandler } from '@sveltejs/kit';
+	static apiHealth(): string {
+		return `import type { RequestHandler } from '@sveltejs/kit';
 import { json } from '@sveltejs/kit';
 
 export const GET: RequestHandler = async () => {
@@ -5144,10 +5105,10 @@ export const GET: RequestHandler = async () => {
   });
 };
 `;
-  }
+	}
 
-  static apiAuthRegister(): string {
-    return `import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
+	static apiAuthRegister(): string {
+		return `import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { AuthController } from '$lib/modules/auth/AuthController.js';
 
 const throttle = new ThrottleMiddleware({ maxAttempts: 5, decayMinutes: 2 });
@@ -5159,10 +5120,10 @@ export async function POST(event: any) {
   return ctrl.handle('register')(event);
 }
 `;
-  }
+	}
 
-  static apiAuthLogin(): string {
-    return `import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
+	static apiAuthLogin(): string {
+		return `import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { AuthController } from '$lib/modules/auth/AuthController.js';
 
 const throttle = new ThrottleMiddleware({ maxAttempts: 5, decayMinutes: 1 });
@@ -5174,26 +5135,26 @@ export async function POST(event: any) {
   return ctrl.handle('login')(event);
 }
 `;
-  }
+	}
 
-  static apiAuthLogout(): string {
-    return `import { AuthController } from '$lib/modules/auth/AuthController.js';
+	static apiAuthLogout(): string {
+		return `import { AuthController } from '$lib/modules/auth/AuthController.js';
 
 const ctrl = new AuthController();
 export const POST = ctrl.handle('logout');
 `;
-  }
+	}
 
-  static apiAuthMe(): string {
-    return `import { AuthController } from '$lib/modules/auth/AuthController.js';
+	static apiAuthMe(): string {
+		return `import { AuthController } from '$lib/modules/auth/AuthController.js';
 
 const ctrl = new AuthController();
 export const GET = ctrl.handle('me');
 `;
-  }
+	}
 
-  static apiAuthForgotPassword(): string {
-    return `import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
+	static apiAuthForgotPassword(): string {
+		return `import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { AuthController } from '$lib/modules/auth/AuthController.js';
 
 const throttle = new ThrottleMiddleware({ maxAttempts: 3, decayMinutes: 5 });
@@ -5205,10 +5166,10 @@ export async function POST(event: any) {
   return ctrl.handle('forgotPassword')(event);
 }
 `;
-  }
+	}
 
-  static apiAuthResetPassword(): string {
-    return `import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
+	static apiAuthResetPassword(): string {
+		return `import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { AuthController } from '$lib/modules/auth/AuthController.js';
 
 const throttle = new ThrottleMiddleware({ maxAttempts: 5, decayMinutes: 5 });
@@ -5220,10 +5181,10 @@ export async function POST(event: any) {
   return ctrl.handle('resetPassword')(event);
 }
 `;
-  }
+	}
 
-  static apiAuthOtpSend(): string {
-    return `import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
+	static apiAuthOtpSend(): string {
+		return `import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { AuthController } from '$lib/modules/auth/AuthController.js';
 
 const throttle = new ThrottleMiddleware({ maxAttempts: 3, decayMinutes: 2 });
@@ -5235,10 +5196,10 @@ export async function POST(event: any) {
   return ctrl.handle('sendOtp')(event);
 }
 `;
-  }
+	}
 
-  static apiAuthOtpVerify(): string {
-    return `import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
+	static apiAuthOtpVerify(): string {
+		return `import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { AuthController } from '$lib/modules/auth/AuthController.js';
 
 const throttle = new ThrottleMiddleware({ maxAttempts: 5, decayMinutes: 5 });
@@ -5250,45 +5211,45 @@ export async function POST(event: any) {
   return ctrl.handle('verifyOtp')(event);
 }
 `;
-  }
+	}
 
-  static apiAuthVerifyEmail(): string {
-    return `import { AuthController } from '$lib/modules/auth/AuthController.js';
+	static apiAuthVerifyEmail(): string {
+		return `import { AuthController } from '$lib/modules/auth/AuthController.js';
 
 const ctrl = new AuthController();
 export const GET = ctrl.handle('verifyEmail');
 `;
-  }
+	}
 
-  static apiPosts(): string {
-    return `import { PostController } from '$lib/modules/posts/PostController.js';
+	static apiPosts(): string {
+		return `import { PostController } from '$lib/modules/posts/PostController.js';
 
 const ctrl = new PostController();
 export const GET = ctrl.handle('index');
 export const POST = ctrl.handle('store');
 `;
-  }
+	}
 
-  static apiPostsSingle(): string {
-    return `import { PostController } from '$lib/modules/posts/PostController.js';
+	static apiPostsSingle(): string {
+		return `import { PostController } from '$lib/modules/posts/PostController.js';
 
 const ctrl = new PostController();
 export const GET = ctrl.handle('show');
 export const PUT = ctrl.handle('update');
 export const DELETE = ctrl.handle('destroy');
 `;
-  }
+	}
 
-  static apiPostsMine(): string {
-    return `import { PostController } from '$lib/modules/posts/PostController.js';
+	static apiPostsMine(): string {
+		return `import { PostController } from '$lib/modules/posts/PostController.js';
 
 const ctrl = new PostController();
 export const GET = ctrl.handle('mine');
 `;
-  }
+	}
 
-  static apiBroadcasting(): string {
-    return `import type { RequestHandler } from '@sveltejs/kit';
+	static apiBroadcasting(): string {
+		return `import type { RequestHandler } from '@sveltejs/kit';
 import { Broadcast } from '@beeblock/svelar/broadcasting';
 
 export const GET: RequestHandler = async (event) => {
@@ -5316,10 +5277,10 @@ export const GET: RequestHandler = async (event) => {
   return Broadcast.subscribe(channelName, user?.id);
 };
 `;
-  }
+	}
 
-  static apiInternalBroadcast(): string {
-    return `import { json } from '@sveltejs/kit';
+	static apiInternalBroadcast(): string {
+		return `import { json } from '@sveltejs/kit';
 import type { RequestHandler } from '@sveltejs/kit';
 import { Broadcast } from '@beeblock/svelar/broadcasting';
 
@@ -5350,75 +5311,75 @@ export const POST: RequestHandler = async (event) => {
   }
 };
 `;
-  }
+	}
 
-  static apiAdminUsers(): string {
-    return `import { AdminController } from '$lib/modules/admin/AdminController.js';
+	static apiAdminUsers(): string {
+		return `import { AdminController } from '$lib/modules/admin/AdminController.js';
 
 const ctrl = new AdminController();
 export const GET = ctrl.handle('listUsers');
 export const PUT = ctrl.handle('updateUserRole');
 export const DELETE = ctrl.handle('deleteUser');
 `;
-  }
+	}
 
-  static apiAdminRoles(): string {
-    return `import { AdminController } from '$lib/modules/admin/AdminController.js';
+	static apiAdminRoles(): string {
+		return `import { AdminController } from '$lib/modules/admin/AdminController.js';
 
 const ctrl = new AdminController();
 export const POST = ctrl.handle('createRole');
 export const DELETE = ctrl.handle('deleteRole');
 `;
-  }
+	}
 
-  static apiAdminPermissions(): string {
-    return `import { AdminController } from '$lib/modules/admin/AdminController.js';
+	static apiAdminPermissions(): string {
+		return `import { AdminController } from '$lib/modules/admin/AdminController.js';
 
 const ctrl = new AdminController();
 export const POST = ctrl.handle('createPermission');
 export const DELETE = ctrl.handle('deletePermission');
 `;
-  }
+	}
 
-  static apiAdminRolePermissions(): string {
-    return `import { AdminController } from '$lib/modules/admin/AdminController.js';
+	static apiAdminRolePermissions(): string {
+		return `import { AdminController } from '$lib/modules/admin/AdminController.js';
 
 const ctrl = new AdminController();
 export const POST = ctrl.handle('attachRolePermission');
 export const DELETE = ctrl.handle('detachRolePermission');
 `;
-  }
+	}
 
-  static apiAdminUserRoles(): string {
-    return `import { AdminController } from '$lib/modules/admin/AdminController.js';
+	static apiAdminUserRoles(): string {
+		return `import { AdminController } from '$lib/modules/admin/AdminController.js';
 
 const ctrl = new AdminController();
 export const POST = ctrl.handle('assignUserRole');
 export const DELETE = ctrl.handle('removeUserRole');
 `;
-  }
+	}
 
-  static apiAdminUserPermissions(): string {
-    return `import { AdminController } from '$lib/modules/admin/AdminController.js';
+	static apiAdminUserPermissions(): string {
+		return `import { AdminController } from '$lib/modules/admin/AdminController.js';
 
 const ctrl = new AdminController();
 export const POST = ctrl.handle('grantUserPermission');
 export const DELETE = ctrl.handle('revokeUserPermission');
 `;
-  }
+	}
 
-  static apiAdminExport(): string {
-    return `import { AdminController } from '$lib/modules/admin/AdminController.js';
+	static apiAdminExport(): string {
+		return `import { AdminController } from '$lib/modules/admin/AdminController.js';
 
 const ctrl = new AdminController();
 export const POST = ctrl.handle('exportData');
 `;
-  }
+	}
 
-  // ─── Admin Dashboard API Routes ──────────────────────────
+	// ─── Admin Dashboard API Routes ──────────────────────────
 
-  static apiAdminHealth(): string {
-    return `import { json } from '@sveltejs/kit';
+	static apiAdminHealth(): string {
+		return `import { json } from '@sveltejs/kit';
 import type { RequestHandler } from '@sveltejs/kit';
 
 export const GET: RequestHandler = async () => {
@@ -5433,10 +5394,10 @@ export const GET: RequestHandler = async () => {
   return json(health);
 };
 `;
-  }
+	}
 
-  static apiAdminQueue(): string {
-    return `import { json } from '@sveltejs/kit';
+	static apiAdminQueue(): string {
+		return `import { json } from '@sveltejs/kit';
 import type { RequestHandler } from '@sveltejs/kit';
 import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
 
@@ -5461,10 +5422,10 @@ export const GET: RequestHandler = async (event) => {
   }
 };
 `;
-  }
+	}
 
-  static apiAdminQueueRetry(): string {
-    return `import { json } from '@sveltejs/kit';
+	static apiAdminQueueRetry(): string {
+		return `import { json } from '@sveltejs/kit';
 import type { RequestHandler } from '@sveltejs/kit';
 import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
 
@@ -5478,10 +5439,10 @@ export const POST: RequestHandler = async (event) => {
   }
 };
 `;
-  }
+	}
 
-  static apiAdminQueueDelete(): string {
-    return `import { json } from '@sveltejs/kit';
+	static apiAdminQueueDelete(): string {
+		return `import { json } from '@sveltejs/kit';
 import type { RequestHandler } from '@sveltejs/kit';
 import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
 
@@ -5495,10 +5456,10 @@ export const DELETE: RequestHandler = async (event) => {
   }
 };
 `;
-  }
+	}
 
-  static apiAdminScheduler(): string {
-    return `import { json } from '@sveltejs/kit';
+	static apiAdminScheduler(): string {
+		return `import { json } from '@sveltejs/kit';
 import type { RequestHandler } from '@sveltejs/kit';
 import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
 
@@ -5512,10 +5473,10 @@ export const GET: RequestHandler = async () => {
   }
 };
 `;
-  }
+	}
 
-  static apiAdminSchedulerRun(): string {
-    return `import { json } from '@sveltejs/kit';
+	static apiAdminSchedulerRun(): string {
+		return `import { json } from '@sveltejs/kit';
 import type { RequestHandler } from '@sveltejs/kit';
 import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
 
@@ -5529,10 +5490,10 @@ export const POST: RequestHandler = async (event) => {
   }
 };
 `;
-  }
+	}
 
-  static apiAdminSchedulerToggle(): string {
-    return `import { json } from '@sveltejs/kit';
+	static apiAdminSchedulerToggle(): string {
+		return `import { json } from '@sveltejs/kit';
 import type { RequestHandler } from '@sveltejs/kit';
 import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
 
@@ -5553,10 +5514,10 @@ export const POST: RequestHandler = async (event) => {
   }
 };
 `;
-  }
+	}
 
-  static apiAdminLogs(): string {
-    return `import { json } from '@sveltejs/kit';
+	static apiAdminLogs(): string {
+		return `import { json } from '@sveltejs/kit';
 import type { RequestHandler } from '@sveltejs/kit';
 import { LogViewer } from '@beeblock/svelar/logging/LogViewer';
 
@@ -5583,10 +5544,10 @@ export const GET: RequestHandler = async (event) => {
   }
 };
 `;
-  }
+	}
 
-  static apiAdminStats(): string {
-    return `import { json } from '@sveltejs/kit';
+	static apiAdminStats(): string {
+		return `import { json } from '@sveltejs/kit';
 import type { RequestHandler } from '@sveltejs/kit';
 import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
 import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
@@ -5613,12 +5574,12 @@ export const GET: RequestHandler = async () => {
   }
 };
 `;
-  }
+	}
 
-  // ─── Jobs ─────────────────────────────────────────────────
+	// ─── Jobs ─────────────────────────────────────────────────
 
-  static sendWelcomeEmail(): string {
-    return `import { Job } from '@beeblock/svelar/queue';
+	static sendWelcomeEmail(): string {
+		return `import { Job } from '@beeblock/svelar/queue';
 import { EmailTemplates } from '@beeblock/svelar/email-templates';
 import { Mailer } from '@beeblock/svelar/mail';
 
@@ -5661,10 +5622,10 @@ export class SendWelcomeEmail extends Job {
   }
 }
 `;
-  }
+	}
 
-  static dailyDigestJob(): string {
-    return `import { Job } from '@beeblock/svelar/queue';
+	static dailyDigestJob(): string {
+		return `import { Job } from '@beeblock/svelar/queue';
 import { Mailer } from '@beeblock/svelar/mail';
 import { User } from '$lib/modules/auth/User.js';
 import { Post } from '$lib/modules/posts/Post.js';
@@ -5731,10 +5692,10 @@ export class DailyDigestJob extends Job {
   }
 }
 `;
-  }
+	}
 
-  static exportDataJob(): string {
-    return `import { Job } from '@beeblock/svelar/queue';
+	static exportDataJob(): string {
+		return `import { Job } from '@beeblock/svelar/queue';
 import { Storage } from '@beeblock/svelar/storage';
 import { User } from '$lib/modules/auth/User.js';
 import { Post } from '$lib/modules/posts/Post.js';
@@ -5805,13 +5766,12 @@ export class ExportDataJob extends Job {
   }
 }
 `;
-  }
+	}
 
-  // ─── Scheduled Tasks ──────────────────────────────────────
+	// ─── Scheduled Tasks ──────────────────────────────────────
 
-  static cleanupExpiredTokens(): string {
-    return `import { ScheduledTask } from '@beeblock/svelar/scheduler';
-import { auth } from '../../../app.js';
+	static cleanupExpiredTokens(): string {
+		return `import { ScheduledTask } from '@beeblock/svelar/scheduler';
 
 export default class CleanupExpiredTokens extends ScheduledTask {
   name = 'cleanup-expired-tokens';
@@ -5821,6 +5781,7 @@ export default class CleanupExpiredTokens extends ScheduledTask {
   }
 
   async handle(): Promise<void> {
+    const { auth } = await import('../../../app.js');
     const result = await auth.cleanupExpiredTokens();
     console.log(
       \`[CleanupExpiredTokens] Deleted: \${result.passwordResets} password resets, \` +
@@ -5829,11 +5790,37 @@ export default class CleanupExpiredTokens extends ScheduledTask {
   }
 }
 `;
-  }
+	}
 
-  static cleanExpiredSessions(): string {
-    return `import { ScheduledTask } from '@beeblock/svelar/scheduler';
-import { Connection } from '@beeblock/svelar/database';
+	static schedulerIndex(): string {
+		return `import { Scheduler } from '@beeblock/svelar/scheduler';
+import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
+import CleanupExpiredTokens from './CleanupExpiredTokens.js';
+import CleanExpiredSessions from './CleanExpiredSessions.js';
+import DailyDigestEmail from './DailyDigestEmail.js';
+import PruneAuditLogs from './PruneAuditLogs.js';
+import QueueHealthCheck from './QueueHealthCheck.js';
+
+export function createScheduler(): Scheduler {
+  const scheduler = new Scheduler().persistToDatabase();
+
+  scheduler.registerMany([
+    new CleanupExpiredTokens(),
+    new CleanExpiredSessions(),
+    new DailyDigestEmail(),
+    new PruneAuditLogs(),
+    new QueueHealthCheck(),
+  ]);
+
+  ScheduleMonitor.configure(scheduler);
+  return scheduler;
+}
+`;
+	}
+
+	static cleanExpiredSessions(): string {
+		return `import { ScheduledTask } from '@beeblock/svelar/scheduler';
+import { QueryBuilder } from '@beeblock/svelar/orm';
 
 export default class CleanExpiredSessions extends ScheduledTask {
   name = 'clean-expired-sessions';
@@ -5845,7 +5832,7 @@ export default class CleanExpiredSessions extends ScheduledTask {
   async handle(): Promise<void> {
     try {
       const now = new Date().toISOString();
-      await Connection.raw('DELETE FROM sessions WHERE expires_at < ?', [now]);
+      await new QueryBuilder('sessions').where('expires_at', '<', now).delete();
       console.log('[CleanExpiredSessions] Expired sessions cleaned');
     } catch (err: any) {
       if (!err.message?.includes('no such table')) {
@@ -5855,10 +5842,10 @@ export default class CleanExpiredSessions extends ScheduledTask {
   }
 }
 `;
-  }
+	}
 
-  static dailyDigestEmail(): string {
-    return `import { ScheduledTask } from '@beeblock/svelar/scheduler';
+	static dailyDigestEmail(): string {
+		return `import { ScheduledTask } from '@beeblock/svelar/scheduler';
 import { Queue } from '@beeblock/svelar/queue';
 import { DailyDigestJob } from '$lib/shared/jobs/DailyDigestJob.js';
 
@@ -5874,11 +5861,11 @@ export default class DailyDigestEmail extends ScheduledTask {
   }
 }
 `;
-  }
+	}
 
-  static pruneAuditLogs(): string {
-    return `import { ScheduledTask } from '@beeblock/svelar/scheduler';
-import { Connection } from '@beeblock/svelar/database';
+	static pruneAuditLogs(): string {
+		return `import { ScheduledTask } from '@beeblock/svelar/scheduler';
+import { QueryBuilder } from '@beeblock/svelar/orm';
 
 export default class PruneAuditLogs extends ScheduledTask {
   name = 'prune-audit-logs';
@@ -5891,7 +5878,7 @@ export default class PruneAuditLogs extends ScheduledTask {
     const ninetyDaysAgo = Date.now() - (90 * 24 * 60 * 60 * 1000);
 
     try {
-      await Connection.raw('DELETE FROM audit_logs WHERE timestamp < ?', [ninetyDaysAgo]);
+      await new QueryBuilder('audit_logs').where('timestamp', '<', ninetyDaysAgo).delete();
       console.log('[PruneAuditLogs] Pruned audit logs older than 90 days');
     } catch (err: any) {
       // Table may not exist yet if no auditable events have fired
@@ -5902,10 +5889,10 @@ export default class PruneAuditLogs extends ScheduledTask {
   }
 }
 `;
-  }
+	}
 
-  static queueHealthCheck(): string {
-    return `import { ScheduledTask } from '@beeblock/svelar/scheduler';
+	static queueHealthCheck(): string {
+		return `import { ScheduledTask } from '@beeblock/svelar/scheduler';
 import { Queue } from '@beeblock/svelar/queue';
 
 export default class QueueHealthCheck extends ScheduledTask {
@@ -5931,12 +5918,12 @@ export default class QueueHealthCheck extends ScheduledTask {
   }
 }
 `;
-  }
+	}
 
-  // ─── Layout & Other ───────────────────────────────────────
+	// ─── Layout & Other ───────────────────────────────────────
 
-  static rootLayoutSvelte(name: string): string {
-    return `<script lang="ts">
+	static rootLayoutSvelte(name: string): string {
+		return `<script lang="ts">
   import '../app.css';
   import { Button, Toaster, toast, Seo } from '@beeblock/svelar/ui';
   import { registerToast } from '@beeblock/svelar/http';
@@ -6016,10 +6003,10 @@ export default class QueueHealthCheck extends ScheduledTask {
   }
 </style>
 `;
-  }
+	}
 
-  static rootLayoutServer(): string {
-    return `import type { ServerLoadEvent } from '@sveltejs/kit';
+	static rootLayoutServer(): string {
+		return `import type { ServerLoadEvent } from '@sveltejs/kit';
 
 export async function load(event: ServerLoadEvent) {
   const user = event.locals.user;
@@ -6036,10 +6023,10 @@ export async function load(event: ServerLoadEvent) {
   };
 }
 `;
-  }
+	}
 
-  static errorSvelte(): string {
-    return `<script lang="ts">
+	static errorSvelte(): string {
+		return `<script lang="ts">
   import { page } from '$app/state';
   import { Button } from '@beeblock/svelar/ui';
 </script>
@@ -6064,20 +6051,20 @@ export async function load(event: ServerLoadEvent) {
   </div>
 </div>
 `;
-  }
+	}
 
-  static userRegisteredEvent(): string {
-    return `export class UserRegistered {
+	static userRegisteredEvent(): string {
+		return `export class UserRegistered {
   readonly user: any;
   constructor(user: any) {
     this.user = user;
   }
 }
 `;
-  }
+	}
 
-  static sendWelcomeEmailListener(): string {
-    return `import { Queue } from '@beeblock/svelar/queue';
+	static sendWelcomeEmailListener(): string {
+		return `import { Queue } from '@beeblock/svelar/queue';
 import { Notifier } from '@beeblock/svelar/notifications';
 import { SendWelcomeEmail } from '$lib/shared/jobs/SendWelcomeEmail.js';
 import { WelcomeNotification } from './WelcomeNotification.js';
@@ -6094,10 +6081,10 @@ export class SendWelcomeEmailListener {
   }
 }
 `;
-  }
+	}
 
-  static welcomeNotification(): string {
-    return `import { Notification } from '@beeblock/svelar/notifications';
+	static welcomeNotification(): string {
+		return `import { Notification } from '@beeblock/svelar/notifications';
 
 export class WelcomeNotification extends Notification {
   user: any;
@@ -6122,10 +6109,10 @@ export class WelcomeNotification extends Notification {
   }
 }
 `;
-  }
+	}
 
-  static eventServiceProvider(): string {
-    return `import { EventServiceProvider as BaseProvider } from '@beeblock/svelar/events';
+	static eventServiceProvider(): string {
+		return `import { EventServiceProvider as BaseProvider } from '@beeblock/svelar/events';
 import { UserRegistered } from '$lib/modules/auth/UserRegistered.js';
 import { SendWelcomeEmailListener } from '$lib/modules/auth/SendWelcomeEmailListener.js';
 
@@ -6138,10 +6125,10 @@ export class EventServiceProvider extends BaseProvider {
   protected subscribe = [];
 }
 `;
-  }
+	}
 
-  static homePage(name: string): string {
-    return `<script lang="ts">
+	static homePage(name: string): string {
+		return `<script lang="ts">
   import { Button, Card, Badge, Separator, Seo } from '@beeblock/svelar/ui';
 </script>
 
@@ -6192,13 +6179,12 @@ export class EventServiceProvider extends BaseProvider {
   </div>
 </div>
 `;
-  }
+	}
 
+	// ─── Testing ──────────────────────────────────────────────────
 
-  // ─── Testing ──────────────────────────────────────────────────
-
-  static vitestConfig(): string {
-    return `import { defineConfig } from 'vitest/config';
+	static vitestConfig(): string {
+		return `import { defineConfig } from 'vitest/config';
 import { createRequire } from 'module';
 import { dirname, resolve } from 'path';
 
@@ -6229,10 +6215,10 @@ export default defineConfig({
   },
 });
 `;
-  }
+	}
 
-  static playwrightConfig(): string {
-    return `import { defineConfig } from '@playwright/test';
+	static playwrightConfig(): string {
+		return `import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: 'tests/e2e',
@@ -6252,10 +6238,10 @@ export default defineConfig({
   },
 });
 `;
-  }
+	}
 
-  static exampleUnitTest(): string {
-    return `import { describe, it, expect } from 'vitest';
+	static exampleUnitTest(): string {
+		return `import { describe, it, expect } from 'vitest';
 
 describe('Example Unit Test', () => {
   it('should pass a basic assertion', () => {
@@ -6268,10 +6254,10 @@ describe('Example Unit Test', () => {
   });
 });
 `;
-  }
+	}
 
-  static exampleFeatureTest(): string {
-    return `import { describe, it, expect } from 'vitest';
+	static exampleFeatureTest(): string {
+		return `import { describe, it, expect } from 'vitest';
 import { useSvelarTest, assertDatabaseHas } from '@beeblock/svelar/testing';
 // import UserFactory from '$lib/factories/UserFactory';
 
@@ -6291,10 +6277,10 @@ describe('Auth Feature Test', () => {
   // });
 });
 `;
-  }
+	}
 
-  static scaffoldUserFactory(): string {
-    return `import { Factory } from '@beeblock/svelar/testing';
+	static scaffoldUserFactory(): string {
+		return `import { Factory } from '@beeblock/svelar/testing';
 import { User } from '$lib/modules/auth/User';
 
 export class UserFactory extends Factory<User> {
@@ -6315,5 +6301,5 @@ export class UserFactory extends Factory<User> {
 // Singleton instance for convenience
 export default new UserFactory();
 `;
-  }
+	}
 }

@@ -8,16 +8,16 @@
  * @example
  * ```ts
  * import { Scheduler, ScheduledTask } from 'svelar/scheduler';
+ * import { QueryBuilder } from 'svelar/orm';
  *
  * // Define tasks
  * class PruneExpiredTokens extends ScheduledTask {
  *   schedule() { return this.daily(); }
  *
  *   async handle(): Promise<void> {
- *     await Connection.raw(
- *       'DELETE FROM tokens WHERE expires_at < ?',
- *       [new Date().toISOString()]
- *     );
+ *     await new QueryBuilder('tokens')
+ *       .where('expires_at', '<', new Date().toISOString())
+ *       .delete();
  *   }
  * }
  *
@@ -42,6 +42,8 @@
  * scheduler.start();
  * ```
  */
+
+import { QueryBuilder } from '../orm/QueryBuilder.js';
 
 // ── Cron Expression Parser ─────────────────────────────────
 
@@ -527,63 +529,15 @@ export class Scheduler {
     }
   }
 
-  private _historyTableEnsured = false;
-
-  private async ensureHistoryTable(): Promise<void> {
-    if (this._historyTableEnsured) return;
-    const { Connection } = await import('../database/Connection.js');
-    const driver = Connection.getDriver();
-
-    switch (driver) {
-      case 'sqlite':
-        await Connection.raw(
-          `CREATE TABLE IF NOT EXISTS scheduled_task_runs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task TEXT NOT NULL,
-            success INTEGER NOT NULL,
-            duration INTEGER NOT NULL,
-            error TEXT,
-            ran_at TEXT NOT NULL
-          )`,
-        );
-        break;
-      case 'postgres':
-        await Connection.raw(
-          `CREATE TABLE IF NOT EXISTS scheduled_task_runs (
-            id SERIAL PRIMARY KEY,
-            task VARCHAR(255) NOT NULL,
-            success BOOLEAN NOT NULL,
-            duration INTEGER NOT NULL,
-            error TEXT,
-            ran_at TIMESTAMPTZ NOT NULL
-          )`,
-        );
-        break;
-      case 'mysql':
-        await Connection.raw(
-          `CREATE TABLE IF NOT EXISTS scheduled_task_runs (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            task VARCHAR(255) NOT NULL,
-            success TINYINT NOT NULL,
-            duration INT NOT NULL,
-            error TEXT,
-            ran_at DATETIME NOT NULL
-          ) ENGINE=InnoDB`,
-        );
-        break;
-    }
-
-    this._historyTableEnsured = true;
-  }
-
   private async persistResult(result: TaskResult): Promise<void> {
     try {
-      await this.ensureHistoryTable();
-      const { Connection } = await import('../database/Connection.js');
-      await Connection.raw(
-        'INSERT INTO scheduled_task_runs (task, success, duration, error, ran_at) VALUES (?, ?, ?, ?, ?)',
-        [result.task, result.success, result.duration, result.error || null, result.timestamp.toISOString()],
-      );
+      await new QueryBuilder('scheduled_task_runs').insert({
+        task: result.task,
+        success: result.success ? 1 : 0,
+        duration: result.duration,
+        error: result.error || null,
+        ran_at: result.timestamp.toISOString(),
+      });
     } catch {
       // Database not available — silently skip
     }

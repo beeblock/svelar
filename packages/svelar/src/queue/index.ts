@@ -46,6 +46,9 @@
  * ```
  */
 
+import { assertSqlIdentifier } from '../database/Connection.js';
+import { QueryBuilder } from '../orm/QueryBuilder.js';
+
 // ── Types ──────────────────────────────────────────────────
 
 export type QueueDriver = 'sync' | 'memory' | 'database' | 'redis';
@@ -239,53 +242,45 @@ class DatabaseDriver implements QueueDriverInterface {
   constructor(
     private table: string,
     private registry: JobRegistry,
-  ) {}
+  ) {
+    this.table = assertSqlIdentifier(table, 'Queue jobs table name');
+  }
 
-  private async getConnection() {
-    const { Connection } = await import('../database/Connection.js');
-    return Connection;
+  private query(): QueryBuilder<any> {
+    return new QueryBuilder(this.table);
   }
 
   async push(job: QueuedJob): Promise<void> {
-    const conn = await this.getConnection();
-    await conn.raw(
-      `INSERT INTO ${this.table} (id, queue, payload, attempts, max_attempts, available_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        job.id,
-        job.queue,
-        JSON.stringify({
-          jobClass: job.jobClass,
-          payload: job.payload,
-        }),
-        job.attempts,
-        job.maxAttempts,
-        Math.floor(job.availableAt / 1000),
-        Math.floor(job.createdAt / 1000),
-      ]
-    );
+    await this.query().insert({
+      id: job.id,
+      queue: job.queue,
+      payload: JSON.stringify({
+        jobClass: job.jobClass,
+        payload: job.payload,
+      }),
+      attempts: job.attempts,
+      max_attempts: job.maxAttempts,
+      reserved_at: null,
+      available_at: Math.floor(job.availableAt / 1000),
+      created_at: Math.floor(job.createdAt / 1000),
+    });
   }
 
   async pop(queue: string = 'default'): Promise<QueuedJob | null> {
-    const conn = await this.getConnection();
     const nowSec = Math.floor(Date.now() / 1000);
 
-    const rows = await conn.raw(
-      `SELECT * FROM ${this.table}
-       WHERE queue = ? AND available_at <= ? AND reserved_at IS NULL
-       ORDER BY created_at ASC LIMIT 1`,
-      [queue, nowSec]
-    );
+    const row = await this.query()
+      .where('queue', queue)
+      .where('available_at', '<=', nowSec)
+      .whereNull('reserved_at')
+      .orderBy('created_at')
+      .first();
 
-    if (!rows || rows.length === 0) return null;
-
-    const row = rows[0];
+    if (!row) return null;
 
     // Reserve the job
-    await conn.raw(
-      `UPDATE ${this.table} SET reserved_at = ?, attempts = attempts + 1 WHERE id = ?`,
-      [nowSec, row.id]
-    );
+    await this.query().where('id', row.id).update({ reserved_at: nowSec });
+    await this.query().where('id', row.id).increment('attempts');
 
     const data = JSON.parse(row.payload);
 
@@ -306,20 +301,14 @@ class DatabaseDriver implements QueueDriverInterface {
   }
 
   async size(queue: string = 'default'): Promise<number> {
-    const conn = await this.getConnection();
-    const rows = await conn.raw(
-      `SELECT COUNT(*) as count FROM ${this.table} WHERE queue = ? AND reserved_at IS NULL`,
-      [queue]
-    );
-    return rows?.[0]?.count ?? 0;
+    return this.query().where('queue', queue).whereNull('reserved_at').count();
   }
 
   async clear(queue?: string): Promise<void> {
-    const conn = await this.getConnection();
     if (queue) {
-      await conn.raw(`DELETE FROM ${this.table} WHERE queue = ?`, [queue]);
+      await this.query().where('queue', queue).delete();
     } else {
-      await conn.raw(`DELETE FROM ${this.table}`, []);
+      await this.query().delete();
     }
   }
 
@@ -327,20 +316,18 @@ class DatabaseDriver implements QueueDriverInterface {
    * Remove a completed job from the database
    */
   async delete(jobId: string): Promise<void> {
-    const conn = await this.getConnection();
-    await conn.raw(`DELETE FROM ${this.table} WHERE id = ?`, [jobId]);
+    await this.query().where('id', jobId).delete();
   }
 
   /**
    * Release a failed job back to the queue with a delay
    */
   async release(jobId: string, delaySec: number = 0): Promise<void> {
-    const conn = await this.getConnection();
     const availableAt = Math.floor(Date.now() / 1000) + delaySec;
-    await conn.raw(
-      `UPDATE ${this.table} SET reserved_at = NULL, available_at = ? WHERE id = ?`,
-      [availableAt, jobId]
-    );
+    await this.query().where('id', jobId).update({
+      reserved_at: null,
+      available_at: availableAt,
+    });
   }
 }
 
@@ -529,28 +516,22 @@ export interface FailedJobRecord {
 }
 
 class FailedJobStore {
-  private table = 'svelar_failed_jobs';
+  private table = assertSqlIdentifier('svelar_failed_jobs', 'Failed jobs table name');
 
-  private async getConnection() {
-    const { Connection } = await import('../database/Connection.js');
-    return Connection;
+  private query(): QueryBuilder<any> {
+    return new QueryBuilder(this.table);
   }
 
   async store(job: QueuedJob, error: Error): Promise<void> {
     try {
-      const conn = await this.getConnection();
-      await conn.raw(
-        `INSERT INTO ${this.table} (id, queue, job_class, payload, exception, failed_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [
-          crypto.randomUUID(),
-          job.queue,
-          job.jobClass,
-          job.payload,
-          error.stack ?? error.message,
-          Math.floor(Date.now() / 1000),
-        ]
-      );
+      await this.query().insert({
+        id: crypto.randomUUID(),
+        queue: job.queue,
+        job_class: job.jobClass,
+        payload: job.payload,
+        exception: error.stack ?? error.message,
+        failed_at: Math.floor(Date.now() / 1000),
+      });
     } catch {
       // If the failed_jobs table doesn't exist, fall back to console logging
       console.error(`[Queue] Could not persist failed job (run migration to create svelar_failed_jobs table)`);
@@ -558,11 +539,7 @@ class FailedJobStore {
   }
 
   async all(): Promise<FailedJobRecord[]> {
-    const conn = await this.getConnection();
-    const rows = await conn.raw(
-      `SELECT * FROM ${this.table} ORDER BY failed_at DESC`,
-      []
-    );
+    const rows = await this.query().orderBy('failed_at', 'desc').get();
     return (rows ?? []).map((r: any) => ({
       id: r.id,
       queue: r.queue,
@@ -574,13 +551,8 @@ class FailedJobStore {
   }
 
   async find(id: string): Promise<FailedJobRecord | null> {
-    const conn = await this.getConnection();
-    const rows = await conn.raw(
-      `SELECT * FROM ${this.table} WHERE id = ? LIMIT 1`,
-      [id]
-    );
-    if (!rows || rows.length === 0) return null;
-    const r = rows[0];
+    const r = await this.query().where('id', id).first();
+    if (!r) return null;
     return {
       id: r.id,
       queue: r.queue,
@@ -592,16 +564,13 @@ class FailedJobStore {
   }
 
   async forget(id: string): Promise<boolean> {
-    const conn = await this.getConnection();
-    await conn.raw(`DELETE FROM ${this.table} WHERE id = ?`, [id]);
-    return true;
+    const deleted = await this.query().where('id', id).delete();
+    return deleted > 0;
   }
 
   async flush(): Promise<number> {
-    const conn = await this.getConnection();
-    const rows = await conn.raw(`SELECT COUNT(*) as count FROM ${this.table}`, []);
-    const count = rows?.[0]?.count ?? 0;
-    await conn.raw(`DELETE FROM ${this.table}`, []);
+    const count = await this.query().count();
+    await this.query().delete();
     return count;
   }
 }

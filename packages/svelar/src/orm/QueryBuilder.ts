@@ -536,28 +536,34 @@ export class QueryBuilder<TModel = any> {
   // ── INSERT / UPSERT ───────────────────────────────────────
 
   async upsert(
-    data: Record<string, any>,
-    conflictColumns: string[],
+    data: Record<string, any> | Record<string, any>[],
+    conflictColumns: string | string[],
     updateColumns?: string[]
   ): Promise<any> {
+    const rows = Array.isArray(data) ? data : [data];
+    if (rows.length === 0) return;
+
     const driver = Connection.getDriver(this.connectionName);
-    const columns = Object.keys(data);
-    const values = Object.values(data);
-    const placeholders = values.map(() => '?').join(', ');
-    const toUpdate = updateColumns ?? columns.filter((c) => !conflictColumns.includes(c));
+    const columns = Object.keys(rows[0]);
+    const conflict = Array.isArray(conflictColumns) ? conflictColumns : [conflictColumns];
+    const toUpdate = updateColumns ?? columns.filter((c) => !conflict.includes(c));
+    const rowPlaceholders = rows.map(() => `(${columns.map(() => '?').join(', ')})`).join(', ');
+    const values = rows.flatMap((row) => columns.map((column) => row[column]));
 
     let sql: string;
 
     if (driver === 'postgres') {
       const updateSet = toUpdate.map((c) => `${c} = EXCLUDED.${c}`).join(', ');
-      sql = `INSERT INTO ${this.tableName} (${columns.join(', ')}) VALUES (${placeholders}) ON CONFLICT (${conflictColumns.join(', ')}) DO UPDATE SET ${updateSet}`;
+      sql = `INSERT INTO ${this.tableName} (${columns.join(', ')}) VALUES ${rowPlaceholders} ON CONFLICT (${conflict.join(', ')}) ${updateSet ? `DO UPDATE SET ${updateSet}` : 'DO NOTHING'}`;
     } else if (driver === 'mysql') {
       const updateSet = toUpdate.map((c) => `${c} = VALUES(${c})`).join(', ');
-      sql = `INSERT INTO ${this.tableName} (${columns.join(', ')}) VALUES (${placeholders}) ON DUPLICATE KEY UPDATE ${updateSet}`;
+      sql = updateSet
+        ? `INSERT INTO ${this.tableName} (${columns.join(', ')}) VALUES ${rowPlaceholders} ON DUPLICATE KEY UPDATE ${updateSet}`
+        : `INSERT IGNORE INTO ${this.tableName} (${columns.join(', ')}) VALUES ${rowPlaceholders}`;
     } else {
       // SQLite
       const updateSet = toUpdate.map((c) => `${c} = excluded.${c}`).join(', ');
-      sql = `INSERT INTO ${this.tableName} (${columns.join(', ')}) VALUES (${placeholders}) ON CONFLICT (${conflictColumns.join(', ')}) DO UPDATE SET ${updateSet}`;
+      sql = `INSERT INTO ${this.tableName} (${columns.join(', ')}) VALUES ${rowPlaceholders} ON CONFLICT (${conflict.join(', ')}) ${updateSet ? `DO UPDATE SET ${updateSet}` : 'DO NOTHING'}`;
     }
 
     return Connection.raw(sql, values, this.connectionName);
@@ -740,27 +746,36 @@ export class QueryBuilder<TModel = any> {
     const setClause = columns.map((c) => `${c} = ?`).join(', ');
 
     const { whereSQL, whereBindings } = this.buildWhere();
-    const sql = `UPDATE ${this.tableName} SET ${setClause}${whereSQL}`;
+    const sql = `UPDATE ${this.tableName} SET ${setClause}${whereSQL ? ` ${whereSQL}` : ''}`;
 
-    await Connection.raw(sql, [...values, ...whereBindings], this.connectionName);
-    return 1; // Simplified — real impl would return affected rows
+    const result = await Connection.raw(sql, [...values, ...whereBindings], this.connectionName);
+    return this.affectedRows(result);
   }
 
   async delete(): Promise<number> {
     const { whereSQL, whereBindings } = this.buildWhere();
-    const sql = `DELETE FROM ${this.tableName}${whereSQL}`;
-    await Connection.raw(sql, whereBindings, this.connectionName);
-    return 1;
+    const sql = `DELETE FROM ${this.tableName}${whereSQL ? ` ${whereSQL}` : ''}`;
+    const result = await Connection.raw(sql, whereBindings, this.connectionName);
+    return this.affectedRows(result);
   }
 
   async increment(column: string, amount: number = 1): Promise<void> {
     const { whereSQL, whereBindings } = this.buildWhere();
-    const sql = `UPDATE ${this.tableName} SET ${column} = ${column} + ?${whereSQL}`;
+    const sql = `UPDATE ${this.tableName} SET ${column} = ${column} + ?${whereSQL ? ` ${whereSQL}` : ''}`;
     await Connection.raw(sql, [amount, ...whereBindings], this.connectionName);
   }
 
   async decrement(column: string, amount: number = 1): Promise<void> {
     return this.increment(column, -amount);
+  }
+
+  private affectedRows(result: any): number {
+    if (!result) return 0;
+    if (typeof result.changes === 'number') return result.changes;
+    if (typeof result.affectedRows === 'number') return result.affectedRows;
+    if (typeof result.rowCount === 'number') return result.rowCount;
+    if (typeof result.count === 'number') return result.count;
+    return 0;
   }
 
   // ── SQL COMPILATION ──────────────────────────────────────

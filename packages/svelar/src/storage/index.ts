@@ -27,7 +27,7 @@
 
 import { readFile, writeFile, unlink, mkdir, readdir, stat, copyFile, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join, dirname, extname, basename } from 'node:path';
+import { dirname, extname, basename, resolve as resolvePath, relative, isAbsolute, sep } from 'node:path';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -89,14 +89,28 @@ interface Disk {
 // ── Local Disk ─────────────────────────────────────────────
 
 class LocalDisk implements Disk {
+  private root: string;
+
   constructor(private config: DiskConfig) {
     if (!config.root) {
       throw new Error('Local disk requires a "root" path.');
     }
+    this.root = resolvePath(config.root);
   }
 
   private resolve(path: string): string {
-    return join(this.config.root!, path);
+    if (path.includes('\0')) {
+      throw new Error('Storage path contains invalid null byte.');
+    }
+
+    const fullPath = resolvePath(this.root, path);
+    const rel = relative(this.root, fullPath);
+
+    if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+      throw new Error(`Storage path escapes disk root: "${path}"`);
+    }
+
+    return fullPath;
   }
 
   async get(path: string): Promise<Buffer> {
@@ -558,6 +572,7 @@ class StorageManager {
    */
   configure(config: StorageConfig): void {
     this.config = config;
+    this.disks.clear();
   }
 
   /**

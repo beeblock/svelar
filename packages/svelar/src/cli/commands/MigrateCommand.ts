@@ -3,7 +3,7 @@
  */
 
 import { Command } from '../Command.js';
-import { readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -40,10 +40,11 @@ export class MigrateCommand extends Command {
     }
 
     // Dynamically import to avoid loading DB deps at CLI parse time
+    const migrationConfig = this.loadMigrationConfig();
     const { Migrator } = await import('../../database/Migration.js');
-    const migrator = new Migrator();
+    const migrator = new Migrator({ table: migrationConfig.table });
 
-    const migrationsDir = join(process.cwd(), 'src', 'lib', 'database', 'migrations');
+    const migrationsDir = join(process.cwd(), migrationConfig.path);
     const migrations = await this.loadMigrations(migrationsDir);
 
     if (flags.status) {
@@ -144,6 +145,26 @@ export class MigrateCommand extends Command {
   private warnDestructive(flag: string): void {
     if (this.isProduction()) {
       this.warn(`Running --${flag} in PRODUCTION with --force.`);
+    }
+  }
+
+  private loadMigrationConfig(): { table: string; path: string } {
+    const defaults = {
+      table: 'migrations',
+      path: 'src/lib/database/migrations',
+    };
+    const configPath = join(process.cwd(), 'svelar.database.json');
+
+    if (!existsSync(configPath)) return defaults;
+
+    try {
+      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+      return {
+        table: config.migrations?.table ?? defaults.table,
+        path: config.migrations?.path ?? defaults.path,
+      };
+    } catch {
+      return defaults;
     }
   }
 

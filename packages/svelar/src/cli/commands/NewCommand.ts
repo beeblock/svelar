@@ -182,14 +182,12 @@ export class NewCommand extends Command {
 
     // ── 4. Migrations ─────────────────────────────────────
     this.info('Creating migrations...');
+    for (const migration of T.svelarCoreMigrations()) {
+      write(migration.path, migration.content);
+    }
     write('src/lib/database/migrations/00000001_create_users_table.ts', T.createUsersTable());
     write('src/lib/database/migrations/00000002_create_posts_table.ts', T.createPostsTable());
-    write('src/lib/database/migrations/00000003_create_permissions_tables.ts', T.createPermissionsTables());
-    write('src/lib/database/migrations/00000004_add_role_to_users.ts', T.addRoleToUsers());
-    write('src/lib/database/migrations/00000005_create_sessions_table.ts', T.createSessionsTable());
-    write('src/lib/database/migrations/00000006_create_audit_logs_table.ts', T.createAuditLogsTable());
-    write('src/lib/database/migrations/00000007_create_notifications_table.ts', T.createNotificationsTable());
-    write('src/lib/database/migrations/00000008_create_failed_jobs_table.ts', T.createFailedJobsTable());
+    write('src/lib/database/migrations/00000003_add_role_to_users.ts', T.addRoleToUsers());
 
 
     // ── 5. Seeder ─────────────────────────────────────────
@@ -277,6 +275,7 @@ export class NewCommand extends Command {
     write('src/lib/shared/scheduler/DailyDigestEmail.ts', T.dailyDigestEmail());
     write('src/lib/shared/scheduler/PruneAuditLogs.ts', T.pruneAuditLogs());
     write('src/lib/shared/scheduler/QueueHealthCheck.ts', T.queueHealthCheck());
+    write('src/lib/shared/scheduler/index.ts', T.schedulerIndex());
 
     // ── 12. Layout & pages ────────────────────────────────
     this.info('Creating layouts...');

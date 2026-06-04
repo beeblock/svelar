@@ -6,9 +6,10 @@
  */
 
 export type DatabaseDriver = 'sqlite' | 'postgres' | 'mysql';
+export type DatabaseDriverAlias = DatabaseDriver | 'postgresql' | 'mysql2';
 
 export interface DatabaseConfig {
-  driver: DatabaseDriver;
+  driver: DatabaseDriverAlias;
   /** SQLite file path */
   filename?: string;
   /** Host for postgres/mysql */
@@ -28,8 +29,29 @@ export interface DatabaseConfig {
 }
 
 export interface ConnectionsConfig {
-  default: DatabaseDriver;
+  default: string;
   connections: Record<string, DatabaseConfig>;
+}
+
+const SQL_IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+export function assertSqlIdentifier(identifier: string, label: string = 'SQL identifier'): string {
+  if (!SQL_IDENTIFIER_RE.test(identifier)) {
+    throw new Error(`${label} contains invalid characters: "${identifier}"`);
+  }
+  return identifier;
+}
+
+export function normalizeDatabaseDriver(driver: string): DatabaseDriver {
+  if (driver === 'postgresql') return 'postgres';
+  if (driver === 'mysql2') return 'mysql';
+  if (driver === 'sqlite' || driver === 'postgres' || driver === 'mysql') return driver;
+  throw new Error(`Unsupported database driver: ${driver}`);
+}
+
+function postgresSql(sql: string): string {
+  let index = 0;
+  return sql.replace(/\?/g, () => `$${++index}`);
 }
 
 // Drizzle instance type — we keep it loose since the actual type depends on the driver
@@ -50,8 +72,28 @@ class ConnectionManager {
    * Initialize the connection manager with configuration
    */
   configure(config: ConnectionsConfig): void {
-    this.config = config;
-    this.defaultName = config.default;
+    const connections: Record<string, DatabaseConfig> = {};
+    for (const [name, connection] of Object.entries(config.connections)) {
+      connections[name] = {
+        ...connection,
+        driver: normalizeDatabaseDriver(connection.driver),
+      };
+    }
+
+    let defaultName = config.default;
+    if (!connections[defaultName]) {
+      try {
+        const normalizedDefault = normalizeDatabaseDriver(config.default);
+        if (connections[normalizedDefault]) {
+          defaultName = normalizedDefault;
+        }
+      } catch {
+        // The default may be a named connection rather than a driver alias.
+      }
+    }
+
+    this.config = { ...config, default: defaultName, connections };
+    this.defaultName = defaultName;
   }
 
   /**
@@ -113,7 +155,7 @@ class ConnectionManager {
         const trimmed = sql.trimStart().toUpperCase();
         if (
           trimmed.startsWith('SELECT') ||
-          trimmed.startsWith('PRAGMA') ||
+          (trimmed.startsWith('PRAGMA') && !trimmed.includes('=')) ||
           trimmed.startsWith('WITH')
         ) {
           return stmt.all(...safeBindings);
@@ -122,7 +164,7 @@ class ConnectionManager {
       }
       case 'postgres': {
         const client = await this.rawClient(connectionName);
-        return client(sql, ...bindings);
+        return client.unsafe(postgresSql(sql), bindings);
       }
       case 'mysql': {
         const client = await this.rawClient(connectionName);
@@ -138,7 +180,7 @@ class ConnectionManager {
    * Get the driver type for a connection
    */
   getDriver(name?: string): DatabaseDriver {
-    return this.getConfig(name).driver;
+    return normalizeDatabaseDriver(this.getConfig(name).driver);
   }
 
   /**

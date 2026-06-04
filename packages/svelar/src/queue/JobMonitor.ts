@@ -5,6 +5,8 @@
  * Used by the admin dashboard to display job metrics and manage jobs.
  */
 
+import { assertSqlIdentifier } from '../database/Connection.js';
+import { QueryBuilder } from '../orm/QueryBuilder.js';
 import { singleton } from '../support/singleton.js';
 
 // Types
@@ -388,33 +390,28 @@ class JobMonitorService {
 
   // ── Database driver implementations ───────────────────────
 
-  private async getDbConnection() {
-    const { Connection } = await import('../database/Connection.js');
-    return Connection;
+  private getDbTable(): string {
+    return assertSqlIdentifier(
+      this._config?.connections[this._config!.default]?.table ?? 'svelar_jobs',
+      'Queue jobs table name',
+    );
   }
 
-  private getDbTable(): string {
-    return this._config?.connections[this._config!.default]?.table ?? 'svelar_jobs';
+  private dbQuery(): QueryBuilder<any> {
+    return new QueryBuilder(this.getDbTable());
   }
 
   private async _getDatabaseJobCounts(queueName: string): Promise<JobCounts> {
-    const conn = await this.getDbConnection();
-    const table = this.getDbTable();
     const nowSec = Math.floor(Date.now() / 1000);
 
-    const rows = await conn.raw(
-      `SELECT
-         SUM(CASE WHEN reserved_at IS NULL AND available_at <= ? THEN 1 ELSE 0 END) as waiting,
-         SUM(CASE WHEN reserved_at IS NOT NULL THEN 1 ELSE 0 END) as active,
-         SUM(CASE WHEN reserved_at IS NULL AND available_at > ? THEN 1 ELSE 0 END) as delayed
-       FROM ${table} WHERE queue = ?`,
-      [nowSec, nowSec, queueName]
-    );
+    const rows = await this.dbQuery()
+      .select('reserved_at', 'available_at')
+      .where('queue', queueName)
+      .get();
 
-    const row = rows?.[0] ?? {};
-    const waiting = Number(row.waiting) || 0;
-    const active = Number(row.active) || 0;
-    const delayed = Number(row.delayed) || 0;
+    const waiting = rows.filter((row) => row.reserved_at == null && row.available_at <= nowSec).length;
+    const active = rows.filter((row) => row.reserved_at != null).length;
+    const delayed = rows.filter((row) => row.reserved_at == null && row.available_at > nowSec).length;
 
     return {
       waiting,
@@ -427,36 +424,25 @@ class JobMonitorService {
   }
 
   private async _listDatabaseJobs(filter: JobFilter): Promise<JobInfo[]> {
-    const conn = await this.getDbConnection();
-    const table = this.getDbTable();
     const limit = filter.limit ?? 50;
     const offset = filter.offset ?? 0;
     const nowSec = Math.floor(Date.now() / 1000);
 
-    let where = 'WHERE 1=1';
-    const params: any[] = [];
+    const query = this.dbQuery();
 
     if (filter.queue) {
-      where += ' AND queue = ?';
-      params.push(filter.queue);
+      query.where('queue', filter.queue);
     }
 
     if (filter.status === 'waiting') {
-      where += ' AND reserved_at IS NULL AND available_at <= ?';
-      params.push(nowSec);
+      query.whereNull('reserved_at').where('available_at', '<=', nowSec);
     } else if (filter.status === 'active') {
-      where += ' AND reserved_at IS NOT NULL';
+      query.whereNotNull('reserved_at');
     } else if (filter.status === 'delayed') {
-      where += ' AND reserved_at IS NULL AND available_at > ?';
-      params.push(nowSec);
+      query.whereNull('reserved_at').where('available_at', '>', nowSec);
     }
 
-    params.push(limit, offset);
-
-    const rows = await conn.raw(
-      `SELECT * FROM ${table} ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-      params
-    );
+    const rows = await query.orderBy('created_at', 'desc').limit(limit).offset(offset).get();
 
     return (rows ?? []).map((row: any) => {
       const data = JSON.parse(row.payload ?? '{}');
@@ -478,13 +464,9 @@ class JobMonitorService {
   }
 
   private async _getDatabaseJob(jobId: string): Promise<JobInfo | null> {
-    const conn = await this.getDbConnection();
-    const table = this.getDbTable();
+    const row = await this.dbQuery().where('id', jobId).first();
+    if (!row) return null;
 
-    const rows = await conn.raw(`SELECT * FROM ${table} WHERE id = ?`, [jobId]);
-    if (!rows || rows.length === 0) return null;
-
-    const row = rows[0];
     const data = JSON.parse(row.payload ?? '{}');
     const nowSec = Math.floor(Date.now() / 1000);
 
@@ -501,37 +483,30 @@ class JobMonitorService {
   }
 
   private async _retryDatabaseJob(jobId: string): Promise<boolean> {
-    const conn = await this.getDbConnection();
-    const table = this.getDbTable();
     const nowSec = Math.floor(Date.now() / 1000);
 
     try {
-      await conn.raw(
-        `UPDATE ${table} SET reserved_at = NULL, available_at = ?, attempts = 0 WHERE id = ?`,
-        [nowSec, jobId]
-      );
-      return true;
+      const updated = await this.dbQuery().where('id', jobId).update({
+        reserved_at: null,
+        available_at: nowSec,
+        attempts: 0,
+      });
+      return updated > 0;
     } catch {
       return false;
     }
   }
 
   private async _deleteDatabaseJob(jobId: string): Promise<boolean> {
-    const conn = await this.getDbConnection();
-    const table = this.getDbTable();
-
     try {
-      await conn.raw(`DELETE FROM ${table} WHERE id = ?`, [jobId]);
-      return true;
+      const deleted = await this.dbQuery().where('id', jobId).delete();
+      return deleted > 0;
     } catch {
       return false;
     }
   }
 
   private async _flushDatabaseFailed(queueName: string): Promise<number> {
-    const conn = await this.getDbConnection();
-    const table = this.getDbTable();
-
     // In the database driver, failed jobs that exhausted retries are already deleted
     // This is a no-op, but we keep the interface consistent
     return 0;

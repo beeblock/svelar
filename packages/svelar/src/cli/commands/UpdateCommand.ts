@@ -487,14 +487,12 @@ export class UpdateCommand extends Command {
     add('src/app.html', () => T.appHtml(), 'config', 'HTML shell');
 
     // ── Migrations ──
+    for (const migration of T.svelarCoreMigrations()) {
+      add(migration.path, () => migration.content, 'migration', migration.label);
+    }
     add('src/lib/database/migrations/00000001_create_users_table.ts', () => T.createUsersTable(), 'migration', 'Users table');
     add('src/lib/database/migrations/00000002_create_posts_table.ts', () => T.createPostsTable(), 'migration', 'Posts table');
-    add('src/lib/database/migrations/00000003_create_permissions_tables.ts', () => T.createPermissionsTables(), 'migration', 'Permissions tables');
-    add('src/lib/database/migrations/00000004_add_role_to_users.ts', () => T.addRoleToUsers(), 'migration', 'Role column on users');
-    add('src/lib/database/migrations/00000005_create_sessions_table.ts', () => T.createSessionsTable(), 'migration', 'Sessions table');
-    add('src/lib/database/migrations/00000006_create_audit_logs_table.ts', () => T.createAuditLogsTable(), 'migration', 'Audit logs table');
-    add('src/lib/database/migrations/00000007_create_notifications_table.ts', () => T.createNotificationsTable(), 'migration', 'Notifications table');
-    add('src/lib/database/migrations/00000008_create_failed_jobs_table.ts', () => T.createFailedJobsTable(), 'migration', 'Failed jobs table');
+    add('src/lib/database/migrations/00000003_add_role_to_users.ts', () => T.addRoleToUsers(), 'migration', 'Role column on users');
 
     // ── Auth Domain ──
     const authDir = isDDD ? 'src/lib/modules/auth' : 'src/lib';

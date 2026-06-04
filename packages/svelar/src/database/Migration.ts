@@ -5,7 +5,7 @@
  * batch tracking, and rollback capabilities.
  */
 
-import { Connection } from './Connection.js';
+import { assertSqlIdentifier, Connection } from './Connection.js';
 import { Schema } from './SchemaBuilder.js';
 
 // ── Migration Base Class ───────────────────────────────────
@@ -29,14 +29,25 @@ export interface MigrationFile {
   migration: Migration;
 }
 
+export interface MigratorOptions {
+  connectionName?: string;
+  table?: string;
+}
+
 // ── Migrator ───────────────────────────────────────────────
 
 export class Migrator {
-  private migrationsTable = 'svelar_migrations';
+  private migrationsTable = 'migrations';
   private connectionName?: string;
 
-  constructor(connectionName?: string) {
-    this.connectionName = connectionName;
+  constructor(connectionNameOrOptions?: string | MigratorOptions) {
+    if (typeof connectionNameOrOptions === 'string') {
+      this.connectionName = connectionNameOrOptions;
+    } else {
+      this.connectionName = connectionNameOrOptions?.connectionName;
+      this.migrationsTable = connectionNameOrOptions?.table ?? this.migrationsTable;
+    }
+    this.migrationsTable = assertSqlIdentifier(this.migrationsTable, 'Migrations table name');
   }
 
   /**

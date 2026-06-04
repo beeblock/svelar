@@ -22,6 +22,8 @@
  */
 
 import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
+import { assertSqlIdentifier } from '../database/Connection.js';
+import { QueryBuilder } from '../orm/QueryBuilder.js';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -252,71 +254,21 @@ export class MemorySessionStore implements SessionStore {
 // ── Database Store ─────────────────────────────────────────
 
 export class DatabaseSessionStore implements SessionStore {
-  private tableEnsured = false;
-
   constructor(
     private tableName: string = 'sessions',
     private connectionName?: string
-  ) {}
+  ) {
+    this.tableName = assertSqlIdentifier(tableName, 'Sessions table name');
+  }
 
-  private async ensureTable(): Promise<void> {
-    if (this.tableEnsured) return;
-    try {
-      const { Connection } = await import('../database/Connection.js');
-      const driver = Connection.getDriver(this.connectionName);
-      switch (driver) {
-        case 'sqlite':
-          await Connection.raw(
-            `CREATE TABLE IF NOT EXISTS ${this.tableName} (
-              id TEXT PRIMARY KEY,
-              payload TEXT NOT NULL,
-              expires_at TEXT NOT NULL
-            )`,
-            [],
-            this.connectionName,
-          );
-          break;
-        case 'postgres':
-          await Connection.raw(
-            `CREATE TABLE IF NOT EXISTS ${this.tableName} (
-              id VARCHAR(255) PRIMARY KEY,
-              payload TEXT NOT NULL,
-              expires_at TIMESTAMPTZ NOT NULL
-            )`,
-            [],
-            this.connectionName,
-          );
-          break;
-        case 'mysql':
-          await Connection.raw(
-            `CREATE TABLE IF NOT EXISTS ${this.tableName} (
-              id VARCHAR(255) PRIMARY KEY,
-              payload TEXT NOT NULL,
-              expires_at DATETIME NOT NULL
-            ) ENGINE=InnoDB`,
-            [],
-            this.connectionName,
-          );
-          break;
-      }
-      this.tableEnsured = true;
-    } catch {
-      // Database not available yet
-    }
+  private query(): QueryBuilder<any> {
+    return new QueryBuilder(this.tableName, undefined, this.connectionName);
   }
 
   async read(id: string): Promise<SessionData | null> {
-    await this.ensureTable();
-    const { Connection } = await import('../database/Connection.js');
-    const rows = await Connection.raw(
-      `SELECT payload, expires_at FROM ${this.tableName} WHERE id = ?`,
-      [id],
-      this.connectionName
-    );
+    const row = await this.query().select('payload', 'expires_at').where('id', id).first();
+    if (!row) return null;
 
-    if (rows.length === 0) return null;
-
-    const row = rows[0];
     if (new Date(row.expires_at) < new Date()) {
       await this.destroy(id);
       return null;
@@ -330,54 +282,22 @@ export class DatabaseSessionStore implements SessionStore {
   }
 
   async write(id: string, data: SessionData, ttl: number): Promise<void> {
-    await this.ensureTable();
-    const { Connection } = await import('../database/Connection.js');
     const payload = JSON.stringify(data);
     const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
 
-    // Upsert
-    const driver = Connection.getDriver(this.connectionName);
-
-    if (driver === 'sqlite') {
-      await Connection.raw(
-        `INSERT INTO ${this.tableName} (id, payload, expires_at) VALUES (?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, expires_at = excluded.expires_at`,
-        [id, payload, expiresAt],
-        this.connectionName
-      );
-    } else if (driver === 'postgres') {
-      await Connection.raw(
-        `INSERT INTO ${this.tableName} (id, payload, expires_at) VALUES ($1, $2, $3)
-         ON CONFLICT(id) DO UPDATE SET payload = $2, expires_at = $3`,
-        [id, payload, expiresAt],
-        this.connectionName
-      );
-    } else {
-      await Connection.raw(
-        `INSERT INTO ${this.tableName} (id, payload, expires_at) VALUES (?, ?, ?)
-         ON DUPLICATE KEY UPDATE payload = VALUES(payload), expires_at = VALUES(expires_at)`,
-        [id, payload, expiresAt],
-        this.connectionName
-      );
-    }
+    await this.query().upsert(
+      { id, payload, expires_at: expiresAt },
+      'id',
+      ['payload', 'expires_at'],
+    );
   }
 
   async destroy(id: string): Promise<void> {
-    const { Connection } = await import('../database/Connection.js');
-    await Connection.raw(
-      `DELETE FROM ${this.tableName} WHERE id = ?`,
-      [id],
-      this.connectionName
-    );
+    await this.query().where('id', id).delete();
   }
 
   async gc(maxLifetime: number): Promise<void> {
-    const { Connection } = await import('../database/Connection.js');
-    await Connection.raw(
-      `DELETE FROM ${this.tableName} WHERE expires_at < ?`,
-      [new Date().toISOString()],
-      this.connectionName
-    );
+    await this.query().where('expires_at', '<', new Date().toISOString()).delete();
   }
 }
 

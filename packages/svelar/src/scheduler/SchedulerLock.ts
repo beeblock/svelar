@@ -5,12 +5,10 @@
  * Prevents duplicate task execution across multiple scheduler instances.
  * Supports SQLite, PostgreSQL, and MySQL via the Connection abstraction.
  *
- * The `scheduler_locks` table is auto-created on first use.
+ * The `scheduler_locks` table is created by Svelar core migrations.
  */
 
 import { hostname } from 'node:os';
-
-let tableEnsured = false;
 
 const ownerId = `${hostname()}:${process.pid}:${Math.random().toString(36).slice(2, 10)}`;
 
@@ -33,54 +31,10 @@ export class SchedulerLock {
   }
 
   /**
-   * Ensure the scheduler_locks table exists (auto-created on first use).
-   */
-  static async ensureTable(): Promise<void> {
-    if (tableEnsured) return;
-
-    const conn = await getConnection();
-    const driver = conn.getDriver();
-
-    switch (driver) {
-      case 'sqlite':
-        await conn.raw(
-          `CREATE TABLE IF NOT EXISTS scheduler_locks (
-            task_key TEXT PRIMARY KEY,
-            owner TEXT NOT NULL,
-            expires_at TEXT NOT NULL
-          )`,
-        );
-        break;
-      case 'postgres':
-        await conn.raw(
-          `CREATE TABLE IF NOT EXISTS scheduler_locks (
-            task_key VARCHAR(255) PRIMARY KEY,
-            owner VARCHAR(255) NOT NULL,
-            expires_at TIMESTAMPTZ NOT NULL
-          )`,
-        );
-        break;
-      case 'mysql':
-        await conn.raw(
-          `CREATE TABLE IF NOT EXISTS scheduler_locks (
-            task_key VARCHAR(255) PRIMARY KEY,
-            owner VARCHAR(255) NOT NULL,
-            expires_at DATETIME NOT NULL
-          ) ENGINE=InnoDB`,
-        );
-        break;
-    }
-
-    tableEnsured = true;
-  }
-
-  /**
    * Try to acquire a distributed lock for a task.
    * Returns true if the lock was acquired, false if another process holds it.
    */
   static async acquire(taskKey: string, ttlMinutes: number = 5): Promise<boolean> {
-    await this.ensureTable();
-
     const conn = await getConnection();
     const driver = await getDriver();
     const now = new Date().toISOString();

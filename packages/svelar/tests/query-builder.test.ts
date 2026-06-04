@@ -1,4 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Connection } from '../src/database/Connection';
 import { QueryBuilder } from '../src/orm/QueryBuilder';
 
 describe('QueryBuilder - SQL Generation', () => {
@@ -467,5 +471,164 @@ describe('QueryBuilder - SQL Generation', () => {
       expect(bindings).toEqual(["'; DROP TABLE users; --"]);
       expect(sql).not.toContain('DROP');
     });
+  });
+});
+
+describe('QueryBuilder - database mutations', () => {
+  it('returns actual affected rows for update and delete', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'svelar-query-builder-'));
+    const filename = join(root, 'query.sqlite');
+
+    try {
+      await Connection.disconnect();
+      Connection.configure({
+        default: 'sqlite',
+        connections: {
+          sqlite: { driver: 'sqlite', filename },
+        },
+      });
+
+      await Connection.raw('CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, active INTEGER)');
+      await Connection.raw(
+        'INSERT INTO users (name, active) VALUES (?, ?), (?, ?), (?, ?)',
+        ['Ada', 0, 'Grace', 0, 'Linus', 1],
+      );
+
+      const updated = await new QueryBuilder('users').where('active', 0).update({ active: 1 });
+      expect(updated).toBe(2);
+
+      const updatedNone = await new QueryBuilder('users').where('name', 'Missing').update({ active: 0 });
+      expect(updatedNone).toBe(0);
+
+      const deleted = await new QueryBuilder('users').where('name', 'Linus').delete();
+      expect(deleted).toBe(1);
+
+      const deletedNone = await new QueryBuilder('users').where('name', 'Missing').delete();
+      expect(deletedNone).toBe(0);
+    } finally {
+      await Connection.disconnect();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('supports Laravel-style upsert for single and multiple rows', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'svelar-query-builder-upsert-'));
+    const filename = join(root, 'query.sqlite');
+
+    try {
+      await Connection.disconnect();
+      Connection.configure({
+        default: 'sqlite',
+        connections: {
+          sqlite: { driver: 'sqlite', filename },
+        },
+      });
+
+      await Connection.raw('CREATE TABLE settings (name TEXT PRIMARY KEY, value TEXT, updated_at TEXT)');
+
+      await new QueryBuilder('settings').upsert(
+        { name: 'theme', value: 'light', updated_at: '1' },
+        'name',
+        ['value', 'updated_at'],
+      );
+
+      await new QueryBuilder('settings').upsert(
+        [
+          { name: 'theme', value: 'dark', updated_at: '2' },
+          { name: 'locale', value: 'en', updated_at: '2' },
+        ],
+        ['name'],
+        ['value', 'updated_at'],
+      );
+
+      const rows = await new QueryBuilder('settings').orderBy('name').get();
+      expect(rows).toEqual([
+        { name: 'locale', value: 'en', updated_at: '2' },
+        { name: 'theme', value: 'dark', updated_at: '2' },
+      ]);
+    } finally {
+      await Connection.disconnect();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('generates driver-specific upsert SQL for SQLite, PostgreSQL, and MySQL', async () => {
+    const cases = [
+      {
+        driver: 'sqlite',
+        expected:
+          'INSERT INTO settings (name, value, updated_at) VALUES (?, ?, ?) ON CONFLICT (name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
+      },
+      {
+        driver: 'postgres',
+        expected:
+          'INSERT INTO settings (name, value, updated_at) VALUES (?, ?, ?) ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at',
+      },
+      {
+        driver: 'mysql',
+        expected:
+          'INSERT INTO settings (name, value, updated_at) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = VALUES(updated_at)',
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const getDriver = vi.spyOn(Connection, 'getDriver').mockReturnValue(testCase.driver);
+      const raw = vi.spyOn(Connection, 'raw').mockResolvedValue([]);
+
+      try {
+        await new QueryBuilder('settings').upsert(
+          { name: 'theme', value: 'dark', updated_at: '2' },
+          'name',
+          ['value', 'updated_at'],
+        );
+
+        expect(raw).toHaveBeenCalledWith(
+          testCase.expected,
+          ['theme', 'dark', '2'],
+          undefined,
+        );
+      } finally {
+        raw.mockRestore();
+        getDriver.mockRestore();
+      }
+    }
+  });
+
+  it('generates driver-specific upsert-ignore SQL when no update columns are supplied', async () => {
+    const cases = [
+      {
+        driver: 'sqlite',
+        expected:
+          'INSERT INTO role_has_permissions (role_id, permission_id) VALUES (?, ?) ON CONFLICT (role_id, permission_id) DO NOTHING',
+      },
+      {
+        driver: 'postgres',
+        expected:
+          'INSERT INTO role_has_permissions (role_id, permission_id) VALUES (?, ?) ON CONFLICT (role_id, permission_id) DO NOTHING',
+      },
+      {
+        driver: 'mysql',
+        expected:
+          'INSERT IGNORE INTO role_has_permissions (role_id, permission_id) VALUES (?, ?)',
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const getDriver = vi.spyOn(Connection, 'getDriver').mockReturnValue(testCase.driver);
+      const raw = vi.spyOn(Connection, 'raw').mockResolvedValue([]);
+
+      try {
+        await new QueryBuilder('role_has_permissions').upsert(
+          { role_id: 1, permission_id: 2 },
+          ['role_id', 'permission_id'],
+          [],
+        );
+
+        expect(raw).toHaveBeenCalledWith(testCase.expected, [1, 2], undefined);
+      } finally {
+        raw.mockRestore();
+        getDriver.mockRestore();
+      }
+    }
   });
 });

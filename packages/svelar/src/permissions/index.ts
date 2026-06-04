@@ -31,6 +31,7 @@
  */
 
 import { Middleware, type MiddlewareContext, type NextFunction } from '../middleware/Middleware.js';
+import { QueryBuilder } from '../orm/QueryBuilder.js';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -55,260 +56,238 @@ export interface RoleRecord {
 // ── Permission Manager ─────────────────────────────────────
 
 class PermissionManager {
-  private connectionGetter?: () => Promise<any>;
-
   /**
-   * Configure the database connection for permissions
+   * @deprecated Permissions now use Svelar's QueryBuilder and shared Connection.
    */
-  configure(getConnection: () => Promise<any>): void {
-    this.connectionGetter = getConnection;
+  configure(_getConnection: () => Promise<any>): void {
+    // Kept during alpha for compatibility with older code.
   }
 
-  private async db() {
-    if (this.connectionGetter) return this.connectionGetter();
-    const { Connection } = await import('../database/Connection.js');
-    return Connection;
+  private permissionsQuery(): QueryBuilder<PermissionRecord> {
+    return new QueryBuilder<PermissionRecord>('permissions');
+  }
+
+  private rolesQuery(): QueryBuilder<RoleRecord> {
+    return new QueryBuilder<RoleRecord>('roles');
+  }
+
+  private rolePermissionsQuery(): QueryBuilder<any> {
+    return new QueryBuilder('role_has_permissions');
+  }
+
+  private modelRolesQuery(): QueryBuilder<any> {
+    return new QueryBuilder('model_has_roles');
+  }
+
+  private modelPermissionsQuery(): QueryBuilder<any> {
+    return new QueryBuilder('model_has_permissions');
   }
 
   // ── Permission CRUD ──────────────────────────────────
 
   async createPermission(data: { name: string; guard?: string; description?: string }): Promise<PermissionRecord> {
-    const conn = await this.db();
     const now = new Date().toISOString();
     const guard = data.guard ?? 'web';
 
-    await conn.raw(
-      `INSERT INTO permissions (name, guard, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-      [data.name, guard, data.description ?? null, now, now],
-    );
+    await this.permissionsQuery().insert({
+      name: data.name,
+      guard,
+      description: data.description ?? null,
+      created_at: now,
+      updated_at: now,
+    });
 
-    const rows = await conn.raw(`SELECT * FROM permissions WHERE name = ? AND guard = ?`, [data.name, guard]);
-    return rows[0];
+    return this.permissionsQuery().where('name', data.name).where('guard', guard).firstOrFail();
   }
 
   async findPermission(name: string, guard: string = 'web'): Promise<PermissionRecord | null> {
-    const conn = await this.db();
-    const rows = await conn.raw(`SELECT * FROM permissions WHERE name = ? AND guard = ?`, [name, guard]);
-    return rows[0] ?? null;
+    return this.permissionsQuery().where('name', name).where('guard', guard).first();
   }
 
   async findPermissionById(id: number): Promise<PermissionRecord | null> {
-    const conn = await this.db();
-    const rows = await conn.raw(`SELECT * FROM permissions WHERE id = ?`, [id]);
-    return rows[0] ?? null;
+    return this.permissionsQuery().where('id', id).first();
   }
 
   async allPermissions(guard: string = 'web'): Promise<PermissionRecord[]> {
-    const conn = await this.db();
-    return conn.raw(`SELECT * FROM permissions WHERE guard = ? ORDER BY name`, [guard]);
+    return this.permissionsQuery().where('guard', guard).orderBy('name').get();
   }
 
   async deletePermission(name: string, guard: string = 'web'): Promise<void> {
-    const conn = await this.db();
-    await conn.raw(`DELETE FROM permissions WHERE name = ? AND guard = ?`, [name, guard]);
+    await this.permissionsQuery().where('name', name).where('guard', guard).delete();
   }
 
   // ── Role CRUD ────────────────────────────────────────
 
   async createRole(data: { name: string; guard?: string; description?: string }): Promise<RoleRecord> {
-    const conn = await this.db();
     const now = new Date().toISOString();
     const guard = data.guard ?? 'web';
 
-    await conn.raw(
-      `INSERT INTO roles (name, guard, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-      [data.name, guard, data.description ?? null, now, now],
-    );
+    await this.rolesQuery().insert({
+      name: data.name,
+      guard,
+      description: data.description ?? null,
+      created_at: now,
+      updated_at: now,
+    });
 
-    const rows = await conn.raw(`SELECT * FROM roles WHERE name = ? AND guard = ?`, [data.name, guard]);
-    return rows[0];
+    return this.rolesQuery().where('name', data.name).where('guard', guard).firstOrFail();
   }
 
   async findRole(name: string, guard: string = 'web'): Promise<RoleRecord | null> {
-    const conn = await this.db();
-    const rows = await conn.raw(`SELECT * FROM roles WHERE name = ? AND guard = ?`, [name, guard]);
-    return rows[0] ?? null;
+    return this.rolesQuery().where('name', name).where('guard', guard).first();
   }
 
   async findRoleById(id: number): Promise<RoleRecord | null> {
-    const conn = await this.db();
-    const rows = await conn.raw(`SELECT * FROM roles WHERE id = ?`, [id]);
-    return rows[0] ?? null;
+    return this.rolesQuery().where('id', id).first();
   }
 
   async allRoles(guard: string = 'web'): Promise<RoleRecord[]> {
-    const conn = await this.db();
-    return conn.raw(`SELECT * FROM roles WHERE guard = ? ORDER BY name`, [guard]);
+    return this.rolesQuery().where('guard', guard).orderBy('name').get();
   }
 
   async deleteRole(name: string, guard: string = 'web'): Promise<void> {
-    const conn = await this.db();
-    await conn.raw(`DELETE FROM roles WHERE name = ? AND guard = ?`, [name, guard]);
+    await this.rolesQuery().where('name', name).where('guard', guard).delete();
   }
 
   // ── Role ↔ Permission ────────────────────────────────
 
   async giveRolePermission(roleId: number, permissionId: number): Promise<void> {
-    const conn = await this.db();
-    try {
-      await conn.raw(
-        `INSERT INTO role_has_permissions (role_id, permission_id) VALUES (?, ?)`,
-        [roleId, permissionId],
-      );
-    } catch {
-      // Already exists, ignore
-    }
+    await this.rolePermissionsQuery().upsert(
+      { role_id: roleId, permission_id: permissionId },
+      ['role_id', 'permission_id'],
+      [],
+    );
   }
 
   async revokeRolePermission(roleId: number, permissionId: number): Promise<void> {
-    const conn = await this.db();
-    await conn.raw(
-      `DELETE FROM role_has_permissions WHERE role_id = ? AND permission_id = ?`,
-      [roleId, permissionId],
-    );
+    await this.rolePermissionsQuery().where('role_id', roleId).where('permission_id', permissionId).delete();
   }
 
   async getRolePermissions(roleId: number): Promise<PermissionRecord[]> {
-    const conn = await this.db();
-    return conn.raw(
-      `SELECT p.* FROM permissions p
-       INNER JOIN role_has_permissions rp ON p.id = rp.permission_id
-       WHERE rp.role_id = ?
-       ORDER BY p.name`,
-      [roleId],
-    );
+    return new QueryBuilder<PermissionRecord>('permissions p')
+      .select('p.*')
+      .join('role_has_permissions rp', 'p.id', '=', 'rp.permission_id')
+      .where('rp.role_id', roleId)
+      .orderBy('p.name')
+      .get();
   }
 
   async roleHasPermission(roleId: number, permissionName: string): Promise<boolean> {
-    const conn = await this.db();
-    const rows = await conn.raw(
-      `SELECT 1 FROM role_has_permissions rp
-       INNER JOIN permissions p ON p.id = rp.permission_id
-       WHERE rp.role_id = ? AND p.name = ?`,
-      [roleId, permissionName],
-    );
-    return rows.length > 0;
+    return new QueryBuilder('role_has_permissions rp')
+      .join('permissions p', 'p.id', '=', 'rp.permission_id')
+      .where('rp.role_id', roleId)
+      .where('p.name', permissionName)
+      .exists();
   }
 
   // ── Model ↔ Role ─────────────────────────────────────
 
   async assignRole(modelType: string, modelId: number, roleId: number): Promise<void> {
-    const conn = await this.db();
-    try {
-      await conn.raw(
-        `INSERT INTO model_has_roles (model_type, model_id, role_id) VALUES (?, ?, ?)`,
-        [modelType, modelId, roleId],
-      );
-    } catch {
-      // Already assigned
-    }
+    await this.modelRolesQuery().upsert(
+      { model_type: modelType, model_id: modelId, role_id: roleId },
+      ['model_type', 'model_id', 'role_id'],
+      [],
+    );
   }
 
   async removeRole(modelType: string, modelId: number, roleId: number): Promise<void> {
-    const conn = await this.db();
-    await conn.raw(
-      `DELETE FROM model_has_roles WHERE model_type = ? AND model_id = ? AND role_id = ?`,
-      [modelType, modelId, roleId],
-    );
+    await this.modelRolesQuery()
+      .where('model_type', modelType)
+      .where('model_id', modelId)
+      .where('role_id', roleId)
+      .delete();
   }
 
   async getModelRoles(modelType: string, modelId: number): Promise<RoleRecord[]> {
-    const conn = await this.db();
-    return conn.raw(
-      `SELECT r.* FROM roles r
-       INNER JOIN model_has_roles mr ON r.id = mr.role_id
-       WHERE mr.model_type = ? AND mr.model_id = ?
-       ORDER BY r.name`,
-      [modelType, modelId],
-    );
+    return new QueryBuilder<RoleRecord>('roles r')
+      .select('r.*')
+      .join('model_has_roles mr', 'r.id', '=', 'mr.role_id')
+      .where('mr.model_type', modelType)
+      .where('mr.model_id', modelId)
+      .orderBy('r.name')
+      .get();
   }
 
   async modelHasRole(modelType: string, modelId: number, roleName: string): Promise<boolean> {
-    const conn = await this.db();
-    const rows = await conn.raw(
-      `SELECT 1 FROM model_has_roles mr
-       INNER JOIN roles r ON r.id = mr.role_id
-       WHERE mr.model_type = ? AND mr.model_id = ? AND r.name = ?`,
-      [modelType, modelId, roleName],
-    );
-    return rows.length > 0;
+    return new QueryBuilder('model_has_roles mr')
+      .join('roles r', 'r.id', '=', 'mr.role_id')
+      .where('mr.model_type', modelType)
+      .where('mr.model_id', modelId)
+      .where('r.name', roleName)
+      .exists();
   }
 
   // ── Model ↔ Permission (direct) ──────────────────────
 
   async giveModelPermission(modelType: string, modelId: number, permissionId: number): Promise<void> {
-    const conn = await this.db();
-    try {
-      await conn.raw(
-        `INSERT INTO model_has_permissions (model_type, model_id, permission_id) VALUES (?, ?, ?)`,
-        [modelType, modelId, permissionId],
-      );
-    } catch {
-      // Already assigned
-    }
+    await this.modelPermissionsQuery().upsert(
+      { model_type: modelType, model_id: modelId, permission_id: permissionId },
+      ['model_type', 'model_id', 'permission_id'],
+      [],
+    );
   }
 
   async revokeModelPermission(modelType: string, modelId: number, permissionId: number): Promise<void> {
-    const conn = await this.db();
-    await conn.raw(
-      `DELETE FROM model_has_permissions WHERE model_type = ? AND model_id = ? AND permission_id = ?`,
-      [modelType, modelId, permissionId],
-    );
+    await this.modelPermissionsQuery()
+      .where('model_type', modelType)
+      .where('model_id', modelId)
+      .where('permission_id', permissionId)
+      .delete();
   }
 
   async getModelDirectPermissions(modelType: string, modelId: number): Promise<PermissionRecord[]> {
-    const conn = await this.db();
-    return conn.raw(
-      `SELECT p.* FROM permissions p
-       INNER JOIN model_has_permissions mp ON p.id = mp.permission_id
-       WHERE mp.model_type = ? AND mp.model_id = ?
-       ORDER BY p.name`,
-      [modelType, modelId],
-    );
+    return new QueryBuilder<PermissionRecord>('permissions p')
+      .select('p.*')
+      .join('model_has_permissions mp', 'p.id', '=', 'mp.permission_id')
+      .where('mp.model_type', modelType)
+      .where('mp.model_id', modelId)
+      .orderBy('p.name')
+      .get();
   }
 
   /**
    * Get ALL permissions for a model (direct + via roles)
    */
   async getModelAllPermissions(modelType: string, modelId: number): Promise<PermissionRecord[]> {
-    const conn = await this.db();
-    return conn.raw(
-      `SELECT DISTINCT p.* FROM permissions p
-       LEFT JOIN model_has_permissions mp
-         ON p.id = mp.permission_id AND mp.model_type = ? AND mp.model_id = ?
-       LEFT JOIN role_has_permissions rp ON p.id = rp.permission_id
-       LEFT JOIN model_has_roles mr
-         ON rp.role_id = mr.role_id AND mr.model_type = ? AND mr.model_id = ?
-       WHERE mp.permission_id IS NOT NULL OR mr.role_id IS NOT NULL
-       ORDER BY p.name`,
-      [modelType, modelId, modelType, modelId],
-    );
+    const direct = await this.getModelDirectPermissions(modelType, modelId);
+    const roles = await this.getModelRoles(modelType, modelId);
+    const byId = new Map<number, PermissionRecord>();
+
+    for (const permission of direct) {
+      byId.set(permission.id, permission);
+    }
+
+    for (const role of roles) {
+      const permissions = await this.getRolePermissions(role.id);
+      for (const permission of permissions) {
+        byId.set(permission.id, permission);
+      }
+    }
+
+    return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
   }
 
   /**
    * Check if a model has a permission (direct or via role)
    */
   async modelHasPermission(modelType: string, modelId: number, permissionName: string): Promise<boolean> {
-    const conn = await this.db();
-
     // Check direct permission
-    const direct = await conn.raw(
-      `SELECT 1 FROM model_has_permissions mp
-       INNER JOIN permissions p ON p.id = mp.permission_id
-       WHERE mp.model_type = ? AND mp.model_id = ? AND p.name = ?`,
-      [modelType, modelId, permissionName],
-    );
-    if (direct.length > 0) return true;
+    const direct = await new QueryBuilder('model_has_permissions mp')
+      .join('permissions p', 'p.id', '=', 'mp.permission_id')
+      .where('mp.model_type', modelType)
+      .where('mp.model_id', modelId)
+      .where('p.name', permissionName)
+      .exists();
+    if (direct) return true;
 
     // Check via roles
-    const viaRole = await conn.raw(
-      `SELECT 1 FROM model_has_roles mr
-       INNER JOIN role_has_permissions rp ON rp.role_id = mr.role_id
-       INNER JOIN permissions p ON p.id = rp.permission_id
-       WHERE mr.model_type = ? AND mr.model_id = ? AND p.name = ?`,
-      [modelType, modelId, permissionName],
-    );
-    return viaRole.length > 0;
+    return new QueryBuilder('model_has_roles mr')
+      .join('role_has_permissions rp', 'rp.role_id', '=', 'mr.role_id')
+      .join('permissions p', 'p.id', '=', 'rp.permission_id')
+      .where('mr.model_type', modelType)
+      .where('mr.model_id', modelId)
+      .where('p.name', permissionName)
+      .exists();
   }
 
   // ── Sync Operations ──────────────────────────────────
@@ -317,11 +296,7 @@ class PermissionManager {
    * Sync roles for a model (remove all, then assign new ones)
    */
   async syncRoles(modelType: string, modelId: number, roleNames: string[], guard: string = 'web'): Promise<void> {
-    const conn = await this.db();
-    await conn.raw(
-      `DELETE FROM model_has_roles WHERE model_type = ? AND model_id = ?`,
-      [modelType, modelId],
-    );
+    await this.modelRolesQuery().where('model_type', modelType).where('model_id', modelId).delete();
     for (const roleName of roleNames) {
       const role = await this.findRole(roleName, guard);
       if (role) {
@@ -334,11 +309,7 @@ class PermissionManager {
    * Sync permissions for a model (remove all direct, then assign new ones)
    */
   async syncPermissions(modelType: string, modelId: number, permissionNames: string[], guard: string = 'web'): Promise<void> {
-    const conn = await this.db();
-    await conn.raw(
-      `DELETE FROM model_has_permissions WHERE model_type = ? AND model_id = ?`,
-      [modelType, modelId],
-    );
+    await this.modelPermissionsQuery().where('model_type', modelType).where('model_id', modelId).delete();
     for (const permName of permissionNames) {
       const perm = await this.findPermission(permName, guard);
       if (perm) {
@@ -583,63 +554,6 @@ export class RequireRoleMiddleware extends Middleware {
     return next();
   }
 }
-
-// ── Default Migrations SQL ─────────────────────────────────
-
-/**
- * SQL statements for creating the permissions tables.
- * These are database-agnostic and work with SQLite, PostgreSQL, and MySQL.
- */
-export const PERMISSIONS_MIGRATION_SQL = {
-  up: [
-    `CREATE TABLE IF NOT EXISTS permissions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name VARCHAR(255) NOT NULL,
-      guard VARCHAR(255) NOT NULL DEFAULT 'web',
-      description TEXT,
-      created_at DATETIME,
-      updated_at DATETIME,
-      UNIQUE(name, guard)
-    )`,
-    `CREATE TABLE IF NOT EXISTS roles (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name VARCHAR(255) NOT NULL,
-      guard VARCHAR(255) NOT NULL DEFAULT 'web',
-      description TEXT,
-      created_at DATETIME,
-      updated_at DATETIME,
-      UNIQUE(name, guard)
-    )`,
-    `CREATE TABLE IF NOT EXISTS role_has_permissions (
-      role_id INTEGER NOT NULL,
-      permission_id INTEGER NOT NULL,
-      PRIMARY KEY (role_id, permission_id),
-      FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
-      FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE
-    )`,
-    `CREATE TABLE IF NOT EXISTS model_has_roles (
-      model_type VARCHAR(255) NOT NULL,
-      model_id INTEGER NOT NULL,
-      role_id INTEGER NOT NULL,
-      PRIMARY KEY (model_type, model_id, role_id),
-      FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
-    )`,
-    `CREATE TABLE IF NOT EXISTS model_has_permissions (
-      model_type VARCHAR(255) NOT NULL,
-      model_id INTEGER NOT NULL,
-      permission_id INTEGER NOT NULL,
-      PRIMARY KEY (model_type, model_id, permission_id),
-      FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE
-    )`,
-  ],
-  down: [
-    `DROP TABLE IF EXISTS model_has_permissions`,
-    `DROP TABLE IF EXISTS model_has_roles`,
-    `DROP TABLE IF EXISTS role_has_permissions`,
-    `DROP TABLE IF EXISTS roles`,
-    `DROP TABLE IF EXISTS permissions`,
-  ],
-};
 
 import { singleton } from '../support/singleton.js';
 

@@ -4,6 +4,7 @@
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 export interface CommandFlag {
   name: string;
@@ -38,7 +39,7 @@ export abstract class Command {
   protected async bootstrap(): Promise<void> {
     const { join } = await import('node:path');
     const { existsSync, readFileSync } = await import('node:fs');
-    const { Connection } = await import('../database/Connection.js');
+    const { Connection, normalizeDatabaseDriver } = await import('../database/Connection.js');
     const cwd = process.cwd();
 
     // Already configured (e.g. if running in-process)
@@ -47,6 +48,28 @@ export abstract class Command {
       return;
     } catch {
       // Not configured yet — continue
+    }
+
+    // Laravel-like behavior: boot the application first so CLI commands share
+    // the same service configuration as the web process.
+    const appCandidates = [
+      join(cwd, 'src', 'app.ts'),
+      join(cwd, 'src', 'app.js'),
+    ];
+    const appPath = appCandidates.find((path) => existsSync(path));
+    if (appPath) {
+      try {
+        await import(pathToFileURL(appPath).href);
+        try {
+          Connection.getDriver();
+          this.info(`Application bootstrapped from src/app.${appPath.endsWith('.ts') ? 'ts' : 'js'}`);
+          return;
+        } catch {
+          // App loaded but did not configure the database; fall back below.
+        }
+      } catch (err: any) {
+        throw new Error(`Failed to bootstrap application from ${appPath}: ${String(err?.message ?? err)}`);
+      }
     }
 
     // Try reading a JSON config file (simple, no TS compilation needed)
@@ -64,7 +87,7 @@ export abstract class Command {
     }
 
     // Default: SQLite
-    const driver = process.env.DB_DRIVER ?? 'sqlite';
+    const driver = normalizeDatabaseDriver(process.env.DB_DRIVER ?? 'sqlite');
     const dbPath = process.env.DB_PATH ?? 'database.db';
 
     Connection.configure({

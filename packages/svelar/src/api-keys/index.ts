@@ -6,6 +6,8 @@
 import { randomBytes, createHash, timingSafeEqual } from 'crypto';
 import { randomUUID } from 'crypto';
 import { singleton } from '../support/singleton.js';
+import { assertSqlIdentifier } from '../database/Connection.js';
+import { QueryBuilder } from '../orm/QueryBuilder.js';
 
 export interface ApiKeyRecord {
   id: string;
@@ -46,11 +48,44 @@ class ApiKeyManager {
   }
 
   private hashKey(key: string): string {
-    return createHash('sha256').update(key).digest('hex');
+    return createHash(this.config.hashAlgorithm ?? 'sha256').update(key).digest('hex');
   }
 
   private generateRandomKey(length: number = 32): string {
     return randomBytes(length).toString('base64url');
+  }
+
+  private table(): string {
+    return assertSqlIdentifier(this.config.table ?? 'api_keys', 'API keys table name');
+  }
+
+  private query(): QueryBuilder<any> {
+    return new QueryBuilder(this.table());
+  }
+
+  private rowToRecord(row: any): ApiKeyRecord {
+    return {
+      id: row.id,
+      userId: row.user_id ?? row.userId ?? row.userid,
+      name: row.name,
+      key: row.key,
+      prefix: row.prefix,
+      lastUsedAt: row.last_used_at ?? row.lastUsedAt ?? row.lastusedat ?? undefined,
+      expiresAt: row.expires_at ?? row.expiresAt ?? row.expiresat ?? undefined,
+      permissions: row.permissions ? JSON.parse(row.permissions) : [],
+      metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+      createdAt: row.created_at ?? row.createdAt ?? row.createdat,
+      revokedAt: row.revoked_at ?? row.revokedAt ?? row.revokedat ?? undefined,
+    };
+  }
+
+  private async findById(keyId: string): Promise<ApiKeyRecord | null> {
+    if (this.config.driver === 'memory') {
+      return this.keys.find((k) => k.id === keyId) ?? null;
+    }
+
+    const row = await this.query().where('id', keyId).first();
+    return row ? this.rowToRecord(row) : null;
   }
 
   /** Generate a new API key. Returns the PLAIN TEXT key (only shown once!) */
@@ -78,14 +113,19 @@ class ApiKeyManager {
     if (this.config.driver === 'memory') {
       this.keys.push(record);
     } else if (this.config.driver === 'database') {
-      try {
-        const { Connection } = await import('../database/Connection.js');
-        await Connection.connection();
-        // Would insert into api_keys table
-      } catch {
-        // Fallback to memory
-        this.keys.push(record);
-      }
+      await this.query().insert({
+        id: record.id,
+        user_id: String(record.userId),
+        name: record.name,
+        key: record.key,
+        prefix: record.prefix,
+        last_used_at: record.lastUsedAt ?? null,
+        expires_at: record.expiresAt ?? null,
+        permissions: JSON.stringify(record.permissions ?? []),
+        metadata: record.metadata ? JSON.stringify(record.metadata) : null,
+        created_at: record.createdAt,
+        revoked_at: record.revokedAt ?? null,
+      });
     }
 
     return { record, plainTextKey };
@@ -94,6 +134,18 @@ class ApiKeyManager {
   /** Validate a key and return the associated record */
   async validate(plainTextKey: string): Promise<ApiKeyRecord | null> {
     const hashedKey = this.hashKey(plainTextKey);
+
+    if (this.config.driver === 'database') {
+      const row = await this.query().where('key', hashedKey).whereNull('revoked_at').first();
+      if (!row) return null;
+
+      const record = this.rowToRecord(row);
+      if (record.expiresAt && record.expiresAt < Date.now()) return null;
+
+      record.lastUsedAt = Date.now();
+      await this.query().where('id', record.id).update({ last_used_at: record.lastUsedAt });
+      return record;
+    }
 
     for (const record of this.keys) {
       if (record.revokedAt) continue;
@@ -126,6 +178,14 @@ class ApiKeyManager {
 
   /** Revoke a key */
   async revoke(keyId: string): Promise<boolean> {
+    if (this.config.driver === 'database') {
+      const existing = await this.findById(keyId);
+      if (!existing || existing.revokedAt) return false;
+
+      await this.query().where('id', keyId).whereNull('revoked_at').update({ revoked_at: Date.now() });
+      return true;
+    }
+
     const key = this.keys.find((k) => k.id === keyId);
     if (!key) return false;
 
@@ -135,6 +195,15 @@ class ApiKeyManager {
 
   /** List keys for a user */
   async listForUser(userId: string | number): Promise<ApiKeyRecord[]> {
+    if (this.config.driver === 'database') {
+      const rows = await this.query()
+        .where('user_id', String(userId))
+        .whereNull('revoked_at')
+        .orderBy('created_at', 'desc')
+        .get();
+      return rows.map((row: any) => this.rowToRecord(row));
+    }
+
     return this.keys
       .filter((k) => k.userId === userId && !k.revokedAt)
       .map((k) => ({ ...k })); // Return copies without plaintext
@@ -144,7 +213,7 @@ class ApiKeyManager {
   async rotate(
     keyId: string
   ): Promise<{ record: ApiKeyRecord; plainTextKey: string } | null> {
-    const oldKey = this.keys.find((k) => k.id === keyId);
+    const oldKey = await this.findById(keyId);
     if (!oldKey || oldKey.revokedAt) return null;
 
     // Revoke old key

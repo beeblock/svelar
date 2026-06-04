@@ -16,6 +16,8 @@
  */
 
 import { createHmac, randomBytes } from 'node:crypto';
+import { assertSqlIdentifier } from '../database/Connection.js';
+import { QueryBuilder } from '../orm/QueryBuilder.js';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -283,13 +285,15 @@ export class AuthManager {
       const hashedRefresh = createHmac('sha256', jwt.secret).update(refreshToken).digest('hex');
       const refreshExpiresAt = new Date((now + refreshExpiresIn) * 1000);
 
-      const { Connection } = await import('../database/Connection.js');
-      const table = jwt.refreshTable ?? 'refresh_tokens';
+      const table = this.tableName(jwt.refreshTable ?? 'refresh_tokens', 'Refresh token table name');
 
-      await Connection.raw(
-        `INSERT INTO ${table} (user_id, token, expires_at, created_at) VALUES (?, ?, ?, ?)`,
-        [user.getAttribute('id'), hashedRefresh, refreshExpiresAt.toISOString(), new Date().toISOString()]
-      );
+      await this.query(table).insert({
+        user_id: user.getAttribute('id'),
+        token: hashedRefresh,
+        expires_at: refreshExpiresAt.toISOString(),
+        created_at: new Date().toISOString(),
+        revoked_at: null,
+      });
 
       result.refreshToken = refreshToken;
       result.refreshExpiresAt = refreshExpiresAt;
@@ -312,18 +316,11 @@ export class AuthManager {
 
     const jwt = this.config.jwt;
     const hashedRefresh = createHmac('sha256', jwt.secret).update(refreshToken).digest('hex');
-    const { Connection } = await import('../database/Connection.js');
-    const table = jwt.refreshTable ?? 'refresh_tokens';
+    const table = this.tableName(jwt.refreshTable ?? 'refresh_tokens', 'Refresh token table name');
 
     // Find the refresh token
-    const rows = await Connection.raw(
-      `SELECT user_id, expires_at, revoked_at FROM ${table} WHERE token = ?`,
-      [hashedRefresh]
-    );
-
-    if (rows.length === 0) return null;
-
-    const row = rows[0];
+    const row = await this.query(table).where('token', hashedRefresh).first();
+    if (!row) return null;
 
     // Check if revoked
     if (row.revoked_at) return null;
@@ -332,10 +329,7 @@ export class AuthManager {
     if (new Date(row.expires_at) < new Date()) return null;
 
     // Revoke the old refresh token (rotation — each token is single-use)
-    await Connection.raw(
-      `UPDATE ${table} SET revoked_at = ? WHERE token = ?`,
-      [new Date().toISOString(), hashedRefresh]
-    );
+    await this.query(table).where('token', hashedRefresh).update({ revoked_at: new Date().toISOString() });
 
     // Resolve user and issue new pair
     const user = await this.config.model.find(row.user_id);
@@ -351,13 +345,12 @@ export class AuthManager {
   async revokeRefreshTokens(userId: string | number): Promise<void> {
     if (!this.config.jwt?.refreshTokens) return;
 
-    const { Connection } = await import('../database/Connection.js');
-    const table = this.config.jwt.refreshTable ?? 'refresh_tokens';
+    const table = this.tableName(this.config.jwt.refreshTable ?? 'refresh_tokens', 'Refresh token table name');
 
-    await Connection.raw(
-      `UPDATE ${table} SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL`,
-      [new Date().toISOString(), userId]
-    );
+    await this.query(table)
+      .where('user_id', userId)
+      .whereNull('revoked_at')
+      .update({ revoked_at: new Date().toISOString() });
   }
 
   /**
@@ -438,6 +431,14 @@ export class AuthManager {
     return this.currentUser?.getAttribute('id') ?? null;
   }
 
+  private tableName(name: string, label: string): string {
+    return assertSqlIdentifier(name, label);
+  }
+
+  private query(table: string): QueryBuilder<any> {
+    return new QueryBuilder(table);
+  }
+
   /**
    * Generate an API token for a user
    */
@@ -447,13 +448,14 @@ export class AuthManager {
     if (!secret) throw new Error('APP_KEY is not set. Set it in your .env file or pass jwt.secret in auth config.');
     const hashedToken = createHmac('sha256', secret).update(token).digest('hex');
 
-    const { Connection } = await import('../database/Connection.js');
-    const table = this.config.token?.table ?? 'personal_access_tokens';
+    const table = this.tableName(this.config.token?.table ?? 'personal_access_tokens', 'API token table name');
 
-    await Connection.raw(
-      `INSERT INTO ${table} (user_id, name, token, created_at) VALUES (?, ?, ?, ?)`,
-      [user.getAttribute('id'), name, hashedToken, new Date().toISOString()]
-    );
+    await this.query(table).insert({
+      user_id: user.getAttribute('id'),
+      name,
+      token: hashedToken,
+      created_at: new Date().toISOString(),
+    });
 
     return token;
   }
@@ -462,21 +464,16 @@ export class AuthManager {
    * Resolve user from an API token
    */
   async resolveFromApiToken(plainToken: string): Promise<AuthUser | null> {
-    const { Connection } = await import('../database/Connection.js');
-    const table = this.config.token?.table ?? 'personal_access_tokens';
+    const table = this.tableName(this.config.token?.table ?? 'personal_access_tokens', 'API token table name');
 
     const secret = this.config.jwt?.secret ?? process.env.APP_KEY;
     if (!secret) throw new Error('APP_KEY is not set. Set it in your .env file or pass jwt.secret in auth config.');
     const hashedToken = createHmac('sha256', secret).update(plainToken).digest('hex');
 
-    const rows = await Connection.raw(
-      `SELECT user_id FROM ${table} WHERE token = ?`,
-      [hashedToken]
-    );
+    const row = await this.query(table).where('token', hashedToken).first();
+    if (!row) return null;
 
-    if (rows.length === 0) return null;
-
-    const user = await this.config.model.find(rows[0].user_id);
+    const user = await this.config.model.find(row.user_id);
     if (user) this.currentUser = user;
     return user;
   }
@@ -486,7 +483,6 @@ export class AuthManager {
   /**
    * Send a password reset email.
    * Generates a token, stores its hash, and sends the password-reset email template.
-   * Auto-creates the password_resets table if it doesn't exist.
    */
   async sendPasswordReset(email: string): Promise<boolean> {
     const user = await this.config.model
@@ -495,31 +491,23 @@ export class AuthManager {
 
     if (!user) return false; // Don't reveal if user exists
 
-    const { Connection } = await import('../database/Connection.js');
-    const table = this.config.passwordResets?.table ?? 'password_resets';
+    const table = this.tableName(this.config.passwordResets?.table ?? 'password_resets', 'Password resets table name');
     const expiresIn = this.config.passwordResets?.expiresIn ?? 3600;
 
-    await this.ensureTable(table, `
-      CREATE TABLE IF NOT EXISTS ${table} (
-        email TEXT NOT NULL,
-        token TEXT NOT NULL,
-        expires_at TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      )
-    `);
-
     // Delete any existing reset tokens for this email
-    await Connection.raw(`DELETE FROM ${table} WHERE email = ?`, [email]);
+    await this.query(table).where('email', email).delete();
 
     // Generate token
     const token = randomBytes(32).toString('base64url');
     const hashedToken = this.hashToken(token);
     const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
 
-    await Connection.raw(
-      `INSERT INTO ${table} (email, token, expires_at, created_at) VALUES (?, ?, ?, ?)`,
-      [email, hashedToken, expiresAt, new Date().toISOString()]
-    );
+    await this.query(table).insert({
+      email,
+      token: hashedToken,
+      expires_at: expiresAt,
+      created_at: new Date().toISOString(),
+    });
 
     // Send email
     const appUrl = this.config.appUrl ?? process.env.APP_URL ?? 'http://localhost:5173';
@@ -540,24 +528,17 @@ export class AuthManager {
    * Validates the token, updates the password, and revokes all refresh tokens.
    */
   async resetPassword(token: string, email: string, newPassword: string): Promise<boolean> {
-    const { Connection } = await import('../database/Connection.js');
     const { Hash } = await import('../hashing/Hash.js');
-    const table = this.config.passwordResets?.table ?? 'password_resets';
+    const table = this.tableName(this.config.passwordResets?.table ?? 'password_resets', 'Password resets table name');
 
     const hashedToken = this.hashToken(token);
 
-    const rows = await Connection.raw(
-      `SELECT email, expires_at FROM ${table} WHERE token = ? AND email = ?`,
-      [hashedToken, email]
-    );
-
-    if (rows.length === 0) return false;
-
-    const row = rows[0];
+    const row = await this.query(table).where('token', hashedToken).where('email', email).first();
+    if (!row) return false;
 
     // Check if expired
     if (new Date(row.expires_at) < new Date()) {
-      await Connection.raw(`DELETE FROM ${table} WHERE email = ?`, [email]);
+      await this.query(table).where('email', email).delete();
       return false;
     }
 
@@ -574,7 +555,7 @@ export class AuthManager {
       .update({ [this.config.passwordColumn]: hashedPassword });
 
     // Delete all reset tokens for this email
-    await Connection.raw(`DELETE FROM ${table} WHERE email = ?`, [email]);
+    await this.query(table).where('email', email).delete();
 
     // Revoke all refresh tokens
     await this.revokeRefreshTokens(user.getAttribute('id'));
@@ -587,34 +568,25 @@ export class AuthManager {
   /**
    * Send an email verification link.
    * Generates a token, stores its hash, and sends the email-verification template.
-   * Auto-creates the email_verifications table if it doesn't exist.
    */
   async sendVerificationEmail(user: AuthUser): Promise<void> {
-    const { Connection } = await import('../database/Connection.js');
-    const table = this.config.emailVerification?.table ?? 'email_verifications';
+    const table = this.tableName(this.config.emailVerification?.table ?? 'email_verifications', 'Email verifications table name');
     const expiresIn = this.config.emailVerification?.expiresIn ?? 86400;
     const email = user.getAttribute(this.config.identifierColumn);
 
-    await this.ensureTable(table, `
-      CREATE TABLE IF NOT EXISTS ${table} (
-        user_id TEXT NOT NULL,
-        token TEXT NOT NULL,
-        expires_at TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      )
-    `);
-
     // Delete existing tokens for this user
-    await Connection.raw(`DELETE FROM ${table} WHERE user_id = ?`, [user.getAttribute('id')]);
+    await this.query(table).where('user_id', user.getAttribute('id')).delete();
 
     const token = randomBytes(32).toString('base64url');
     const hashedToken = this.hashToken(token);
     const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
 
-    await Connection.raw(
-      `INSERT INTO ${table} (user_id, token, expires_at, created_at) VALUES (?, ?, ?, ?)`,
-      [user.getAttribute('id'), hashedToken, expiresAt, new Date().toISOString()]
-    );
+    await this.query(table).insert({
+      user_id: user.getAttribute('id'),
+      token: hashedToken,
+      expires_at: expiresAt,
+      created_at: new Date().toISOString(),
+    });
 
     const appUrl = this.config.appUrl ?? process.env.APP_URL ?? 'http://localhost:5173';
     const verifyUrl = `${appUrl}/verify-email?token=${token}&id=${user.getAttribute('id')}`;
@@ -630,21 +602,16 @@ export class AuthManager {
    * Sets the email_verified_at column on the user.
    */
   async verifyEmail(token: string, userId: string | number): Promise<boolean> {
-    const { Connection } = await import('../database/Connection.js');
-    const table = this.config.emailVerification?.table ?? 'email_verifications';
+    const table = this.tableName(this.config.emailVerification?.table ?? 'email_verifications', 'Email verifications table name');
     const verifiedColumn = this.config.emailVerification?.verifiedColumn ?? 'email_verified_at';
 
     const hashedToken = this.hashToken(token);
 
-    const rows = await Connection.raw(
-      `SELECT user_id, expires_at FROM ${table} WHERE token = ? AND user_id = ?`,
-      [hashedToken, userId]
-    );
+    const row = await this.query(table).where('token', hashedToken).where('user_id', userId).first();
+    if (!row) return false;
 
-    if (rows.length === 0) return false;
-
-    if (new Date(rows[0].expires_at) < new Date()) {
-      await Connection.raw(`DELETE FROM ${table} WHERE user_id = ?`, [userId]);
+    if (new Date(row.expires_at) < new Date()) {
+      await this.query(table).where('user_id', userId).delete();
       return false;
     }
 
@@ -654,7 +621,7 @@ export class AuthManager {
       .update({ [verifiedColumn]: new Date().toISOString() });
 
     // Delete all verification tokens for this user
-    await Connection.raw(`DELETE FROM ${table} WHERE user_id = ?`, [userId]);
+    await this.query(table).where('user_id', userId).delete();
 
     return true;
   }
@@ -672,7 +639,6 @@ export class AuthManager {
   /**
    * Send an OTP code via email.
    * Generates a numeric code, stores its hash, and sends the otp-code email template.
-   * Auto-creates the otp_codes table if it doesn't exist.
    *
    * @param email - User email address
    * @param purpose - Purpose identifier (default: 'login')
@@ -685,37 +651,26 @@ export class AuthManager {
 
     if (!user) return false;
 
-    const { Connection } = await import('../database/Connection.js');
-    const table = this.config.otp?.table ?? 'otp_codes';
+    const table = this.tableName(this.config.otp?.table ?? 'otp_codes', 'OTP table name');
     const expiresIn = this.config.otp?.expiresIn ?? 600;
     const length = this.config.otp?.length ?? 6;
 
-    await this.ensureTable(table, `
-      CREATE TABLE IF NOT EXISTS ${table} (
-        email TEXT NOT NULL,
-        code TEXT NOT NULL,
-        purpose TEXT NOT NULL DEFAULT 'login',
-        expires_at TEXT NOT NULL,
-        used_at TEXT,
-        created_at TEXT NOT NULL
-      )
-    `);
-
     // Delete expired/used codes for this email+purpose
-    await Connection.raw(
-      `DELETE FROM ${table} WHERE email = ? AND purpose = ?`,
-      [email, purpose]
-    );
+    await this.query(table).where('email', email).where('purpose', purpose).delete();
 
     // Generate numeric code
     const code = this.generateOtpCode(length);
     const hashedCode = this.hashToken(code);
     const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
 
-    await Connection.raw(
-      `INSERT INTO ${table} (email, code, purpose, expires_at, created_at) VALUES (?, ?, ?, ?, ?)`,
-      [email, hashedCode, purpose, expiresAt, new Date().toISOString()]
-    );
+    await this.query(table).insert({
+      email,
+      code: hashedCode,
+      purpose,
+      expires_at: expiresAt,
+      created_at: new Date().toISOString(),
+      used_at: null,
+    });
 
     const appName = this.config.appName ?? process.env.APP_NAME ?? 'Svelar';
     const expiresMinutes = Math.ceil(expiresIn / 60);
@@ -736,31 +691,29 @@ export class AuthManager {
    * Returns the user if valid, null otherwise.
    */
   async verifyOtp(email: string, code: string, purpose: string = 'login'): Promise<AuthUser | null> {
-    const { Connection } = await import('../database/Connection.js');
-    const table = this.config.otp?.table ?? 'otp_codes';
+    const table = this.tableName(this.config.otp?.table ?? 'otp_codes', 'OTP table name');
 
     const hashedCode = this.hashToken(code);
 
-    const rows = await Connection.raw(
-      `SELECT email, expires_at, used_at FROM ${table} WHERE code = ? AND email = ? AND purpose = ? AND used_at IS NULL`,
-      [hashedCode, email, purpose]
-    );
+    const row = await this.query(table)
+      .where('code', hashedCode)
+      .where('email', email)
+      .where('purpose', purpose)
+      .whereNull('used_at')
+      .first();
+    if (!row) return null;
 
-    if (rows.length === 0) return null;
-
-    if (new Date(rows[0].expires_at) < new Date()) {
-      await Connection.raw(
-        `DELETE FROM ${table} WHERE email = ? AND purpose = ?`,
-        [email, purpose]
-      );
+    if (new Date(row.expires_at) < new Date()) {
+      await this.query(table).where('email', email).where('purpose', purpose).delete();
       return null;
     }
 
     // Mark as used
-    await Connection.raw(
-      `UPDATE ${table} SET used_at = ? WHERE code = ? AND email = ? AND purpose = ?`,
-      [new Date().toISOString(), hashedCode, email, purpose]
-    );
+    await this.query(table)
+      .where('code', hashedCode)
+      .where('email', email)
+      .where('purpose', purpose)
+      .update({ used_at: new Date().toISOString() });
 
     const user = await this.config.model
       .where(this.config.identifierColumn, email)
@@ -796,29 +749,26 @@ export class AuthManager {
    * Call this from a scheduled task (e.g., daily).
    */
   async cleanupExpiredTokens(): Promise<{ passwordResets: number; verifications: number; otpCodes: number }> {
-    const { Connection } = await import('../database/Connection.js');
     const now = new Date().toISOString();
     let passwordResets = 0;
     let verifications = 0;
     let otpCodes = 0;
 
-    const prTable = this.config.passwordResets?.table ?? 'password_resets';
-    const evTable = this.config.emailVerification?.table ?? 'email_verifications';
-    const otpTable = this.config.otp?.table ?? 'otp_codes';
+    const prTable = this.tableName(this.config.passwordResets?.table ?? 'password_resets', 'Password resets table name');
+    const evTable = this.tableName(this.config.emailVerification?.table ?? 'email_verifications', 'Email verifications table name');
+    const otpTable = this.tableName(this.config.otp?.table ?? 'otp_codes', 'OTP table name');
 
     try {
-      const pr = await Connection.raw(`DELETE FROM ${prTable} WHERE expires_at < ?`, [now]);
-      passwordResets = pr?.changes ?? 0;
+      passwordResets = await this.query(prTable).where('expires_at', '<', now).delete();
     } catch { /* table may not exist */ }
 
     try {
-      const ev = await Connection.raw(`DELETE FROM ${evTable} WHERE expires_at < ?`, [now]);
-      verifications = ev?.changes ?? 0;
+      verifications = await this.query(evTable).where('expires_at', '<', now).delete();
     } catch { /* table may not exist */ }
 
     try {
-      const otp = await Connection.raw(`DELETE FROM ${otpTable} WHERE expires_at < ? OR used_at IS NOT NULL`, [now]);
-      otpCodes = otp?.changes ?? 0;
+      otpCodes = await this.query(otpTable).where('expires_at', '<', now).delete();
+      otpCodes += await this.query(otpTable).whereNotNull('used_at').delete();
     } catch { /* table may not exist */ }
 
     return { passwordResets, verifications, otpCodes };
@@ -835,15 +785,6 @@ export class AuthManager {
   private generateOtpCode(length: number): string {
     const digits = randomBytes(length);
     return Array.from(digits).map(b => (b % 10).toString()).join('');
-  }
-
-  private tablesEnsured = new Set<string>();
-
-  private async ensureTable(table: string, sql: string): Promise<void> {
-    if (this.tablesEnsured.has(table)) return;
-    const { Connection } = await import('../database/Connection.js');
-    await Connection.raw(sql);
-    this.tablesEnsured.add(table);
   }
 
   private async sendAuthEmail(templateName: string, to: string, vars: Record<string, any>): Promise<void> {
@@ -891,12 +832,20 @@ export class AuthenticateMiddleware extends Middleware {
       if (authHeader?.startsWith('Bearer ')) {
         const token = authHeader.slice(7);
 
-        // Try JWT
+        // Try JWT first, then fall back to opaque API tokens. resolveFromToken()
+        // returns null for malformed/non-JWT tokens, so fallback cannot live only in catch.
         try {
           user = await this.authManager.resolveFromToken(token);
         } catch {
-          // Not JWT, try API token
-          user = await this.authManager.resolveFromApiToken(token);
+          // JWT is not configured or failed unexpectedly. Try API token below.
+        }
+
+        if (!user) {
+          try {
+            user = await this.authManager.resolveFromApiToken(token);
+          } catch {
+            // Token table may not exist or token auth may not be configured.
+          }
         }
       }
     }

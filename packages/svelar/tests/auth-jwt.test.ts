@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { signJwt, verifyJwt, type JwtPayload } from '../src/auth/Auth.js';
+import { AuthenticateMiddleware, signJwt, verifyJwt, type JwtPayload } from '../src/auth/Auth.js';
+import type { MiddlewareContext } from '../src/middleware/Middleware.js';
 
 describe('JWT utilities', () => {
   const secret = 'test-secret-key-for-jwt-testing';
@@ -161,5 +162,47 @@ describe('AuthManager', () => {
     // After logout, should still be false
     await auth.logout();
     expect(auth.check()).toBe(false);
+  });
+});
+
+describe('AuthenticateMiddleware', () => {
+  function createCtx(token: string): MiddlewareContext {
+    return {
+      event: {
+        request: {
+          headers: {
+            get: (name: string) => name.toLowerCase() === 'authorization' ? `Bearer ${token}` : null,
+          },
+        },
+        locals: {},
+      },
+      params: {},
+      locals: {},
+    } as MiddlewareContext;
+  }
+
+  it('falls back to API tokens when Bearer token is not a valid JWT', async () => {
+    const user = { getAttribute: (key: string) => key === 'id' ? 123 : null };
+    let apiToken: string | null = null;
+
+    const auth = {
+      resolveFromToken: async () => null,
+      resolveFromApiToken: async (token: string) => {
+        apiToken = token;
+        return user;
+      },
+    };
+
+    const middleware = new AuthenticateMiddleware(auth as any);
+    const ctx = createCtx('opaque-api-token');
+    let nextCalled = false;
+
+    await middleware.handle(ctx, async () => {
+      nextCalled = true;
+    });
+
+    expect(apiToken).toBe('opaque-api-token');
+    expect(ctx.event.locals.user).toBe(user);
+    expect(nextCalled).toBe(true);
   });
 });

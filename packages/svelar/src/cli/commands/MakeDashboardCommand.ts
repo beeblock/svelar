@@ -118,13 +118,13 @@ export class MakeDashboardCommand extends Command {
     this.newLine();
     this.info('Setup instructions:');
     this.log('  1. Import dashboard modules in your app:');
-    this.log('     import { ScheduleMonitor } from "svelar/scheduler/ScheduleMonitor";');
-    this.log('     import { JobMonitor } from "svelar/queue/JobMonitor";');
-    this.log('     import { LogViewer } from "svelar/logging/LogViewer";');
+    this.log('     import { ScheduleMonitor } from "@beeblock/svelar/scheduler/ScheduleMonitor";');
+    this.log('     import { JobMonitor } from "@beeblock/svelar/queue/JobMonitor";');
+    this.log('     import { LogViewer } from "@beeblock/svelar/logging/LogViewer";');
     this.newLine();
     this.log('  2. Configure auth middleware on admin routes:');
-    this.log('     - Replace "// TODO: Add admin middleware check" with your auth logic');
-    this.log('     - Example: if (!event.locals.user?.isAdmin) return error(403, "Forbidden");');
+    this.log('     - API routes require event.locals.user.role === "admin" by default.');
+    this.log('     - Adjust the generated requireAdmin check if your app uses a different admin contract.');
     this.newLine();
     this.log('  3. Access the dashboard:');
     this.log('     - Navigate to: /admin/dashboard');
@@ -149,7 +149,10 @@ import type { RequestHandler } from '@sveltejs/kit';
  * Returns system health status
  */
 export const GET: RequestHandler = async (event) => {
-  // TODO: Add admin middleware check
+  if (!event.locals.user || event.locals.user.role !== 'admin') {
+    return new Response('Unauthorized', { status: 403 });
+  }
+
 
   const health = {
     status: 'ok',
@@ -179,7 +182,10 @@ import type { RequestHandler } from '@sveltejs/kit';
  * - offset: pagination offset (default: 0)
  */
 export const GET: RequestHandler = async (event) => {
-  // TODO: Add admin middleware check
+  if (!event.locals.user || event.locals.user.role !== 'admin') {
+    return new Response('Unauthorized', { status: 403 });
+  }
+
 
   const { searchParams } = event.url;
   const status = searchParams.get('status') || 'all';
@@ -188,7 +194,7 @@ export const GET: RequestHandler = async (event) => {
   const offset = parseInt(searchParams.get('offset') || '0');
 
   try {
-    const { JobMonitor } = await import('svelar/queue/JobMonitor');
+    const { JobMonitor } = await import('@beeblock/svelar/queue/JobMonitor');
 
     const jobs = await JobMonitor.listJobs({
       queue: queueName,
@@ -225,12 +231,15 @@ import type { RequestHandler } from '@sveltejs/kit';
  * Retry a failed job
  */
 export const POST: RequestHandler = async (event) => {
-  // TODO: Add admin middleware check
+  if (!event.locals.user || event.locals.user.role !== 'admin') {
+    return new Response('Unauthorized', { status: 403 });
+  }
+
 
   const { id } = event.params;
 
   try {
-    const { JobMonitor } = await import('svelar/queue/JobMonitor');
+    const { JobMonitor } = await import('@beeblock/svelar/queue/JobMonitor');
     await JobMonitor.retryJob(id);
 
     return json({ success: true, message: 'Job queued for retry' });
@@ -255,12 +264,15 @@ import type { RequestHandler } from '@sveltejs/kit';
  * Remove a job from the queue
  */
 export const DELETE: RequestHandler = async (event) => {
-  // TODO: Add admin middleware check
+  if (!event.locals.user || event.locals.user.role !== 'admin') {
+    return new Response('Unauthorized', { status: 403 });
+  }
+
 
   const { id } = event.params;
 
   try {
-    const { JobMonitor } = await import('svelar/queue/JobMonitor');
+    const { JobMonitor } = await import('@beeblock/svelar/queue/JobMonitor');
     await JobMonitor.deleteJob(id);
 
     return json({ success: true, message: 'Job removed' });
@@ -285,10 +297,13 @@ import type { RequestHandler } from '@sveltejs/kit';
  * List all scheduled tasks
  */
 export const GET: RequestHandler = async (event) => {
-  // TODO: Add admin middleware check
+  if (!event.locals.user || event.locals.user.role !== 'admin') {
+    return new Response('Unauthorized', { status: 403 });
+  }
+
 
   try {
-    const { ScheduleMonitor } = await import('svelar/scheduler/ScheduleMonitor');
+    const { ScheduleMonitor } = await import('@beeblock/svelar/scheduler/ScheduleMonitor');
 
     const tasks = await ScheduleMonitor.listTasks();
     const health = await ScheduleMonitor.getHealth();
@@ -318,12 +333,15 @@ import type { RequestHandler } from '@sveltejs/kit';
  * Manually trigger a scheduled task
  */
 export const POST: RequestHandler = async (event) => {
-  // TODO: Add admin middleware check
+  if (!event.locals.user || event.locals.user.role !== 'admin') {
+    return new Response('Unauthorized', { status: 403 });
+  }
+
 
   const { name } = event.params;
 
   try {
-    const { ScheduleMonitor } = await import('svelar/scheduler/ScheduleMonitor');
+    const { ScheduleMonitor } = await import('@beeblock/svelar/scheduler/ScheduleMonitor');
     await ScheduleMonitor.runTask(name);
 
     return json({ success: true, message: \`Task '\${name}' triggered\` });
@@ -348,14 +366,17 @@ import type { RequestHandler } from '@sveltejs/kit';
  * Enable or disable a scheduled task
  */
 export const POST: RequestHandler = async (event) => {
-  // TODO: Add admin middleware check
+  if (!event.locals.user || event.locals.user.role !== 'admin') {
+    return new Response('Unauthorized', { status: 403 });
+  }
+
 
   const { name } = event.params;
   const body = await event.request.json();
   const enabled = body.enabled ?? true;
 
   try {
-    const { ScheduleMonitor } = await import('svelar/scheduler/ScheduleMonitor');
+    const { ScheduleMonitor } = await import('@beeblock/svelar/scheduler/ScheduleMonitor');
     if (enabled) {
       ScheduleMonitor.enableTask(name);
     } else {
@@ -391,7 +412,10 @@ import type { RequestHandler } from '@sveltejs/kit';
  * - offset: pagination offset (default: 0)
  */
 export const GET: RequestHandler = async (event) => {
-  // TODO: Add admin middleware check
+  if (!event.locals.user || event.locals.user.role !== 'admin') {
+    return new Response('Unauthorized', { status: 403 });
+  }
+
 
   const { searchParams } = event.url;
   const level = searchParams.get('level');
@@ -401,7 +425,7 @@ export const GET: RequestHandler = async (event) => {
   const offset = parseInt(searchParams.get('offset') || '0');
 
   try {
-    const { LogViewer } = await import('svelar/logging/LogViewer');
+    const { LogViewer } = await import('@beeblock/svelar/logging/LogViewer');
 
     const logs = LogViewer.query({
       level: level as any,
@@ -441,9 +465,12 @@ export const GET: RequestHandler = async (event) => {
  * Returns a text/event-stream response with real-time log entries
  */
 export const GET: RequestHandler = async (event) => {
-  // TODO: Add admin middleware check
+  if (!event.locals.user || event.locals.user.role !== 'admin') {
+    return new Response('Unauthorized', { status: 403 });
+  }
 
-  const { LogViewer } = await import('svelar/logging/LogViewer');
+
+  const { LogViewer } = await import('@beeblock/svelar/logging/LogViewer');
 
   // Set up SSE headers
   const headers = {
@@ -486,12 +513,15 @@ import type { RequestHandler } from '@sveltejs/kit';
  * Dashboard overview statistics
  */
 export const GET: RequestHandler = async (event) => {
-  // TODO: Add admin middleware check
+  if (!event.locals.user || event.locals.user.role !== 'admin') {
+    return new Response('Unauthorized', { status: 403 });
+  }
+
 
   try {
-    const { JobMonitor } = await import('svelar/queue/JobMonitor');
-    const { ScheduleMonitor } = await import('svelar/scheduler/ScheduleMonitor');
-    const { LogViewer } = await import('svelar/logging/LogViewer');
+    const { JobMonitor } = await import('@beeblock/svelar/queue/JobMonitor');
+    const { ScheduleMonitor } = await import('@beeblock/svelar/scheduler/ScheduleMonitor');
+    const { LogViewer } = await import('@beeblock/svelar/logging/LogViewer');
 
     const [queueHealth, recentErrors] = await Promise.all([
       JobMonitor.getHealth(),

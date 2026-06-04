@@ -38,6 +38,7 @@ class TestCommand extends Command {
   public testError(msg: string) { this.error(msg); }
   public testTable(headers: string[], rows: string[][]) { this.table(headers, rows); }
   public testNewLine() { this.newLine(); }
+  public testBootstrap() { return this.bootstrap(); }
 }
 
 describe('Command Base Class', () => {
@@ -167,6 +168,23 @@ describe('Command Base Class', () => {
       expect(logSpy).toHaveBeenCalledWith('args: test');
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Verbose mode'));
       logSpy.mockRestore();
+    });
+  });
+
+  describe('bootstrap()', () => {
+    it('imports src/app before falling back to database config', async () => {
+      mkdirSync(join(tmpDir, 'src'), { recursive: true });
+      writeFileSync(
+        join(tmpDir, 'src', 'app.ts'),
+        `globalThis.__svelarTestAppBooted = true;\n`,
+      );
+
+      try {
+        await cmd.testBootstrap();
+        expect((globalThis as any).__svelarTestAppBooted).toBe(true);
+      } finally {
+        delete (globalThis as any).__svelarTestAppBooted;
+      }
     });
   });
 });

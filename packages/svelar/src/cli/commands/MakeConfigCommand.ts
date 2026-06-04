@@ -13,7 +13,7 @@ export class MakeConfigCommand extends Command {
   flags = [];
 
   private templates: Record<string, string> = {
-    app: `import { env } from 'svelar/config';
+    app: `import { env } from '@beeblock/svelar/config';
 
 export default {
   name: env('APP_NAME', 'Svelar'),
@@ -25,7 +25,7 @@ export default {
   locale: 'en',
 };
 `,
-    database: `import { env } from 'svelar/config';
+    database: `import { env } from '@beeblock/svelar/config';
 
 export default {
   default: env('DB_DRIVER', 'sqlite'),
@@ -37,19 +37,21 @@ export default {
     },
 
     postgres: {
-      driver: 'postgresql' as const,
+      driver: 'postgres' as const,
+      url: env('DATABASE_URL', ''),
       host: env('DB_HOST', 'localhost'),
       port: env<number>('DB_PORT', 5432),
-      database: env('DB_NAME', 'svelar'),
+      database: env('DB_NAME', 'svelar_db'),
       user: env('DB_USER', 'postgres'),
       password: env('DB_PASSWORD', ''),
     },
 
     mysql: {
-      driver: 'mysql2' as const,
+      driver: 'mysql' as const,
+      url: env('DATABASE_URL', ''),
       host: env('DB_HOST', 'localhost'),
       port: env<number>('DB_PORT', 3306),
-      database: env('DB_NAME', 'svelar'),
+      database: env('DB_NAME', 'svelar_db'),
       user: env('DB_USER', 'root'),
       password: env('DB_PASSWORD', ''),
     },
@@ -61,7 +63,7 @@ export default {
   },
 };
 `,
-    auth: `import { env } from 'svelar/config';
+    auth: `import { env } from '@beeblock/svelar/config';
 
 export default {
   guard: env('AUTH_GUARD', 'session'),
@@ -82,7 +84,7 @@ export default {
   },
 };
 `,
-    mail: `import { env } from 'svelar/config';
+    mail: `import { env } from '@beeblock/svelar/config';
 
 export default {
   driver: env('MAIL_DRIVER', 'log'),
@@ -101,7 +103,7 @@ export default {
   },
 };
 `,
-    cache: `import { env } from 'svelar/config';
+    cache: `import { env } from '@beeblock/svelar/config';
 
 export default {
   default: env('CACHE_DRIVER', 'memory'),
@@ -111,17 +113,21 @@ export default {
       driver: 'memory' as const,
     },
 
-    database: {
-      driver: 'database' as const,
-      table: 'cache',
-      ttl: 60 * 60,  // 1 hour default
+    file: {
+      driver: 'file' as const,
+      path: 'storage/cache',
+    },
+
+    redis: {
+      driver: 'redis' as const,
+      url: env('REDIS_URL', 'redis://localhost:6379'),
     },
   },
 
   prefix: 'svelar_cache_',
 };
 `,
-    queue: `import { env } from 'svelar/config';
+    queue: `import { env } from '@beeblock/svelar/config';
 
 export default {
   default: env('QUEUE_DRIVER', 'sync'),
@@ -155,7 +161,7 @@ export default {
   },
 };
 `,
-    storage: `import { env } from 'svelar/config';
+    storage: `import { env } from '@beeblock/svelar/config';
 
 export default {
   default: env('STORAGE_DISK', 'local'),
@@ -184,7 +190,7 @@ export default {
   },
 };
 `,
-    broadcasting: `import { env } from 'svelar/config';
+    broadcasting: `import { env } from '@beeblock/svelar/config';
 
 export default {
   default: env('BROADCAST_DRIVER', 'pusher'),
@@ -212,7 +218,7 @@ export default {
   },
 };
 `,
-    logging: `import { env } from 'svelar/config';
+    logging: `import { env } from '@beeblock/svelar/config';
 
 export default {
   default: env('LOG_CHANNEL', 'console'),
@@ -264,7 +270,7 @@ export default {
   }
 
   private blankTemplate(name: string): string {
-    return `import { env } from 'svelar/config';
+    return `import { env } from '@beeblock/svelar/config';
 
 export default {
   // Add your ${name} configuration here

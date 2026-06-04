@@ -1,13 +1,12 @@
 /**
  * Svelar Teams & Workspaces
  * Multi-tenant team support for SaaS applications.
- *
- * Tables (`teams`, `team_members`, `team_invitations`) are auto-created
- * on first use when the database driver is configured — no migration required.
  */
 
 import { randomUUID } from 'crypto';
 import { singleton } from '../support/singleton.js';
+import { assertSqlIdentifier } from '../database/Connection.js';
+import { QueryBuilder } from '../orm/QueryBuilder.js';
 
 export interface Team {
   id: string | number;
@@ -60,165 +59,37 @@ class TeamManager {
   private memInvitations: TeamInvitation[] = [];
 
   private currentTeamId: string | number | null = null;
-  private tablesEnsured = false;
 
   configure(config: TeamsConfig): void {
     this.config = { ...this.config, ...config };
-    this.tablesEnsured = false;
   }
 
   private get teamsTable(): string {
-    return this.config.table || 'teams';
+    return assertSqlIdentifier(this.config.table || 'teams', 'Teams table name');
   }
 
   private get membersTable(): string {
-    return this.config.membersTable || 'team_members';
+    return assertSqlIdentifier(this.config.membersTable || 'team_members', 'Team members table name');
   }
 
   private get invitationsTable(): string {
-    return this.config.invitationsTable || 'team_invitations';
+    return assertSqlIdentifier(this.config.invitationsTable || 'team_invitations', 'Team invitations table name');
   }
 
   private get useDb(): boolean {
     return this.config.driver === 'database';
   }
 
-  // ── Database helpers ─────────────────────────────────────
-
-  private async getConnection() {
-    const { Connection } = await import('../database/Connection.js');
-    return Connection;
+  private teamsQuery(): QueryBuilder<any> {
+    return new QueryBuilder(this.teamsTable);
   }
 
-  private async getDriver(): Promise<string> {
-    const conn = await this.getConnection();
-    return conn.getDriver();
+  private membersQuery(): QueryBuilder<any> {
+    return new QueryBuilder(this.membersTable);
   }
 
-  /**
-   * Auto-create teams, team_members, and team_invitations tables on first use.
-   */
-  async ensureTables(): Promise<void> {
-    if (this.tablesEnsured || !this.useDb) return;
-
-    const conn = await this.getConnection();
-    const driver = conn.getDriver();
-    const t = this.teamsTable;
-    const m = this.membersTable;
-    const inv = this.invitationsTable;
-
-    switch (driver) {
-      case 'sqlite':
-        await conn.raw(
-          `CREATE TABLE IF NOT EXISTS ${t} (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            slug TEXT NOT NULL UNIQUE,
-            owner_id TEXT NOT NULL,
-            personal_team INTEGER NOT NULL DEFAULT 0,
-            metadata TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-          )`,
-        );
-        await conn.raw(
-          `CREATE TABLE IF NOT EXISTS ${m} (
-            id TEXT PRIMARY KEY,
-            team_id TEXT NOT NULL,
-            user_id TEXT NOT NULL,
-            role TEXT NOT NULL DEFAULT 'member',
-            joined_at TEXT NOT NULL,
-            UNIQUE(team_id, user_id)
-          )`,
-        );
-        await conn.raw(
-          `CREATE TABLE IF NOT EXISTS ${inv} (
-            id TEXT PRIMARY KEY,
-            team_id TEXT NOT NULL,
-            email TEXT NOT NULL,
-            role TEXT NOT NULL DEFAULT 'member',
-            token TEXT NOT NULL UNIQUE,
-            expires_at TEXT NOT NULL,
-            accepted_at TEXT,
-            created_at TEXT NOT NULL
-          )`,
-        );
-        break;
-      case 'postgres':
-        await conn.raw(
-          `CREATE TABLE IF NOT EXISTS ${t} (
-            id VARCHAR(255) PRIMARY KEY,
-            name VARCHAR(255) NOT NULL,
-            slug VARCHAR(255) NOT NULL UNIQUE,
-            owner_id VARCHAR(255) NOT NULL,
-            personal_team BOOLEAN NOT NULL DEFAULT FALSE,
-            metadata JSONB,
-            created_at TIMESTAMPTZ NOT NULL,
-            updated_at TIMESTAMPTZ NOT NULL
-          )`,
-        );
-        await conn.raw(
-          `CREATE TABLE IF NOT EXISTS ${m} (
-            id VARCHAR(255) PRIMARY KEY,
-            team_id VARCHAR(255) NOT NULL,
-            user_id VARCHAR(255) NOT NULL,
-            role VARCHAR(50) NOT NULL DEFAULT 'member',
-            joined_at TIMESTAMPTZ NOT NULL,
-            UNIQUE(team_id, user_id)
-          )`,
-        );
-        await conn.raw(
-          `CREATE TABLE IF NOT EXISTS ${inv} (
-            id VARCHAR(255) PRIMARY KEY,
-            team_id VARCHAR(255) NOT NULL,
-            email VARCHAR(255) NOT NULL,
-            role VARCHAR(50) NOT NULL DEFAULT 'member',
-            token VARCHAR(255) NOT NULL UNIQUE,
-            expires_at TIMESTAMPTZ NOT NULL,
-            accepted_at TIMESTAMPTZ,
-            created_at TIMESTAMPTZ NOT NULL
-          )`,
-        );
-        break;
-      case 'mysql':
-        await conn.raw(
-          `CREATE TABLE IF NOT EXISTS ${t} (
-            id VARCHAR(255) PRIMARY KEY,
-            name VARCHAR(255) NOT NULL,
-            slug VARCHAR(255) NOT NULL UNIQUE,
-            owner_id VARCHAR(255) NOT NULL,
-            personal_team TINYINT(1) NOT NULL DEFAULT 0,
-            metadata JSON,
-            created_at DATETIME NOT NULL,
-            updated_at DATETIME NOT NULL
-          ) ENGINE=InnoDB`,
-        );
-        await conn.raw(
-          `CREATE TABLE IF NOT EXISTS ${m} (
-            id VARCHAR(255) PRIMARY KEY,
-            team_id VARCHAR(255) NOT NULL,
-            user_id VARCHAR(255) NOT NULL,
-            role VARCHAR(50) NOT NULL DEFAULT 'member',
-            joined_at DATETIME NOT NULL,
-            UNIQUE(team_id, user_id)
-          ) ENGINE=InnoDB`,
-        );
-        await conn.raw(
-          `CREATE TABLE IF NOT EXISTS ${inv} (
-            id VARCHAR(255) PRIMARY KEY,
-            team_id VARCHAR(255) NOT NULL,
-            email VARCHAR(255) NOT NULL,
-            role VARCHAR(50) NOT NULL DEFAULT 'member',
-            token VARCHAR(255) NOT NULL UNIQUE,
-            expires_at DATETIME NOT NULL,
-            accepted_at DATETIME,
-            created_at DATETIME NOT NULL
-          ) ENGINE=InnoDB`,
-        );
-        break;
-    }
-
-    this.tablesEnsured = true;
+  private invitationsQuery(): QueryBuilder<any> {
+    return new QueryBuilder(this.invitationsTable);
   }
 
   private rowToTeam(row: any): Team {
@@ -277,18 +148,25 @@ class TeamManager {
     };
 
     if (this.useDb) {
-      await this.ensureTables();
-      const conn = await this.getConnection();
       const nowIso = new Date(now).toISOString();
-      await conn.raw(
-        `INSERT INTO ${this.teamsTable} (id, name, slug, owner_id, personal_team, metadata, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [team.id, team.name, team.slug, team.ownerId, team.personalTeam ? 1 : 0, null, nowIso, nowIso],
-      );
+      await this.teamsQuery().insert({
+        id: team.id,
+        name: team.name,
+        slug: team.slug,
+        owner_id: team.ownerId,
+        personal_team: team.personalTeam ? 1 : 0,
+        metadata: null,
+        created_at: nowIso,
+        updated_at: nowIso,
+      });
       // Auto-add owner as member
-      await conn.raw(
-        `INSERT INTO ${this.membersTable} (id, team_id, user_id, role, joined_at) VALUES (?, ?, ?, ?, ?)`,
-        [randomUUID(), team.id, data.ownerId, 'owner', nowIso],
-      );
+      await this.membersQuery().insert({
+        id: randomUUID(),
+        team_id: team.id,
+        user_id: data.ownerId,
+        role: 'owner',
+        joined_at: nowIso,
+      });
     } else {
       this.memTeams.push(team);
       this.memMembers.push({
@@ -308,8 +186,6 @@ class TeamManager {
     data: Partial<Pick<Team, 'name' | 'metadata'>>
   ): Promise<Team | null> {
     if (this.useDb) {
-      await this.ensureTables();
-      const conn = await this.getConnection();
       const existing = await this.findById(teamId);
       if (!existing) return null;
 
@@ -320,10 +196,12 @@ class TeamManager {
         ? JSON.stringify(data.metadata)
         : (existing.metadata ? JSON.stringify(existing.metadata) : null);
 
-      await conn.raw(
-        `UPDATE ${this.teamsTable} SET name = ?, slug = ?, metadata = ?, updated_at = ? WHERE id = ?`,
-        [newName, newSlug, newMeta, nowIso, teamId],
-      );
+      await this.teamsQuery().where('id', teamId).update({
+        name: newName,
+        slug: newSlug,
+        metadata: newMeta,
+        updated_at: nowIso,
+      });
 
       return this.findById(teamId);
     }
@@ -338,14 +216,11 @@ class TeamManager {
 
   async delete(teamId: string | number): Promise<boolean> {
     if (this.useDb) {
-      await this.ensureTables();
-      const conn = await this.getConnection();
       // Cascade: delete invitations, members, then team
-      await conn.raw(`DELETE FROM ${this.invitationsTable} WHERE team_id = ?`, [teamId]);
-      await conn.raw(`DELETE FROM ${this.membersTable} WHERE team_id = ?`, [teamId]);
-      const result: any = await conn.raw(`DELETE FROM ${this.teamsTable} WHERE id = ?`, [teamId]);
-      // Different drivers return changes differently; check if the team existed
-      return true;
+      await this.invitationsQuery().where('team_id', teamId).delete();
+      await this.membersQuery().where('team_id', teamId).delete();
+      const deleted = await this.teamsQuery().where('id', teamId).delete();
+      return deleted > 0;
     }
 
     const index = this.memTeams.findIndex((t) => t.id === teamId);
@@ -359,13 +234,8 @@ class TeamManager {
 
   async findById(teamId: string | number): Promise<Team | null> {
     if (this.useDb) {
-      await this.ensureTables();
-      const conn = await this.getConnection();
-      const rows: any[] = await conn.raw(
-        `SELECT * FROM ${this.teamsTable} WHERE id = ?`,
-        [teamId],
-      );
-      return rows.length > 0 ? this.rowToTeam(rows[0]) : null;
+      const row = await this.teamsQuery().where('id', teamId).first();
+      return row ? this.rowToTeam(row) : null;
     }
 
     return this.memTeams.find((t) => t.id === teamId) || null;
@@ -373,13 +243,8 @@ class TeamManager {
 
   async findBySlug(slug: string): Promise<Team | null> {
     if (this.useDb) {
-      await this.ensureTables();
-      const conn = await this.getConnection();
-      const rows: any[] = await conn.raw(
-        `SELECT * FROM ${this.teamsTable} WHERE slug = ?`,
-        [slug],
-      );
-      return rows.length > 0 ? this.rowToTeam(rows[0]) : null;
+      const row = await this.teamsQuery().where('slug', slug).first();
+      return row ? this.rowToTeam(row) : null;
     }
 
     return this.memTeams.find((t) => t.slug === slug) || null;
@@ -393,22 +258,22 @@ class TeamManager {
     role: string = 'member'
   ): Promise<TeamMember> {
     if (this.useDb) {
-      await this.ensureTables();
-      const conn = await this.getConnection();
-
       // Check if already a member
-      const existing: any[] = await conn.raw(
-        `SELECT * FROM ${this.membersTable} WHERE team_id = ? AND user_id = ?`,
-        [teamId, userId],
-      );
-      if (existing.length > 0) return this.rowToMember(existing[0]);
+      const existing = await this.membersQuery()
+        .where('team_id', teamId)
+        .where('user_id', userId)
+        .first();
+      if (existing) return this.rowToMember(existing);
 
       const id = randomUUID();
       const nowIso = new Date().toISOString();
-      await conn.raw(
-        `INSERT INTO ${this.membersTable} (id, team_id, user_id, role, joined_at) VALUES (?, ?, ?, ?, ?)`,
-        [id, teamId, userId, role, nowIso],
-      );
+      await this.membersQuery().insert({
+        id,
+        team_id: teamId,
+        user_id: userId,
+        role,
+        joined_at: nowIso,
+      });
 
       return { id, teamId, userId, role, joinedAt: Date.now() };
     }
@@ -436,13 +301,11 @@ class TeamManager {
     userId: string | number
   ): Promise<boolean> {
     if (this.useDb) {
-      await this.ensureTables();
-      const conn = await this.getConnection();
-      await conn.raw(
-        `DELETE FROM ${this.membersTable} WHERE team_id = ? AND user_id = ?`,
-        [teamId, userId],
-      );
-      return true;
+      const deleted = await this.membersQuery()
+        .where('team_id', teamId)
+        .where('user_id', userId)
+        .delete();
+      return deleted > 0;
     }
 
     const index = this.memMembers.findIndex(
@@ -460,13 +323,11 @@ class TeamManager {
     role: string
   ): Promise<boolean> {
     if (this.useDb) {
-      await this.ensureTables();
-      const conn = await this.getConnection();
-      await conn.raw(
-        `UPDATE ${this.membersTable} SET role = ? WHERE team_id = ? AND user_id = ?`,
-        [role, teamId, userId],
-      );
-      return true;
+      const updated = await this.membersQuery()
+        .where('team_id', teamId)
+        .where('user_id', userId)
+        .update({ role });
+      return updated > 0;
     }
 
     const member = this.memMembers.find(
@@ -480,12 +341,7 @@ class TeamManager {
 
   async getMembers(teamId: string | number): Promise<TeamMember[]> {
     if (this.useDb) {
-      await this.ensureTables();
-      const conn = await this.getConnection();
-      const rows: any[] = await conn.raw(
-        `SELECT * FROM ${this.membersTable} WHERE team_id = ?`,
-        [teamId],
-      );
+      const rows = await this.membersQuery().where('team_id', teamId).get();
       return rows.map((r) => this.rowToMember(r));
     }
 
@@ -494,14 +350,11 @@ class TeamManager {
 
   async getUserTeams(userId: string | number): Promise<Team[]> {
     if (this.useDb) {
-      await this.ensureTables();
-      const conn = await this.getConnection();
-      const rows: any[] = await conn.raw(
-        `SELECT t.* FROM ${this.teamsTable} t
-         INNER JOIN ${this.membersTable} m ON m.team_id = t.id
-         WHERE m.user_id = ?`,
-        [userId],
-      );
+      const rows = await new QueryBuilder<any>(`${this.teamsTable} t`)
+        .select('t.*')
+        .join(`${this.membersTable} m`, 'm.team_id', '=', 't.id')
+        .where('m.user_id', userId)
+        .get();
       return rows.map((r) => this.rowToTeam(r));
     }
 
@@ -514,13 +367,10 @@ class TeamManager {
 
   async isMember(teamId: string | number, userId: string | number): Promise<boolean> {
     if (this.useDb) {
-      await this.ensureTables();
-      const conn = await this.getConnection();
-      const rows: any[] = await conn.raw(
-        `SELECT 1 FROM ${this.membersTable} WHERE team_id = ? AND user_id = ?`,
-        [teamId, userId],
-      );
-      return rows.length > 0;
+      return this.membersQuery()
+        .where('team_id', teamId)
+        .where('user_id', userId)
+        .exists();
     }
 
     return this.memMembers.some(
@@ -534,13 +384,11 @@ class TeamManager {
     role: string
   ): Promise<boolean> {
     if (this.useDb) {
-      await this.ensureTables();
-      const conn = await this.getConnection();
-      const rows: any[] = await conn.raw(
-        `SELECT 1 FROM ${this.membersTable} WHERE team_id = ? AND user_id = ? AND role = ?`,
-        [teamId, userId, role],
-      );
-      return rows.length > 0;
+      return this.membersQuery()
+        .where('team_id', teamId)
+        .where('user_id', userId)
+        .where('role', role)
+        .exists();
     }
 
     const member = this.memMembers.find(
@@ -569,17 +417,16 @@ class TeamManager {
     };
 
     if (this.useDb) {
-      await this.ensureTables();
-      const conn = await this.getConnection();
-      await conn.raw(
-        `INSERT INTO ${this.invitationsTable} (id, team_id, email, role, token, expires_at, accepted_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          invitation.id, teamId, email, role, invitation.token,
-          new Date(invitation.expiresAt).toISOString(),
-          null,
-          new Date(now).toISOString(),
-        ],
-      );
+      await this.invitationsQuery().insert({
+        id: invitation.id,
+        team_id: teamId,
+        email,
+        role,
+        token: invitation.token,
+        expires_at: new Date(invitation.expiresAt).toISOString(),
+        accepted_at: null,
+        created_at: new Date(now).toISOString(),
+      });
     } else {
       // Verify team exists for memory driver
       const team = this.memTeams.find((t) => t.id === teamId);
@@ -596,27 +443,21 @@ class TeamManager {
     userId: string | number
   ): Promise<boolean> {
     if (this.useDb) {
-      await this.ensureTables();
-      const conn = await this.getConnection();
       const nowIso = new Date().toISOString();
 
-      const rows: any[] = await conn.raw(
-        `SELECT * FROM ${this.invitationsTable} WHERE token = ? AND accepted_at IS NULL`,
-        [token],
-      );
-      if (rows.length === 0) return false;
+      const inv = await this.invitationsQuery()
+        .where('token', token)
+        .whereNull('accepted_at')
+        .first();
+      if (!inv) return false;
 
-      const inv = rows[0];
       if (new Date(inv.expires_at).getTime() < Date.now()) return false;
 
       // Add as member
       await this.addMember(inv.team_id, userId, inv.role);
 
       // Mark as accepted
-      await conn.raw(
-        `UPDATE ${this.invitationsTable} SET accepted_at = ? WHERE id = ?`,
-        [nowIso, inv.id],
-      );
+      await this.invitationsQuery().where('id', inv.id).update({ accepted_at: nowIso });
 
       return true;
     }
@@ -632,13 +473,8 @@ class TeamManager {
 
   async cancelInvitation(invitationId: string): Promise<boolean> {
     if (this.useDb) {
-      await this.ensureTables();
-      const conn = await this.getConnection();
-      await conn.raw(
-        `DELETE FROM ${this.invitationsTable} WHERE id = ?`,
-        [invitationId],
-      );
-      return true;
+      const deleted = await this.invitationsQuery().where('id', invitationId).delete();
+      return deleted > 0;
     }
 
     const index = this.memInvitations.findIndex((i) => i.id === invitationId);
@@ -650,13 +486,12 @@ class TeamManager {
 
   async getPendingInvitations(teamId: string | number): Promise<TeamInvitation[]> {
     if (this.useDb) {
-      await this.ensureTables();
-      const conn = await this.getConnection();
       const nowIso = new Date().toISOString();
-      const rows: any[] = await conn.raw(
-        `SELECT * FROM ${this.invitationsTable} WHERE team_id = ? AND accepted_at IS NULL AND expires_at > ?`,
-        [teamId, nowIso],
-      );
+      const rows = await this.invitationsQuery()
+        .where('team_id', teamId)
+        .whereNull('accepted_at')
+        .where('expires_at', '>', nowIso)
+        .get();
       return rows.map((r) => this.rowToInvitation(r));
     }
 

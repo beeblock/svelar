@@ -4,7 +4,10 @@
  */
 
 import { randomUUID } from 'crypto';
+import { join } from 'node:path';
 import { singleton } from '../support/singleton.js';
+import { assertSqlIdentifier } from '../database/Connection.js';
+import { QueryBuilder } from '../orm/QueryBuilder.js';
 
 export interface EmailTemplate {
   id: string;
@@ -57,13 +60,21 @@ class EmailTemplateManager {
     if (this.config.driver === 'memory') {
       this.templates.set(template.name, record);
     } else if (this.config.driver === 'database') {
-      try {
-        const { Connection } = await import('../database/Connection.js');
-        await Connection.connection();
-        // Would insert into email_templates table
-      } catch {
-        this.templates.set(template.name, record);
-      }
+      await this.query().where('name', record.name).delete();
+      await this.query().insert({
+        id: record.id,
+        name: record.name,
+        subject: record.subject,
+        html: record.html,
+        text: record.text ?? null,
+        variables: JSON.stringify(record.variables),
+        category: record.category ?? null,
+        active: record.active ? 1 : 0,
+        created_at: record.createdAt,
+        updated_at: record.updatedAt,
+      });
+    } else if (this.config.driver === 'file') {
+      await this.writeFileTemplate(record);
     }
 
     return record;
@@ -90,11 +101,40 @@ class EmailTemplateManager {
 
   /** Get a template by name */
   async get(name: string): Promise<EmailTemplate | null> {
+    if (this.config.driver === 'database') {
+      const row = await this.query().where('name', name).first();
+      if (row) return this.rowToTemplate(row);
+    } else if (this.config.driver === 'file') {
+      const template = await this.readFileTemplate(name);
+      if (template) return template;
+    }
+
     return this.templates.get(name) || null;
   }
 
   /** List all templates */
   async list(category?: string): Promise<EmailTemplate[]> {
+    if (this.config.driver === 'database') {
+      const query = this.query();
+      if (category) query.where('category', category);
+      const rows = await query.orderBy('name').get();
+      const records = rows.map((row: any) => this.rowToTemplate(row));
+      const names = new Set(records.map((template: EmailTemplate) => template.name));
+      const defaults = Array.from(this.templates.values()).filter((template) => {
+        return !names.has(template.name) && (!category || template.category === category);
+      });
+      return [...records, ...defaults];
+    }
+
+    if (this.config.driver === 'file') {
+      const records = await this.listFileTemplates(category);
+      const names = new Set(records.map((template) => template.name));
+      const defaults = Array.from(this.templates.values()).filter((template) => {
+        return !names.has(template.name) && (!category || template.category === category);
+      });
+      return [...records, ...defaults];
+    }
+
     let results = Array.from(this.templates.values());
     if (category) {
       results = results.filter((t) => t.category === category);
@@ -107,6 +147,32 @@ class EmailTemplateManager {
     name: string,
     data: Partial<EmailTemplate>
   ): Promise<EmailTemplate | null> {
+    if (this.config.driver === 'database') {
+      const existing = await this.get(name);
+      if (!existing) return null;
+      const template = { ...existing, ...data, name, updatedAt: Date.now() };
+      await this.query().where('name', name).update({
+        subject: template.subject,
+        html: template.html,
+        text: template.text ?? null,
+        variables: JSON.stringify(template.variables),
+        category: template.category ?? null,
+        active: template.active ? 1 : 0,
+        updated_at: template.updatedAt,
+      });
+      if (this.templates.has(name)) this.templates.set(name, template);
+      return template;
+    }
+
+    if (this.config.driver === 'file') {
+      const existing = await this.get(name);
+      if (!existing) return null;
+      const template = { ...existing, ...data, name, updatedAt: Date.now() };
+      await this.writeFileTemplate(template);
+      if (this.templates.has(name)) this.templates.set(name, template);
+      return template;
+    }
+
     const template = this.templates.get(name);
     if (!template) return null;
 
@@ -116,11 +182,96 @@ class EmailTemplateManager {
 
   /** Delete a template */
   async delete(name: string): Promise<boolean> {
+    if (this.config.driver === 'database') {
+      const existing = await this.get(name);
+      if (!existing) return false;
+      await this.query().where('name', name).delete();
+      this.templates.delete(name);
+      return true;
+    }
+
+    if (this.config.driver === 'file') {
+      const existing = await this.get(name);
+      if (!existing) return false;
+      const { unlink } = await import('node:fs/promises');
+      await unlink(this.filePath(name)).catch(() => undefined);
+      this.templates.delete(name);
+      return true;
+    }
+
     return this.templates.delete(name);
   }
 
+  private table(): string {
+    return assertSqlIdentifier(this.config.table ?? 'email_templates', 'Email templates table name');
+  }
+
+  private query(): QueryBuilder<any> {
+    return new QueryBuilder(this.table());
+  }
+
+  private rowToTemplate(row: any): EmailTemplate {
+    return {
+      id: row.id,
+      name: row.name,
+      subject: row.subject,
+      html: row.html,
+      text: row.text ?? undefined,
+      variables: JSON.parse(row.variables),
+      category: row.category ?? undefined,
+      active: Boolean(row.active),
+      createdAt: row.created_at ?? row.createdAt ?? row.createdat,
+      updatedAt: row.updated_at ?? row.updatedAt ?? row.updatedat,
+    };
+  }
+
+  private templatesPath(): string {
+    return this.config.path ?? 'email-templates';
+  }
+
+  private filePath(name: string): string {
+    return join(this.templatesPath(), `${encodeURIComponent(name)}.json`);
+  }
+
+  private async writeFileTemplate(template: EmailTemplate): Promise<void> {
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    await mkdir(this.templatesPath(), { recursive: true });
+    await writeFile(this.filePath(template.name), JSON.stringify(template, null, 2));
+  }
+
+  private async readFileTemplate(name: string): Promise<EmailTemplate | null> {
+    const { readFile } = await import('node:fs/promises');
+    try {
+      return JSON.parse(await readFile(this.filePath(name), 'utf-8')) as EmailTemplate;
+    } catch {
+      return null;
+    }
+  }
+
+  private async listFileTemplates(category?: string): Promise<EmailTemplate[]> {
+    const { readdir, readFile } = await import('node:fs/promises');
+    try {
+      const files = await readdir(this.templatesPath());
+      const templates: EmailTemplate[] = [];
+
+      for (const file of files) {
+        if (!file.endsWith('.json')) continue;
+        try {
+          const template = JSON.parse(await readFile(join(this.templatesPath(), file), 'utf-8')) as EmailTemplate;
+          if (!category || template.category === category) templates.push(template);
+        } catch {
+          // Ignore malformed template files.
+        }
+      }
+
+      return templates.sort((a, b) => a.name.localeCompare(b.name));
+    } catch {
+      return [];
+    }
+  }
+
   /** Register built-in default templates */
-  private registerDefaults(): void {
+  registerDefaults(): void {
     // Welcome email
     this.templates.set('welcome', {
       id: randomUUID(),
@@ -344,3 +495,5 @@ export const EmailTemplates = singleton(
   'svelar.emailTemplates',
   () => new EmailTemplateManager()
 );
+
+export const EmailTemplate = EmailTemplates;

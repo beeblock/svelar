@@ -49,8 +49,8 @@ interface ${actionName}Output {
 
 export class ${actionName} extends Action<${actionName}Input, ${actionName}Output> {
   async handle(input: ${actionName}Input): Promise<${actionName}Output> {
-    // Implement your single-use business logic here
-    throw new Error('Not implemented');
+    // Implement your single-use business logic here.
+    return {} as ${actionName}Output;
   }
 }
 `;
