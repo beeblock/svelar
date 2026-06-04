@@ -85,6 +85,8 @@ See the [Getting Started guide](https://svelar.dev/docs/getting-started) for a c
 | **Search** | `@beeblock/svelar/search` | Meilisearch integration with auto-syncing `Searchable` mixin |
 | **Testing** | `@beeblock/svelar/testing` | Factory, `useSvelarTest()`, `refreshDatabase()`, `actingAs()`, database assertions |
 
+Most first-party facades are also available from the root package, for example `import { PDF, ApiKeys, Teams } from '@beeblock/svelar'`. Subpath imports remain supported when you want a narrower import.
+
 ## Official Plugins
 
 | Package | Description |
@@ -130,6 +132,8 @@ npx svelar dev:up                      # start dev containers (hot-reload)
 npx svelar dev:logs                    # follow dev container logs
 npx svelar prod:deploy                 # pull latest image + restart prod
 ```
+
+Generated apps include `npm run ui:install` for manual `--no-install` setup. Use that instead of calling `shadcn-svelte` directly so Shadcn runtime packages stay in production dependencies for adapter-node builds.
 
 54 commands available. Run `npx svelar` to see all commands.
 

@@ -28,6 +28,8 @@ export class NewCommandTemplates {
 						"test:watch": "vitest",
 						"test:e2e": "playwright test",
 						"test:coverage": "vitest run --coverage",
+						"ui:install":
+							"npx shadcn-svelte@latest add --all --yes && npm install --save-prod @internationalized/date@^3.12.2 bits-ui@^2.18.1 embla-carousel-svelte@^8.6.0 formsnap@^2.0.1 layerchart@^2.0.0-next.48 mode-watcher@^1.1.0 paneforge@^1.0.2 svelte-sonner@^1.1.1 sveltekit-superforms@^2.30.1 tailwind-variants@^3.2.2 typebox@^1.1.39 vaul-svelte@^1.0.0-next.7 zod-v3-to-json-schema@^4.0.0",
 					},
 					devDependencies: {
 						"@sveltejs/adapter-node": "^5.5.4",
@@ -44,20 +46,29 @@ export class NewCommandTemplates {
 						"@playwright/test": "^1.48.0",
 					},
 						dependencies: {
+							"@internationalized/date": "^3.12.2",
 							"better-sqlite3": "^11.0.0",
+							"bits-ui": "^2.18.1",
 							"drizzle-orm": "^0.45.2",
+							"embla-carousel-svelte": "^8.6.0",
+							formsnap: "^2.0.1",
+							layerchart: "^2.0.0-next.48",
 							mysql2: "^3.11.0",
+							"mode-watcher": "^1.1.0",
+							paneforge: "^1.0.2",
 							postgres: "^3.4.5",
 							"@beeblock/svelar": `^${svelarVersion}`,
-						"bits-ui": "^1.0.0",
 						clsx: "^2.1.0",
-						"mode-watcher": "^0.5.0",
 						pdfkit: "^0.18.0",
-						"sveltekit-superforms": "^2.22.0",
+						"svelte-sonner": "^1.1.1",
+						"sveltekit-superforms": "^2.30.1",
 						"tailwind-merge": "^3.0.0",
-						"tailwind-variants": "^1.0.0",
+						"tailwind-variants": "^3.2.2",
 						"tw-animate-css": "^1.2.0",
+						typebox: "^1.1.39",
+						"vaul-svelte": "^1.0.0-next.7",
 						valibot: "^1.2.0",
+						"zod-v3-to-json-schema": "^4.0.0",
 						zod: "^3.25.0",
 					},
 				},
@@ -175,6 +186,31 @@ export default defineConfig({
   },
   optimizeDeps: {
     exclude: ['@lucide/svelte', '@tabler/icons-svelte', 'bits-ui'],
+  },
+  build: {
+    rollupOptions: {
+      onwarn(warning, warn) {
+        const warningText = [
+          warning.message,
+          warning.id,
+          ...(Array.isArray(warning.ids) ? warning.ids : []),
+        ]
+          .filter(Boolean)
+          .join(' ');
+
+        if (
+          warning.code === 'CIRCULAR_DEPENDENCY' &&
+          (
+            warningText.includes('node_modules/typebox') ||
+            warningText.includes('node_modules/zod-v3-to-json-schema')
+          )
+        ) {
+          return;
+        }
+
+        warn(warning);
+      },
+    },
   },
 });
 `;
@@ -527,6 +563,9 @@ Hash.configure({ driver: 'scrypt' });
 export const auth = new AuthManager({
   guard: config.get('auth.guard', 'session'),
   model: User,
+  jwt: {
+    secret: config.get('auth.jwt.secret', process.env.JWT_SECRET ?? process.env.APP_KEY),
+  },
   appUrl: config.get('app.url', process.env.APP_URL ?? 'http://localhost:5173'),
   appName: config.get('app.name', process.env.APP_NAME ?? 'Svelar'),
 });
@@ -597,8 +636,29 @@ Broadcast.channel('presence-admin', async (user: any) => {
 // ── Feature Flags ────────────────────────────────────────
 Features.configure({ driver: 'database' });
 
-// ── PDF (PDFKit — no Docker needed) ─────────────────────
-PDF.configure({ driver: 'pdfkit' });
+// ── PDF ─────────────────────────────────────────────────
+const pdfDriver = config.get('pdf.driver', process.env.PDF_DRIVER ?? 'pdfkit') as 'pdfkit' | 'gotenberg';
+const parseDurationMs = (value: unknown, fallback: number): number => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value !== 'string') return fallback;
+
+  const match = value.trim().match(/^(\\d+)(ms|s|m)?$/);
+  if (!match) return fallback;
+
+  const amount = Number(match[1]);
+  const unit = match[2] ?? 'ms';
+  if (unit === 'm') return amount * 60_000;
+  if (unit === 's') return amount * 1_000;
+  return amount;
+};
+
+PDF.configure({
+  driver: pdfDriver,
+  gotenberg: {
+    url: config.get('pdf.gotenberg.url', process.env.GOTENBERG_URL ?? 'http://localhost:3000'),
+    timeout: parseDurationMs(config.get('pdf.gotenberg.timeout', process.env.GOTENBERG_TIMEOUT ?? '60s'), 60_000),
+  },
+});
 
 // ── Dashboard ─────────────────────────────────────────────
 configureDashboard({ enabled: true, prefix: '/admin' });
@@ -5795,6 +5855,7 @@ export class ExportDataJob extends Job {
 
 	static cleanupExpiredTokens(): string {
 		return `import { ScheduledTask } from '@beeblock/svelar/scheduler';
+import { QueryBuilder } from '@beeblock/svelar/orm';
 
 export default class CleanupExpiredTokens extends ScheduledTask {
   name = 'cleanup-expired-tokens';
@@ -5804,8 +5865,26 @@ export default class CleanupExpiredTokens extends ScheduledTask {
   }
 
   async handle(): Promise<void> {
-    const { auth } = await import('../../../app.js');
-    const result = await auth.cleanupExpiredTokens();
+    const now = new Date().toISOString();
+    const result = {
+      passwordResets: 0,
+      verifications: 0,
+      otpCodes: 0,
+    };
+
+    try {
+      result.passwordResets = await new QueryBuilder('password_resets').where('expires_at', '<', now).delete();
+    } catch { /* table may not exist */ }
+
+    try {
+      result.verifications = await new QueryBuilder('email_verifications').where('expires_at', '<', now).delete();
+    } catch { /* table may not exist */ }
+
+    try {
+      result.otpCodes = await new QueryBuilder('otp_codes').where('expires_at', '<', now).delete();
+      result.otpCodes += await new QueryBuilder('otp_codes').whereNotNull('used_at').delete();
+    } catch { /* table may not exist */ }
+
     console.log(
       \`[CleanupExpiredTokens] Deleted: \${result.passwordResets} password resets, \` +
       \`\${result.verifications} email verifications, \${result.otpCodes} OTP codes\`

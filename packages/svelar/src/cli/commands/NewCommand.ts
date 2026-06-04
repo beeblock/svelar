@@ -310,13 +310,13 @@ export class NewCommand extends Command {
       // ── 15. Install shadcn-svelte components ─────────────
       this.info('Installing shadcn-svelte components...');
       try {
-        execSync('npx shadcn-svelte@latest add --all --yes', {
+        execSync('npm run ui:install', {
           cwd: projectDir,
           stdio: 'inherit',
         });
         this.success('shadcn-svelte components installed');
       } catch {
-        this.warn('shadcn-svelte setup failed — run manually: cd ' + projectName + ' && npx shadcn-svelte@latest add --all');
+        this.warn('shadcn-svelte setup failed — run manually: cd ' + projectName + ' && npm run ui:install');
       }
 
       // ── 16. Run migrations and seed ─────────────────────
@@ -350,7 +350,7 @@ export class NewCommand extends Command {
     this.log(`    cd ${projectName}`);
     if (flags['no-install']) {
       this.log('    npm install');
-      this.log('    npx shadcn-svelte@latest add --all');
+      this.log('    npm run ui:install');
       this.log('    npx svelar migrate');
       this.log('    npx svelar seed:run');
     }

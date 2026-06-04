@@ -2,7 +2,7 @@
   import type { Snippet, Component } from 'svelte';
 
   interface Props {
-    // A Svelte icon component (from lucide-svelte or @tabler/icons-svelte)
+    // A Svelte icon component (from @lucide/svelte or @tabler/icons-svelte)
     icon?: Component<any>;
     // Raw SVG path data (d attribute) for inline icons
     path?: string;
