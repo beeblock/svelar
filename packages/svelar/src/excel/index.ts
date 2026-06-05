@@ -377,17 +377,37 @@ class ExcelManager {
     options: ImportStreamOptions,
   ): Promise<void> {
     const ExcelJS = await getExcelJS();
-    const { Readable } = await import('stream');
-
     const targetSheet = options.sheet;
     const headerRowNum = options.headerRow ?? 1;
+
+    if (Buffer.isBuffer(input)) {
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(input);
+      const worksheet = getSheetByOption(workbook, targetSheet);
+      if (!worksheet) throw new Error('Worksheet not found');
+
+      const headerRow = worksheet.getRow(headerRowNum);
+      const headers: string[] = [];
+      headerRow.eachCell({ includeEmpty: true }, (cell: any, colNumber: number) => {
+        headers[colNumber - 1] = String(cell.value ?? `col${colNumber}`);
+      });
+
+      let rowIndex = 0;
+      for (let rowNumber = headerRowNum + 1; rowNumber <= worksheet.rowCount; rowNumber++) {
+        const row = worksheet.getRow(rowNumber);
+        if (!row.hasValues) continue;
+        await options.onRow(rowToObject(row, headers), rowIndex);
+        rowIndex++;
+      }
+      return;
+    }
 
     let stream: any;
     if (typeof input === 'string') {
       const fs = await import('fs');
       stream = fs.createReadStream(input);
     } else {
-      stream = Readable.from(input);
+      throw new Error('Unsupported Excel import stream input');
     }
 
     const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(stream, {});
