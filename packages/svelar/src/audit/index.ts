@@ -144,7 +144,7 @@ class AuditManager {
     let results = [...this.entries];
 
     if (filter.userId !== undefined) {
-      results = results.filter((e) => e.userId === filter.userId);
+      results = results.filter((e) => String(e.userId) === String(filter.userId));
     }
     if (filter.action) {
       results = results.filter((e) => e.action === filter.action);
@@ -153,7 +153,7 @@ class AuditManager {
       results = results.filter((e) => e.modelType === filter.modelType);
     }
     if (filter.modelId !== undefined) {
-      results = results.filter((e) => e.modelId === filter.modelId);
+      results = results.filter((e) => String(e.modelId) === String(filter.modelId));
     }
     if (filter.since) {
       results = results.filter((e) => e.timestamp >= filter.since!);
