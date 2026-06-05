@@ -219,7 +219,7 @@ export async function apiFetchJson<T = any>(url: string, options: ApiFetchOption
       error: { message: err.message ?? 'Network error', status: 0 },
       status: 0,
       ok: false,
-      response: new Response(null, { status: 0 }),
+      response: new Response(null),
     };
   }
 }
