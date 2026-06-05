@@ -39,7 +39,7 @@ npm run certify:fast
 - SQLite, PostgreSQL, and MySQL smoke checks with Docker-managed random ports
 - production `adapter-node` browser smoke across the database matrix
 
-The core package test suite includes direct gates for feature flags, outgoing webhooks, Excel import/export/streaming, HTTP helpers and the fluent HTTP client, forms, i18n, UI/SEO component compilation, toast state, deployment CLI file generation, Docker compose command construction, and package-level utility commands.
+The core package test suite includes direct gates for feature flags, outgoing webhooks, audit logging, Excel import/export/streaming, HTTP helpers and the fluent HTTP client, forms, i18n, UI/SEO/pagination component compilation, toast state, testing helpers, deployment CLI file generation, Docker compose command construction, and package-level utility commands.
 
 Generated DDD smoke apps receive an injected `tests/feature/svelar-certification.test.ts` file. It validates the intended Svelar flow:
 
