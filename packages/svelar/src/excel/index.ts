@@ -128,6 +128,30 @@ function rowToObject(row: any, headers: string[]): Record<string, any> {
   return obj;
 }
 
+async function processLoadedWorkbookRows(
+  workbook: any,
+  options: ImportStreamOptions,
+): Promise<void> {
+  const targetSheet = options.sheet;
+  const headerRowNum = options.headerRow ?? 1;
+  const worksheet = getSheetByOption(workbook, targetSheet);
+  if (!worksheet) throw new Error('Worksheet not found');
+
+  const headerRow = worksheet.getRow(headerRowNum);
+  const headers: string[] = [];
+  headerRow.eachCell({ includeEmpty: true }, (cell: any, colNumber: number) => {
+    headers[colNumber - 1] = String(cell.value ?? `col${colNumber}`);
+  });
+
+  let rowIndex = 0;
+  for (let rowNumber = headerRowNum + 1; rowNumber <= worksheet.rowCount; rowNumber++) {
+    const row = worksheet.getRow(rowNumber);
+    if (!row.hasValues) continue;
+    await options.onRow(rowToObject(row, headers), rowIndex);
+    rowIndex++;
+  }
+}
+
 // ── Spreadsheet Builder ───────────────────────────────────
 
 export class SheetBuilder {
@@ -383,22 +407,7 @@ class ExcelManager {
     if (Buffer.isBuffer(input)) {
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.load(input);
-      const worksheet = getSheetByOption(workbook, targetSheet);
-      if (!worksheet) throw new Error('Worksheet not found');
-
-      const headerRow = worksheet.getRow(headerRowNum);
-      const headers: string[] = [];
-      headerRow.eachCell({ includeEmpty: true }, (cell: any, colNumber: number) => {
-        headers[colNumber - 1] = String(cell.value ?? `col${colNumber}`);
-      });
-
-      let rowIndex = 0;
-      for (let rowNumber = headerRowNum + 1; rowNumber <= worksheet.rowCount; rowNumber++) {
-        const row = worksheet.getRow(rowNumber);
-        if (!row.hasValues) continue;
-        await options.onRow(rowToObject(row, headers), rowIndex);
-        rowIndex++;
-      }
+      await processLoadedWorkbookRows(workbook, options);
       return;
     }
 
@@ -415,30 +424,37 @@ class ExcelManager {
     let headers: string[] = [];
     let rowIndex = 0;
 
-    for await (const worksheetReader of workbookReader) {
-      // Skip sheets that don't match
-      if (targetSheet) {
-        if (typeof targetSheet === 'string' && worksheetReader.name !== targetSheet) continue;
-        if (typeof targetSheet === 'number' && worksheetReader.id !== targetSheet) continue;
-      }
-
-      for await (const row of worksheetReader) {
-        rowIndex++;
-        if (rowIndex === headerRowNum) {
-          // Extract headers from this row
-          row.eachCell({ includeEmpty: true }, (cell: any, colNumber: number) => {
-            headers[colNumber - 1] = String(cell.value ?? `col${colNumber}`);
-          });
-          continue;
+    try {
+      for await (const worksheetReader of workbookReader) {
+        // Skip sheets that don't match
+        if (targetSheet) {
+          if (typeof targetSheet === 'string' && worksheetReader.name !== targetSheet) continue;
+          if (typeof targetSheet === 'number' && worksheetReader.id !== targetSheet) continue;
         }
-        if (rowIndex <= headerRowNum) continue;
 
-        const obj = rowToObject(row, headers);
-        await options.onRow(obj, rowIndex - headerRowNum - 1);
+        for await (const row of worksheetReader) {
+          rowIndex++;
+          if (rowIndex === headerRowNum) {
+            // Extract headers from this row
+            row.eachCell({ includeEmpty: true }, (cell: any, colNumber: number) => {
+              headers[colNumber - 1] = String(cell.value ?? `col${colNumber}`);
+            });
+            continue;
+          }
+          if (rowIndex <= headerRowNum) continue;
+
+          const obj = rowToObject(row, headers);
+          await options.onRow(obj, rowIndex - headerRowNum - 1);
+        }
+
+        // Only process the first matching sheet
+        return;
       }
-
-      // Only process the first matching sheet
-      break;
+    } catch (error) {
+      if (typeof input !== 'string') throw error;
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.readFile(input);
+      await processLoadedWorkbookRows(workbook, options);
     }
   }
 
