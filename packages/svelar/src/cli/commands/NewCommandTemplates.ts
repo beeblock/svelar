@@ -3271,15 +3271,15 @@ export const load: PageServerLoad = async ({ locals }) => {
   if (!authConfig.otpEnabled) throw redirect(302, '/login');
   if (locals.user) throw redirect(302, '/dashboard');
 
-  const requestForm = await superValidate(zod(otpRequestSchema));
-  const verifyForm = await superValidate(zod(otpVerifySchema));
+  const requestForm = await superValidate(zod(otpRequestSchema), { id: 'otp-request' });
+  const verifyForm = await superValidate(zod(otpVerifySchema), { id: 'otp-verify' });
   return { requestForm, verifyForm };
 };
 
 export const actions: Actions = {
   send: async (event) => {
     const { request } = event;
-    const form = await superValidate(request, zod(otpRequestSchema));
+    const form = await superValidate(request, zod(otpRequestSchema), { id: 'otp-request' });
     const ctx = throttleContext(event);
     const block = await sendThrottle.check(ctx);
     if (block.blocked) {
@@ -3299,7 +3299,7 @@ export const actions: Actions = {
 
   verify: async (event) => {
     const { request, locals } = event;
-    const form = await superValidate(request, zod(otpVerifySchema));
+    const form = await superValidate(request, zod(otpVerifySchema), { id: 'otp-verify' });
     const ctx = throttleContext(event);
     const block = await verifyThrottle.check(ctx);
     if (block.blocked) {

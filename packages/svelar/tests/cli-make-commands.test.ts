@@ -547,6 +547,15 @@ describe('New project templates', () => {
       expect(template).toContain('.hit(ctx)');
     }
   });
+
+  it('uses stable ids for generated OTP superforms', () => {
+    const template = NewCommandTemplates.otpLoginPageServer();
+
+    expect(template).toContain("superValidate(zod(otpRequestSchema), { id: 'otp-request' })");
+    expect(template).toContain("superValidate(zod(otpVerifySchema), { id: 'otp-verify' })");
+    expect(template).toContain("superValidate(request, zod(otpRequestSchema), { id: 'otp-request' })");
+    expect(template).toContain("superValidate(request, zod(otpVerifySchema), { id: 'otp-verify' })");
+  });
 });
 
 // ── Cross-type import path tests ──────────────────────────
