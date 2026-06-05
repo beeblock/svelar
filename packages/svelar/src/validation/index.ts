@@ -5,6 +5,7 @@
  */
 
 import { z } from 'zod';
+import { isUlid, isUuidv7 } from '../support/uuid.js';
 
 // Re-export Zod for direct usage
 export { z };
@@ -31,6 +32,14 @@ export const rules = {
   date: () => z.coerce.date(),
   url: () => z.string().url(),
   uuid: () => z.string().uuid(),
+  uuidv7: () =>
+    z.string().refine((value) => isUuidv7(value), {
+      message: 'Must be a valid UUID v7',
+    }),
+  ulid: () =>
+    z.string().refine((value) => isUlid(value), {
+      message: 'Must be a valid ULID',
+    }),
   enum: <T extends [string, ...string[]]>(values: T) => z.enum(values),
   array: <T extends z.ZodTypeAny>(schema: T) => z.array(schema),
   nullable: <T extends z.ZodTypeAny>(schema: T) => schema.nullable(),

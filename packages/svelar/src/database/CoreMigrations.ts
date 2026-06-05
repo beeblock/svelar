@@ -7,7 +7,6 @@
 
 import type { MigrationFile } from './Migration.js';
 import { CreateSessionsTable } from './core/00000000_000001_create_sessions_table.js';
-import { CreatePersonalAccessTokensTable } from './core/00000000_000002_create_personal_access_tokens_table.js';
 import { CreateRefreshTokensTable } from './core/00000000_000003_create_refresh_tokens_table.js';
 import { CreatePasswordResetsTable } from './core/00000000_000004_create_password_resets_table.js';
 import { CreateEmailVerificationsTable } from './core/00000000_000005_create_email_verifications_table.js';
@@ -36,7 +35,6 @@ import { CreateSvelarFailedJobsTable } from './core/00000000_000027_create_svela
 
 export {
   CreateSessionsTable,
-  CreatePersonalAccessTokensTable,
   CreateRefreshTokensTable,
   CreatePasswordResetsTable,
   CreateEmailVerificationsTable,
@@ -66,7 +64,6 @@ export {
 
 const coreMigrationDefinitions = [
   ['00000000_000001_create_sessions_table', CreateSessionsTable],
-  ['00000000_000002_create_personal_access_tokens_table', CreatePersonalAccessTokensTable],
   ['00000000_000003_create_refresh_tokens_table', CreateRefreshTokensTable],
   ['00000000_000004_create_password_resets_table', CreatePasswordResetsTable],
   ['00000000_000005_create_email_verifications_table', CreateEmailVerificationsTable],

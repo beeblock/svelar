@@ -26,6 +26,8 @@ export interface DatabaseConfig {
   url?: string;
   /** Enable debug/query logging */
   debug?: boolean;
+  /** Enable prepared statements for PostgreSQL. Disable for PgBouncer transaction pooling. */
+  prepare?: boolean;
 }
 
 export interface ConnectionsConfig {
@@ -390,7 +392,9 @@ class ConnectionManager {
       config.url ??
       `postgres://${config.user}:${config.password}@${config.host ?? 'localhost'}:${config.port ?? 5432}/${config.database}`;
 
-    const client = postgres(connectionString);
+    const client = postgres(connectionString, {
+      prepare: config.prepare ?? true,
+    });
     const db = drizzle(client);
 
     return { drizzle: db, config, rawClient: client };

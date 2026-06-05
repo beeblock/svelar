@@ -24,6 +24,7 @@ interface WhereClause {
   raw?: string;
   subSQL?: string;
   subBindings?: any[];
+  softDeleteScope?: boolean;
 }
 
 interface CTEClause {
@@ -79,6 +80,7 @@ export class QueryBuilder<TModel = any> {
   private cteClauses: CTEClause[] = [];
   private unionClauses: UnionClause[] = [];
   private rawSelectColumns = new Set<string>();
+  private forceDeleting = false;
 
   // Model class reference for hydrating results
   private modelClass?: any;
@@ -87,6 +89,28 @@ export class QueryBuilder<TModel = any> {
     this.tableName = table;
     this.modelClass = modelClass;
     this.connectionName = connectionName;
+    this.applySoftDeleteScope('without');
+  }
+
+  private get softDeletes(): boolean {
+    return Boolean(this.modelClass?.softDeletes);
+  }
+
+  private get deletedAtColumn(): string {
+    return this.modelClass?.deletedAt ?? 'deleted_at';
+  }
+
+  private applySoftDeleteScope(mode: 'without' | 'with' | 'only'): void {
+    this.whereClauses = this.whereClauses.filter((clause) => !clause.softDeleteScope);
+
+    if (!this.softDeletes || mode === 'with') return;
+
+    this.whereClauses.push({
+      type: mode === 'only' ? 'notNull' : 'null',
+      column: this.deletedAtColumn,
+      boolean: 'AND',
+      softDeleteScope: true,
+    });
   }
 
   // ── SELECT ───────────────────────────────────────────────
@@ -182,6 +206,21 @@ export class QueryBuilder<TModel = any> {
     return this;
   }
 
+  withTrashed(): this {
+    this.applySoftDeleteScope('with');
+    return this;
+  }
+
+  withoutTrashed(): this {
+    this.applySoftDeleteScope('without');
+    return this;
+  }
+
+  onlyTrashed(): this {
+    this.applySoftDeleteScope('only');
+    return this;
+  }
+
   whereBetween(column: string, range: [any, any]): this {
     this.whereClauses.push({
       type: 'between',
@@ -203,7 +242,7 @@ export class QueryBuilder<TModel = any> {
   }
 
   whereNested(callback: (query: QueryBuilder) => void, bool: 'AND' | 'OR' = 'AND'): this {
-    const nested = new QueryBuilder(this.tableName, this.modelClass, this.connectionName);
+    const nested = new QueryBuilder(this.tableName, undefined, this.connectionName);
     callback(nested);
     if (nested.whereClauses.length > 0) {
       const { whereSQL, whereBindings } = nested.buildWhere();
@@ -764,10 +803,31 @@ export class QueryBuilder<TModel = any> {
   }
 
   async delete(): Promise<number> {
+    if (this.softDeletes && !this.forceDeleting) {
+      return this.update({ [this.deletedAtColumn]: new Date().toISOString() });
+    }
+
     const { whereSQL, whereBindings } = this.buildWhere();
     const sql = `DELETE FROM ${this.quoteIdentifier(this.tableName, 'Table name')}${whereSQL ? ` ${whereSQL}` : ''}`;
     const result = await Connection.raw(sql, whereBindings, this.connectionName);
     return this.affectedRows(result);
+  }
+
+  async forceDelete(): Promise<number> {
+    this.forceDeleting = true;
+    try {
+      return await this.delete();
+    } finally {
+      this.forceDeleting = false;
+    }
+  }
+
+  async restore(): Promise<number> {
+    if (!this.softDeletes) {
+      throw new Error(`Model "${this.modelClass?.name ?? this.tableName}" does not use soft deletes.`);
+    }
+
+    return this.update({ [this.deletedAtColumn]: null });
   }
 
   async increment(column: string, amount: number = 1): Promise<void> {
@@ -903,6 +963,7 @@ export class QueryBuilder<TModel = any> {
     cloned.unionClauses = [...this.unionClauses];
     cloned.rawSelectColumns = new Set(this.rawSelectColumns);
     cloned._selectBindings = this._selectBindings ? [...this._selectBindings] : undefined;
+    cloned.forceDeleting = this.forceDeleting;
     return cloned;
   }
 

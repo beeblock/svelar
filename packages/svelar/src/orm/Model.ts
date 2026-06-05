@@ -27,6 +27,7 @@ import { QueryBuilder } from './QueryBuilder.js';
 import { HasOne, HasMany, BelongsTo, BelongsToMany } from './Relationship.js';
 import { type ModelObserver, type ModelEventName, MODEL_EVENTS } from './Observer.js';
 import { Event } from '../events/index.js';
+import { ulid, uuidv7 } from '../support/uuid.js';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -63,6 +64,18 @@ export class Model {
   /** Column names for timestamps */
   static createdAt: string = 'created_at';
   static updatedAt: string = 'updated_at';
+
+  /** Whether deletes should set deleted_at instead of removing the row */
+  static softDeletes: boolean = false;
+
+  /** Column name for soft deletes */
+  static deletedAt: string = 'deleted_at';
+
+  /** Columns that should be auto-filled with UUID/ULID values before insert */
+  static uniqueIds: string[] = [];
+
+  /** Default unique ID generator for static uniqueIds */
+  static uniqueIdType: 'uuid' | 'ulid' = 'uuid';
 
   /** Attribute casting definitions */
   static casts: Record<string, 'string' | 'number' | 'boolean' | 'date' | 'json'> = {};
@@ -106,7 +119,7 @@ export class Model {
           return Reflect.get(target, prop, receiver);
         }
         // Check if it's a static config property
-        if (['table', 'primaryKey', 'incrementing', 'timestamps', 'casts', 'fillable', 'hidden', 'connection'].includes(prop)) {
+        if (['table', 'primaryKey', 'incrementing', 'timestamps', 'createdAt', 'updatedAt', 'softDeletes', 'deletedAt', 'uniqueIds', 'uniqueIdType', 'casts', 'fillable', 'hidden', 'connection'].includes(prop)) {
           return Reflect.get(target, prop, receiver);
         }
         // Check if it's a relation method
@@ -201,6 +214,18 @@ export class Model {
     return (this as any).query().with(...relations);
   }
 
+  static withTrashed<T extends Model>(this: new () => T): QueryBuilder<T> {
+    return (this as any).query().withTrashed();
+  }
+
+  static withoutTrashed<T extends Model>(this: new () => T): QueryBuilder<T> {
+    return (this as any).query().withoutTrashed();
+  }
+
+  static onlyTrashed<T extends Model>(this: new () => T): QueryBuilder<T> {
+    return (this as any).query().onlyTrashed();
+  }
+
   static async count(this: typeof Model): Promise<number> {
     return (this as any).query().count();
   }
@@ -212,6 +237,7 @@ export class Model {
     const instance = new this();
     const ctor = this as unknown as typeof Model;
     instance.fill(attributes);
+    instance.populateUniqueIds();
 
     // Run creating hook
     await instance.fireHook('creating');
@@ -268,6 +294,8 @@ export class Model {
       await this.fireHook('saved');
     } else {
       // Insert (delegate to static create)
+      this.populateUniqueIds();
+
       await this.fireHook('creating');
       await this.fireHook('saving');
 
@@ -307,11 +335,51 @@ export class Model {
 
     const pk = this.getAttribute(ctor.primaryKey);
     const qb = new QueryBuilder(ctor.table, this.constructor, ctor.connection);
-    await qb.where(ctor.primaryKey, pk).delete();
+    if (ctor.softDeletes) {
+      const deletedAt = new Date().toISOString();
+      await qb.where(ctor.primaryKey, pk).update({ [ctor.deletedAt]: deletedAt });
+      this.setAttribute(ctor.deletedAt, deletedAt);
+      this.syncOriginal();
+    } else {
+      await qb.where(ctor.primaryKey, pk).delete();
+      this.exists = false;
+    }
+
+    await this.fireHook('deleted');
+  }
+
+  async forceDelete(): Promise<void> {
+    const ctor = this.constructor as typeof Model;
+
+    await this.fireHook('deleting');
+
+    const pk = this.getAttribute(ctor.primaryKey);
+    const qb = new QueryBuilder(ctor.table, this.constructor, ctor.connection);
+    await qb.withTrashed().where(ctor.primaryKey, pk).forceDelete();
 
     this.exists = false;
 
     await this.fireHook('deleted');
+  }
+
+  async restore(): Promise<void> {
+    const ctor = this.constructor as typeof Model;
+    if (!ctor.softDeletes) {
+      throw new Error(`Model "${ctor.name}" does not use soft deletes.`);
+    }
+
+    const pk = this.getAttribute(ctor.primaryKey);
+    const qb = new QueryBuilder(ctor.table, this.constructor, ctor.connection);
+    await qb.withTrashed().where(ctor.primaryKey, pk).update({ [ctor.deletedAt]: null });
+
+    this.setAttribute(ctor.deletedAt, null);
+    this.syncOriginal();
+    this.exists = true;
+  }
+
+  trashed(): boolean {
+    const ctor = this.constructor as typeof Model;
+    return ctor.softDeletes && this.getAttribute(ctor.deletedAt) !== null && this.getAttribute(ctor.deletedAt) !== undefined;
   }
 
   async refresh(): Promise<void> {
@@ -599,4 +667,26 @@ export class Model {
   static get tableName(): string {
     return this.table;
   }
+
+  protected newUniqueId(_column: string): string {
+    const ctor = this.constructor as typeof Model;
+    return ctor.uniqueIdType === 'ulid' ? generateUlid() : generateUuidV7();
+  }
+
+  private populateUniqueIds(): void {
+    const ctor = this.constructor as typeof Model;
+    for (const column of ctor.uniqueIds) {
+      if (!this.getAttribute(column)) {
+        this.setAttribute(column, this.newUniqueId(column));
+      }
+    }
+  }
+}
+
+export function generateUuidV7(): string {
+  return uuidv7();
+}
+
+export function generateUlid(): string {
+  return ulid();
 }

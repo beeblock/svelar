@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { rules, validate, z } from '../src/validation/index';
+import { ulid, uuidv7 } from '../src/support/uuid';
 
 describe('Validation', () => {
   describe('rules.required', () => {
@@ -118,6 +119,26 @@ describe('Validation', () => {
       const validUUID = '550e8400-e29b-41d4-a716-446655440000';
       expect(schema.safeParse({ id: validUUID }).success).toBe(true);
       expect(schema.safeParse({ id: 'not-a-uuid' }).success).toBe(false);
+    });
+  });
+
+  describe('rules.uuidv7', () => {
+    it('should validate UUID v7 format', () => {
+      const schema = z.object({ id: rules.uuidv7() });
+
+      expect(schema.safeParse({ id: uuidv7() }).success).toBe(true);
+      expect(schema.safeParse({ id: '550e8400-e29b-41d4-a716-446655440000' }).success).toBe(false);
+      expect(schema.safeParse({ id: 'not-a-uuid' }).success).toBe(false);
+    });
+  });
+
+  describe('rules.ulid', () => {
+    it('should validate ULID format', () => {
+      const schema = z.object({ id: rules.ulid() });
+
+      expect(schema.safeParse({ id: ulid() }).success).toBe(true);
+      expect(schema.safeParse({ id: '550e8400-e29b-41d4-a716-446655440000' }).success).toBe(false);
+      expect(schema.safeParse({ id: 'not-a-ulid' }).success).toBe(false);
     });
   });
 

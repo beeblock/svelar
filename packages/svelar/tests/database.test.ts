@@ -78,6 +78,71 @@ describe('Database configuration', () => {
     }
   });
 
+  it('creates the migrations table before reporting migration status', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'svelar-migration-status-'));
+    const filename = join(root, 'database.sqlite');
+
+    try {
+      await Connection.disconnect();
+      Connection.configure({
+        default: 'sqlite',
+        connections: {
+          sqlite: { driver: 'sqlite', filename },
+        },
+      });
+
+      const migrator = new Migrator();
+      await expect(migrator.status([
+        {
+          name: '00000001_noop',
+          timestamp: '00000001',
+          path: 'tests/noop',
+          migration: new NoopMigration(),
+        },
+      ])).resolves.toEqual([
+        { name: '00000001_noop', ran: false, batch: null },
+      ]);
+    } finally {
+      await Connection.disconnect();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('propagates migration tracking query failures', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'svelar-migration-tracking-failure-'));
+    const filename = join(root, 'database.sqlite');
+
+    try {
+      await Connection.disconnect();
+      Connection.configure({
+        default: 'sqlite',
+        connections: {
+          sqlite: { driver: 'sqlite', filename },
+        },
+      });
+
+      const migrator = new Migrator();
+      await migrator.ensureMigrationsTable();
+
+      const originalRaw = Connection.raw.bind(Connection);
+      Connection.raw = (async (sql: string, bindings?: any[], connectionName?: string) => {
+        if (sql.includes('SELECT migration FROM migrations')) {
+          throw new Error('migration tracking table is unreadable');
+        }
+        return originalRaw(sql, bindings, connectionName);
+      }) as typeof Connection.raw;
+
+      try {
+        await expect(migrator.getRanMigrations()).rejects.toThrow('migration tracking table is unreadable');
+      } finally {
+        Connection.raw = originalRaw;
+      }
+    } finally {
+      await Connection.disconnect();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('supports Laravel-style schema.table column changes', async () => {
     await Connection.disconnect();
     Connection.configure({
@@ -134,14 +199,17 @@ describe('Database configuration', () => {
     const table = new TableBuilder();
     table.timestamp('ran_at').default('CURRENT_TIMESTAMP');
     table.string('status').default("waiting's turn");
+    table.softDeletes();
 
     const postgres = table.toSQL('migrations', 'postgres')[0];
     expect(postgres).toContain('"ran_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP');
     expect(postgres).toContain('"status" VARCHAR(255) NOT NULL DEFAULT \'waiting\'\'s turn\'');
+    expect(postgres).toContain('"deleted_at" TIMESTAMP');
 
     const mysql = table.toSQL('migrations', 'mysql')[0];
     expect(mysql).toContain('`ran_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP');
     expect(mysql).toContain('`status` VARCHAR(255) NOT NULL DEFAULT \'waiting\'\'s turn\'');
+    expect(mysql).toContain('`deleted_at` DATETIME');
   });
 
   it('renders Laravel-style id and foreignId columns with compatible MySQL types', () => {

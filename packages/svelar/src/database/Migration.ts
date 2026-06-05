@@ -226,36 +226,30 @@ export class Migrator {
    * Get list of already-ran migration names
    */
   async getRanMigrations(): Promise<string[]> {
-    try {
-      const rows = await Connection.raw(
-        `SELECT migration FROM ${this.migrationsTable} ORDER BY batch, id`,
-        [],
-        this.connectionName
-      );
-      return rows.map((r: any) => r.migration);
-    } catch {
-      return [];
-    }
+    const rows = await Connection.raw(
+      `SELECT migration FROM ${this.migrationsTable} ORDER BY batch, id`,
+      [],
+      this.connectionName
+    );
+    return rows.map((r: any) => r.migration);
   }
 
   /**
    * Get the status of all migrations
    */
   async status(migrations: MigrationFile[]): Promise<{ name: string; ran: boolean; batch: number | null }[]> {
+    await this.ensureMigrationsTable();
+
     const ran = await this.getRanMigrations();
     const batchMap = new Map<string, number>();
 
-    try {
-      const rows = await Connection.raw(
-        `SELECT migration, batch FROM ${this.migrationsTable}`,
-        [],
-        this.connectionName
-      );
-      for (const row of rows) {
-        batchMap.set(row.migration, row.batch);
-      }
-    } catch {
-      // Table might not exist yet
+    const rows = await Connection.raw(
+      `SELECT migration, batch FROM ${this.migrationsTable}`,
+      [],
+      this.connectionName
+    );
+    for (const row of rows) {
+      batchMap.set(row.migration, row.batch);
     }
 
     return migrations.map((m) => ({
@@ -272,15 +266,11 @@ export class Migrator {
   }
 
   private async getLastBatch(): Promise<number> {
-    try {
-      const rows = await Connection.raw(
-        `SELECT MAX(batch) as max_batch FROM ${this.migrationsTable}`,
-        [],
-        this.connectionName
-      );
-      return rows[0]?.max_batch ?? 0;
-    } catch {
-      return 0;
-    }
+    const rows = await Connection.raw(
+      `SELECT MAX(batch) as max_batch FROM ${this.migrationsTable}`,
+      [],
+      this.connectionName
+    );
+    return rows[0]?.max_batch ?? 0;
   }
 }

@@ -188,6 +188,10 @@ export class TableBuilder {
     this.timestamp('updated_at').nullable();
   }
 
+  softDeletes(column: string = 'deleted_at'): ColumnBuilder {
+    return this.timestamp(column).nullable();
+  }
+
   json(name: string): ColumnBuilder {
     return this.addColumn(name, 'JSON');
   }
