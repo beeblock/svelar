@@ -73,6 +73,14 @@ export interface SystemHealth {
   timestamp: string;
 }
 
+export interface DashboardHealthCollectionStatus {
+  lastRunAt: string | null;
+  lastSuccessAt: string | null;
+  lastErrorAt: string | null;
+  lastError: string | null;
+  failures: number;
+}
+
 // ── Dashboard Plugin ────────────────────────────────────
 
 class DashboardPlugin extends Plugin {
@@ -94,6 +102,14 @@ class DashboardPlugin extends Plugin {
 
   private startTime = Date.now();
   private healthCollectionInterval: NodeJS.Timeout | null = null;
+  private latestHealth: SystemHealth | null = null;
+  private healthCollectionStatus: DashboardHealthCollectionStatus = {
+    lastRunAt: null,
+    lastSuccessAt: null,
+    lastErrorAt: null,
+    lastError: null,
+    failures: 0,
+  };
 
   /**
    * Return plugin configuration
@@ -124,9 +140,10 @@ class DashboardPlugin extends Plugin {
   async boot(app: Container): Promise<void> {
     // Start periodic health collection
     if (this.dashboardConfig.enabled && this.dashboardConfig.refreshInterval > 0) {
+      await this.collectHealthSnapshot();
       this.healthCollectionInterval = setInterval(() => {
-        this.getSystemHealth().catch((err) => {
-          console.error('[Dashboard] Health collection error:', err);
+        void this.collectHealthSnapshot().catch(() => {
+          // Error details are stored in healthCollectionStatus for dashboards/supervisors.
         });
       }, this.dashboardConfig.refreshInterval);
     }
@@ -163,10 +180,52 @@ class DashboardPlugin extends Plugin {
 
     if (this.dashboardConfig.enabled && this.dashboardConfig.refreshInterval > 0) {
       this.healthCollectionInterval = setInterval(() => {
-        this.getSystemHealth().catch((err) => {
-          console.error('[Dashboard] Health collection error:', err);
+        void this.collectHealthSnapshot().catch(() => {
+          // Error details are stored in healthCollectionStatus for dashboards/supervisors.
         });
       }, this.dashboardConfig.refreshInterval);
+    }
+  }
+
+  /**
+   * Get the latest background health collection status.
+   */
+  getHealthCollectionStatus(): DashboardHealthCollectionStatus {
+    return { ...this.healthCollectionStatus };
+  }
+
+  /**
+   * Get the latest successfully collected health snapshot, if background collection is enabled.
+   */
+  getLatestHealthSnapshot(): SystemHealth | null {
+    return this.latestHealth;
+  }
+
+  private async collectHealthSnapshot(): Promise<SystemHealth> {
+    const startedAt = new Date().toISOString();
+    this.healthCollectionStatus.lastRunAt = startedAt;
+
+    try {
+      const health = await this.getSystemHealth();
+      const successAt = new Date().toISOString();
+      this.latestHealth = health;
+      this.healthCollectionStatus = {
+        ...this.healthCollectionStatus,
+        lastRunAt: startedAt,
+        lastSuccessAt: successAt,
+        lastErrorAt: this.healthCollectionStatus.lastErrorAt,
+        lastError: null,
+      };
+      return health;
+    } catch (error) {
+      this.healthCollectionStatus = {
+        ...this.healthCollectionStatus,
+        lastRunAt: startedAt,
+        lastErrorAt: new Date().toISOString(),
+        lastError: error instanceof Error ? error.message : String(error),
+        failures: this.healthCollectionStatus.failures + 1,
+      };
+      throw error;
     }
   }
 
@@ -226,6 +285,7 @@ class DashboardPlugin extends Plugin {
     const data: Record<string, any> = {
       health,
       config: this.dashboardConfig,
+      healthCollection: this.getHealthCollectionStatus(),
     };
 
     // Add section data based on config

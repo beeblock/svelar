@@ -1,7 +1,18 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, it, expect, beforeEach } from 'vitest';
 import { Cache } from '../src/cache/index';
 
+function fileCachePath(root: string, key: string): string {
+  const hash = createHash('md5').update(key).digest('hex');
+  return join(root, hash.slice(0, 2), hash);
+}
+
 describe('CacheManager (Memory Store)', () => {
+  let tempDirs: string[] = [];
+
   beforeEach(() => {
     Cache.configure({
       default: 'memory',
@@ -9,6 +20,13 @@ describe('CacheManager (Memory Store)', () => {
         memory: { driver: 'memory' },
       },
     });
+  });
+
+  afterEach(async () => {
+    for (const dir of tempDirs) {
+      await rm(dir, { recursive: true, force: true });
+    }
+    tempDirs = [];
   });
 
   describe('get', () => {
@@ -78,6 +96,24 @@ describe('CacheManager (Memory Store)', () => {
 
       const result = await Cache.get('key');
       expect(result).toBe('value');
+    });
+
+    it('should apply store default TTL through the manager and direct store access', async () => {
+      Cache.configure({
+        default: 'memory',
+        stores: {
+          memory: { driver: 'memory', ttl: 1 },
+          other: { driver: 'memory', ttl: 1 },
+        },
+      });
+
+      await Cache.put('manager-key', 'value');
+      await Cache.store('other').put('store-key', 'value');
+
+      await new Promise((r) => setTimeout(r, 1100));
+
+      expect(await Cache.get('manager-key')).toBeNull();
+      expect(await Cache.store('other').get('store-key')).toBeNull();
     });
 
     it('should overwrite existing key', async () => {
@@ -406,6 +442,99 @@ describe('CacheManager (Memory Store)', () => {
 
       expect(await memoryStore.get('key')).toBe('memory-value');
       expect(await otherStore.get('key')).toBe('other-value');
+    });
+  });
+
+  describe('file store', () => {
+    it('should treat stored null values as existing cache entries', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'svelar-file-cache-'));
+      tempDirs.push(dir);
+
+      Cache.configure({
+        default: 'file',
+        stores: {
+          file: { driver: 'file', path: dir },
+        },
+      });
+
+      await Cache.put('nullable', null);
+
+      expect(await Cache.has('nullable')).toBe(true);
+      expect(await Cache.get('nullable', 'default')).toBeNull();
+    });
+
+    it('should apply file store default TTL through direct store access', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'svelar-file-cache-'));
+      tempDirs.push(dir);
+
+      Cache.configure({
+        default: 'file',
+        stores: {
+          file: { driver: 'file', path: dir, ttl: 1 },
+        },
+      });
+
+      await Cache.store('file').put('key', 'value');
+      await new Promise((r) => setTimeout(r, 1100));
+
+      expect(await Cache.store('file').get('key')).toBeNull();
+    });
+
+    it('should delete corrupted file cache entries and treat them as missing', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'svelar-file-cache-'));
+      tempDirs.push(dir);
+
+      Cache.configure({
+        default: 'file',
+        stores: {
+          file: { driver: 'file', path: dir },
+        },
+      });
+
+      const key = 'corrupt-cache-key';
+      const path = fileCachePath(dir, key);
+      const hash = createHash('md5').update(key).digest('hex');
+      await mkdir(join(dir, hash.slice(0, 2)), { recursive: true });
+      await writeFile(path, '{invalid', 'utf-8');
+
+      expect(await Cache.has(key)).toBe(false);
+      expect(await Cache.get(key, 'default')).toBe('default');
+      await expect(readFile(path, 'utf-8')).rejects.toThrow();
+    });
+
+    it('should throw file cache read errors that are not missing files', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'svelar-file-cache-'));
+      tempDirs.push(dir);
+
+      Cache.configure({
+        default: 'file',
+        stores: {
+          file: { driver: 'file', path: dir },
+        },
+      });
+
+      const path = fileCachePath(dir, 'directory-cache-key');
+      await mkdir(path, { recursive: true });
+
+      await expect(Cache.has('directory-cache-key')).rejects.toThrow();
+      await expect(Cache.get('directory-cache-key')).rejects.toThrow();
+    });
+
+    it('should throw file cache forget errors that are not missing files', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'svelar-file-cache-'));
+      tempDirs.push(dir);
+
+      Cache.configure({
+        default: 'file',
+        stores: {
+          file: { driver: 'file', path: dir },
+        },
+      });
+
+      const path = fileCachePath(dir, 'directory-forget-key');
+      await mkdir(path, { recursive: true });
+
+      await expect(Cache.forget('directory-forget-key')).rejects.toThrow();
     });
   });
 

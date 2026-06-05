@@ -169,7 +169,7 @@ class ScheduleMonitorService {
     const result = await task.executeTask();
 
     // Persist to database
-    await this.persistResult(result).catch(() => {});
+    await this.persistResult(result);
   }
 
   /**
@@ -245,30 +245,26 @@ class ScheduleMonitorService {
     const result = new Map<string, TaskRunRecord[]>();
     if (taskNames.length === 0) return result;
 
-    try {
-      const rows = await new QueryBuilder('scheduled_task_runs')
-        .select('task', 'success', 'duration', 'error', 'ran_at')
-        .whereIn('task', taskNames)
-        .orderBy('ran_at', 'desc')
-        .limit(taskNames.length * limit)
-        .get();
+    const rows = await new QueryBuilder('scheduled_task_runs')
+      .select('task', 'success', 'duration', 'error', 'ran_at')
+      .whereIn('task', taskNames)
+      .orderBy('ran_at', 'desc')
+      .limit(taskNames.length * limit)
+      .get();
 
-      for (const row of rows) {
-        if (!result.has(row.task)) {
-          result.set(row.task, []);
-        }
-        const history = result.get(row.task)!;
-        if (history.length < limit) {
-          history.push({
-            timestamp: new Date(row.ran_at),
-            success: !!row.success,
-            duration: row.duration,
-            error: row.error || undefined,
-          });
-        }
+    for (const row of rows) {
+      if (!result.has(row.task)) {
+        result.set(row.task, []);
       }
-    } catch {
-      // Table may not exist — return empty
+      const history = result.get(row.task)!;
+      if (history.length < limit) {
+        history.push({
+          timestamp: new Date(row.ran_at),
+          success: !!row.success,
+          duration: row.duration,
+          error: row.error || undefined,
+        });
+      }
     }
 
     return result;

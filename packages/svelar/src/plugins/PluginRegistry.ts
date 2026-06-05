@@ -57,10 +57,6 @@ class PluginRegistryService {
 
           const fullName = prefix + entry.name;
 
-          // Check if matches svelar-* pattern
-          const isSvelarPackage = entry.name.startsWith('svelar-');
-          if (!isSvelarPackage) continue;
-
           const packageJsonPath = join(dir, entry.name, 'package.json');
           if (!existsSync(packageJsonPath)) continue;
 
@@ -69,6 +65,7 @@ class PluginRegistryService {
             const pkg = JSON.parse(content);
 
             // Check for svelar-plugin keyword or svelar-* pattern
+            const isSvelarPackage = entry.name.startsWith('svelar-');
             const hasSvelarKeyword = pkg.keywords?.includes('svelar-plugin');
             if (!isSvelarPackage && !hasSvelarKeyword) continue;
 

@@ -48,6 +48,29 @@ import { createRequire } from 'node:module';
 
 const requireOptionalPeer = createRequire(import.meta.url);
 
+function isSearchDocumentMissingError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const err = error as {
+    code?: string;
+    errorCode?: string;
+    type?: string;
+    name?: string;
+    status?: number;
+    statusCode?: number;
+    response?: { status?: number };
+  };
+
+  return (
+    err.status === 404 ||
+    err.statusCode === 404 ||
+    err.response?.status === 404 ||
+    err.code === 'document_not_found' ||
+    err.errorCode === 'document_not_found' ||
+    err.type === 'document_not_found' ||
+    err.name === 'DocumentNotFoundError'
+  );
+}
+
 // ── Types ──────────────────────────────────────────────────
 
 export interface SearchConfig {
@@ -110,17 +133,19 @@ class SearchManager {
 
     if (!this.client) {
       // Lazy-load meilisearch to avoid requiring it when not used
+      let MeiliSearch: any;
       try {
-        const { MeiliSearch } = requireOptionalPeer('meilisearch');
-        this.client = new MeiliSearch({
-          host: this.config.host,
-          apiKey: this.config.apiKey,
-        });
+        ({ MeiliSearch } = requireOptionalPeer('meilisearch'));
       } catch {
         throw new Error(
           'meilisearch package not installed. Run: npm install meilisearch'
         );
       }
+
+      this.client = new MeiliSearch({
+        host: this.config.host,
+        apiKey: this.config.apiKey,
+      });
     }
 
     return this.client;
@@ -268,8 +293,8 @@ export function Searchable<TBase extends Constructor>(
 
       try {
         await index.deleteDocument(this.getSearchableId());
-      } catch {
-        // Document may not exist in index — ignore
+      } catch (error) {
+        if (!isSearchDocumentMissingError(error)) throw error;
       }
     }
 
@@ -399,11 +424,7 @@ export function Searchable<TBase extends Constructor>(
     SearchableMixin.prototype.save = async function (...args: any[]) {
       const result = await origSave.apply(this, args);
       if (!Search.isSyncingDisabled()) {
-        try {
-          await this.searchable();
-        } catch {
-          // Don't fail the save if search indexing fails
-        }
+        await this.searchable();
       }
       return result;
     };
@@ -414,11 +435,7 @@ export function Searchable<TBase extends Constructor>(
     (SearchableMixin as any).create = async function (data: any) {
       const result = await origCreate.call(this, data);
       if (!Search.isSyncingDisabled() && result) {
-        try {
-          await result.searchable();
-        } catch {
-          // Don't fail the create if search indexing fails
-        }
+        await result.searchable();
       }
       return result;
     };
@@ -435,8 +452,8 @@ export function Searchable<TBase extends Constructor>(
           const client = Search.getClient();
           const index = client.index(indexName);
           await index.deleteDocument(id);
-        } catch {
-          // Don't fail the delete if search removal fails
+        } catch (error) {
+          if (!isSearchDocumentMissingError(error)) throw error;
         }
       }
       return result;

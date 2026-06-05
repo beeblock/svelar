@@ -57,23 +57,19 @@ class PluginPublisherService {
           continue;
         }
 
-        try {
-          // Create destination directory
-          await mkdir(destDir, { recursive: true });
+        // Create destination directory
+        await mkdir(destDir, { recursive: true });
 
-          // Copy the file
-          await copyFile(file.source, destPath);
+        // Copy the file
+        await copyFile(file.source, destPath);
 
-          // Track published file
-          if (file.type === 'config') {
-            result.configs.push(destPath);
-          } else if (file.type === 'migration') {
-            result.migrations.push(destPath);
-          } else if (file.type === 'asset') {
-            result.assets.push(destPath);
-          }
-        } catch (error) {
-          console.warn(`Failed to publish ${file.source} to ${destPath}:`, error);
+        // Track published file
+        if (file.type === 'config') {
+          result.configs.push(destPath);
+        } else if (file.type === 'migration') {
+          result.migrations.push(destPath);
+        } else if (file.type === 'asset') {
+          result.assets.push(destPath);
         }
       }
     }

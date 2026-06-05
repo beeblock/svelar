@@ -108,6 +108,20 @@ interface QueuedJob {
   job: Job;
 }
 
+function parseDatabaseJobPayload(row: { id: string; payload: string }, table: string): { jobClass: string; payload: string } {
+  try {
+    const data = JSON.parse(row.payload);
+    if (!data || typeof data.jobClass !== 'string' || typeof data.payload !== 'string') {
+      throw new Error('expected object with string jobClass and payload fields');
+    }
+    return data;
+  } catch (error: any) {
+    throw new Error(
+      `Failed to parse queued job payload for job "${row.id}" in table "${table}": ${error.message ?? error}`
+    );
+  }
+}
+
 // ── Job Base Class ─────────────────────────────────────────
 
 export abstract class Job {
@@ -177,23 +191,38 @@ interface QueueDriverInterface {
   pop(queue?: string): Promise<QueuedJob | null>;
   size(queue?: string): Promise<number>;
   clear(queue?: string): Promise<void>;
+  close?(): Promise<void>;
+}
+
+interface FailedJobRecorder {
+  store(job: QueuedJob, error: Error): Promise<void>;
 }
 
 // Sync driver — runs immediately in the same process
 class SyncDriver implements QueueDriverInterface {
+  constructor(private failedStore?: FailedJobRecorder) {}
+
   async push(queuedJob: QueuedJob): Promise<void> {
-    try {
-      queuedJob.job.attempts = 1;
-      await queuedJob.job.handle();
-    } catch (error) {
-      if (queuedJob.attempts + 1 < queuedJob.maxAttempts) {
-        // Retry synchronously
-        queuedJob.attempts++;
-        queuedJob.job.attempts = queuedJob.attempts + 1;
-        queuedJob.job.retrying(queuedJob.job.attempts);
-        return this.push(queuedJob);
+    let lastError: Error | null = null;
+
+    for (let attempt = queuedJob.attempts + 1; attempt <= queuedJob.maxAttempts; attempt += 1) {
+      queuedJob.attempts = attempt;
+      queuedJob.job.attempts = attempt;
+
+      try {
+        await queuedJob.job.handle();
+        return;
+      } catch (error) {
+        lastError = error as Error;
+        if (attempt < queuedJob.maxAttempts) {
+          queuedJob.job.retrying(attempt);
+        }
       }
-      queuedJob.job.failed(error as Error);
+    }
+
+    if (lastError) {
+      queuedJob.job.failed(lastError);
+      await this.failedStore?.store(queuedJob, lastError);
     }
   }
   async pop(): Promise<QueuedJob | null> { return null; }
@@ -278,14 +307,14 @@ class DatabaseDriver implements QueueDriverInterface {
 
     if (!row) return null;
 
-    // Reserve the job
-    await this.query().where('id', row.id).update({ reserved_at: nowSec });
-    await this.query().where('id', row.id).increment('attempts');
-
-    const data = JSON.parse(row.payload);
+    const data = parseDatabaseJobPayload(row, this.table);
 
     // Reconstruct the actual Job instance from the registry
     const jobInstance = this.registry.resolve(data.jobClass, data.payload);
+
+    // Reserve the job after validating that it can be parsed and restored.
+    await this.query().where('id', row.id).update({ reserved_at: nowSec });
+    await this.query().where('id', row.id).increment('attempts');
 
     return {
       id: row.id,
@@ -443,6 +472,13 @@ class RedisDriver implements QueueDriverInterface {
     }
   }
 
+  async close(): Promise<void> {
+    for (const q of this.queues.values()) {
+      await q.close();
+    }
+    this.queues.clear();
+  }
+
   /**
    * Start a BullMQ Worker that processes jobs for a given queue.
    * Returns the Worker instance so you can listen for events.
@@ -474,30 +510,53 @@ class RedisDriver implements QueueDriverInterface {
       },
     );
 
-    worker.on('failed', async (bullJob: any, err: Error) => {
-      const data = bullJob?.data;
-      if (data) {
-        try {
-          const jobInstance = registry.resolve(data.jobClass, data.payload);
-          // Only call failed() and persist if all retries are exhausted
-          if (bullJob.attemptsMade >= (bullJob.opts?.attempts ?? 3)) {
-            jobInstance.failed(err);
-            await failedStore.store({
-              id: bullJob.id,
-              jobClass: data.jobClass,
-              payload: data.payload,
-              queue: queueName,
-              attempts: bullJob.attemptsMade,
-              maxAttempts: bullJob.opts?.attempts ?? 3,
-              availableAt: Date.now(),
-              createdAt: bullJob.timestamp ?? Date.now(),
-              job: jobInstance,
-            }, err);
-          }
-        } catch {
-          console.error(`[Queue] Failed to resolve job for failure handler:`, err.message);
+    worker.on('failed', (bullJob: any, err: Error) => {
+      void (async () => {
+        const data = bullJob?.data;
+        const attemptsMade = bullJob?.attemptsMade ?? 0;
+        const maxAttempts = bullJob?.opts?.attempts ?? 3;
+
+        if (attemptsMade < maxAttempts) {
+          return;
         }
-      }
+
+        if (!data) {
+          await failedStore.storeRaw({
+            queue: queueName,
+            jobClass: bullJob?.name ?? 'Unknown',
+            payload: '{}',
+          }, err);
+          return;
+        }
+
+        let jobInstance: Job;
+        try {
+          jobInstance = registry.resolve(data.jobClass, data.payload);
+        } catch (resolveError: any) {
+          const failure = resolveError instanceof Error ? resolveError : err;
+          await failedStore.storeRaw({
+            queue: queueName,
+            jobClass: data.jobClass ?? bullJob?.name ?? 'Unknown',
+            payload: typeof data.payload === 'string' ? data.payload : JSON.stringify(data.payload ?? {}),
+          }, failure);
+          return;
+        }
+
+        jobInstance.failed(err);
+        await failedStore.store({
+          id: bullJob.id,
+          jobClass: data.jobClass,
+          payload: data.payload,
+          queue: queueName,
+          attempts: attemptsMade,
+          maxAttempts,
+          availableAt: Date.now(),
+          createdAt: bullJob.timestamp ?? Date.now(),
+          job: jobInstance,
+        }, err);
+      })().catch((error: any) => {
+        worker.emit('svelar:error', error instanceof Error ? error : new Error(String(error)));
+      });
     });
 
     return worker;
@@ -515,6 +574,27 @@ export interface FailedJobRecord {
   failedAt: number;
 }
 
+export interface QueueRetryFailure {
+  id: string;
+  queue: string;
+  jobClass: string;
+  error: string;
+}
+
+export class QueueRetryAllError extends Error {
+  constructor(
+    public retried: number,
+    public failures: QueueRetryFailure[],
+  ) {
+    super(
+      `Retried ${retried} failed job(s), but ${failures.length} failed to retry: ${failures
+        .map((failure) => `${failure.id} (${failure.jobClass}): ${failure.error}`)
+        .join('; ')}`
+    );
+    this.name = 'QueueRetryAllError';
+  }
+}
+
 class FailedJobStore {
   private table = assertSqlIdentifier('svelar_failed_jobs', 'Failed jobs table name');
 
@@ -523,19 +603,25 @@ class FailedJobStore {
   }
 
   async store(job: QueuedJob, error: Error): Promise<void> {
-    try {
-      await this.query().insert({
-        id: crypto.randomUUID(),
-        queue: job.queue,
-        job_class: job.jobClass,
-        payload: job.payload,
-        exception: error.stack ?? error.message,
-        failed_at: Math.floor(Date.now() / 1000),
-      });
-    } catch {
-      // If the failed_jobs table doesn't exist, fall back to console logging
-      console.error(`[Queue] Could not persist failed job (run migration to create svelar_failed_jobs table)`);
-    }
+    await this.storeRaw({
+      queue: job.queue,
+      jobClass: job.jobClass,
+      payload: job.payload,
+    }, error);
+  }
+
+  async storeRaw(
+    job: { queue: string; jobClass: string; payload: string },
+    error: Error,
+  ): Promise<void> {
+    await this.query().insert({
+      id: crypto.randomUUID(),
+      queue: job.queue,
+      job_class: job.jobClass,
+      payload: job.payload,
+      exception: error.stack ?? error.message,
+      failed_at: Math.floor(Date.now() / 1000),
+    });
   }
 
   async all(): Promise<FailedJobRecord[]> {
@@ -623,12 +709,15 @@ class JobRegistry {
     instance.queue = 'default';
 
     // Restore serialized data
+    let data: Record<string, any>;
     try {
-      const data = JSON.parse(serializedPayload);
-      instance.restore(data);
-    } catch {
-      // If deserialization fails, the instance will run with defaults
+      data = JSON.parse(serializedPayload);
+    } catch (error: any) {
+      throw new Error(
+        `Failed to deserialize payload for job "${className}": ${error.message ?? error}`
+      );
     }
+    instance.restore(data);
 
     return instance;
   }
@@ -736,7 +825,7 @@ class QueueManager {
    * await Queue.dispatchSync(new ProcessPayment(orderId));
    */
   async dispatchSync(job: Job): Promise<void> {
-    const syncDriver = new SyncDriver();
+    const syncDriver = new SyncDriver(this.failedStore);
 
     const queuedJob: QueuedJob = {
       id: crypto.randomUUID(),
@@ -817,15 +906,54 @@ class QueueManager {
       this.processing = true;
       this._activeWorker = worker;
 
-      // Block until stop() is called
-      await new Promise<void>((resolve) => {
-        const check = () => {
-          if (!this.processing) {
-            worker.close().then(resolve).catch(resolve);
-          } else {
-            setTimeout(check, 500);
+      // Block until stop() is called, or until BullMQ reports an infrastructure error.
+      await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        let timer: ReturnType<typeof setTimeout> | null = null;
+
+        const cleanup = () => {
+          if (timer) clearTimeout(timer);
+          worker.off('svelar:error', onWorkerError);
+          worker.off('error', onWorkerError);
+        };
+
+        const closeWorker = async () => {
+          try {
+            await worker.close();
+          } finally {
+            if (this._activeWorker === worker) {
+              this._activeWorker = null;
+            }
           }
         };
+
+        const finish = async () => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          await closeWorker();
+          resolve();
+        };
+
+        const onWorkerError = async (error: any) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          this.processing = false;
+          await closeWorker();
+          reject(error instanceof Error ? error : new Error(String(error)));
+        };
+
+        const check = () => {
+          if (!this.processing) {
+            void finish();
+          } else {
+            timer = setTimeout(check, 500);
+          }
+        };
+
+        worker.on('svelar:error', onWorkerError);
+        worker.on('error', onWorkerError);
         check();
       });
 
@@ -902,6 +1030,7 @@ class QueueManager {
       await this._activeWorker.close();
       this._activeWorker = null;
     }
+    await this.resolveDriver(this.config.default).close?.();
   }
 
   /**
@@ -962,6 +1091,8 @@ class QueueManager {
   async retryAll(): Promise<number> {
     const records = await this.failedStore.all();
     let count = 0;
+    const failures: QueueRetryFailure[] = [];
+
     for (const record of records) {
       try {
         const jobInstance = this.jobRegistry.resolve(record.jobClass, record.payload);
@@ -969,10 +1100,20 @@ class QueueManager {
         await this.dispatch(jobInstance, { queue: record.queue });
         await this.failedStore.forget(record.id);
         count++;
-      } catch {
-        // Skip unresolvable jobs
+      } catch (error: any) {
+        failures.push({
+          id: record.id,
+          queue: record.queue,
+          jobClass: record.jobClass,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
+
+    if (failures.length > 0) {
+      throw new QueueRetryAllError(count, failures);
+    }
+
     return count;
   }
 
@@ -1004,7 +1145,7 @@ class QueueManager {
 
     let driver: QueueDriverInterface;
     switch (config.driver) {
-      case 'sync': driver = new SyncDriver(); break;
+      case 'sync': driver = new SyncDriver(this.failedStore); break;
       case 'memory': driver = new MemoryDriver(); break;
       case 'database':
         driver = new DatabaseDriver(config.table ?? 'svelar_jobs', this.jobRegistry);

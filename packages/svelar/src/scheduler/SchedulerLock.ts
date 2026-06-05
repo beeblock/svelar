@@ -39,32 +39,24 @@ export class SchedulerLock {
     const now = new Date().toISOString();
     const expiresAt = new Date(Date.now() + ttlMinutes * 60_000).toISOString();
 
-    try {
-      await conn.transaction(async () => {
-        await locksQuery().where('task_key', taskKey).where('expires_at', '<', now).delete();
-        await locksQuery().upsert(
-          { task_key: taskKey, owner: ownerId, expires_at: expiresAt },
-          'task_key',
-          [],
-        );
-      });
+    await conn.transaction(async () => {
+      await locksQuery().where('task_key', taskKey).where('expires_at', '<', now).delete();
+      await locksQuery().upsert(
+        { task_key: taskKey, owner: ownerId, expires_at: expiresAt },
+        'task_key',
+        [],
+      );
+    });
 
-      const row = await locksQuery().select('owner').where('task_key', taskKey).first();
-      return row?.owner === ownerId;
-    } catch {
-      return false;
-    }
+    const row = await locksQuery().select('owner').where('task_key', taskKey).first();
+    return row?.owner === ownerId;
   }
 
   /**
    * Release a lock (only if this process owns it).
    */
   static async release(taskKey: string): Promise<void> {
-    try {
-      await locksQuery().where('task_key', taskKey).where('owner', ownerId).delete();
-    } catch {
-      // Best-effort release — TTL will handle cleanup if this fails
-    }
+    await locksQuery().where('task_key', taskKey).where('owner', ownerId).delete();
   }
 
   /**
@@ -72,10 +64,6 @@ export class SchedulerLock {
    * Called during graceful shutdown.
    */
   static async releaseAll(): Promise<void> {
-    try {
-      await locksQuery().where('owner', ownerId).delete();
-    } catch {
-      // Best-effort
-    }
+    await locksQuery().where('owner', ownerId).delete();
   }
 }

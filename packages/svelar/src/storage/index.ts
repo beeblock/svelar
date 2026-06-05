@@ -26,7 +26,6 @@
  */
 
 import { readFile, writeFile, unlink, mkdir, readdir, stat, copyFile, rename } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
 import { dirname, extname, basename, resolve as resolvePath, relative, isAbsolute, sep } from 'node:path';
 
 // ── Types ──────────────────────────────────────────────────
@@ -42,11 +41,11 @@ export interface DiskConfig {
   /** S3 / RustFS configuration */
   bucket?: string;
   region?: string;
-  /** S3-compatible endpoint URL (e.g. http://rustfs:9000 for RustFS/MinIO) */
+  /** S3-compatible endpoint URL (e.g. http://rustfs:9000 for RustFS) */
   endpoint?: string;
   accessKeyId?: string;
   secretAccessKey?: string;
-  /** Force path-style addressing (required for RustFS/MinIO, default: true) */
+  /** Force path-style addressing (required for RustFS and most S3-compatible services, default: true) */
   forcePathStyle?: boolean;
   /** Optional prefix/directory within the bucket */
   prefix?: string;
@@ -63,6 +62,24 @@ export interface FileInfo {
   extension: string;
   size: number;
   lastModified: Date;
+}
+
+function isNodeError(error: unknown, code: string): boolean {
+  return typeof error === 'object' && error !== null && (error as NodeJS.ErrnoException).code === code;
+}
+
+function isS3NotFoundError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const err = error as { name?: string; Code?: string; code?: string; $metadata?: { httpStatusCode?: number } };
+  return (
+    err.name === 'NoSuchKey' ||
+    err.name === 'NotFound' ||
+    err.Code === 'NoSuchKey' ||
+    err.Code === 'NotFound' ||
+    err.code === 'NoSuchKey' ||
+    err.code === 'NotFound' ||
+    err.$metadata?.httpStatusCode === 404
+  );
 }
 
 // ── Storage Disk Interface ─────────────────────────────────
@@ -135,15 +152,22 @@ class LocalDisk implements Disk {
   }
 
   async exists(path: string): Promise<boolean> {
-    return existsSync(this.resolve(path));
+    try {
+      await stat(this.resolve(path));
+      return true;
+    } catch (error) {
+      if (isNodeError(error, 'ENOENT')) return false;
+      throw error;
+    }
   }
 
   async delete(path: string): Promise<boolean> {
     try {
       await unlink(this.resolve(path));
       return true;
-    } catch {
-      return false;
+    } catch (error) {
+      if (isNodeError(error, 'ENOENT')) return false;
+      throw error;
     }
   }
 
@@ -164,8 +188,9 @@ class LocalDisk implements Disk {
     try {
       const entries = await readdir(dir, { withFileTypes: true });
       return entries.filter((e) => e.isFile()).map((e) => (directory ? `${directory}/${e.name}` : e.name));
-    } catch {
-      return [];
+    } catch (error) {
+      if (isNodeError(error, 'ENOENT')) return [];
+      throw error;
     }
   }
 
@@ -184,8 +209,8 @@ class LocalDisk implements Disk {
           results.push(...(await this.allFiles(path)));
         }
       }
-    } catch {
-      // Directory doesn't exist
+    } catch (error) {
+      if (!isNodeError(error, 'ENOENT')) throw error;
     }
 
     return results;
@@ -196,8 +221,9 @@ class LocalDisk implements Disk {
     try {
       const entries = await readdir(dir, { withFileTypes: true });
       return entries.filter((e) => e.isDirectory()).map((e) => (directory ? `${directory}/${e.name}` : e.name));
-    } catch {
-      return [];
+    } catch (error) {
+      if (isNodeError(error, 'ENOENT')) return [];
+      throw error;
     }
   }
 
@@ -226,11 +252,11 @@ class LocalDisk implements Disk {
   }
 }
 
-// ── S3-Compatible Disk (RustFS / MinIO / AWS S3) ──────────
+// ── S3-Compatible Disk (RustFS / AWS S3) ──────────
 
 /**
  * S3-compatible storage disk using @aws-sdk/client-s3.
- * Works with RustFS, MinIO, AWS S3, and any S3-compatible service.
+ * Works with RustFS, AWS S3, and other S3-compatible services.
  * Requires: npm install @aws-sdk/client-s3 (peer dependency, loaded dynamically)
  */
 class S3Disk implements Disk {
@@ -320,8 +346,8 @@ class S3Disk implements Disk {
     let existing: Buffer | null = null;
     try {
       existing = await this.get(path);
-    } catch {
-      // File doesn't exist yet, that's fine
+    } catch (error) {
+      if (!isS3NotFoundError(error)) throw error;
     }
 
     const appendBuffer = typeof content === 'string' ? Buffer.from(content, 'utf-8') : content;
@@ -341,7 +367,8 @@ class S3Disk implements Disk {
         })
       );
       return true;
-    } catch {
+    } catch (error) {
+      if (!isS3NotFoundError(error)) throw error;
       return false;
     }
   }
@@ -350,17 +377,13 @@ class S3Disk implements Disk {
     const s3 = await this.getS3();
     const client = await this.getClient();
 
-    try {
-      await client.send(
-        new s3.DeleteObjectCommand({
-          Bucket: this.config.bucket,
-          Key: this.key(path),
-        })
-      );
-      return true;
-    } catch {
-      return false;
-    }
+    await client.send(
+      new s3.DeleteObjectCommand({
+        Bucket: this.config.bucket,
+        Key: this.key(path),
+      })
+    );
+    return true;
   }
 
   async copy(from: string, to: string): Promise<void> {
@@ -386,26 +409,22 @@ class S3Disk implements Disk {
     const client = await this.getClient();
     const prefix = this.key(directory ? `${directory}/` : '');
 
-    try {
-      const response = await client.send(
-        new s3.ListObjectsV2Command({
-          Bucket: this.config.bucket,
-          Prefix: prefix,
-          Delimiter: '/',
-        })
-      );
+    const response = await client.send(
+      new s3.ListObjectsV2Command({
+        Bucket: this.config.bucket,
+        Prefix: prefix,
+        Delimiter: '/',
+      })
+    );
 
-      return (response.Contents ?? [])
-        .map((obj: any) => obj.Key)
-        .filter((key: string) => key !== prefix)
-        .map((key: string) => {
-          // Strip the disk prefix to return relative paths
-          const p = this.config.prefix;
-          return p ? key.slice(p.length + 1) : key;
-        });
-    } catch {
-      return [];
-    }
+    return (response.Contents ?? [])
+      .map((obj: any) => obj.Key)
+      .filter((key: string) => key !== prefix)
+      .map((key: string) => {
+        // Strip the disk prefix to return relative paths
+        const p = this.config.prefix;
+        return p ? key.slice(p.length + 1) : key;
+      });
   }
 
   async allFiles(directory: string = ''): Promise<string[]> {
@@ -442,25 +461,21 @@ class S3Disk implements Disk {
     const client = await this.getClient();
     const prefix = this.key(directory ? `${directory}/` : '');
 
-    try {
-      const response = await client.send(
-        new s3.ListObjectsV2Command({
-          Bucket: this.config.bucket,
-          Prefix: prefix,
-          Delimiter: '/',
-        })
-      );
+    const response = await client.send(
+      new s3.ListObjectsV2Command({
+        Bucket: this.config.bucket,
+        Prefix: prefix,
+        Delimiter: '/',
+      })
+    );
 
-      return (response.CommonPrefixes ?? [])
-        .map((cp: any) => {
-          const p = this.config.prefix;
-          const key = p ? cp.Prefix.slice(p.length + 1) : cp.Prefix;
-          return key.replace(/\/$/, ''); // strip trailing slash
-        })
-        .filter((d: string) => d.length > 0);
-    } catch {
-      return [];
-    }
+    return (response.CommonPrefixes ?? [])
+      .map((cp: any) => {
+        const p = this.config.prefix;
+        const key = p ? cp.Prefix.slice(p.length + 1) : cp.Prefix;
+        return key.replace(/\/$/, ''); // strip trailing slash
+      })
+      .filter((d: string) => d.length > 0);
   }
 
   async makeDirectory(_path: string): Promise<void> {
@@ -522,27 +537,29 @@ class S3Disk implements Disk {
    * Requires: npm install @aws-sdk/s3-request-presigner
    */
   async temporaryUrl(path: string, expiresInSeconds: number = 3600): Promise<string> {
+    let presigner: any;
     try {
-      const presigner = await (Function('return import("@aws-sdk/s3-request-presigner")')() as Promise<any>);
-      const s3 = await this.getS3();
-      const client = await this.getClient();
-
-      const command = new s3.GetObjectCommand({
-        Bucket: this.config.bucket,
-        Key: this.key(path),
-      });
-
-      return await presigner.getSignedUrl(client, command, { expiresIn: expiresInSeconds });
+      presigner = await (Function('return import("@aws-sdk/s3-request-presigner")')() as Promise<any>);
     } catch {
       throw new Error(
         'Pre-signed URLs require @aws-sdk/s3-request-presigner. Install it with: npm install @aws-sdk/s3-request-presigner'
       );
     }
+
+    const s3 = await this.getS3();
+    const client = await this.getClient();
+
+    const command = new s3.GetObjectCommand({
+      Bucket: this.config.bucket,
+      Key: this.key(path),
+    });
+
+    return presigner.getSignedUrl(client, command, { expiresIn: expiresInSeconds });
   }
 
   /**
    * Ensure the bucket exists, creating it if not.
-   * Useful for initial setup with RustFS/MinIO.
+   * Useful for initial setup with RustFS.
    */
   async ensureBucket(): Promise<void> {
     const s3 = await this.getS3();
@@ -552,8 +569,8 @@ class S3Disk implements Disk {
       await client.send(
         new s3.HeadBucketCommand({ Bucket: this.config.bucket })
       );
-    } catch {
-      // Bucket doesn't exist — create it
+    } catch (error) {
+      if (!isS3NotFoundError(error)) throw error;
       await client.send(
         new s3.CreateBucketCommand({ Bucket: this.config.bucket })
       );

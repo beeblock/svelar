@@ -1078,6 +1078,9 @@ export const PDF = {
    * ```
    */
   configure(config: PdfConfig): void {
+    if (config.driver && !['pdfkit', 'gotenberg'].includes(config.driver)) {
+      throw new Error(`Unknown PDF driver: ${(config as any).driver}`);
+    }
     _config = { ..._config, ...config };
   },
 

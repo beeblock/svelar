@@ -9,6 +9,10 @@ import { singleton } from '../support/singleton.js';
 import { assertSqlIdentifier } from '../database/Connection.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
 
+function isNodeError(error: unknown, code: string): boolean {
+  return typeof error === 'object' && error !== null && (error as NodeJS.ErrnoException).code === code;
+}
+
 export interface EmailTemplate {
   id: string;
   name: string; // 'welcome', 'password-reset', 'invoice'
@@ -194,7 +198,11 @@ class EmailTemplateManager {
       const existing = await this.get(name);
       if (!existing) return false;
       const { unlink } = await import('node:fs/promises');
-      await unlink(this.filePath(name)).catch(() => undefined);
+      try {
+        await unlink(this.filePath(name));
+      } catch (error) {
+        if (!isNodeError(error, 'ENOENT')) throw error;
+      }
       this.templates.delete(name);
       return true;
     }
@@ -243,8 +251,9 @@ class EmailTemplateManager {
     const { readFile } = await import('node:fs/promises');
     try {
       return JSON.parse(await readFile(this.filePath(name), 'utf-8')) as EmailTemplate;
-    } catch {
-      return null;
+    } catch (error) {
+      if (isNodeError(error, 'ENOENT')) return null;
+      throw error;
     }
   }
 
@@ -259,14 +268,15 @@ class EmailTemplateManager {
         try {
           const template = JSON.parse(await readFile(join(this.templatesPath(), file), 'utf-8')) as EmailTemplate;
           if (!category || template.category === category) templates.push(template);
-        } catch {
-          // Ignore malformed template files.
+        } catch (error) {
+          if (!isNodeError(error, 'ENOENT')) throw error;
         }
       }
 
       return templates.sort((a, b) => a.name.localeCompare(b.name));
-    } catch {
-      return [];
+    } catch (error) {
+      if (isNodeError(error, 'ENOENT')) return [];
+      throw error;
     }
   }
 

@@ -7,6 +7,7 @@
  * - **smtp** — SMTP via nodemailer (requires `npm install nodemailer`)
  * - **postmark** — Postmark transactional email API (zero deps, uses fetch)
  * - **resend** — Resend email API (zero deps, uses fetch)
+ * - **mailtrap** — Mailtrap Email API (zero deps, uses fetch)
  * - **log** — Logs emails to console (development)
  * - **null** — Silently discards emails (testing)
  *
@@ -30,6 +31,10 @@
  *       host: 'smtp.example.com',
  *       port: 587,
  *       auth: { user: 'you@example.com', pass: 'secret' },
+ *     },
+ *     mailtrap: {
+ *       driver: 'mailtrap',
+ *       apiToken: process.env.MAILTRAP_API_TOKEN,
  *     },
  *     log: { driver: 'log' },
  *   },
@@ -63,7 +68,7 @@
 
 // ── Types ──────────────────────────────────────────────────
 
-export type MailDriver = 'smtp' | 'postmark' | 'resend' | 'log' | 'null' | 'custom';
+export type MailDriver = 'smtp' | 'postmark' | 'resend' | 'mailtrap' | 'log' | 'null' | 'custom';
 
 export interface MailerConfig {
   default: string;
@@ -84,6 +89,8 @@ export interface MailDriverConfig {
   messageStream?: string;
   // Resend
   apiKey?: string;
+  // HTTP API drivers
+  endpoint?: string;
   // Custom — provide your own MailTransport instance
   transport?: MailTransport;
 }
@@ -114,7 +121,7 @@ export interface SendResult {
 
 // ── Mail Transport Interface ───────────────────────────────
 
-interface MailTransport {
+export interface MailTransport {
   send(message: MailMessage): Promise<SendResult>;
 }
 
@@ -123,6 +130,16 @@ interface MailTransport {
 function formatFrom(from: string | { name: string; address: string }): string {
   if (typeof from === 'string') return from;
   return `${from.name} <${from.address}>`;
+}
+
+function parseAddress(address: string | { name: string; address: string }): { email: string; name?: string } {
+  if (typeof address !== 'string') return { email: address.address, name: address.name };
+
+  const match = address.match(/^\s*(?:"?([^"<]*)"?\s*)?<([^>]+)>\s*$/);
+  if (!match) return { email: address.trim() };
+
+  const name = match[1]?.trim();
+  return name ? { email: match[2].trim(), name } : { email: match[2].trim() };
 }
 
 function toArray(value: string | string[] | undefined): string[] {
@@ -252,7 +269,7 @@ class PostmarkTransport implements MailTransport {
       }));
     }
 
-    const response = await fetch('https://api.postmarkapp.com/email', {
+    const response = await fetch(this.config.endpoint ?? 'https://api.postmarkapp.com/email', {
       method: 'POST',
       headers: {
         'Accept': 'application/json',
@@ -328,7 +345,7 @@ class ResendTransport implements MailTransport {
       }));
     }
 
-    const response = await fetch('https://api.resend.com/emails', {
+    const response = await fetch(this.config.endpoint ?? 'https://api.resend.com/emails', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
@@ -348,6 +365,83 @@ class ResendTransport implements MailTransport {
       accepted: to,
       rejected: [],
       messageId: result.id,
+    };
+  }
+}
+
+// ── Mailtrap Transport ─────────────────────────────────────
+
+/**
+ * Sends email via the Mailtrap Email API.
+ * Uses fetch — zero external dependencies.
+ *
+ * API docs: https://docs.mailtrap.io/developers/email-sending
+ * Endpoint: POST https://send.api.mailtrap.io/api/send
+ * Auth: Authorization: Bearer <api_token>
+ */
+class MailtrapTransport implements MailTransport {
+  constructor(private config: MailDriverConfig) {}
+
+  async send(message: MailMessage): Promise<SendResult> {
+    const apiToken = this.config.apiToken ?? this.config.apiKey;
+    if (!apiToken) {
+      throw new Error(
+        'Mailtrap apiToken is required. Set it in your mailer config or MAILTRAP_API_TOKEN env var.'
+      );
+    }
+
+    const to = toArray(message.to);
+    const cc = toArray(message.cc);
+    const bcc = toArray(message.bcc);
+
+    const body: Record<string, any> = {
+      from: message.from ? parseAddress(message.from) : undefined,
+      to: to.map((email) => ({ email })),
+      subject: message.subject,
+    };
+
+    if (cc.length > 0) body.cc = cc.map((email) => ({ email }));
+    if (bcc.length > 0) body.bcc = bcc.map((email) => ({ email }));
+    if (message.replyTo) body.reply_to = parseAddress(message.replyTo);
+    if (message.html) body.html = message.html;
+    if (message.text) body.text = message.text;
+
+    if (!body.html && !body.text) {
+      body.text = '';
+    }
+
+    if (message.tags) {
+      body.category = Object.values(message.tags)[0];
+    }
+
+    if (message.attachments?.length) {
+      body.attachments = message.attachments.map((att) => ({
+        filename: att.filename,
+        content: encodeAttachment(att.content),
+        type: att.contentType || 'application/octet-stream',
+      }));
+    }
+
+    const response = await fetch(this.config.endpoint ?? 'https://send.api.mailtrap.io/api/send', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: response.statusText })) as any;
+      throw new Error(`Mailtrap error ${response.status}: ${error.message || error.error || JSON.stringify(error)}`);
+    }
+
+    const result = await response.json() as any;
+
+    return {
+      accepted: to,
+      rejected: [],
+      messageId: result.message_ids?.[0] ?? result.message_id,
     };
   }
 }
@@ -481,6 +575,7 @@ class MailManager {
       case 'smtp': transport = new SmtpTransport(driverConfig); break;
       case 'postmark': transport = new PostmarkTransport(driverConfig); break;
       case 'resend': transport = new ResendTransport(driverConfig); break;
+      case 'mailtrap': transport = new MailtrapTransport(driverConfig); break;
       case 'log': transport = new LogTransport(); break;
       case 'null': transport = new NullTransport(); break;
       case 'custom': {

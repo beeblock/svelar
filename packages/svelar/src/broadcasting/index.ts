@@ -98,6 +98,23 @@ type Subscriber = {
   userInfo?: Record<string, any>;
 };
 
+function validateDriverConfig(name: string, config: BroadcastDriverConfig): void {
+  switch (config.driver) {
+    case 'sse':
+    case 'log':
+      return;
+    case 'pusher': {
+      const missing = ['key', 'secret', 'appId'].filter((field) => !(config as any)[field]);
+      if (missing.length > 0) {
+        throw new Error(`Broadcast driver "${name}" is missing required Pusher config: ${missing.join(', ')}`);
+      }
+      return;
+    }
+    default:
+      throw new Error(`Unknown broadcast driver "${(config as any).driver}" for "${name}".`);
+  }
+}
+
 // ── Channel Types ─────────────────────────────────────────
 
 export type ChannelType = 'public' | 'private' | 'presence';
@@ -132,6 +149,7 @@ class SSEChannel {
    */
   stream(userId?: string | number, userInfo?: Record<string, any>): Response {
     const channel = this;
+    let subscriber: Subscriber | null = null;
 
     const stream = new ReadableStream({
       start(controller) {
@@ -145,7 +163,7 @@ class SSEChannel {
         const initData = `event: connected\ndata: ${JSON.stringify(initPayload)}\nid: ${Date.now()}\n\n`;
         controller.enqueue(new TextEncoder().encode(initData));
 
-        const subscriber: Subscriber = { controller, userId, userInfo };
+        subscriber = { controller, userId, userInfo };
         channel.subscribers.push(subscriber);
 
         // Notify other presence subscribers that someone joined
@@ -154,23 +172,11 @@ class SSEChannel {
         }
       },
       cancel() {
-        const idx = channel.subscribers.findIndex(
-          (s) => s.controller === (this as any)._controller
-        );
-        // Remove by filtering out disconnected controllers
-        const before = channel.subscribers.length;
-        channel.subscribers = channel.subscribers.filter((s) => {
-          try {
-            // Test if the controller is still alive
-            s.controller.enqueue(new TextEncoder().encode(':\n\n')); // SSE comment (keepalive)
-            return true;
-          } catch {
-            return false;
-          }
-        });
+        if (subscriber) {
+          channel.subscribers = channel.subscribers.filter((s) => s !== subscriber);
+        }
 
-        // Notify presence members that someone left
-        if (channel.type === 'presence' && userId !== undefined && channel.subscribers.length < before) {
+        if (channel.type === 'presence' && userId !== undefined) {
           channel.sendInternal('member:left', { id: userId, ...userInfo });
         }
       },
@@ -430,12 +436,20 @@ class BroadcastManager {
    * Configure broadcasting drivers.
    */
   configure(config: BroadcastConfig): void {
-    this.config = config;
+    const defaultConfig = config.drivers[config.default];
+    if (!defaultConfig) {
+      throw new Error(`Broadcast default driver "${config.default}" is not defined.`);
+    }
 
-    // Pre-initialize Pusher driver if configured
-    const pusherConfig = Object.values(config.drivers).find((d) => d.driver === 'pusher');
-    if (pusherConfig && pusherConfig.driver === 'pusher') {
-      this.pusherDriver = new PusherDriver(pusherConfig);
+    for (const [name, driverConfig] of Object.entries(config.drivers)) {
+      validateDriverConfig(name, driverConfig);
+    }
+
+    this.config = config;
+    this.pusherDriver = null;
+
+    if (defaultConfig.driver === 'pusher') {
+      this.pusherDriver = new PusherDriver(defaultConfig);
     }
   }
 
@@ -604,6 +618,9 @@ class BroadcastManager {
     targetUserId?: string | number
   ): Promise<void> {
     const driverConfig = this.config.drivers[this.config.default];
+    if (!driverConfig) {
+      throw new Error(`Broadcast default driver "${this.config.default}" is not defined.`);
+    }
 
     switch (driverConfig?.driver) {
       case 'pusher':
@@ -618,7 +635,6 @@ class BroadcastManager {
         break;
 
       case 'sse':
-      default:
         // Send to all SSE channels matching the name
         for (const [, ch] of this.sseChannels) {
           if (ch.name === channelName) {
@@ -626,6 +642,9 @@ class BroadcastManager {
           }
         }
         break;
+
+      default:
+        throw new Error(`Unknown broadcast driver "${(driverConfig as any).driver}".`);
     }
   }
 
@@ -735,6 +754,10 @@ class BroadcastManager {
       .replace(/\{(\w+)\}/g, (_, name) => {
         paramNames.push(name);
         return '([^.]+)';
+      })
+      .replace(/\\\*/g, () => {
+        paramNames.push(String(paramNames.length));
+        return '(.+)';
       });
 
     const regex = new RegExp(`^${regexStr}$`);

@@ -1,5 +1,12 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { Queue, Job } from '../src/queue/index';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Connection } from '../src/database/Connection.js';
+import { svelarCoreMigrations } from '../src/database/CoreMigrations.js';
+import { Migrator } from '../src/database/Migration.js';
+import { Queue, Job, QueueRetryAllError } from '../src/queue/index';
+import { JobMonitor } from '../src/queue/JobMonitor.js';
 
 describe('Queue and Job Processing', () => {
   beforeEach(() => {
@@ -108,7 +115,7 @@ describe('Queue and Job Processing', () => {
 
       const job = new FailingJob();
 
-      await Queue.dispatch(job);
+      await expect(Queue.dispatch(job)).rejects.toThrow('Database not configured');
 
       expect(failedFn).toHaveBeenCalled();
     });
@@ -165,7 +172,7 @@ describe('Queue and Job Processing', () => {
         }
       }
 
-      await Queue.dispatch(new ErrorJob());
+      await expect(Queue.dispatch(new ErrorJob())).rejects.toThrow('Database not configured');
 
       expect(failedFn).toHaveBeenCalled();
     });
@@ -580,5 +587,427 @@ describe('Queue and Job Processing', () => {
 
       expect(attempts).toBeGreaterThan(0);
     });
+  });
+});
+
+describe.sequential('Queue failed jobs', () => {
+  let root: string;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'svelar-queue-failed-'));
+    await Connection.disconnect();
+    Connection.configure({
+      default: 'sqlite',
+      connections: {
+        sqlite: { driver: 'sqlite', filename: join(root, 'database.sqlite') },
+      },
+    });
+    await new Migrator().fresh(svelarCoreMigrations());
+    await Queue.stop();
+  });
+
+  afterEach(async () => {
+    await Queue.stop();
+    Queue.configure({
+      default: 'sync',
+      connections: { sync: { driver: 'sync' } },
+    });
+    await Connection.disconnect();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it('persists exhausted sync driver failures', async () => {
+    const failedCalls: string[] = [];
+
+    class PersistentlyFailingSyncJob extends Job {
+      maxAttempts = 2;
+      retryDelay = 0;
+
+      async handle(): Promise<void> {
+        throw new Error('sync exploded');
+      }
+
+      failed(error: Error): void {
+        failedCalls.push(error.message);
+      }
+    }
+
+    Queue.configure({
+      default: 'sync',
+      connections: { sync: { driver: 'sync' } },
+    });
+    Queue.register(PersistentlyFailingSyncJob);
+
+    await Queue.dispatch(new PersistentlyFailingSyncJob());
+
+    const failures = await Queue.failed();
+    expect(failedCalls).toEqual(['sync exploded']);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({
+      queue: 'default',
+      jobClass: 'PersistentlyFailingSyncJob',
+    });
+    expect(failures[0].exception).toContain('sync exploded');
+  });
+
+  it('fails exhausted sync jobs when the failed jobs table is unavailable', async () => {
+    await Connection.raw('DROP TABLE svelar_failed_jobs');
+
+    class MissingFailedTableSyncJob extends Job {
+      maxAttempts = 1;
+
+      async handle(): Promise<void> {
+        throw new Error('sync failure needs persistence');
+      }
+    }
+
+    Queue.configure({
+      default: 'sync',
+      connections: { sync: { driver: 'sync' } },
+    });
+    Queue.register(MissingFailedTableSyncJob);
+
+    await expect(Queue.dispatch(new MissingFailedTableSyncJob())).rejects.toThrow(
+      'svelar_failed_jobs'
+    );
+  });
+
+  it('lists, retries, and flushes failed jobs from the database store', async () => {
+    class RetryableFailedJob extends Job {
+      static attempts = 0;
+      maxAttempts = 1;
+      retryDelay = 0;
+
+      async handle(): Promise<void> {
+        RetryableFailedJob.attempts += 1;
+        if (RetryableFailedJob.attempts === 1) {
+          throw new Error('first attempt failed');
+        }
+      }
+    }
+
+    Queue.configure({
+      default: 'memory',
+      connections: { memory: { driver: 'memory' } },
+    });
+    Queue.register(RetryableFailedJob);
+    RetryableFailedJob.attempts = 0;
+
+    await Queue.dispatch(new RetryableFailedJob());
+    await Queue.work({ maxJobs: 1, sleep: 0 });
+
+    let failures = await Queue.failed();
+    expect(failures).toHaveLength(1);
+    expect(failures[0].jobClass).toBe('RetryableFailedJob');
+
+    await expect(Queue.retry(failures[0].id)).resolves.toBe(true);
+    await expect(Queue.retry('missing-id')).resolves.toBe(false);
+    await Queue.work({ maxJobs: 1, sleep: 0 });
+
+    failures = await Queue.failed();
+    expect(failures).toHaveLength(0);
+    expect(RetryableFailedJob.attempts).toBe(2);
+
+    class AlwaysFailingMemoryJob extends Job {
+      maxAttempts = 1;
+
+      async handle(): Promise<void> {
+        throw new Error('flush me');
+      }
+    }
+
+    Queue.register(AlwaysFailingMemoryJob);
+    await Queue.dispatch(new AlwaysFailingMemoryJob());
+    await Queue.dispatch(new AlwaysFailingMemoryJob());
+    await Queue.work({ maxJobs: 2, sleep: 0 });
+
+    expect(await Queue.failed()).toHaveLength(2);
+    await expect(Queue.flushFailed()).resolves.toBe(2);
+    expect(await Queue.failed()).toHaveLength(0);
+  });
+
+  it('reports retryAll failures without deleting unresolvable failed jobs', async () => {
+    class RetryAllGoodJob extends Job {
+      static attempts = 0;
+      maxAttempts = 1;
+      retryDelay = 0;
+
+      async handle(): Promise<void> {
+        RetryAllGoodJob.attempts += 1;
+        if (RetryAllGoodJob.attempts === 1) {
+          throw new Error('retry all first failure');
+        }
+      }
+    }
+
+    Queue.configure({
+      default: 'memory',
+      connections: { memory: { driver: 'memory' } },
+    });
+    Queue.register(RetryAllGoodJob);
+    RetryAllGoodJob.attempts = 0;
+
+    await Queue.dispatch(new RetryAllGoodJob());
+    await Queue.work({ maxJobs: 1, sleep: 0 });
+    await Connection.raw(
+      'INSERT INTO svelar_failed_jobs (id, queue, job_class, payload, exception, failed_at) VALUES (?, ?, ?, ?, ?, ?)',
+      [
+        'missing-job-class',
+        'default',
+        'MissingRetryAllJob',
+        '{}',
+        'missing class',
+        Math.floor(Date.now() / 1000),
+      ],
+    );
+
+    await expect(Queue.retryAll()).rejects.toMatchObject({
+      name: 'QueueRetryAllError',
+      retried: 1,
+      failures: [
+        expect.objectContaining({
+          id: 'missing-job-class',
+          jobClass: 'MissingRetryAllJob',
+        }),
+      ],
+    });
+
+    await Queue.work({ maxJobs: 1, sleep: 0 });
+    expect(RetryAllGoodJob.attempts).toBe(2);
+    const failures = await Queue.failed();
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({
+      id: 'missing-job-class',
+      jobClass: 'MissingRetryAllJob',
+    });
+
+    const error = await Queue.retryAll().catch((err) => err);
+    expect(error).toBeInstanceOf(QueueRetryAllError);
+    expect(error.retried).toBe(0);
+  });
+
+  it('does not retry failed jobs with malformed serialized payloads', async () => {
+    class BadPayloadRetryJob extends Job {
+      static attempts = 0;
+
+      async handle(): Promise<void> {
+        BadPayloadRetryJob.attempts += 1;
+      }
+    }
+
+    Queue.configure({
+      default: 'memory',
+      connections: { memory: { driver: 'memory' } },
+    });
+    Queue.register(BadPayloadRetryJob);
+    BadPayloadRetryJob.attempts = 0;
+
+    await Connection.raw(
+      'INSERT INTO svelar_failed_jobs (id, queue, job_class, payload, exception, failed_at) VALUES (?, ?, ?, ?, ?, ?)',
+      [
+        'bad-payload',
+        'default',
+        'BadPayloadRetryJob',
+        '{not-json',
+        'malformed payload',
+        Math.floor(Date.now() / 1000),
+      ],
+    );
+
+    await expect(Queue.retry('bad-payload')).rejects.toThrow(
+      'Failed to deserialize payload for job "BadPayloadRetryJob"'
+    );
+    expect(BadPayloadRetryJob.attempts).toBe(0);
+    await expect(Queue.failed()).resolves.toHaveLength(1);
+
+    await expect(Queue.retryAll()).rejects.toMatchObject({
+      name: 'QueueRetryAllError',
+      retried: 0,
+      failures: [
+        expect.objectContaining({
+          id: 'bad-payload',
+          jobClass: 'BadPayloadRetryJob',
+          error: expect.stringContaining('Failed to deserialize payload'),
+        }),
+      ],
+    });
+  });
+
+  it('reports malformed database queue payloads with job and table context', async () => {
+    class DatabasePayloadJob extends Job {
+      async handle(): Promise<void> {}
+    }
+
+    Queue.configure({
+      default: 'database',
+      connections: { database: { driver: 'database', table: 'svelar_jobs' } },
+    });
+    JobMonitor.configure({
+      driver: 'database',
+      default: 'database',
+      connections: { database: { driver: 'database', table: 'svelar_jobs' } },
+    });
+    Queue.register(DatabasePayloadJob);
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    await Connection.raw(
+      'INSERT INTO svelar_jobs (id, queue, payload, attempts, max_attempts, reserved_at, available_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ['bad-db-payload', 'default', '{not-json', 0, 3, null, nowSec, nowSec],
+    );
+
+    await expect(Queue.work({ maxJobs: 1, sleep: 0 })).rejects.toThrow(
+      'Failed to parse queued job payload for job "bad-db-payload" in table "svelar_jobs"'
+    );
+    await expect(JobMonitor.listJobs({ queue: 'default' })).rejects.toThrow(
+      'Failed to parse queued job payload for job "bad-db-payload" in table "svelar_jobs"'
+    );
+    await expect(JobMonitor.getJob('bad-db-payload')).rejects.toThrow(
+      'Failed to parse queued job payload for job "bad-db-payload" in table "svelar_jobs"'
+    );
+
+    const rows = await Connection.raw(
+      'SELECT attempts, reserved_at FROM svelar_jobs WHERE id = ?',
+      ['bad-db-payload'],
+    );
+    expect(rows[0]).toMatchObject({ attempts: 0, reserved_at: null });
+  });
+
+  it('fails worker processing when exhausted jobs cannot be persisted', async () => {
+    await Connection.raw('DROP TABLE svelar_failed_jobs');
+
+    class MissingFailedTableMemoryJob extends Job {
+      maxAttempts = 1;
+
+      async handle(): Promise<void> {
+        throw new Error('memory failure needs persistence');
+      }
+    }
+
+    Queue.configure({
+      default: 'memory',
+      connections: { memory: { driver: 'memory' } },
+    });
+    Queue.register(MissingFailedTableMemoryJob);
+
+    await Queue.dispatch(new MissingFailedTableMemoryJob());
+    await expect(Queue.work({ maxJobs: 1, sleep: 0 })).rejects.toThrow(
+      'svelar_failed_jobs'
+    );
+  });
+
+  it('surfaces persisted failures through the job monitor', async () => {
+    class MonitorFailingJob extends Job {
+      maxAttempts = 1;
+      queue = 'critical';
+
+      async handle(): Promise<void> {
+        throw new Error('monitor me');
+      }
+    }
+
+    class MonitorOtherQueueJob extends Job {
+      maxAttempts = 1;
+      queue = 'default';
+
+      async handle(): Promise<void> {
+        throw new Error('leave me');
+      }
+    }
+
+    Queue.configure({
+      default: 'memory',
+      connections: { memory: { driver: 'memory' } },
+    });
+    JobMonitor.configure({
+      driver: 'memory',
+      default: 'memory',
+      connections: { memory: { driver: 'memory' } },
+    });
+    Queue.register(MonitorFailingJob);
+    Queue.register(MonitorOtherQueueJob);
+
+    await Queue.dispatch(new MonitorFailingJob());
+    await Queue.dispatch(new MonitorOtherQueueJob());
+    await Queue.work({ queue: 'critical', maxJobs: 1, sleep: 0 });
+    await Queue.work({ queue: 'default', maxJobs: 1, sleep: 0 });
+
+    await expect(JobMonitor.getCounts('critical')).resolves.toMatchObject({
+      failed: 1,
+      total: 1,
+    });
+
+    const criticalFailures = await JobMonitor.listJobs({ status: 'failed', queue: 'critical' });
+    expect(criticalFailures).toHaveLength(1);
+    expect(criticalFailures[0]).toMatchObject({
+      status: 'failed',
+      queue: 'critical',
+      jobClass: 'MonitorFailingJob',
+    });
+    expect(criticalFailures[0].error).toContain('monitor me');
+    expect(await JobMonitor.listJobs({ queue: 'critical' })).toHaveLength(1);
+    await expect(JobMonitor.getJob(criticalFailures[0].id)).resolves.toMatchObject({
+      status: 'failed',
+      jobClass: 'MonitorFailingJob',
+    });
+
+    await expect(JobMonitor.deleteJob(criticalFailures[0].id)).resolves.toBe(true);
+    expect(await JobMonitor.listJobs({ status: 'failed', queue: 'critical' })).toHaveLength(0);
+    expect(await JobMonitor.listJobs({ status: 'failed', queue: 'default' })).toHaveLength(1);
+    await expect(JobMonitor.flushFailed('default')).resolves.toBe(1);
+    expect(await Queue.failed()).toHaveLength(0);
+  });
+
+  it('retries persisted failures through the job monitor', async () => {
+    class MonitorRetryJob extends Job {
+      static attempts = 0;
+      maxAttempts = 1;
+      retryDelay = 0;
+
+      async handle(): Promise<void> {
+        MonitorRetryJob.attempts += 1;
+        if (MonitorRetryJob.attempts === 1) {
+          throw new Error('retry from monitor');
+        }
+      }
+    }
+
+    Queue.configure({
+      default: 'memory',
+      connections: { memory: { driver: 'memory' } },
+    });
+    JobMonitor.configure({
+      driver: 'memory',
+      default: 'memory',
+      connections: { memory: { driver: 'memory' } },
+    });
+    Queue.register(MonitorRetryJob);
+    MonitorRetryJob.attempts = 0;
+
+    await Queue.dispatch(new MonitorRetryJob());
+    await Queue.work({ maxJobs: 1, sleep: 0 });
+
+    const failures = await JobMonitor.listJobs({ status: 'failed' });
+    expect(failures).toHaveLength(1);
+    await expect(JobMonitor.retryJob(failures[0].id)).resolves.toBe(true);
+    await Queue.work({ maxJobs: 1, sleep: 0 });
+
+    expect(MonitorRetryJob.attempts).toBe(2);
+    expect(await Queue.failed()).toHaveLength(0);
+  });
+
+  it('fails job monitor reads when the failed jobs table is unavailable', async () => {
+    await Connection.raw('DROP TABLE svelar_failed_jobs');
+
+    JobMonitor.configure({
+      driver: 'memory',
+      default: 'memory',
+      connections: { memory: { driver: 'memory' } },
+    });
+
+    await expect(JobMonitor.getCounts('default')).rejects.toThrow('svelar_failed_jobs');
+    await expect(JobMonitor.listJobs({ status: 'failed' })).rejects.toThrow('svelar_failed_jobs');
+    await expect(JobMonitor.getJob('missing')).rejects.toThrow('svelar_failed_jobs');
+    await expect(JobMonitor.deleteJob('missing')).rejects.toThrow('svelar_failed_jobs');
+    await expect(JobMonitor.flushFailed('default')).rejects.toThrow('svelar_failed_jobs');
   });
 });

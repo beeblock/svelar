@@ -59,14 +59,10 @@ class PluginInstallerService {
       // 4. Optionally publish config/migrations
       let published: PublishResult | null = null;
       if (options?.publish !== false) {
-        try {
-          const plugin = await this.loadPluginClass(pluginMeta.packageName);
-          if (plugin) {
-            const publisher = PluginPublisher;
-            published = await publisher.publish(new plugin());
-          }
-        } catch (error) {
-          console.warn('Failed to publish plugin assets:', error);
+        const plugin = await this.loadPluginClass(pluginMeta.packageName);
+        if (plugin) {
+          const publisher = PluginPublisher;
+          published = await publisher.publish(new plugin());
         }
       }
 
@@ -91,26 +87,21 @@ class PluginInstallerService {
    * Uninstall a plugin
    */
   async uninstall(pluginName: string): Promise<boolean> {
-    try {
-      // Get package name from registry
-      const registry = PluginRegistry;
-      const plugin = registry.get(pluginName);
+    // Get package name from registry
+    const registry = PluginRegistry;
+    const plugin = registry.get(pluginName);
 
-      if (!plugin) {
-        return false;
-      }
-
-      // Remove from enabled list
-      registry.disable(pluginName);
-
-      // Run npm uninstall
-      await this.runNpmUninstall(plugin.packageName);
-
-      return true;
-    } catch (error) {
-      console.error('Failed to uninstall plugin:', error);
+    if (!plugin) {
       return false;
     }
+
+    // Remove from enabled list
+    registry.disable(pluginName);
+
+    // Run npm uninstall
+    await this.runNpmUninstall(plugin.packageName);
+
+    return true;
   }
 
   // ── Private ──────────────────────────────────────────────────
@@ -154,18 +145,13 @@ class PluginInstallerService {
   }
 
   private async loadPluginClass(packageName: string): Promise<any> {
-    // Try the dedicated /plugin entry first (server-only, avoids node: imports in client barrel).
-    // Fall back to the main entry for backwards compatibility.
     try {
       const mod = await import(`${packageName}/plugin`);
       return mod.default || Object.values(mod)[0];
-    } catch {
-      try {
-        const mod = await import(packageName);
-        return mod.default || Object.values(mod)[0];
-      } catch {
-        return null;
-      }
+    } catch (error) {
+      throw new Error(
+        `Plugin package "${packageName}" must export a server plugin entry at "${packageName}/plugin".`
+      );
     }
   }
 }

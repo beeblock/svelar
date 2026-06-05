@@ -131,6 +131,15 @@ export interface TaskResult {
   timestamp: Date;
 }
 
+export interface SchedulerRuntimeStatus {
+  running: boolean;
+  lastTickAt: Date | null;
+  lastSuccessAt: Date | null;
+  lastErrorAt: Date | null;
+  lastError: string | null;
+  failures: number;
+}
+
 // ── Scheduled Task Base Class ──────────────────────────────
 
 export abstract class ScheduledTask {
@@ -321,11 +330,19 @@ export abstract class ScheduledTask {
   }
 
   /** @internal */
+  usesDistributedLock(): boolean {
+    this.schedule();
+    return this.withoutOverlapping;
+  }
+
+  /** @internal */
   async executeTask(): Promise<TaskResult> {
     // Fast-path: local in-memory overlap check
     if (this.withoutOverlapping && this._running) {
       return { task: this.name, success: true, duration: 0, timestamp: new Date() };
     }
+
+    const start = Date.now();
 
     // Distributed lock: acquire before running if preventOverlap is enabled
     let lockAcquired = false;
@@ -336,13 +353,20 @@ export abstract class ScheduledTask {
         if (!lockAcquired) {
           return { task: this.name, success: true, duration: 0, timestamp: new Date() };
         }
-      } catch {
-        // Database not available — fall back to local-only overlap check
+      } catch (error: any) {
+        await this.onFailure(error);
+
+        return {
+          task: this.name,
+          success: false,
+          duration: Date.now() - start,
+          error: error.message,
+          timestamp: new Date(),
+        };
       }
     }
 
     this._running = true;
-    const start = Date.now();
 
     try {
       await this.handle();
@@ -388,6 +412,14 @@ export class Scheduler {
   private history: TaskResult[] = [];
   private maxHistory = 100;
   private _persistToDb = false;
+  private runtimeStatus: SchedulerRuntimeStatus = {
+    running: false,
+    lastTickAt: null,
+    lastSuccessAt: null,
+    lastErrorAt: null,
+    lastError: null,
+    failures: 0,
+  };
 
   /**
    * Enable database persistence for task run history.
@@ -428,7 +460,7 @@ export class Scheduler {
       if (cronMatches(expression, date)) {
         const result = await task.executeTask();
         results.push(result);
-        this.addToHistory(result);
+        await this.addToHistory(result);
       }
     }
 
@@ -440,18 +472,19 @@ export class Scheduler {
    */
   start(): void {
     if (this.timer) return;
+    this.runtimeStatus.running = true;
 
     // Run immediately for the current minute
-    this.run().catch((err) => console.error('[Scheduler] Error:', err));
+    void this.runTick();
 
     // Wait until the next minute boundary, then tick every 60s
     const now = Date.now();
     const msUntilNextMinute = 60_000 - (now % 60_000);
 
     this.timer = setTimeout(() => {
-      this.run().catch((err) => console.error('[Scheduler] Error:', err));
+      void this.runTick();
       this.timer = setInterval(() => {
-        this.run().catch((err) => console.error('[Scheduler] Error:', err));
+        void this.runTick();
       }, 60_000);
     }, msUntilNextMinute);
 
@@ -467,14 +500,21 @@ export class Scheduler {
       clearInterval(this.timer as any);
       this.timer = null;
     }
+    this.runtimeStatus.running = false;
 
-    // Release all distributed locks held by this process
-    try {
+    if (this.tasks.some((task) => task.usesDistributedLock())) {
       const { SchedulerLock } = await import('./SchedulerLock.js');
       await SchedulerLock.releaseAll();
-    } catch { /* best-effort */ }
+    }
 
     console.log('[Scheduler] Stopped.');
+  }
+
+  /**
+   * Get runtime ticker status for health checks and dashboards.
+   */
+  getRuntimeStatus(): SchedulerRuntimeStatus {
+    return { ...this.runtimeStatus };
   }
 
   /**
@@ -518,28 +558,41 @@ export class Scheduler {
     this.tasks = [];
   }
 
-  private addToHistory(result: TaskResult): void {
+  private async addToHistory(result: TaskResult): Promise<void> {
     this.history.push(result);
     if (this.history.length > this.maxHistory) {
       this.history.shift();
     }
 
     if (this._persistToDb) {
-      this.persistResult(result).catch(() => {});
+      await this.persistResult(result);
     }
   }
 
   private async persistResult(result: TaskResult): Promise<void> {
+    await new QueryBuilder('scheduled_task_runs').insert({
+      task: result.task,
+      success: result.success ? 1 : 0,
+      duration: result.duration,
+      error: result.error || null,
+      ran_at: result.timestamp.toISOString(),
+    });
+  }
+
+  private async runTick(): Promise<void> {
+    const tickAt = new Date();
+    this.runtimeStatus.lastTickAt = tickAt;
+
     try {
-      await new QueryBuilder('scheduled_task_runs').insert({
-        task: result.task,
-        success: result.success ? 1 : 0,
-        duration: result.duration,
-        error: result.error || null,
-        ran_at: result.timestamp.toISOString(),
-      });
-    } catch {
-      // Database not available — silently skip
+      await this.run(tickAt);
+      this.runtimeStatus.lastSuccessAt = new Date();
+      this.runtimeStatus.lastErrorAt = null;
+      this.runtimeStatus.lastError = null;
+      this.runtimeStatus.failures = 0;
+    } catch (error: any) {
+      this.runtimeStatus.lastErrorAt = new Date();
+      this.runtimeStatus.lastError = error?.message ?? String(error);
+      this.runtimeStatus.failures += 1;
     }
   }
 }

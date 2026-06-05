@@ -126,14 +126,10 @@ class UploadManager {
       createdAt: Date.now(),
     };
 
-    // Store the actual file via the Storage facade
-    try {
-      const { Storage } = await import('../storage/index.js');
-      await Storage.disk(disk).put(path, fileData);
-      upload.publicUrl = Storage.disk(disk).url(path);
-    } catch {
-      // Storage not configured — metadata-only mode (development)
-    }
+    const { Storage } = await import('../storage/index.js');
+    const storageDisk = Storage.disk(disk);
+    await storageDisk.put(path, fileData);
+    upload.publicUrl = storageDisk.url(path);
 
     // Track the upload record
     if (this.config.driver === 'memory') {
@@ -216,12 +212,8 @@ class UploadManager {
     const upload = await this.get(id);
     if (!upload) return false;
 
-    try {
-      const { Storage } = await import('../storage/index.js');
-      await Storage.disk(upload.disk).delete(upload.path);
-    } catch {
-      // Storage may be unconfigured; still delete the tracking record.
-    }
+    const { Storage } = await import('../storage/index.js');
+    await Storage.disk(upload.disk).delete(upload.path);
 
     if (this.config.driver === 'database') {
       await this.query().where('id', id).delete();
@@ -240,18 +232,12 @@ class UploadManager {
 
     if (upload.publicUrl) return upload.publicUrl;
 
-    try {
-      const { Storage } = await import('../storage/index.js');
-      const disk = Storage.disk(upload.disk) as any;
-      if (typeof disk.temporaryUrl === 'function' && expiresIn) {
-        return disk.temporaryUrl(upload.path, expiresIn);
-      }
-      return disk.url(upload.path);
-    } catch {
-      // Storage may be unconfigured; return a stable reference.
+    const { Storage } = await import('../storage/index.js');
+    const disk = Storage.disk(upload.disk) as any;
+    if (typeof disk.temporaryUrl === 'function' && expiresIn) {
+      return disk.temporaryUrl(upload.path, expiresIn);
     }
-
-    return `/files/${upload.id}/${upload.storedName}`;
+    return disk.url(upload.path);
   }
 
   /** Get upload statistics */

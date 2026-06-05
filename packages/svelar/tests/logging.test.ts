@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Log } from '../src/logging/index';
 
@@ -48,6 +51,39 @@ describe('Logger', () => {
       });
 
       expect(Log).toBeDefined();
+    });
+
+    it('should throw when the default channel is not configured', async () => {
+      Log.configure({
+        default: 'missing',
+        channels: {
+          console: { driver: 'console', level: 'info' },
+        },
+      });
+
+      await expect(Log.info('Missing channel')).rejects.toThrow('Log channel "missing" is not defined.');
+    });
+
+    it('should throw when a stack references a missing channel', async () => {
+      Log.configure({
+        default: 'stack',
+        channels: {
+          stack: { driver: 'stack', channels: ['missing'] },
+        },
+      });
+
+      await expect(Log.info('Missing nested channel')).rejects.toThrow('Log channel "missing" is not defined.');
+    });
+
+    it('should throw for unknown log drivers', async () => {
+      Log.configure({
+        default: 'bad',
+        channels: {
+          bad: { driver: 'database' as any },
+        },
+      });
+
+      await expect(Log.info('Unknown driver')).rejects.toThrow('Unknown log driver: database');
     });
   });
 
@@ -464,6 +500,26 @@ describe('Logger', () => {
 
       expect(consoleSpy).toHaveBeenCalled();
       consoleSpy.mockRestore();
+    });
+
+    it('should surface file logging write failures', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'svelar-log-'));
+
+      try {
+        const directoryPath = join(root, 'app.log');
+        await mkdir(directoryPath);
+
+        Log.configure({
+          default: 'file',
+          channels: {
+            file: { driver: 'file', path: directoryPath, level: 'info' },
+          },
+        });
+
+        await expect(Log.info('Cannot write to directory path')).rejects.toThrow();
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
     });
   });
 });

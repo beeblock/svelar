@@ -32,8 +32,7 @@
  * ```
  */
 
-// Lazy-import to avoid circular dependency when module is loaded
-// but queue/pdf aren't both used.
+import { Job } from '../queue/index.js';
 
 export interface PdfJobPayload {
   /** Type of conversion */
@@ -70,24 +69,13 @@ export interface PdfJobPayload {
   meta?: Record<string, any>;
 }
 
-// We need to get the Job class, but import it lazily to avoid forcing
-// the queue module to load at parse time.
-let _JobClass: any = null;
-
-async function getJobClass(): Promise<any> {
-  if (_JobClass) return _JobClass;
-  const mod = await import('../queue/index.js');
-  _JobClass = mod.Job;
-  return _JobClass;
-}
-
 /**
  * A queue job that generates a PDF using the Svelar PDF module.
  *
  * Supports sync generation (with file storage) and async webhook mode.
  * Optionally broadcasts a completion event so the client can react.
  */
-export class GeneratePdfJob {
+export class GeneratePdfJob extends Job {
   /** Queue job name for serialization */
   static readonly jobName = 'GeneratePdfJob';
 
@@ -100,7 +88,9 @@ export class GeneratePdfJob {
   /** Queue name */
   queue = 'default';
 
-  constructor(public payload: PdfJobPayload) {}
+  constructor(public payload: PdfJobPayload) {
+    super();
+  }
 
   async handle(): Promise<void> {
     const { PDF } = await import('./index.js');
@@ -165,16 +155,12 @@ export class GeneratePdfJob {
 
     // Optional: broadcast a completion event
     if (broadcastEvent && broadcastChannel) {
-      try {
-        const { Broadcast } = await import('../broadcasting/index.js');
-        await Broadcast.to(broadcastChannel).send(broadcastEvent, {
-          outputPath,
-          meta,
-          completedAt: new Date().toISOString(),
-        });
-      } catch {
-        // Broadcasting is optional — don't fail the job if it's not configured
-      }
+      const { Broadcast } = await import('../broadcasting/index.js');
+      await Broadcast.to(broadcastChannel).send(broadcastEvent, {
+        outputPath,
+        meta,
+        completedAt: new Date().toISOString(),
+      });
     }
   }
 
@@ -183,8 +169,8 @@ export class GeneratePdfJob {
   }
 
   /** Serialize for database queue driver */
-  serialize(): Record<string, any> {
-    return { payload: this.payload };
+  serialize(): string {
+    return JSON.stringify({ payload: this.payload });
   }
 
   /** Restore from database queue driver */

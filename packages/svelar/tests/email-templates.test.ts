@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
@@ -72,6 +72,41 @@ describe('EmailTemplates', () => {
       expect(await EmailTemplates.get('custom-welcome')).toBeNull();
     } finally {
       await Connection.disconnect();
+      await rm(root, { recursive: true, force: true });
+      EmailTemplates.configure({ driver: 'memory' });
+      EmailTemplates.registerDefaults();
+    }
+  });
+
+  it('throws for malformed file templates instead of falling back to defaults', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'svelar-email-file-templates-'));
+
+    try {
+      await mkdir(root, { recursive: true });
+      await writeFile(join(root, `${encodeURIComponent('welcome')}.json`), '{invalid', 'utf-8');
+
+      EmailTemplates.configure({ driver: 'file', path: root });
+
+      await expect(EmailTemplates.get('welcome')).rejects.toThrow();
+      await expect(EmailTemplates.list()).rejects.toThrow();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      EmailTemplates.configure({ driver: 'memory' });
+      EmailTemplates.registerDefaults();
+    }
+  });
+
+  it('keeps missing file template directories as default-template fallback', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'svelar-email-file-missing-'));
+    const missingPath = join(root, 'missing');
+
+    try {
+      EmailTemplates.configure({ driver: 'file', path: missingPath });
+
+      await expect(EmailTemplates.get('welcome')).resolves.not.toBeNull();
+      const templates = await EmailTemplates.list('auth');
+      expect(templates.some((template) => template.name === 'welcome')).toBe(true);
+    } finally {
       await rm(root, { recursive: true, force: true });
       EmailTemplates.configure({ driver: 'memory' });
       EmailTemplates.registerDefaults();

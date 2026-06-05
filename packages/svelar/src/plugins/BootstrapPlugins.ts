@@ -16,8 +16,6 @@ export async function bootstrapPlugins(
   app: Container,
   enabledPlugins?: string[]
 ): Promise<void> {
-  const { join } = await import('node:path');
-
   const registry = PluginRegistry;
 
   // If no explicit list provided, discover all plugins and use enabled ones
@@ -27,21 +25,11 @@ export async function bootstrapPlugins(
   }
 
   const loadedPlugins: Plugin[] = [];
-  const failedPlugins: string[] = [];
 
   // 2. Load each plugin class dynamically
   for (const pluginName of enabledPlugins) {
-    try {
-      const plugin = await loadPluginClass(pluginName);
-      if (plugin) {
-        loadedPlugins.push(plugin);
-      } else {
-        failedPlugins.push(pluginName);
-      }
-    } catch (error) {
-      console.warn(`Failed to load plugin ${pluginName}:`, error);
-      failedPlugins.push(pluginName);
-    }
+    const plugin = await loadPluginClass(pluginName);
+    loadedPlugins.push(plugin);
   }
 
   // 3. Register plugins (respecting dependency order)
@@ -54,12 +42,6 @@ export async function bootstrapPlugins(
 
   // 4. Boot all plugins (in dependency order)
   await manager.boot();
-
-  if (failedPlugins.length > 0) {
-    console.warn(
-      `Warning: Failed to load plugins: ${failedPlugins.join(', ')}`
-    );
-  }
 }
 
 /**
@@ -69,7 +51,6 @@ async function loadPluginClass(pluginName: string): Promise<any> {
   const { join } = await import('node:path');
   const { existsSync, readFileSync } = await import('node:fs');
 
-  // Try different entry points
   const nodeModulesPath = join(process.cwd(), 'node_modules');
   const packagePath = join(nodeModulesPath, pluginName);
   const packageJsonPath = join(packagePath, 'package.json');
@@ -79,19 +60,14 @@ async function loadPluginClass(pluginName: string): Promise<any> {
   }
 
   try {
-    // Read package.json to find main entry
     const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
 
-    // Try the dedicated /plugin entry first (server-only, avoids node: imports in client barrel).
-    let mod: any;
     const pluginEntry = pkg.exports?.['./plugin']?.default;
-    if (pluginEntry) {
-      mod = await import(join(packagePath, pluginEntry));
-    } else {
-      const main = pkg.main || 'index.js';
-      mod = await import(join(packagePath, main));
+    if (!pluginEntry) {
+      throw new Error(`Plugin ${pluginName} must define exports["./plugin"].default in package.json`);
     }
 
+    const mod = await import(join(packagePath, pluginEntry));
     const PluginClass = mod.default || Object.values(mod)[0];
 
     if (!PluginClass) {

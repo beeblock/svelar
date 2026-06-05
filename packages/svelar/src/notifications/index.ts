@@ -1,45 +1,18 @@
 /**
  * Svelar Notifications
  *
- * Multi-channel notification system (mail, database, custom channels).
- *
- * @example
- * ```ts
- * import { Notification, Notifier } from '@beeblock/svelar/notifications';
- *
- * class InvoicePaid extends Notification {
- *   constructor(private invoice: Invoice) { super(); }
- *
- *   via() { return ['mail', 'database']; }
- *
- *   toMail() {
- *     return {
- *       subject: 'Invoice Paid',
- *       html: `<p>Invoice #${this.invoice.id} has been paid.</p>`,
- *     };
- *   }
- *
- *   toDatabase() {
- *     return {
- *       type: 'invoice_paid',
- *       data: { invoiceId: this.invoice.id, amount: this.invoice.amount },
- *     };
- *   }
- * }
- *
- * await Notifier.send(user, new InvoicePaid(invoice));
- * ```
+ * Multi-channel notification system for email, database, and custom delivery channels.
  */
 
+import { randomUUID } from 'node:crypto';
 import { assertSqlIdentifier } from '../database/Connection.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
 import { singleton } from '../support/singleton.js';
 
-// ── Types ──────────────────────────────────────────────────
+export type NotificationChannel = 'email' | 'database' | string;
 
-export type NotificationChannel = 'mail' | 'database' | string;
-
-export interface NotificationMailData {
+export interface NotificationEmailData {
+  to?: string | string[];
   subject: string;
   html?: string;
   text?: string;
@@ -47,64 +20,61 @@ export interface NotificationMailData {
 }
 
 export interface NotificationDatabaseData {
-  type: string;
-  data: Record<string, any>;
+  type?: string;
+  title?: string;
+  message?: string;
+  data?: Record<string, any>;
 }
 
 export interface Notifiable {
   getAttribute(key: string): any;
-  /** Email address for mail notifications */
-  routeNotificationForMail?(): string;
+  routeNotificationForEmail?(): string | string[];
 }
 
-// ── Notification Base Class ────────────────────────────────
-
 export abstract class Notification {
-  /** Channels to deliver this notification on */
-  abstract via(notifiable: Notifiable): NotificationChannel[];
+  abstract channels(notifiable: Notifiable): NotificationChannel[];
 
-  /** Format for mail channel */
-  toMail?(notifiable: Notifiable): NotificationMailData;
+  toEmail?(notifiable: Notifiable): NotificationEmailData;
 
-  /** Format for database channel */
   toDatabase?(notifiable: Notifiable): NotificationDatabaseData;
 
-  /** Custom channel format (override for custom channels) */
   toChannel?(channel: string, notifiable: Notifiable): any;
 }
 
-// ── Channel Implementations ────────────────────────────────
-
-interface NotificationChannelDriver {
+export interface NotificationChannelDriver {
   send(notifiable: Notifiable, notification: Notification): Promise<void>;
 }
 
-class MailNotificationChannel implements NotificationChannelDriver {
+export type NotificationChannelConfig =
+  | { driver: 'email' }
+  | { driver: 'database'; table?: string }
+  | { driver: 'custom'; handler: NotificationChannelDriver };
+
+export interface NotifierConfig {
+  channels?: Record<string, NotificationChannelConfig>;
+}
+
+class EmailNotificationChannel implements NotificationChannelDriver {
   async send(notifiable: Notifiable, notification: Notification): Promise<void> {
-    if (!notification.toMail) return;
+    if (!notification.toEmail) return;
 
-    const mailData = notification.toMail(notifiable);
-    const email =
-      notifiable.routeNotificationForMail?.() ?? notifiable.getAttribute('email');
+    const emailData = notification.toEmail(notifiable);
+    const to = emailData.to
+      ?? notifiable.routeNotificationForEmail?.()
+      ?? notifiable.getAttribute('email');
 
-    if (!email) {
-      console.warn('[Notifications] No email address for notifiable.');
-      return;
+    if (!to || (Array.isArray(to) && to.length === 0)) {
+      throw new Error('Email notification requires a recipient address.');
     }
 
-    // Use the Mailer
-    try {
-      const { Mailer } = await import('../mail/index.js');
-      await Mailer.send({
-        to: email,
-        subject: mailData.subject,
-        html: mailData.html,
-        text: mailData.text,
-        from: mailData.from,
-      });
-    } catch (error) {
-      console.error('[Notifications] Failed to send mail notification:', error);
-    }
+    const { Mailer } = await import('../mail/index.js');
+    await Mailer.send({
+      to,
+      subject: emailData.subject,
+      html: emailData.html,
+      text: emailData.text,
+      from: emailData.from,
+    });
   }
 }
 
@@ -118,87 +88,77 @@ class DatabaseNotificationChannel implements NotificationChannelDriver {
   async send(notifiable: Notifiable, notification: Notification): Promise<void> {
     if (!notification.toDatabase) return;
 
-    const dbData = notification.toDatabase(notifiable);
+    const payload = notification.toDatabase(notifiable);
+    const type = payload.type ?? notification.constructor.name;
+    const data = {
+      ...(payload.title !== undefined ? { title: payload.title } : {}),
+      ...(payload.message !== undefined ? { message: payload.message } : {}),
+      ...(payload.data ?? {}),
+    };
 
-    try {
-      await new QueryBuilder(this.table).insert({
-        id: crypto.randomUUID(),
-        notifiable_id: notifiable.getAttribute('id'),
-        type: dbData.type,
-        data: JSON.stringify(dbData.data),
-        read_at: null,
-        created_at: new Date().toISOString(),
-      });
-    } catch (error) {
-      console.error('[Notifications] Failed to store database notification:', error);
-    }
+    await new QueryBuilder(this.table).insert({
+      id: randomUUID(),
+      notifiable_id: String(notifiable.getAttribute('id')),
+      type,
+      data: JSON.stringify(data),
+      read_at: null,
+      created_at: new Date().toISOString(),
+    });
   }
 }
-
-// ── Notifier Manager ───────────────────────────────────────
 
 class NotifierManager {
   private channels = new Map<string, NotificationChannelDriver>();
 
   constructor() {
-    // Register default channels
-    this.channels.set('mail', new MailNotificationChannel());
-    this.channels.set('database', new DatabaseNotificationChannel());
+    this.configure();
   }
 
-  /**
-   * Register a custom notification channel
-   */
+  configure(config: NotifierConfig = {}): void {
+    this.channels.clear();
+
+    const channelConfig = config.channels ?? {
+      email: { driver: 'email' as const },
+      database: { driver: 'database' as const },
+    };
+
+    for (const [name, definition] of Object.entries(channelConfig)) {
+      if (definition.driver === 'email') {
+        this.channels.set(name, new EmailNotificationChannel());
+      } else if (definition.driver === 'database') {
+        this.channels.set(name, new DatabaseNotificationChannel(definition.table));
+      } else {
+        this.channels.set(name, definition.handler);
+      }
+    }
+  }
+
   extend(name: string, channel: NotificationChannelDriver): void {
     this.channels.set(name, channel);
   }
 
-  /**
-   * Send a notification to a notifiable entity
-   */
-  async send(
-    notifiable: Notifiable | Notifiable[],
-    notification: Notification
-  ): Promise<void> {
+  async notify(notifiable: Notifiable | Notifiable[], notification: Notification): Promise<void> {
     const notifiables = Array.isArray(notifiable) ? notifiable : [notifiable];
 
     for (const target of notifiables) {
-      const channels = notification.via(target);
-
-      for (const channelName of channels) {
-        const channel = this.channels.get(channelName);
-
-        if (channel) {
-          try {
-            await channel.send(target, notification);
-          } catch (error) {
-            console.error(`[Notifications] Channel "${channelName}" failed:`, error);
-          }
-        } else {
-          console.warn(`[Notifications] Unknown channel: ${channelName}`);
-        }
-      }
+      await this.notifyVia(target, notification, notification.channels(target));
     }
   }
 
-  /**
-   * Send a notification on specific channels only
-   */
-  async sendVia(
+  async notifyVia(
     notifiable: Notifiable,
     notification: Notification,
-    channels: NotificationChannel[]
+    channels: NotificationChannel[],
   ): Promise<void> {
     for (const channelName of channels) {
       const channel = this.channels.get(channelName);
-      if (channel) {
-        await channel.send(notifiable, notification);
+      if (!channel) {
+        throw new Error(`Notification channel "${channelName}" is not configured.`);
       }
+
+      await channel.send(notifiable, notification);
     }
   }
 }
 
-/**
- * Global Notifier singleton
- */
 export const Notifier = singleton('svelar.notifier', () => new NotifierManager());
