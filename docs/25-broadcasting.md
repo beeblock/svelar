@@ -55,6 +55,8 @@ import broadcastingConfig from '../config/broadcasting.js';
 Broadcast.configure(broadcastingConfig);
 ```
 
+The configured `default` driver must exist in `drivers`. Pusher/Soketi drivers must include `key`, `secret`, and `appId`; missing driver config fails during `Broadcast.configure()` instead of falling back to SSE.
+
 In Docker Compose the app gets `PUSHER_HOST=soketi` automatically, so Soketi works without any `.env` changes.
 
 ### Client-Side Setup
@@ -181,7 +183,7 @@ npx svelar make:channel Order
 npx svelar make:channel Chat --presence
 ```
 
-This creates files in `src/lib/channels/`. Register them in `src/app.ts`:
+This creates files in `src/lib/shared/channels/` for DDD apps or `src/lib/channels/` for flat apps. Generated channel callbacks deny access by default; add your model, team, or permission lookup before returning `true` or presence member data. Register them in `src/app.ts`:
 
 ```typescript
 import { Broadcast } from '@beeblock/svelar/broadcasting';

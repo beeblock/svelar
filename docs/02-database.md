@@ -82,6 +82,8 @@ npx svelar migrate
 
 This runs migrations in chronological order and logs completed ones to the `migrations` table.
 
+`migrate --status` creates the migration tracking table when it does not exist yet. Once the table exists, migration tracking reads are strict: database or schema errors throw instead of being treated as "no migrations have run."
+
 ### Migration Commands
 
 All migration operations use the `migrate` command with flags:
@@ -123,6 +125,7 @@ await this.schema.createTable('posts', (table) => {
   table.boolean('published').default(false); // BOOLEAN with default
   table.integer('user_id');                  // INTEGER
   table.timestamps();                        // created_at, updated_at timestamps
+  table.softDeletes();                       // deleted_at timestamp for soft deletes
 
   // Indexes
   table.index(['slug']);
@@ -184,6 +187,7 @@ table.date('birthday');           // DATE
 table.datetime('created_at');     // DATETIME
 table.timestamp('logged_at');     // TIMESTAMP
 table.timestamps();               // created_at + updated_at
+table.softDeletes();              // deleted_at
 
 // Identifiers
 table.uuid('id');                 // UUID — UUID on Postgres, CHAR(36) on MySQL, TEXT on SQLite
@@ -193,6 +197,8 @@ table.ulid('id');                 // ULID — VARCHAR(26) on Postgres, CHAR(26) 
 table.blob('data');               // BLOB / binary data
 table.enum('status', ['active', 'inactive']); // ENUM
 ```
+
+`uuid()` and `ulid()` define columns only. Use `HasUuids`, `HasUlids`, or `static uniqueIds` on the model when Svelar should generate values before insert. See [Models & ORM](./03-models-orm.md#primary-key).
 
 ### Column Modifiers
 

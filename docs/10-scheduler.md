@@ -16,7 +16,7 @@ Scheduled tasks are classes that define when and what to run.
 npx svelar make:task CleanupExpiredSessions
 ```
 
-This creates `src/lib/scheduler/CleanupExpiredSessions.ts`. Each task must be in its own file with a **default export**:
+In DDD apps this creates `src/lib/shared/scheduler/CleanupExpiredSessions.ts`; in flat apps it creates `src/lib/scheduler/CleanupExpiredSessions.ts`. Each task should live in its own file with a **default export**, then be registered in the scheduler registry.
 
 ```typescript
 import { ScheduledTask } from '@beeblock/svelar/scheduler';
@@ -40,7 +40,7 @@ export default class CleanupExpiredSessions extends ScheduledTask {
 Define when tasks should run using fluent methods:
 
 ```typescript
-export class MyTask extends ScheduledTask {
+export default class MyTask extends ScheduledTask {
   name = 'my-task';
 
   schedule() {
@@ -70,7 +70,7 @@ export class MyTask extends ScheduledTask {
 The main method that runs when the task is triggered:
 
 ```typescript
-export class GenerateReport extends ScheduledTask {
+export default class GenerateReport extends ScheduledTask {
   name = 'generate-daily-report';
 
   schedule() {
@@ -112,7 +112,7 @@ schedule() {
 }
 ```
 
-The `scheduler_locks` table is managed by Svelar core migrations.
+The `scheduler_locks` table is managed by Svelar core migrations. If the lock table or database connection is unavailable, a `preventOverlap()` task fails instead of running without a distributed lock.
 
 ### onSuccess()
 
@@ -136,7 +136,7 @@ async onFailure(error: Error): Promise<void> {
 
 ## Task Registry
 
-New scaffolded apps register tasks in `src/lib/shared/scheduler/index.ts`. Older projects can still rely on CLI task auto-discovery from `src/lib/shared/scheduler/` or `src/lib/scheduler/`. Each task file should contain a single class with a **default export**:
+Svelar uses an explicit scheduler registry. DDD apps register tasks in `src/lib/shared/scheduler/index.ts`; flat apps register tasks in `src/lib/scheduler/index.ts`. The CLI does not auto-discover task files, so every scheduled task must be imported and registered in the registry.
 
 ```
 src/lib/scheduler/
@@ -162,7 +162,7 @@ export default class DailyStatsSummary extends ScheduledTask {
 }
 ```
 
-You can also create a scheduler manually and register tasks programmatically:
+Create a scheduler and register tasks programmatically:
 
 ```typescript
 import { Scheduler } from '@beeblock/svelar/scheduler';
@@ -170,7 +170,7 @@ import CleanupExpiredSessions from './CleanupExpiredSessions.ts';
 import DailyStatsSummary from './DailyStatsSummary.ts';
 
 export function createScheduler(): Scheduler {
-  const scheduler = new Scheduler();
+  const scheduler = new Scheduler().persistToDatabase();
   scheduler.register(new CleanupExpiredSessions());
   scheduler.register(new DailyStatsSummary());
   return scheduler;
@@ -187,7 +187,11 @@ Run the scheduler in development:
 npx svelar schedule:run
 ```
 
-This boots `src/app.ts`, then uses the scheduler registry from `src/lib/shared/scheduler/index.ts` or `src/lib/scheduler/index.ts` when present. Older projects without a registry fall back to auto-discovering task files from `src/lib/shared/scheduler/` or `src/lib/scheduler/`. The runner aligns to the top of each minute and persists task execution history to `scheduled_task_runs` so the admin dashboard can display accurate run times.
+This boots `src/app.ts`, then loads the scheduler registry from `src/lib/shared/scheduler/index.ts` in DDD apps or `src/lib/scheduler/index.ts` in flat apps. The runner aligns to the top of each minute and persists task execution history to `scheduled_task_runs` so the admin dashboard can display accurate run times.
+
+Run `npx svelar migrate` before starting the scheduler in any app that calls `persistToDatabase()`. If the `scheduled_task_runs` table is unavailable, the scheduler run fails instead of silently dropping history.
+
+When using the built-in `Scheduler.start()` ticker, call `scheduler.getRuntimeStatus()` from health checks or dashboards to inspect `lastTickAt`, `lastSuccessAt`, `lastErrorAt`, `lastError`, and consecutive `failures`. Timer failures are recorded there instead of being logged and forgotten.
 
 To run due tasks once and exit (useful for cron):
 
@@ -228,7 +232,7 @@ schedule() {
 }
 ```
 
-The lock uses the shared database (SQLite, PostgreSQL, or MySQL) — no Redis required. Locks auto-expire via TTL, so crashed processes don't block future executions. The `scheduler_locks` table is managed by Svelar core migrations.
+The lock uses the shared database (SQLite, PostgreSQL, or MySQL) — no Redis required. Locks auto-expire via TTL, so crashed processes don't block future executions. The `scheduler_locks` table is managed by Svelar core migrations. If the lock store is unavailable, the task fails instead of running without a distributed lock. Graceful shutdown also surfaces lock cleanup failures for schedulers with overlapping-protected tasks.
 
 ## Task Examples
 
@@ -486,13 +490,15 @@ scheduler.register(cleanupTask);
 
 ## Task Run History
 
-Task execution history is automatically persisted to the `scheduled_task_runs` database table. This is shared across all processes — the CLI scheduler writes to it, and the admin dashboard reads from it.
+Task execution history is automatically persisted to the `scheduled_task_runs` database table when the scheduler registry calls `persistToDatabase()`. This is shared across all processes — the CLI scheduler writes to it, and the admin dashboard reads from it. If the table or database connection is unavailable, the scheduler run fails instead of silently dropping history.
 
 Both the `scheduled_task_runs` and `scheduler_locks` tables are managed by Svelar core migrations.
 
 ## Monitoring Scheduled Tasks
 
 The `ScheduleMonitor` provides a real-time view of all tasks for use in admin dashboards. It reads history from the database so it reflects runs from all scheduler processes:
+
+Run `npx svelar migrate` before using `ScheduleMonitor` in production. Missing `scheduled_task_runs` storage causes task listing, history reads, and manual dashboard-triggered runs to fail instead of returning empty history.
 
 ```typescript
 import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';

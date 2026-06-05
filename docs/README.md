@@ -42,7 +42,7 @@ Svelar is a Laravel-inspired framework built on top of SvelteKit 2. It brings en
 11. [Job Queue](./11-queue-jobs.md) - Background job processing
 12. [Sessions](./22-sessions.md) - Session stores (database, file, Redis, memory)
 13. [Events & Listeners](./23-events.md) - Pub/sub event system with typed listeners
-14. [Mail](./24-mail.md) - SMTP, Postmark, Resend drivers with Mailable classes
+14. [Mail](./24-mail.md) - SMTP, Postmark, Resend, Mailtrap, log, and null drivers with Mailable classes
 15. [Broadcasting](./25-broadcasting.md) - Real-time SSE and Pusher/Soketi WebSocket
 16. [Storage](./26-storage.md) - Local and S3-compatible file storage
 17. [PDF Generation](./27-pdf.md) - PDFKit (default) and Gotenberg drivers
@@ -61,6 +61,11 @@ Svelar is a Laravel-inspired framework built on top of SvelteKit 2. It brings en
 30. [Security](./30-security.md) - Authentication, CSRF, rate limiting, Docker hardening, production checklist
 31. [Full-Text Search](./31-search.md) - Meilisearch integration with Searchable mixin, auto-sync, bulk indexing
 32. [Stripe Billing](./32-stripe.md) - Subscriptions, checkout, invoices, refunds, webhooks, customer portal
+33. [Contributors](./48-contributors.md) - Contributing to Svelar core, docs sync rules, and maintainer workflows
+
+### Contributor Documentation
+
+- [Release Certification](./47-release-certification.md) - Pre-publish certification gate and external-service checks
 
 ## Quick Start
 
@@ -73,6 +78,28 @@ npm run dev
 The `new` command installs dependencies, generates `.env` with secure random secrets, runs migrations, and seeds the database. Your app is ready at `http://localhost:5173` with auth, dashboard, admin panel, teams, API keys, and more — all working out of the box.
 
 > **New to Svelar?** Read the [Getting Started](./00-getting-started.md) guide for a complete walkthrough of what you get and how to set everything up.
+
+## Release Verification
+
+Before publishing Svelar, run the local smoke checks from the core repository:
+
+```bash
+npm run smoke:ddd
+npm run smoke:flat
+npm run smoke:browser
+npm run smoke:browser:headed
+npm run smoke:prod
+npm run smoke:db
+npm run smoke:db:prod
+npm run smoke:redis
+npm run smoke:pdf
+npm run smoke:search
+npm run smoke:pgbouncer
+npm run certify:inventory
+npm run certify
+```
+
+Run `npm run certify` before publishing. It prints the release certification inventory, runs the core test suite, then runs Redis, PDF, Meilisearch, S3, and PgBouncer/`pg_stat_statements` service smoke plus the full generated-app database and production-browser smoke gate. These commands build and pack the local `@beeblock/svelar` package, scaffold real apps into the sibling `svelar-testing-area`, install UI components with the generated `npm run ui:install` script, run migrations and seeders, execute generated tests, verify production builds, and exercise the generated app in a real browser, including real `EventSource` checks for SSE public/private/presence channels. DDD smoke apps also receive an injected certification test that covers the intended `route -> controller -> DTO/schema -> action -> service -> repository -> model -> resource` flow, complex ORM queries, events/listeners, model observers, queues, middleware/rate limiting, sessions, auth recovery tokens, Teams roles/invitations, SSE public/private/presence broadcasting, and Postmark/Resend/Mailtrap mail transport payloads across the configured database driver, Redis cache/session/BullMQ behavior when `REDIS_URL` is present, PDFKit/Gotenberg behavior when `GOTENBERG_URL` is present, Meilisearch `Searchable` indexing when `MEILISEARCH_HOST` is present, S3-compatible storage when `S3_CERTIFICATION` is present, and PostgreSQL through PgBouncer with `pg_stat_statements` when `PGBOUNCER_CERTIFICATION` is present. Use `npm run smoke:browser:headed` when you want to watch Chromium open and step through the browser smoke flow locally. The database, Redis, Gotenberg, Meilisearch, RustFS, and PgBouncer smoke scripts start Docker containers with random localhost ports, so they do not require 5432, 3306, 6379, 3000, 6432, 7700, or 9000 to be free. If Playwright has not downloaded Chromium locally yet, run `cd ../svelar-testing-area/apps/svelar-smoke-ddd && npx playwright install chromium`.
 
 ## Project Structure (DDD Modular Monolith)
 

@@ -20,6 +20,8 @@ Plugins go through these lifecycle stages:
 
 All plugins are registered first, then all are booted — so during `boot()` you can safely access services registered by other plugins.
 
+Enabled plugins are required infrastructure. If an enabled plugin package cannot be loaded, does not expose the required `./plugin` export, or fails during register/boot, app startup fails instead of continuing with a partially booted plugin set.
+
 ## Creating a Plugin
 
 ```bash
@@ -480,6 +482,8 @@ npx svelar plugin:publish @beeblock/svelar-tags --force
 
 Copies plugin's publishable files (config, migrations, route stubs) to your app. Use `--force` to overwrite existing files.
 
+Publishing is strict: if a declared publishable source file cannot be copied, `plugin:publish` fails. `plugin:install` also fails when automatic publishing fails unless you pass `--no-publish`.
+
 ### Official Plugins
 
 All official plugins support `plugin:install` and `plugin:publish`:
@@ -507,7 +511,8 @@ Package a plugin for publishing to npm:
 ```
 svelar-analytics/
 ├── src/
-│   ├── index.ts              # Export the Plugin class
+│   ├── index.ts              # Public client-safe exports
+│   ├── plugin.ts             # Default export: the Plugin class
 │   ├── AnalyticsService.ts
 │   └── middleware/
 │       └── TrackingMiddleware.ts
@@ -524,7 +529,10 @@ svelar-analytics/
   "keywords": ["svelar-plugin"],
   "main": "dist/index.js",
   "exports": {
-    ".": "./dist/index.js"
+    ".": "./dist/index.js",
+    "./plugin": {
+      "default": "./dist/plugin.js"
+    }
   },
   "peerDependencies": {
     "@beeblock/svelar": ">=0.4.0"
@@ -532,7 +540,7 @@ svelar-analytics/
 }
 ```
 
-The `svelar-plugin` keyword in package.json allows `npx svelar plugin:list` to auto-discover your plugin when installed.
+The `svelar-plugin` keyword in package.json allows `npx svelar plugin:list` to auto-discover your plugin when installed. Packages may use a `svelar-*` name or any package name with the `svelar-plugin` keyword. `plugin:install` and app bootstrap require the dedicated `./plugin` export so server-only plugin code does not leak through the public package barrel.
 
 Users install and register:
 

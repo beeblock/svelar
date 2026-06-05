@@ -97,10 +97,14 @@ export const { handle, handleError } = createSvelarApp({
   sessionLifetime: 60 * 60 * 24 * 7, // 7 days
   rateLimit: 200,
   rateLimitWindow: 120_000,           // 2 minutes
+  rateLimitStore: 'cache',             // use Redis via Cache for multi-instance production apps
+  rateLimitCacheStore: 'redis',
   csrfPaths: ['/api/'],
-  csrfExcludePaths: ['/api/webhooks'],
+  csrfExcludePaths: ['/api/webhooks', '/api/internal/'],
   authThrottleAttempts: 10,
   authThrottleDecay: 5,
+  authThrottleStore: 'cache',          // defaults to rateLimitStore
+  authThrottleCacheStore: 'redis',
   debug: true,
   i18n: { paraglideMiddleware, getTextDirection },
 });
@@ -190,12 +194,34 @@ Rate limit requests by IP address:
 new RateLimitMiddleware({
   maxRequests: 100,     // Max requests
   windowMs: 60_000,     // Time window in milliseconds (1 minute)
+  store: 'cache',        // optional: 'memory' (default) or 'cache'
+  cacheStore: 'redis',   // optional: Cache store name when using store: 'cache'
   keyGenerator: (ctx) => ctx.event.getClientAddress(), // Custom key
-  handler: (ctx) => {
-    return new Response('Too many requests', { status: 429 });
+  handler: (ctx, retryAfter) => {
+    return new Response('Too many requests', {
+      status: 429,
+      headers: { 'Retry-After': String(retryAfter) },
+    });
   },
 })
 ```
+
+The default in-memory store is suitable for local development and single-process apps. For production apps running multiple Node instances, configure the Redis cache store and use `rateLimitStore: 'cache'` in `createSvelarApp()` or `store: 'cache'` on `RateLimitMiddleware`.
+
+### ThrottleMiddleware
+
+Throttle sensitive routes by IP address and path. Unlike the global rate limiter, throttling only increments when the downstream response is a 4xx failure:
+
+```typescript
+new ThrottleMiddleware({
+  maxAttempts: 5,
+  decayMinutes: 1,
+  store: 'cache',       // optional: 'memory' (default) or 'cache'
+  cacheStore: 'redis',
+})
+```
+
+Use `authThrottleStore: 'cache'` in `createSvelarApp()` for shared named auth throttles across production app instances. Scaffolded auth pages and API auth routes also read `RATE_LIMIT_STORE=cache` and `RATE_LIMIT_CACHE_STORE=redis`, so browser form submissions and API requests share production-safe throttling.
 
 ### LoggingMiddleware
 
@@ -225,7 +251,7 @@ new CorsMiddleware({
 
 #### Production CORS Configuration
 
-> **Warning**: `origin: '*'` with `credentials: true` is invalid per the CORS spec — browsers will reject the response. Always specify explicit origins in production.
+> **Production**: when `credentials: true` is used with `origin: '*'`, Svelar echoes the incoming request origin because browsers reject credentialed `*` responses. Always specify explicit allowed origins in production.
 
 ```typescript
 // Production — explicit allowed origins
@@ -302,9 +328,10 @@ Protect against CSRF attacks:
 import { CsrfMiddleware } from '@beeblock/svelar/middleware';
 
 new CsrfMiddleware({
-  tokenLength: 32,
+  tokenLength: 32, // random bytes before hex encoding (64-character token)
   headerName: 'X-CSRF-Token',
   cookieName: 'csrf_token',
+  excludePaths: ['/api/webhooks', '/api/internal/'],
 })
 ```
 

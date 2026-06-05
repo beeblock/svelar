@@ -16,21 +16,19 @@ npx svelar key:generate
 
 This generates a 64-character hex key and writes it to `.env`. Never commit your `.env` file to version control.
 
-### Accessing Secrets in SvelteKit
+### Accessing Secrets in Svelar Apps
 
-SvelteKit uses Vite, which does **not** populate `process.env` from `.env` files. Always use SvelteKit's built-in env module:
+Generated Svelar apps target adapter-node and read runtime configuration from `process.env`, including `src/hooks.server.ts`. This keeps the web server, CLI commands, workers, scheduler, and tests on the same environment contract:
 
 ```typescript
 // hooks.server.ts
-import { env } from '$env/dynamic/private';
-
 export const { handle } = createSvelarApp({
   auth,
-  secret: env.APP_KEY,
+  secret: process.env.APP_KEY,
 });
 ```
 
-Never use `process.env` for secrets in SvelteKit server code. The CLI (`npx svelar`) loads `.env` automatically, but the Vite dev server does not.
+In production, set secrets as real environment variables on the Node process. For local development and CLI commands, keep them in `.env`.
 
 ### Secret Rotation
 
@@ -75,6 +73,8 @@ All drivers use safe defaults (salt generation, appropriate work factors). Never
 - Refresh tokens are long-lived and stored in the database
 - Refresh tokens are single-use (rotated on each refresh)
 - Revoked tokens are rejected immediately
+- Password reset, email verification, and OTP tokens are HMAC-hashed at rest and checked with constant-time comparisons after scoped lookup
+- OTP codes use unbiased numeric randomness, are single-use, and must be 4-12 digits
 
 ### API Token Security
 
@@ -101,8 +101,12 @@ Prevents brute-force and abuse:
 new RateLimitMiddleware({
   maxRequests: 100,
   windowMs: 60_000, // 100 requests per minute
+  store: 'cache',   // use Redis via Cache for multi-instance production apps
+  cacheStore: 'redis',
 })
 ```
+
+For single-process development the default in-memory limiter is fine. In production, configure `CACHE_DRIVER=redis` and set `RATE_LIMIT_STORE=cache` in scaffolded apps so global rate limits and auth throttles are shared across all Node instances.
 
 ### 3. CSRF Protection (`CsrfMiddleware`)
 
@@ -149,12 +153,22 @@ Svelar includes a Spatie-inspired permission system:
 - Roles can be assigned to users via pivot tables
 - Direct permissions can be granted to individual users
 - Gate checks enforce authorization at the controller level
+- Policies keep model-specific authorization in dedicated classes
 
 ```typescript
 // Check in controllers
 if (!await user.hasPermission('manage-users')) {
   return json({ error: 'Forbidden' }, { status: 403 });
 }
+```
+
+Policies must be checked with an explicit model target:
+
+```typescript
+Gate.policy('Post', new PostPolicy());
+
+await Gate.forUser(user).allows('create', Post);
+await Gate.forUser(user).authorize('update', post);
 ```
 
 ---
@@ -191,7 +205,7 @@ Change `REDIS_PASSWORD` in `.env` before deploying to production.
 
 Default credentials in `docker-compose.yml` are for development only. Before deploying:
 
-1. Set strong passwords in `.env` for `DB_PASSWORD`, `REDIS_PASSWORD`, `RUSTFS_ROOT_PASSWORD`
+1. Set strong passwords in `.env` for `DB_PASSWORD`, `REDIS_PASSWORD`, `RUSTFS_SECRET_KEY`
 2. Never use default passwords in production
 3. Consider using Docker secrets or a vault for sensitive values
 
@@ -201,7 +215,7 @@ The RustFS admin console (port 9001) provides full access to object storage. In 
 
 - Restrict access via firewall rules (allow only admin IPs)
 - Or remove the port mapping entirely and use the CLI for administration
-- Change `RUSTFS_ROOT_USER` and `RUSTFS_ROOT_PASSWORD` from defaults
+- Change `RUSTFS_ACCESS_KEY` and `RUSTFS_SECRET_KEY` from defaults
 
 ---
 
@@ -245,7 +259,7 @@ Before deploying to production:
 
 - [ ] Generate a strong `APP_KEY` with `npx svelar key:generate`
 - [ ] Set unique `JWT_SECRET` and `INTERNAL_SECRET`
-- [ ] Change all default passwords (`DB_PASSWORD`, `REDIS_PASSWORD`, `RUSTFS_ROOT_PASSWORD`, `MEILI_MASTER_KEY`)
+- [ ] Change all default passwords (`DB_PASSWORD`, `REDIS_PASSWORD`, `RUSTFS_SECRET_KEY`, `MEILI_MASTER_KEY`)
 - [ ] Set `NODE_ENV=production`
 - [ ] Enable HTTPS (use a reverse proxy like Traefik or Nginx)
 - [ ] Restrict CORS origins to your domain

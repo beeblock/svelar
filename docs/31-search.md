@@ -64,6 +64,8 @@ class Post extends Searchable(Model) {
 
 That's it. Every time a `Post` is created, updated, or deleted, the search index updates automatically.
 
+Search auto-sync is part of the model write path. If Meilisearch is misconfigured, unavailable, or rejects an indexing request, the create/update/delete operation fails instead of silently drifting out of sync. Removing a document that is already missing from the index is treated as a successful no-op.
+
 ### With HasRoles
 
 Mixins compose — stack them:

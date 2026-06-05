@@ -613,7 +613,7 @@ pgbouncer:
     retries: 5
 ```
 
-The app connects to `pgbouncer:6432` (not `postgres:5432`). This is set automatically in `docker-compose.yml` via `DB_HOST=pgbouncer` and `DB_PORT=6432`.
+The app connects to `pgbouncer:6432` (not `postgres:5432`). This is set automatically in `docker-compose.yml` via `DB_HOST=pgbouncer` and `DB_PORT=6432`. Generated database config disables PostgreSQL prepared statements automatically when `DB_HOST=pgbouncer`; set `DB_PREPARE=false` explicitly when connecting to PgBouncer through a different hostname.
 
 **Generated config files:**
 
@@ -684,9 +684,11 @@ rustfs:
   ports:
     - "${RUSTFS_CONSOLE_PORT:-9001}:9001"   # Admin console (protect with firewall)
   environment:
-    RUSTFS_ROOT_USER: ${RUSTFS_ROOT_USER:-svelar}
-    RUSTFS_ROOT_PASSWORD: ${RUSTFS_ROOT_PASSWORD:-svelarsecret}
-  command: server /data --console-address ":9001"
+    RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-svelar}
+    RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-svelarsecret}
+    RUSTFS_CONSOLE_ENABLE: "true"
+    RUSTFS_ADDRESS: ":9000"
+  command: /data
   volumes:
     - rustfs_data:/data
 ```
@@ -807,6 +809,7 @@ docker compose exec app pm2 scale worker 4
 | `DB_NAME` | `svelar` | Database name |
 | `DB_USER` | `svelar` | Database user |
 | `DB_PASSWORD` | `secret` | Database password |
+| `DB_PREPARE` | `false` behind PgBouncer | Set to `false` for PgBouncer transaction pooling |
 | `DB_ROOT_PASSWORD` | `rootsecret` | MySQL root password (MySQL only) |
 
 ### Redis & Queue
@@ -849,8 +852,8 @@ docker compose exec app pm2 scale worker 4
 | `S3_BUCKET` | `svelar` | S3 bucket name |
 | `S3_REGION` | `us-east-1` | S3 region |
 | `STORAGE_DISK` | `s3` | Default storage disk |
-| `RUSTFS_ROOT_USER` | `svelar` | RustFS admin user |
-| `RUSTFS_ROOT_PASSWORD` | `svelarsecret` | RustFS admin password |
+| `RUSTFS_ACCESS_KEY` | `svelar` | RustFS access key |
+| `RUSTFS_SECRET_KEY` | `svelarsecret` | RustFS secret key |
 
 ### Search (Meilisearch)
 
@@ -1278,7 +1281,7 @@ INTERNAL_SECRET=<openssl rand -hex 32>
 
 # REQUIRED — change from defaults
 DB_PASSWORD=<strong-password>
-RUSTFS_ROOT_PASSWORD=<strong-password>
+RUSTFS_SECRET_KEY=<strong-password>
 PUSHER_KEY=<random-string>
 PUSHER_SECRET=<random-string>
 

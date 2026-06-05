@@ -310,7 +310,7 @@ Svelar ships 35+ modules. Here's what each one does and when you'll use it:
 | **Notifications** | `@beeblock/svelar/notifications` | Multi-channel notifications (mail, database, custom) |
 | **Broadcasting** | `@beeblock/svelar/broadcasting` | Real-time SSE/WebSocket events with channel auth |
 | **Cache** | `@beeblock/svelar/cache` | Multi-driver cache (memory, file, Redis) with `remember()` |
-| **Storage** | `@beeblock/svelar/storage` | File storage (local, S3/MinIO/RustFS) with pre-signed URLs |
+| **Storage** | `@beeblock/svelar/storage` | File storage (local, S3/RustFS) with pre-signed URLs |
 | **Logging** | `@beeblock/svelar/logging` | Structured logging with channels (console, file) |
 
 ### You'll Use for SaaS Features

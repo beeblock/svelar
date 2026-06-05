@@ -377,6 +377,8 @@ import { GeneratePdfJob } from '@beeblock/svelar/pdf';
 Queue.register(GeneratePdfJob);
 ```
 
+If a `GeneratePdfJob` includes `broadcastEvent` and `broadcastChannel`, that completion broadcast is part of the job contract. Broadcast driver failures cause the job to fail and retry through the configured queue instead of being ignored.
+
 You can also combine queue + webhook — the job dispatches to Gotenberg in webhook mode, and the webhook receiver handles the result:
 
 ```typescript

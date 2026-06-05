@@ -222,7 +222,20 @@ export default class MarkOverdueInvoices extends ScheduledTask {
 }
 ```
 
-The scheduler auto-discovers all files in `src/lib/scheduler/`. Run it with:
+Register the task in `src/lib/shared/scheduler/index.ts` for DDD apps or `src/lib/scheduler/index.ts` for flat apps:
+
+```typescript
+import { Scheduler } from '@beeblock/svelar/scheduler';
+import MarkOverdueInvoices from './MarkOverdueInvoices.js';
+
+export function createScheduler(): Scheduler {
+  const scheduler = new Scheduler().persistToDatabase();
+  scheduler.register(new MarkOverdueInvoices());
+  return scheduler;
+}
+```
+
+Run it with:
 
 ```bash
 npx svelar schedule:run
@@ -352,7 +365,11 @@ Svelar's built-in Teams system handles multi-tenancy. It's configured out of the
 
 ```typescript
 import { Teams } from '@beeblock/svelar/teams';
-Teams.configure({ driver: 'database' });
+Teams.configure({
+  driver: 'database',
+  roles: ['owner', 'admin', 'member', 'viewer'],
+  maxTeamsPerUser: 10,
+});
 ```
 
 ### Team Operations
@@ -382,6 +399,8 @@ await Teams.removeMember(team.id, memberId);
 // Get user's teams
 const teams = await Teams.getUserTeams(user.id);
 ```
+
+Team slugs are made unique automatically. Roles are validated against the configured role list, invitation tokens can only be accepted once, and the `owner` role is reserved for the team owner.
 
 ### Team-Scoped Queries
 
@@ -455,7 +474,7 @@ await Permissions.assignRole('User', user.id, role.id);
 const user = await User.find(userId);
 await user.hasRole('admin');        // true/false
 await user.hasPermission('manage-users');  // true/false
-await user.can('manage-users');     // alias for hasPermission
+await user.can('manage-users');     // Laravel-style authorization helper
 ```
 
 ### Authorization Gates
@@ -473,6 +492,30 @@ Gate.define('edit-post', (user, post) => {
 
 // Super user bypass — admins pass all gates
 Gate.defineSuperUser((user) => user?.role === 'admin');
+```
+
+### Authorization Policies
+
+Use policies for model-specific authorization. Register each policy against its model name, then pass a model class/name for class-level checks or a model instance for instance-level checks:
+
+```typescript
+import { Gate, Policy } from '@beeblock/svelar/auth';
+import { Post } from '$lib/server/models/Post';
+
+class PostPolicy extends Policy {
+  create(user: any) {
+    return user.role === 'editor' || user.role === 'admin';
+  }
+
+  update(user: any, post: Post) {
+    return user.id === post.user_id || user.role === 'admin';
+  }
+}
+
+Gate.policy('Post', new PostPolicy());
+
+await Gate.forUser(user).allows('create', Post);
+await Gate.forUser(user).authorize('update', post);
 ```
 
 ### Admin API Routes

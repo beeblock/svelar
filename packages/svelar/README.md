@@ -41,11 +41,17 @@ npm run smoke:browser:headed
 npm run smoke:prod
 npm run smoke:db
 npm run smoke:db:prod
+npm run smoke:redis
+npm run smoke:pdf
+npm run smoke:search
+npm run smoke:pgbouncer
+npm run certify:inventory
+npm run certify
 npm run release:dry-run
 npm run release
 ```
 
-Run the smoke checks before publishing. They build and pack the local core package, scaffold real apps into the sibling `svelar-testing-area`, install UI components, run migrations and seeders, execute generated tests, verify production builds, and exercise the generated app in a real browser. Use `npm run smoke:browser:headed` when you want to watch Chromium open and step through the browser smoke flow locally. Use `npm run smoke:prod` to test the adapter-node production server, and `npm run smoke:db` or `npm run smoke:db:prod` to test SQLite, PostgreSQL, and MySQL. The database smoke scripts start Docker containers with random localhost ports, so they do not require 5432 or 3306 to be free. If Playwright has not downloaded Chromium locally yet, run `cd ../svelar-testing-area/apps/svelar-smoke-ddd && npx playwright install chromium`. The release script syncs and publishes both `@beeblock/svelar` and the unscoped `svelar` CLI shim used by `npx svelar`.
+Run `npm run certify` before publishing. It prints the release certification inventory, runs the core test suite, then runs Redis, PDF, Meilisearch, S3, and PgBouncer/`pg_stat_statements` service smoke plus the full generated-app database and production-browser smoke gate. The smoke checks build and pack the local core package, scaffold real apps into the sibling `svelar-testing-area`, install UI components, run migrations and seeders, execute generated tests, verify production builds, and exercise the generated app in a real browser, including real `EventSource` checks for SSE public/private/presence channels. DDD smoke apps also receive an injected certification test that covers the intended `route -> controller -> DTO/schema -> action -> service -> repository -> model -> resource` flow, complex ORM queries, events/listeners, model observers, queues, middleware/rate limiting, sessions, SSE public/private/presence broadcasting, and Postmark/Resend/Mailtrap mail transport payloads across the configured database driver, Redis cache/session/BullMQ behavior when `REDIS_URL` is present, PDFKit/Gotenberg behavior when `GOTENBERG_URL` is present, Meilisearch `Searchable` indexing when `MEILISEARCH_HOST` is present, S3-compatible storage when `S3_CERTIFICATION` is present, and PostgreSQL through PgBouncer with `pg_stat_statements` when `PGBOUNCER_CERTIFICATION` is present. Use `npm run smoke:browser:headed` when you want to watch Chromium open and step through the browser smoke flow locally. The database, Redis, Gotenberg, Meilisearch, RustFS, and PgBouncer smoke scripts start Docker containers with random localhost ports, so they do not require 5432, 3306, 6379, 3000, 6432, 7700, or 9000 to be free. If Playwright has not downloaded Chromium locally yet, run `cd ../svelar-testing-area/apps/svelar-smoke-ddd && npx playwright install chromium`. The release script syncs and publishes both `@beeblock/svelar` and the unscoped `svelar` CLI shim used by `npx svelar`.
 
 See the [Getting Started guide](https://svelar.dev/docs/getting-started) for a complete walkthrough.
 
@@ -67,9 +73,9 @@ See the [Getting Started guide](https://svelar.dev/docs/getting-started) for a c
 | **Broadcasting** | `@beeblock/svelar/broadcasting` | Server-Sent Events and Pusher/Soketi WebSocket support |
 | **Cache** | `@beeblock/svelar/cache` | Memory and Redis cache with TTL and remember pattern |
 | **Storage** | `@beeblock/svelar/storage` | Local and S3-compatible file storage |
-| **Mail** | `@beeblock/svelar/mail` | SMTP, Postmark, Resend, log, and null transports with Mailable classes |
+| **Mail** | `@beeblock/svelar/mail` | SMTP, Postmark, Resend, Mailtrap, log, and null transports with Mailable classes |
 | **Excel** | `@beeblock/svelar/excel` | Import/export Excel files with streaming support for large datasets |
-| **Notifications** | `@beeblock/svelar/notifications` | Multi-channel notifications (mail, database, broadcast) |
+| **Notifications** | `@beeblock/svelar/notifications` | Multi-channel notifications (email, database, custom) |
 | **Logging** | `@beeblock/svelar/logging` | File-based logger with levels and rotation |
 | **HTTP Client** | `@beeblock/svelar/http` | Client-side CSRF fetch + server-side fluent HTTP client for third-party APIs |
 | **Permissions** | `@beeblock/svelar/permissions` | Role-based access control with permissions and gates |

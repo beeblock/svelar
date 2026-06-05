@@ -9,6 +9,7 @@ Send emails from your application with swappable drivers.
 | **smtp** | `nodemailer` | Traditional SMTP relay |
 | **postmark** | none (fetch) | Postmark transactional email API |
 | **resend** | none (fetch) | Resend email API |
+| **mailtrap** | none (fetch) | Mailtrap Email API |
 | **log** | none | Logs to console (development) |
 | **null** | none | Discards silently (testing) |
 
@@ -28,9 +29,13 @@ Mailer.configure({
       driver: 'postmark',
       apiToken: process.env.POSTMARK_API_TOKEN,
     },
+    mailtrap: {
+      driver: 'mailtrap',
+      apiToken: process.env.MAILTRAP_API_TOKEN,
+    },
     smtp: {
       driver: 'smtp',
-      host: process.env.MAIL_HOST || 'smtp.mailtrap.io',
+      host: process.env.MAIL_HOST || 'live.smtp.mailtrap.io',
       port: parseInt(process.env.MAIL_PORT || '587'),
       auth: {
         user: process.env.MAIL_USER,

@@ -33,11 +33,17 @@ npm run smoke:browser:headed
 npm run smoke:prod
 npm run smoke:db
 npm run smoke:db:prod
+npm run smoke:redis
+npm run smoke:pdf
+npm run smoke:search
+npm run smoke:pgbouncer
+npm run certify:inventory
+npm run certify
 npm run release:dry-run
 npm run release
 ```
 
-Run the smoke checks before publishing. They build and pack the local core package, scaffold real apps into the sibling `svelar-testing-area`, install UI components, run migrations and seeders, execute generated tests, verify production builds, and exercise the generated app in a real browser. Use `npm run smoke:browser:headed` when you want to watch Chromium open and step through the browser smoke flow locally. Use `npm run smoke:prod` to test the adapter-node production server, and `npm run smoke:db` or `npm run smoke:db:prod` to test SQLite, PostgreSQL, and MySQL. The database smoke scripts start Docker containers with random localhost ports, so they do not require 5432 or 3306 to be free. If Playwright has not downloaded Chromium locally yet, run `cd ../svelar-testing-area/apps/svelar-smoke-ddd && npx playwright install chromium`. The release script syncs the shim version and dependency from `packages/svelar`, publishes `@beeblock/svelar` first, then publishes the `svelar` shim.
+Run `npm run certify` before publishing. It prints the release certification inventory, runs the core test suite, then runs Redis, PDF, Meilisearch, S3, and PgBouncer/`pg_stat_statements` service smoke plus the full generated-app database and production-browser smoke gate. The smoke checks build and pack the local core package, scaffold real apps into the sibling `svelar-testing-area`, install UI components, run migrations and seeders, execute generated tests, verify production builds, and exercise the generated app in a real browser, including real `EventSource` checks for SSE public/private/presence channels. DDD smoke apps also receive an injected certification test that covers the intended `route -> controller -> DTO/schema -> action -> service -> repository -> model -> resource` flow, complex ORM queries, events/listeners, model observers, queues, middleware/rate limiting, sessions, SSE public/private/presence broadcasting, and Postmark/Resend/Mailtrap mail transport payloads across the configured database driver, Redis cache/session/BullMQ behavior when `REDIS_URL` is present, PDFKit/Gotenberg behavior when `GOTENBERG_URL` is present, Meilisearch `Searchable` indexing when `MEILISEARCH_HOST` is present, S3-compatible storage when `S3_CERTIFICATION` is present, and PostgreSQL through PgBouncer with `pg_stat_statements` when `PGBOUNCER_CERTIFICATION` is present. Use `npm run smoke:browser:headed` when you want to watch Chromium open and step through the browser smoke flow locally. The database, Redis, Gotenberg, Meilisearch, RustFS, and PgBouncer smoke scripts start Docker containers with random localhost ports, so they do not require 5432, 3306, 6379, 3000, 6432, 7700, or 9000 to be free. If Playwright has not downloaded Chromium locally yet, run `cd ../svelar-testing-area/apps/svelar-smoke-ddd && npx playwright install chromium`. The release script syncs the shim version and dependency from `packages/svelar`, publishes `@beeblock/svelar` first, then publishes the `svelar` shim.
 
 ## Features
 
@@ -61,7 +67,7 @@ Run the smoke checks before publishing. They build and pack the local core packa
 
 **Queue** — Background job processing with sync and memory drivers, retry logic, and failure handling.
 
-**Mail** — Email abstraction with SMTP, log, and null drivers. Mailable classes for structured emails.
+**Mail** — Email abstraction with SMTP, Postmark, Resend, Mailtrap, log, and null drivers. Mailable classes for structured emails.
 
 **Notifications** — Multi-channel notifications (mail, database, custom) with Notification classes.
 

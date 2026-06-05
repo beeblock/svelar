@@ -300,6 +300,8 @@ The `AuthenticateMiddleware` automatically validates the token and sets `event.l
 
 Access tokens are short-lived by design. When they expire, the client needs to re-authenticate. Refresh tokens solve this — they're long-lived tokens stored in the database that can be exchanged for a new access token without re-entering credentials.
 
+Refresh tokens are for JWT authentication only. Session auth uses server-side expiry plus `regenerateId()`, and API keys use `ApiKeys.rotate()`/`ApiKeys.revoke()` instead of refresh tokens.
+
 #### Enable Refresh Tokens
 
 ```typescript
@@ -317,30 +319,7 @@ export const auth = new AuthManager({
 });
 ```
 
-#### Migration
-
-Create the refresh tokens table:
-
-```typescript
-import { Migration } from '@beeblock/svelar/database';
-
-export default class CreateRefreshTokensTable extends Migration {
-  async up() {
-    await this.schema.createTable('refresh_tokens', (table) => {
-      table.increments('id');
-      table.integer('user_id').references('id', 'users').onDelete('cascade');
-      table.string('token').unique();         // SHA256 hash
-      table.dateTime('expires_at');
-      table.dateTime('revoked_at').nullable();
-      table.timestamps();
-    });
-  }
-
-  async down() {
-    await this.schema.dropTable('refresh_tokens');
-  }
-}
-```
+The `refresh_tokens` table is managed by Svelar core migrations. Run `npx svelar migrate` before enabling JWT refresh tokens in an app.
 
 #### Login — Returns Both Tokens
 
@@ -467,68 +446,30 @@ async function fetchWithAuth(url: string, options: RequestInit = {}) {
 
 ## API Token Authentication
 
-For machine-to-machine authentication, generate API tokens per user.
-
-### Database Migration
-
-Create an `api_tokens` table:
+For machine-to-machine authentication, generate API keys per user. The `api_keys` table is managed by Svelar core migrations.
 
 ```typescript
-import { Migration } from '@beeblock/svelar/database';
+import { ApiKeys } from '@beeblock/svelar/api-keys';
 
-export default class CreateApiTokensTable extends Migration {
-  async up() {
-    await this.schema.createTable('api_tokens', (table) => {
-      table.increments('id');
-      table.integer('user_id').references('id', 'users').onDelete('cascade');
-      table.string('name');
-      table.string('token').unique();
-      table.dateTime('last_used_at').nullable();
-      table.timestamps();
-    });
-  }
+ApiKeys.configure({ driver: 'database', prefix: 'sk_' });
 
-  async down() {
-    await this.schema.dropTable('api_tokens');
-  }
-}
+const { plainTextKey, record } = await ApiKeys.create({
+  name: 'GitHub Deploy Key',
+  userId: user.id,
+  permissions: ['deployments:create'],
+  expiresIn: 60 * 60 * 24 * 365,
+});
 ```
 
-### Generate Token
-
-```typescript
-import { crypto } from 'node:crypto';
-
-export class AuthController extends Controller {
-  async generateToken(event: any) {
-    const user = event.locals.user;
-
-    if (!user) {
-      return this.json({ message: 'Unauthenticated' }, 401);
-    }
-
-    const token = crypto.randomBytes(32).toString('hex');
-
-    await ApiToken.create({
-      user_id: (user as any).id,
-      name: event.request.body.name || 'API Token',
-      token: token,
-    });
-
-    return this.created({ token });
-  }
-}
-```
-
-### Use Token
+The plain text key is returned once. Svelar stores only a hash plus metadata, permissions, timestamps, and revocation state.
 
 Clients send the token in the Authorization header:
 
 ```bash
-curl -H "Authorization: Bearer <api-token>" http://localhost:5173/api/posts
+curl -H "Authorization: Bearer sk_your_api_key" http://localhost:5173/api/posts
 ```
 
-Middleware resolves the token and sets `event.locals.user`.
+`AuthenticateMiddleware` validates the key through `ApiKeys`, resolves the owning user, and sets `event.locals.user`.
 
 ## API Request Signatures
 
@@ -1232,7 +1173,13 @@ await EmailTemplates.update('welcome', {
 });
 ```
 
+When using the file-backed email template driver, missing template files fall back to the built-in defaults. Malformed template JSON and filesystem errors throw instead of being treated as missing templates.
+
+Password reset and OTP requests still return `false` for unknown users so the app can keep account existence private. For existing users, template rendering failures and mail provider failures throw. Do not catch and ignore those errors in registration, reset, verification, or OTP flows unless you intentionally want to accept a token that the user may never receive.
+
 ## Token Cleanup
+
+Password reset, email verification, and OTP values are stored as HMAC hashes and validated after a scoped lookup with constant-time hash comparison. OTP codes are generated with unbiased numeric randomness, restricted to 4-12 digits, and marked as used after the first successful verification.
 
 Expired tokens from password resets, email verifications, and OTP codes should be cleaned up periodically. The `cleanupExpiredTokens()` method handles all three:
 
@@ -1243,9 +1190,13 @@ const result = await auth.cleanupExpiredTokens();
 
 This is wired up automatically in the scaffolded `CleanupExpiredTokens` scheduled task (runs daily).
 
+The password reset, email verification, OTP, refresh token, and session tables are managed by Svelar core migrations. Run `npx svelar migrate` before enabling auth cleanup or scheduled session cleanup. Missing auth tables fail loudly instead of being ignored.
+
+Session stores treat missing or corrupted session payloads as an invalid session and return `null`; corrupted file, database, and Redis session records are removed. Storage, database, and Redis infrastructure errors are not swallowed.
+
 ## Choosing an Auth Strategy
 
-Svelar supports four authentication methods. They can be used independently or combined. They can be used independently or combined — the `AuthenticateMiddleware` tries them all automatically.
+Svelar supports three authentication methods. They can be used independently or combined — the `AuthenticateMiddleware` tries them all automatically.
 
 ### Comparison
 
@@ -1277,6 +1228,7 @@ Svelar supports four authentication methods. They can be used independently or c
 - User generates a named token from their dashboard (e.g., "GitHub Deploy Key")
 - Token can have scoped permissions (`['posts:read', 'posts:write']`)
 - Can be revoked instantly if compromised
+- Rotate with `ApiKeys.rotate()` when credentials need replacing
 - Tracks when it was last used — great for audit logs
 
 ### How the Middleware Resolves Auth

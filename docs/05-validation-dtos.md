@@ -678,7 +678,9 @@ const schema = z.object({
   active:   rules.boolean(),                      // z.boolean()
   birthday: rules.date(),                         // z.coerce.date()
   website:  rules.url(),                          // z.string().url()
-  token:    rules.uuid(),                         // z.string().uuid()
+  token:    rules.uuid(),                         // any UUID version
+  publicId: rules.uuidv7(),                       // UUID v7 public IDs
+  ulid:     rules.ulid(),                         // ULID public IDs
   role:     rules.enum(['admin', 'user']),         // z.enum(['admin', 'user'])
   tags:     rules.array(z.string()),              // z.array(z.string())
   phone:    rules.nullable(z.string()),           // z.string().nullable()

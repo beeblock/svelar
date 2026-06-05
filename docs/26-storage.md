@@ -1,6 +1,6 @@
 # Storage
 
-Manage file storage across local filesystem and S3-compatible object storage (RustFS, MinIO, AWS S3).
+Manage file storage across local filesystem and S3-compatible object storage (RustFS, AWS S3, and other S3-compatible providers).
 
 ### Configuration
 
@@ -21,7 +21,7 @@ Storage.configure({
       endpoint: process.env.S3_ENDPOINT ?? 'http://localhost:9000',
       accessKeyId: process.env.S3_ACCESS_KEY ?? 'svelar',
       secretAccessKey: process.env.S3_SECRET_KEY ?? 'svelarsecret',
-      forcePathStyle: true,  // Required for RustFS/MinIO
+      forcePathStyle: true,  // Required for RustFS and most S3-compatible services
     },
   },
 });
@@ -53,9 +53,11 @@ const files = await disk.files('avatars/');
 const url = disk.url('avatars/user1.jpg');
 ```
 
+Missing files and missing directories use normal storage semantics: `exists()` returns `false`, `delete()` returns `false`, and listing methods return `[]`. Filesystem, S3 auth, bucket, network, and malformed path errors are not swallowed.
+
 ### S3 / RustFS Object Storage
 
-Svelar includes a full S3-compatible storage driver that works with [RustFS](https://github.com/rustfs/rustfs), MinIO, AWS S3, and any S3-compatible service. RustFS is included by default in `docker-compose` when you run `npx svelar make:docker`.
+Svelar includes a full S3-compatible storage driver that works with [RustFS](https://github.com/rustfs/rustfs), AWS S3, and other S3-compatible services. RustFS is included by default in `docker-compose` when you run `npx svelar make:docker`.
 
 ```bash
 # Install the S3 SDK (peer dependency)
@@ -68,7 +70,7 @@ npm install @aws-sdk/s3-request-presigner
 S3 disks support all the same methods as local disks, plus additional features:
 
 ```typescript
-// Ensure bucket exists (auto-creates if missing — great for RustFS/MinIO)
+// Ensure bucket exists (auto-creates if missing for RustFS)
 await Storage.s3Disk('s3').ensureBucket();
 
 // Generate a pre-signed temporary URL (expires in 1 hour)

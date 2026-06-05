@@ -56,19 +56,29 @@ Cache.configure({
   stores: {
     memory: {
       driver: 'memory',
+      ttl: 3600,
     },
     file: {
       driver: 'file',
       path: './storage/cache',
+      ttl: 3600,
     },
     redis: {
       driver: 'redis',
       host: 'localhost',
       port: 6379,
+      password: process.env.REDIS_PASSWORD,
+      db: 0,
+      prefix: 'svelar_cache:',
+      ttl: 3600,
     },
   },
 });
 ```
+
+The store-level `ttl` is the default TTL in seconds. It applies to `Cache.put()` and direct store calls such as `Cache.store('redis').put()` unless you pass a TTL for that call.
+
+File cache treats missing, expired, and corrupted entries as cache misses and removes corrupted/expired files. Filesystem errors that are not normal cache misses are not swallowed.
 
 ### Using Cache
 
@@ -127,22 +137,24 @@ Log.configure({
 import { Log } from '@beeblock/svelar/logging';
 
 // Log levels
-Log.debug('Debug message');
-Log.info('Information message');
-Log.warn('Warning message');
-Log.error('Error message');
+await Log.debug('Debug message');
+await Log.info('Information message');
+await Log.warn('Warning message');
+await Log.error('Error message');
 
 // With context
-Log.info('User registered', { user_id: 1, email: 'john@example.com' });
+await Log.info('User registered', { user_id: 1, email: 'john@example.com' });
 
 // Multiple channels
-Log.channel('file').info('Logged to file only');
-Log.channel('console').warn('Logged to console only');
+await Log.channel('file').info('Logged to file only');
+await Log.channel('console').warn('Logged to console only');
 ```
+
+Log writes return promises. Await file and stack channels when you need to guarantee persistence or surface write failures. Missing channels, unknown drivers, and file write errors throw instead of falling back to console.
 
 ## Notifications
 
-Send notifications via multiple channels (email, SMS, database).
+Send notifications via email, database, and custom channels.
 
 ### Configuration
 
@@ -152,16 +164,11 @@ import { Notifier } from '@beeblock/svelar/notifications';
 Notifier.configure({
   channels: {
     email: {
-      driver: 'mail',
+      driver: 'email',
     },
     database: {
       driver: 'database',
       table: 'notifications',
-    },
-    sms: {
-      driver: 'vonage',  // or 'twilio'
-      api_key: process.env.VONAGE_API_KEY,
-      api_secret: process.env.VONAGE_API_SECRET,
     },
   },
 });
@@ -191,6 +198,7 @@ export class OrderShippedNotification extends Notification {
 
   toDatabase() {
     return {
+      type: 'order_shipped',
       title: 'Order Shipped',
       message: `Your order #${this.order.id} has shipped`,
       data: { order_id: this.order.id },
@@ -200,6 +208,17 @@ export class OrderShippedNotification extends Notification {
 
 // Send
 await Notifier.notify(user, new OrderShippedNotification(order));
+```
+
+Register custom channels with `Notifier.extend()`:
+
+```typescript
+Notifier.extend('audit', {
+  async send(notifiable, notification) {
+    const payload = notification.toChannel?.('audit', notifiable);
+    await auditService.record(payload);
+  },
+});
 ```
 
 ## Configuration Management
@@ -247,6 +266,8 @@ await config.loadFromDirectory('./config');
 ```
 
 Scaffolded apps call `config.loadFromDirectory('config')` in `src/app.ts`, so generated config files are loaded automatically when the web server or a Svelar CLI runtime command boots the application.
+
+Missing config directories are treated as optional and return an empty list. Files inside an existing config directory must import successfully and export an object; syntax errors, failed imports, and invalid exports throw during bootstrap instead of being skipped.
 
 ### Using Configuration
 
@@ -401,6 +422,8 @@ import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
 configureDashboard({ enabled: true, prefix: '/admin' });
 ```
 
+When the dashboard plugin is booted with background health collection enabled, it records the latest health snapshot plus last run/success/error metadata. Health collection failures are exposed through dashboard data instead of being logged and forgotten.
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/admin/health` | System health |
@@ -490,10 +513,10 @@ const team = await Teams.create({
   ownerId: user.id,
 });
 
-await Teams.invite(team.id, 'member@example.com', 'editor');
+await Teams.invite(team.id, 'member@example.com', 'admin');
 ```
 
-Tables are managed by Svelar core migrations. Supports role-based access control (owner, admin, member, viewer).
+Tables are managed by Svelar core migrations. Teams use `owner`, `admin`, `member`, and `viewer` roles by default; pass `roles` to `Teams.configure()` to allow custom roles. The `owner` role is reserved for the team owner, cannot be assigned through invitations or member updates, and the owner member cannot be removed through `removeMember()`.
 
 ## Email Templates
 
@@ -531,6 +554,8 @@ const upload = await Uploads.store(formFile, {
 
 const url = await Uploads.getUrl(upload.id, 3600);
 ```
+
+`Uploads.store()`, `Uploads.delete()`, and `Uploads.getUrl()` use the configured Storage disk and throw storage configuration, filesystem, or S3/RustFS errors. Upload metadata is only created after the file write succeeds, and metadata is not deleted when file deletion fails.
 
 ## Billing with Stripe
 
