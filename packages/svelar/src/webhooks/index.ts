@@ -300,7 +300,7 @@ class WebhookManager {
 
     let results = this.endpoints;
     if (userId !== undefined) {
-      results = results.filter((e) => e.userId === userId);
+      results = results.filter((e) => String(e.userId) === String(userId));
     }
     return results.map((e) => ({ ...e })); // Return copies
   }
