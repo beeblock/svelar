@@ -29,6 +29,7 @@ npm run certify:fast
 `npm run certify` runs:
 
 - the core package test suite
+- package publish dry-run checks for `@beeblock/svelar` and the `npx svelar` shim package
 - Redis cache, Redis session, and BullMQ queue smoke checks with Docker-managed random ports
 - PDFKit, queued PDF job, and Gotenberg smoke checks with Docker-managed random ports
 - Meilisearch indexing and search smoke checks with Docker-managed random ports
@@ -37,6 +38,8 @@ npm run certify:fast
 - generated DDD app certification tests, including local provider mocks for Postmark, Resend, and Mailtrap mail transports
 - SQLite, PostgreSQL, and MySQL smoke checks with Docker-managed random ports
 - production `adapter-node` browser smoke across the database matrix
+
+The core package test suite includes direct gates for feature flags, outgoing webhooks, Excel import/export/streaming, HTTP helpers and the fluent HTTP client, forms, i18n, UI/SEO component compilation, toast state, deployment CLI file generation, Docker compose command construction, and package-level utility commands.
 
 Generated DDD smoke apps receive an injected `tests/feature/svelar-certification.test.ts` file. It validates the intended Svelar flow:
 
