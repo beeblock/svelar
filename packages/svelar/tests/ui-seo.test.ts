@@ -5,6 +5,7 @@ import { compile } from 'svelte/compiler';
 import { dismiss, dismissAll, getToasts, pauseToast, resumeToast, subscribe, toast } from '../src/ui/toast';
 
 const uiDir = join(process.cwd(), 'src/ui');
+const paginationDir = join(process.cwd(), 'src/pagination');
 
 describe('UI components', () => {
   afterEach(() => {
@@ -13,13 +14,18 @@ describe('UI components', () => {
   });
 
   it('compiles every bundled Svelte UI component for server rendering', async () => {
-    const files = (await readdir(uiDir)).filter((file) => file.endsWith('.svelte'));
+    const uiFiles = (await readdir(uiDir)).filter((file) => file.endsWith('.svelte'));
+    const files = [
+      ...uiFiles.map((file) => ({ file, path: join(uiDir, file) })),
+      { file: 'Pagination.svelte', path: join(paginationDir, 'Pagination.svelte') },
+    ];
 
-    expect(files).toContain('Seo.svelte');
-    expect(files).toContain('Toaster.svelte');
+    expect(files.map((entry) => entry.file)).toContain('Seo.svelte');
+    expect(files.map((entry) => entry.file)).toContain('Toaster.svelte');
+    expect(files.map((entry) => entry.file)).toContain('Pagination.svelte');
 
-    for (const file of files) {
-      const source = await readFile(join(uiDir, file), 'utf8');
+    for (const { file, path } of files) {
+      const source = await readFile(path, 'utf8');
       expect(() => compile(source, { filename: file, generate: 'server' })).not.toThrow();
     }
   });
