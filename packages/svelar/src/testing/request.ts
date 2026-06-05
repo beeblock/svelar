@@ -32,16 +32,18 @@ export function createRequestEvent(options: RequestEventOptions = {}): any {
 
   const parsedUrl = new URL(url, 'http://localhost:5173');
 
+  const requestHeaders = { ...headers };
   const headerMap = new Map(
     Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]),
   );
 
   // Build the Request object
-  const requestInit: RequestInit = { method, headers: headers as any };
+  const requestInit: RequestInit = { method, headers: requestHeaders as any };
   if (body !== undefined && method !== 'GET' && method !== 'HEAD') {
     requestInit.body = typeof body === 'string' ? body : JSON.stringify(body);
     if (!headerMap.has('content-type')) {
       headerMap.set('content-type', 'application/json');
+      requestHeaders['Content-Type'] = 'application/json';
     }
   }
 
