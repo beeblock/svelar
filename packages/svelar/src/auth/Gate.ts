@@ -18,8 +18,8 @@
  * });
  *
  * // Check authorization
- * if (Gate.allows('edit-post', user, post)) { ... }
- * if (Gate.denies('admin-access', user)) { throw ... }
+ * if (await Gate.allows('edit-post', user, post)) { ... }
+ * if (await Gate.denies('admin-access', user)) { throw ... }
  *
  * // Use policies
  * class PostPolicy extends Policy {
@@ -35,8 +35,9 @@
  * Gate.policy('Post', new PostPolicy());
  *
  * // Check via policy
- * Gate.forUser(user).allows('update', post);
- * Gate.forUser(user).authorize('delete', post); // throws if denied
+ * await Gate.forUser(user).allows('create', Post);
+ * await Gate.forUser(user).allows('update', post);
+ * await Gate.forUser(user).authorize('delete', post); // throws if denied
  * ```
  */
 
@@ -116,10 +117,9 @@ export abstract class Policy {
 
 // ── Gate Manager ───────────────────────────────────────────
 
-class GateManager {
+export class GateManager {
   private gates = new Map<string, GateCallback>();
   private policies = new Map<string, Policy>();
-  private policyModelMap = new Map<string, string>();
   private beforeCallbacks: BeforeCallback[] = [];
   private afterCallbacks: AfterCallback[] = [];
   private superUserCallback?: (user: any) => boolean;
@@ -169,8 +169,8 @@ class GateManager {
    * Check if a user is allowed to perform an ability
    */
   async allows(ability: string, user: any, ...args: any[]): Promise<boolean> {
-    const result = await this.check(ability, user, ...args);
-    return result;
+    const response = await this.inspect(ability, user, ...args);
+    return response.allowed;
   }
 
   /**
@@ -220,12 +220,19 @@ class GateManager {
     const gate = this.gates.get(ability);
     if (gate) {
       const gateResult = await gate(user, ...args);
-      if (gateResult instanceof GateResponse) return gateResult;
-      return gateResult ? GateResponse.allow() : GateResponse.deny();
+      const response = gateResult instanceof GateResponse
+        ? gateResult
+        : gateResult ? GateResponse.allow() : GateResponse.deny();
+      return this.runAfterCallbacks(user, ability, response, ...args);
     }
 
     // No gate or policy found
-    return GateResponse.deny(`No gate or policy defined for ability "${ability}".`);
+    return this.runAfterCallbacks(
+      user,
+      ability,
+      GateResponse.deny(`No gate or policy defined for ability "${ability}".`),
+      ...args,
+    );
   }
 
   /**
@@ -259,11 +266,9 @@ class GateManager {
 
   // ── Private ──
 
-  private async check(ability: string, user: any, ...args: any[]): Promise<boolean> {
-    const response = await this.inspect(ability, user, ...args);
+  private async runAfterCallbacks(user: any, ability: string, response: GateResponse, ...args: any[]): Promise<GateResponse> {
     let result = response.allowed;
 
-    // After callbacks
     for (const after of this.afterCallbacks) {
       const afterResult = await after(user, ability, result, ...args);
       if (typeof afterResult === 'boolean') {
@@ -271,29 +276,20 @@ class GateManager {
       }
     }
 
-    return result;
+    if (result === response.allowed) return response;
+    return result ? GateResponse.allow() : GateResponse.deny();
   }
 
   private async checkPolicy(ability: string, user: any, ...args: any[]): Promise<GateResponse | null> {
-    // Determine which policy to use based on the first argument's type
-    let policy: Policy | undefined;
+    const target = args[0];
+    if (!target) return null;
 
-    if (args.length > 0 && args[0]) {
-      const modelName = args[0]?.constructor?.name;
-      if (modelName) {
-        policy = this.policies.get(modelName);
-      }
-    }
-
-    // If no policy found from model, check all policies for this method
-    if (!policy) {
-      for (const p of this.policies.values()) {
-        if (typeof (p as any)[ability] === 'function') {
-          policy = p;
-          break;
-        }
-      }
-    }
+    const modelName = typeof target === 'string'
+      ? target
+      : typeof target === 'function'
+        ? target.name
+        : target?.constructor?.name;
+    const policy = modelName ? this.policies.get(modelName) : undefined;
 
     if (!policy) return null;
 
@@ -308,9 +304,15 @@ class GateManager {
     const method = (policy as any)[ability];
     if (typeof method !== 'function') return null;
 
-    const result = await method.call(policy, user, ...args);
-    if (result instanceof GateResponse) return result;
-    return result ? GateResponse.allow() : GateResponse.deny();
+    const policyArgs = typeof target === 'string' || typeof target === 'function'
+      ? args.slice(1)
+      : args;
+    const result = await method.call(policy, user, ...policyArgs);
+    const response = result instanceof GateResponse
+      ? result
+      : result ? GateResponse.allow() : GateResponse.deny();
+
+    return this.runAfterCallbacks(user, ability, response, ...args);
   }
 }
 

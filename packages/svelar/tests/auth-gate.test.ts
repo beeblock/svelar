@@ -2,11 +2,9 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   GateResponse,
   AuthorizationError,
+  GateManager,
   Policy,
 } from '../src/auth/Gate.js';
-
-// Gate is a singleton, so we test the classes/utilities directly
-// and create a fresh GateManager for isolated tests
 
 describe('GateResponse', () => {
   describe('allow()', () => {
@@ -77,6 +75,9 @@ describe('AuthorizationError', () => {
 });
 
 describe('Policy', () => {
+  class Post {}
+  class Comment {}
+
   class PostPolicy extends Policy {
     viewAny(_user: any) { return true; }
     view(_user: any, _post: any) { return true; }
@@ -114,5 +115,97 @@ describe('Policy', () => {
     const policy = new PostPolicy();
     expect(policy.create!(null)).toBe(false);
     expect(policy.create!({ id: 1 })).toBe(true);
+  });
+});
+
+describe('Gate policies', () => {
+  class Post {
+    constructor(public user_id: number) {}
+  }
+
+  class Comment {
+    constructor(public user_id: number) {}
+  }
+
+  class PostPolicy extends Policy {
+    before(user: any) {
+      if (user.role === 'admin') return true;
+      return null;
+    }
+
+    viewAny() {
+      return true;
+    }
+
+    create(user: any) {
+      return user.role === 'editor';
+    }
+
+    update(user: any, post: Post) {
+      return user.id === post.user_id;
+    }
+
+    delete(user: any, post: Post) {
+      if (user.id === post.user_id) return GateResponse.allow('Owner allowed');
+      return GateResponse.deny('Owner only', 403);
+    }
+  }
+
+  class CommentPolicy extends Policy {
+    update() {
+      return false;
+    }
+  }
+
+  it('checks policy abilities through model instances and class targets', async () => {
+    const gate = new GateManager();
+    gate.policy('Post', new PostPolicy());
+
+    await expect(gate.allows('viewAny', { id: 7, role: 'user' }, Post)).resolves.toBe(true);
+    await expect(gate.allows('create', { id: 7, role: 'editor' }, Post)).resolves.toBe(true);
+    await expect(gate.denies('create', { id: 7, role: 'user' }, Post)).resolves.toBe(true);
+    await expect(gate.allows('update', { id: 7, role: 'user' }, new Post(7))).resolves.toBe(true);
+    await expect(gate.denies('update', { id: 8, role: 'user' }, new Post(7))).resolves.toBe(true);
+  });
+
+  it('uses the explicit target policy instead of the first policy with a matching method', async () => {
+    const gate = new GateManager();
+    gate.policy('Post', new PostPolicy());
+    gate.policy('Comment', new CommentPolicy());
+
+    await expect(gate.denies('update', { id: 7, role: 'user' }, new Comment(7))).resolves.toBe(true);
+    await expect(gate.denies('update', { id: 7, role: 'user' })).resolves.toBe(true);
+  });
+
+  it('supports policy before hooks, GateResponse inspection, and throwing authorization errors', async () => {
+    const gate = new GateManager();
+    gate.policy('Post', new PostPolicy());
+
+    await expect(gate.allows('update', { id: 1, role: 'admin' }, new Post(2))).resolves.toBe(true);
+
+    const denied = await gate.inspect('delete', { id: 1, role: 'user' }, new Post(2));
+    expect(denied.allowed).toBe(false);
+    expect(denied.message).toBe('Owner only');
+
+    await expect(gate.authorize('delete', { id: 1, role: 'user' }, new Post(2))).rejects.toMatchObject({
+      message: 'Owner only',
+      statusCode: 403,
+    });
+  });
+
+  it('runs after callbacks for inspect, authorize, and user-scoped gates', async () => {
+    const gate = new GateManager();
+    gate.policy('Post', new PostPolicy());
+    gate.after((_user, ability, result) => {
+      if (ability === 'delete' && !result) return true;
+      return undefined;
+    });
+
+    const scoped = gate.forUser({ id: 1, role: 'user' });
+    await expect(scoped.allows('delete', new Post(2))).resolves.toBe(true);
+    await expect(scoped.authorize('delete', new Post(2))).resolves.toBeUndefined();
+
+    const inspected = await scoped.inspect('delete', new Post(2));
+    expect(inspected.allowed).toBe(true);
   });
 });

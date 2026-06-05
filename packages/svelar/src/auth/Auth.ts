@@ -15,9 +15,10 @@
  * ```
  */
 
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { assertSqlIdentifier } from '../database/Connection.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
+import { ApiKeys } from '../api-keys/index.js';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -86,10 +87,10 @@ export interface JwtConfig {
 }
 
 export interface TokenConfig {
-  /** Table storing API tokens */
-  table?: string;
-  /** Header name for token (default: 'Authorization') */
-  header?: string;
+  /** Token prefix for generated keys (default: ApiKeys config prefix, usually 'sk_') */
+  prefix?: string;
+  /** Default permissions for AuthManager.generateApiToken() */
+  permissions?: string[];
 }
 
 export interface AuthUser {
@@ -138,7 +139,7 @@ export function signJwt(payload: JwtPayload, secret: string, algorithm: string =
   return `${header}.${body}.${signature}`;
 }
 
-export function verifyJwt(token: string, secret: string): JwtPayload | null {
+export function verifyJwt(token: string, secret: string, expectedAlgorithm: 'HS256' | 'HS384' | 'HS512' = 'HS256'): JwtPayload | null {
   const parts = token.split('.');
   if (parts.length !== 3) return null;
 
@@ -151,6 +152,8 @@ export function verifyJwt(token: string, secret: string): JwtPayload | null {
   } catch {
     return null;
   }
+  if (!['HS256', 'HS384', 'HS512'].includes(headerObj.alg)) return null;
+  if (headerObj.alg !== expectedAlgorithm) return null;
 
   // Verify signature
   const expected = createJwtSignature(header, payload, secret, headerObj.alg);
@@ -361,7 +364,7 @@ export class AuthManager {
       throw new Error('JWT configuration required.');
     }
 
-    const payload = verifyJwt(token, this.config.jwt.secret);
+    const payload = verifyJwt(token, this.config.jwt.secret, this.config.jwt.algorithm ?? 'HS256');
     if (!payload) return null;
 
     const user = await this.config.model.find(payload.sub);
@@ -443,37 +446,24 @@ export class AuthManager {
    * Generate an API token for a user
    */
   async generateApiToken(user: AuthUser, name: string = 'default'): Promise<string> {
-    const token = randomBytes(32).toString('hex');
-    const secret = this.config.jwt?.secret ?? process.env.APP_KEY;
-    if (!secret) throw new Error('APP_KEY is not set. Set it in your .env file or pass jwt.secret in auth config.');
-    const hashedToken = createHmac('sha256', secret).update(token).digest('hex');
-
-    const table = this.tableName(this.config.token?.table ?? 'personal_access_tokens', 'API token table name');
-
-    await this.query(table).insert({
-      user_id: user.getAttribute('id'),
+    const { plainTextKey } = await ApiKeys.create({
+      userId: user.getAttribute('id'),
       name,
-      token: hashedToken,
-      created_at: new Date().toISOString(),
+      prefix: this.config.token?.prefix,
+      permissions: this.config.token?.permissions,
     });
 
-    return token;
+    return plainTextKey;
   }
 
   /**
    * Resolve user from an API token
    */
   async resolveFromApiToken(plainToken: string): Promise<AuthUser | null> {
-    const table = this.tableName(this.config.token?.table ?? 'personal_access_tokens', 'API token table name');
+    const record = await ApiKeys.validate(plainToken);
+    if (!record) return null;
 
-    const secret = this.config.jwt?.secret ?? process.env.APP_KEY;
-    if (!secret) throw new Error('APP_KEY is not set. Set it in your .env file or pass jwt.secret in auth config.');
-    const hashedToken = createHmac('sha256', secret).update(plainToken).digest('hex');
-
-    const row = await this.query(table).where('token', hashedToken).first();
-    if (!row) return null;
-
-    const user = await this.config.model.find(row.user_id);
+    const user = await this.config.model.find(record.userId);
     if (user) this.currentUser = user;
     return user;
   }
@@ -531,9 +521,11 @@ export class AuthManager {
     const { Hash } = await import('../hashing/Hash.js');
     const table = this.tableName(this.config.passwordResets?.table ?? 'password_resets', 'Password resets table name');
 
-    const hashedToken = this.hashToken(token);
-
-    const row = await this.query(table).where('token', hashedToken).where('email', email).first();
+    const row = await this.findMatchingTokenRow(
+      this.query(table).where('email', email),
+      token,
+      'token',
+    );
     if (!row) return false;
 
     // Check if expired
@@ -605,9 +597,11 @@ export class AuthManager {
     const table = this.tableName(this.config.emailVerification?.table ?? 'email_verifications', 'Email verifications table name');
     const verifiedColumn = this.config.emailVerification?.verifiedColumn ?? 'email_verified_at';
 
-    const hashedToken = this.hashToken(token);
-
-    const row = await this.query(table).where('token', hashedToken).where('user_id', userId).first();
+    const row = await this.findMatchingTokenRow(
+      this.query(table).where('user_id', userId),
+      token,
+      'token',
+    );
     if (!row) return false;
 
     if (new Date(row.expires_at) < new Date()) {
@@ -693,14 +687,14 @@ export class AuthManager {
   async verifyOtp(email: string, code: string, purpose: string = 'login'): Promise<AuthUser | null> {
     const table = this.tableName(this.config.otp?.table ?? 'otp_codes', 'OTP table name');
 
-    const hashedCode = this.hashToken(code);
-
-    const row = await this.query(table)
-      .where('code', hashedCode)
-      .where('email', email)
-      .where('purpose', purpose)
-      .whereNull('used_at')
-      .first();
+    const row = await this.findMatchingTokenRow(
+      this.query(table)
+        .where('email', email)
+        .where('purpose', purpose)
+        .whereNull('used_at'),
+      code,
+      'code',
+    );
     if (!row) return null;
 
     if (new Date(row.expires_at) < new Date()) {
@@ -710,7 +704,7 @@ export class AuthManager {
 
     // Mark as used
     await this.query(table)
-      .where('code', hashedCode)
+      .where('code', row.code)
       .where('email', email)
       .where('purpose', purpose)
       .update({ used_at: new Date().toISOString() });
@@ -758,18 +752,10 @@ export class AuthManager {
     const evTable = this.tableName(this.config.emailVerification?.table ?? 'email_verifications', 'Email verifications table name');
     const otpTable = this.tableName(this.config.otp?.table ?? 'otp_codes', 'OTP table name');
 
-    try {
-      passwordResets = await this.query(prTable).where('expires_at', '<', now).delete();
-    } catch { /* table may not exist */ }
-
-    try {
-      verifications = await this.query(evTable).where('expires_at', '<', now).delete();
-    } catch { /* table may not exist */ }
-
-    try {
-      otpCodes = await this.query(otpTable).where('expires_at', '<', now).delete();
-      otpCodes += await this.query(otpTable).whereNotNull('used_at').delete();
-    } catch { /* table may not exist */ }
+    passwordResets = await this.query(prTable).where('expires_at', '<', now).delete();
+    verifications = await this.query(evTable).where('expires_at', '<', now).delete();
+    otpCodes = await this.query(otpTable).where('expires_at', '<', now).delete();
+    otpCodes += await this.query(otpTable).whereNotNull('used_at').delete();
 
     return { passwordResets, verifications, otpCodes };
   }
@@ -782,27 +768,48 @@ export class AuthManager {
     return createHmac('sha256', secret).update(token).digest('hex');
   }
 
+  private async findMatchingTokenRow(query: QueryBuilder<any>, plainToken: string, column: string): Promise<any | null> {
+    const candidateHash = this.hashToken(plainToken);
+    const rows = await query.get();
+
+    for (const row of rows) {
+      if (this.hashesMatch(row[column], candidateHash)) {
+        return row;
+      }
+    }
+
+    return null;
+  }
+
+  private hashesMatch(storedHash: unknown, candidateHash: string): boolean {
+    if (typeof storedHash !== 'string') return false;
+
+    const stored = Buffer.from(storedHash, 'hex');
+    const candidate = Buffer.from(candidateHash, 'hex');
+    if (stored.length !== candidate.length || stored.length === 0) return false;
+
+    return timingSafeEqual(stored, candidate);
+  }
+
   private generateOtpCode(length: number): string {
-    const digits = randomBytes(length);
-    return Array.from(digits).map(b => (b % 10).toString()).join('');
+    if (!Number.isInteger(length) || length < 4 || length > 12) {
+      throw new Error('OTP length must be an integer between 4 and 12');
+    }
+
+    return Array.from({ length }, () => randomInt(0, 10).toString()).join('');
   }
 
   private async sendAuthEmail(templateName: string, to: string, vars: Record<string, any>): Promise<void> {
-    try {
-      const { EmailTemplates } = await import('../email-templates/index.js');
-      const { Mailer } = await import('../mail/index.js');
+    const { EmailTemplates } = await import('../email-templates/index.js');
+    const { Mailer } = await import('../mail/index.js');
 
-      const rendered = await EmailTemplates.render(templateName, vars);
-      await Mailer.send({
-        to,
-        subject: rendered.subject,
-        html: rendered.html,
-        text: rendered.text,
-      });
-    } catch (err: any) {
-      // Log but don't throw — the token is still created, user can request again
-      console.error(`[Auth] Failed to send ${templateName} email to ${to}:`, err.message);
-    }
+    const rendered = await EmailTemplates.render(templateName, vars);
+    await Mailer.send({
+      to,
+      subject: rendered.subject,
+      html: rendered.html,
+      text: rendered.text,
+    });
   }
 }
 

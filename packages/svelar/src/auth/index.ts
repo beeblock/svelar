@@ -24,6 +24,7 @@ export {
   GateResponse,
   AuthorizationError,
   GateMiddleware,
+  GateManager,
   UserGate,
   type GateCallback,
   type BeforeCallback,

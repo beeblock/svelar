@@ -25,6 +25,10 @@ import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
 import { assertSqlIdentifier } from '../database/Connection.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
 
+function isNodeError(error: unknown, code: string): boolean {
+  return typeof error === 'object' && error !== null && (error as NodeJS.ErrnoException).code === code;
+}
+
 // ── Types ──────────────────────────────────────────────────
 
 export interface SessionData {
@@ -277,6 +281,7 @@ export class DatabaseSessionStore implements SessionStore {
     try {
       return JSON.parse(row.payload);
     } catch {
+      await this.destroy(id);
       return null;
     }
   }
@@ -332,8 +337,13 @@ export class FileSessionStore implements SessionStore {
         return null;
       }
       return entry.data;
-    } catch {
-      return null;
+    } catch (error) {
+      if (isNodeError(error, 'ENOENT')) return null;
+      if (error instanceof SyntaxError) {
+        await this.destroy(id);
+        return null;
+      }
+      throw error;
     }
   }
 
@@ -349,8 +359,8 @@ export class FileSessionStore implements SessionStore {
   async destroy(id: string): Promise<void> {
     try {
       await fs.unlink(this.filePath(id));
-    } catch {
-      // File may not exist
+    } catch (error) {
+      if (!isNodeError(error, 'ENOENT')) throw error;
     }
   }
 
@@ -366,13 +376,18 @@ export class FileSessionStore implements SessionStore {
           if (new Date(entry.expiresAt) < now) {
             await fs.unlink(join(this.dir, file));
           }
-        } catch {
-          // Corrupted file, remove it
-          await fs.unlink(join(this.dir, file)).catch(() => {});
+        } catch (error) {
+          if (isNodeError(error, 'ENOENT')) continue;
+          if (!(error instanceof SyntaxError)) throw error;
+          try {
+            await fs.unlink(join(this.dir, file));
+          } catch (unlinkError) {
+            if (!isNodeError(unlinkError, 'ENOENT')) throw unlinkError;
+          }
         }
       }
-    } catch {
-      // Directory may not exist yet
+    } catch (error) {
+      if (!isNodeError(error, 'ENOENT')) throw error;
     }
   }
 }
@@ -425,6 +440,7 @@ export class RedisSessionStore implements SessionStore {
     try {
       return JSON.parse(raw);
     } catch {
+      await client.del(this.prefix + id);
       return null;
     }
   }
@@ -465,7 +481,7 @@ export class SessionMiddleware extends Middleware {
       ...userConfig,
     };
     if (!this.config.secret) {
-      throw new Error('APP_KEY is not set. Pass `secret` to createSvelarApp() — e.g. secret: env.APP_KEY (from $env/dynamic/private).');
+      throw new Error('APP_KEY is not set. Set it in your environment or pass `secret` to createSvelarApp() — e.g. secret: process.env.APP_KEY.');
     }
   }
 

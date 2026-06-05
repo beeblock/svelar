@@ -1,10 +1,19 @@
-import { describe, it, expect } from 'vitest';
-import { AuthenticateMiddleware, signJwt, verifyJwt, type JwtPayload } from '../src/auth/Auth.js';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, it, expect } from 'vitest';
+import { AuthManager, AuthenticateMiddleware, signJwt, verifyJwt, type JwtPayload } from '../src/auth/Auth.js';
+import { Connection } from '../src/database/Connection.js';
+import { svelarCoreMigrations } from '../src/database/CoreMigrations.js';
+import { Migrator } from '../src/database/Migration.js';
+import { Schema } from '../src/database/SchemaBuilder.js';
+import { Hash } from '../src/hashing/Hash.js';
 import type { MiddlewareContext } from '../src/middleware/Middleware.js';
+import { Model } from '../src/orm/Model.js';
+
+const secret = 'test-secret-key-for-jwt-testing';
 
 describe('JWT utilities', () => {
-  const secret = 'test-secret-key-for-jwt-testing';
-
   describe('signJwt()', () => {
     it('should create a valid JWT string', () => {
       const payload: JwtPayload = {
@@ -117,20 +126,92 @@ describe('JWT utilities', () => {
   });
 
   describe('cross-algorithm verification', () => {
-    it('should not verify HS256 token with HS384 expectation', () => {
+    it('should reject tokens signed with a different algorithm than expected', () => {
       const payload: JwtPayload = {
         sub: 1,
         iat: Math.floor(Date.now() / 1000),
         exp: Math.floor(Date.now() / 1000) + 3600,
       };
-      // Sign with HS256
       const token = signJwt(payload, secret, 'HS256');
-      // The token contains the algorithm in the header, so verifyJwt
-      // uses the algorithm from the header. This should still verify
-      // since verifyJwt reads alg from header.
-      const result = verifyJwt(token, secret);
-      expect(result).not.toBeNull();
+      expect(verifyJwt(token, secret, 'HS384')).toBeNull();
+      expect(verifyJwt(token, secret, 'HS256')).not.toBeNull();
     });
+  });
+});
+
+class RefreshUser extends Model {
+  static table = 'users';
+  static timestamps = false;
+}
+
+describe.sequential('JWT refresh tokens', () => {
+  let root: string;
+  let auth: AuthManager;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'svelar-refresh-tokens-'));
+    await Connection.disconnect();
+    Connection.configure({
+      default: 'sqlite',
+      connections: {
+        sqlite: { driver: 'sqlite', filename: join(root, 'database.sqlite') },
+      },
+    });
+    await new Migrator().fresh(svelarCoreMigrations());
+    await new Schema().createTable('users', (table) => {
+      table.increments('id');
+      table.string('email');
+      table.string('password');
+    });
+
+    Hash.configure({ driver: 'scrypt', scryptCost: 16384 });
+    await RefreshUser.create({
+      email: 'refresh@example.com',
+      password: await Hash.make('secret'),
+    });
+
+    auth = new AuthManager({
+      guard: 'jwt',
+      model: RefreshUser,
+      jwt: {
+        secret,
+        expiresIn: 60,
+        refreshTokens: true,
+        refreshExpiresIn: 3600,
+        algorithm: 'HS384',
+      },
+    });
+  });
+
+  afterEach(async () => {
+    await Connection.disconnect();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it('rotates refresh tokens as single-use credentials', async () => {
+    const login = await auth.attemptJwt({ email: 'refresh@example.com', password: 'secret' });
+    expect(login?.refreshToken).toBeTruthy();
+    expect(verifyJwt(login!.token, secret, 'HS384')).not.toBeNull();
+    expect(verifyJwt(login!.token, secret, 'HS256')).toBeNull();
+
+    const rotated = await auth.refreshJwt(login!.refreshToken!);
+    expect(rotated?.refreshToken).toBeTruthy();
+    expect(rotated!.refreshToken).not.toBe(login!.refreshToken);
+
+    await expect(auth.refreshJwt(login!.refreshToken!)).resolves.toBeNull();
+    await expect(auth.refreshJwt(rotated!.refreshToken!)).resolves.toMatchObject({
+      user: expect.any(Object),
+    });
+  });
+
+  it('revokes all active refresh tokens for a user', async () => {
+    const first = await auth.attemptJwt({ email: 'refresh@example.com', password: 'secret' });
+    const second = await auth.attemptJwt({ email: 'refresh@example.com', password: 'secret' });
+
+    await auth.revokeRefreshTokens(first!.user.getAttribute('id'));
+
+    await expect(auth.refreshJwt(first!.refreshToken!)).resolves.toBeNull();
+    await expect(auth.refreshJwt(second!.refreshToken!)).resolves.toBeNull();
   });
 });
 

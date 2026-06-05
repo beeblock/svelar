@@ -23,7 +23,7 @@ export interface TeamMember {
   id: string | number;
   teamId: string | number;
   userId: string | number;
-  role: string; // 'owner' | 'admin' | 'member' | custom
+  role: string;
   joinedAt: number;
 }
 
@@ -38,7 +38,9 @@ export interface TeamInvitation {
   createdAt: number;
 }
 
-export type TeamRole = 'owner' | 'admin' | 'member' | 'viewer';
+export type TeamRole = 'owner' | 'admin' | 'member' | 'viewer' | (string & {});
+
+const DEFAULT_TEAM_ROLES: TeamRole[] = ['owner', 'admin', 'member', 'viewer'];
 
 export interface TeamsConfig {
   driver: 'database' | 'memory';
@@ -51,7 +53,11 @@ export interface TeamsConfig {
 }
 
 class TeamManager {
-  private config: TeamsConfig = { driver: 'memory', invitationExpiryHours: 72 };
+  private config: TeamsConfig = {
+    driver: 'memory',
+    roles: DEFAULT_TEAM_ROLES,
+    invitationExpiryHours: 72,
+  };
 
   // In-memory storage (used when driver = 'memory')
   private memTeams: Team[] = [];
@@ -61,7 +67,11 @@ class TeamManager {
   private currentTeamId: string | number | null = null;
 
   configure(config: TeamsConfig): void {
-    this.config = { ...this.config, ...config };
+    this.config = {
+      ...this.config,
+      ...config,
+      roles: config.roles ?? this.config.roles ?? DEFAULT_TEAM_ROLES,
+    };
   }
 
   private get teamsTable(): string {
@@ -90,6 +100,57 @@ class TeamManager {
 
   private invitationsQuery(): QueryBuilder<any> {
     return new QueryBuilder(this.invitationsTable);
+  }
+
+  private get roles(): string[] {
+    return (this.config.roles?.length ? this.config.roles : DEFAULT_TEAM_ROLES).map(String);
+  }
+
+  private assertRole(role: string): void {
+    if (!this.roles.includes(role)) {
+      throw new Error(`Invalid team role "${role}". Allowed roles: ${this.roles.join(', ')}`);
+    }
+  }
+
+  private assertAssignableRole(role: string): void {
+    this.assertRole(role);
+    if (role === 'owner') {
+      throw new Error('The owner role is reserved for the team owner');
+    }
+  }
+
+  private async assertTeamExists(teamId: string | number): Promise<Team> {
+    const team = await this.findById(teamId);
+    if (!team) throw new Error(`Team ${teamId} not found`);
+    return team;
+  }
+
+  private async assertWithinTeamLimit(ownerId: string | number): Promise<void> {
+    const max = this.config.maxTeamsPerUser;
+    if (!max || max < 1) return;
+
+    const teams = await this.getUserTeams(ownerId);
+    if (teams.length >= max) {
+      throw new Error(`User ${ownerId} has reached the maximum number of teams (${max})`);
+    }
+  }
+
+  private async slugExists(slug: string, excludeTeamId?: string | number): Promise<boolean> {
+    const existing = await this.findBySlug(slug);
+    return Boolean(existing && String(existing.id) !== String(excludeTeamId));
+  }
+
+  private async uniqueSlug(name: string, excludeTeamId?: string | number): Promise<string> {
+    const base = this.slugify(name) || 'team';
+    let slug = base;
+    let suffix = 2;
+
+    while (await this.slugExists(slug, excludeTeamId)) {
+      slug = `${base}-${suffix}`;
+      suffix += 1;
+    }
+
+    return slug;
   }
 
   private rowToTeam(row: any): Team {
@@ -135,7 +196,10 @@ class TeamManager {
     ownerId: string | number;
     personalTeam?: boolean;
   }): Promise<Team> {
-    const slug = this.slugify(data.name);
+    this.assertRole('owner');
+    await this.assertWithinTeamLimit(data.ownerId);
+
+    const slug = await this.uniqueSlug(data.name);
     const now = Date.now();
     const team: Team = {
       id: randomUUID(),
@@ -191,7 +255,7 @@ class TeamManager {
 
       const nowIso = new Date().toISOString();
       const newName = data.name ?? existing.name;
-      const newSlug = data.name ? this.slugify(data.name) : existing.slug;
+      const newSlug = data.name ? await this.uniqueSlug(data.name, teamId) : existing.slug;
       const newMeta = data.metadata !== undefined
         ? JSON.stringify(data.metadata)
         : (existing.metadata ? JSON.stringify(existing.metadata) : null);
@@ -210,7 +274,7 @@ class TeamManager {
     if (!team) return null;
 
     Object.assign(team, data, { updatedAt: Date.now() });
-    if (data.name) team.slug = this.slugify(data.name);
+    if (data.name) team.slug = await this.uniqueSlug(data.name, teamId);
     return team;
   }
 
@@ -257,6 +321,9 @@ class TeamManager {
     userId: string | number,
     role: string = 'member'
   ): Promise<TeamMember> {
+    this.assertAssignableRole(role);
+    await this.assertTeamExists(teamId);
+
     if (this.useDb) {
       // Check if already a member
       const existing = await this.membersQuery()
@@ -300,7 +367,15 @@ class TeamManager {
     teamId: string | number,
     userId: string | number
   ): Promise<boolean> {
+    const team = await this.assertTeamExists(teamId);
+
     if (this.useDb) {
+      const member = await this.membersQuery()
+        .where('team_id', teamId)
+        .where('user_id', userId)
+        .first();
+      if (!member || member.role === 'owner' || String(team.ownerId) === String(userId)) return false;
+
       const deleted = await this.membersQuery()
         .where('team_id', teamId)
         .where('user_id', userId)
@@ -312,6 +387,7 @@ class TeamManager {
       (m) => m.teamId === teamId && m.userId === userId
     );
     if (index === -1) return false;
+    if (this.memMembers[index].role === 'owner' || String(team.ownerId) === String(userId)) return false;
 
     this.memMembers.splice(index, 1);
     return true;
@@ -322,7 +398,16 @@ class TeamManager {
     userId: string | number,
     role: string
   ): Promise<boolean> {
+    this.assertAssignableRole(role);
+    const team = await this.assertTeamExists(teamId);
+
     if (this.useDb) {
+      const member = await this.membersQuery()
+        .where('team_id', teamId)
+        .where('user_id', userId)
+        .first();
+      if (!member || member.role === 'owner' || String(team.ownerId) === String(userId)) return false;
+
       const updated = await this.membersQuery()
         .where('team_id', teamId)
         .where('user_id', userId)
@@ -334,6 +419,7 @@ class TeamManager {
       (m) => m.teamId === teamId && m.userId === userId
     );
     if (!member) return false;
+    if (member.role === 'owner' || String(team.ownerId) === String(userId)) return false;
 
     member.role = role;
     return true;
@@ -404,6 +490,9 @@ class TeamManager {
     email: string,
     role: string = 'member'
   ): Promise<TeamInvitation> {
+    this.assertAssignableRole(role);
+    await this.assertTeamExists(teamId);
+
     const expiryHours = this.config.invitationExpiryHours || 72;
     const now = Date.now();
     const invitation: TeamInvitation = {
@@ -428,10 +517,6 @@ class TeamManager {
         created_at: new Date(now).toISOString(),
       });
     } else {
-      // Verify team exists for memory driver
-      const team = this.memTeams.find((t) => t.id === teamId);
-      if (!team) throw new Error(`Team ${teamId} not found`);
-
       this.memInvitations.push(invitation);
     }
 
@@ -464,6 +549,7 @@ class TeamManager {
 
     const invitation = this.memInvitations.find((i) => i.token === token);
     if (!invitation) return false;
+    if (invitation.acceptedAt) return false;
     if (invitation.expiresAt < Date.now()) return false;
 
     await this.addMember(invitation.teamId, userId, invitation.role);

@@ -1,5 +1,13 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { Session, MemorySessionStore, DatabaseSessionStore } from '../src/session/Session';
+import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { Session, MemorySessionStore, DatabaseSessionStore, FileSessionStore, RedisSessionStore } from '../src/session/Session';
+import { Connection } from '../src/database/Connection';
+import { svelarCoreMigrations } from '../src/database/CoreMigrations';
+import { Migrator } from '../src/database/Migration';
+import { Schema } from '../src/database/SchemaBuilder';
+import { QueryBuilder } from '../src/orm/QueryBuilder';
 
 describe('Session', () => {
   let session: Session;
@@ -494,6 +502,110 @@ describe('MemorySessionStore', () => {
       expect(retrieved1).toBeNull();
       expect(retrieved2).toEqual({ data: 2 });
     });
+  });
+});
+
+describe.sequential('DatabaseSessionStore', () => {
+  let root: string;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'svelar-db-session-'));
+    await Connection.disconnect();
+    Connection.configure({
+      default: 'sqlite',
+      connections: {
+        sqlite: { driver: 'sqlite', filename: join(root, 'database.sqlite') },
+      },
+    });
+    await new Migrator().fresh(svelarCoreMigrations());
+  });
+
+  afterEach(async () => {
+    await Connection.disconnect();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it('deletes corrupted session payloads and returns null', async () => {
+    const store = new DatabaseSessionStore();
+    await new QueryBuilder('sessions').insert({
+      id: 'corrupt-db-session',
+      payload: '{invalid',
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+    });
+
+    await expect(store.read('corrupt-db-session')).resolves.toBeNull();
+    await expect(new QueryBuilder('sessions').where('id', 'corrupt-db-session').first()).resolves.toBeNull();
+  });
+
+  it('throws when the migrated sessions table is missing', async () => {
+    const store = new DatabaseSessionStore();
+    await new Schema().dropTable('sessions');
+
+    await expect(store.read('missing-table-session')).rejects.toThrow('sessions');
+  });
+});
+
+describe('FileSessionStore', () => {
+  let root: string;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'svelar-file-session-'));
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it('deletes corrupted session files and returns null', async () => {
+    const store = new FileSessionStore(root);
+    const path = join(root, 'corrupt-file-session.json');
+    await writeFile(path, '{invalid', 'utf-8');
+
+    await expect(store.read('corrupt-file-session')).resolves.toBeNull();
+    await expect(readFile(path, 'utf-8')).rejects.toThrow();
+  });
+
+  it('throws filesystem read errors that are not missing files', async () => {
+    const store = new FileSessionStore(root);
+    await mkdir(join(root, 'directory-session.json'));
+
+    await expect(store.read('directory-session')).rejects.toThrow();
+  });
+
+  it('ignores missing files when destroying sessions', async () => {
+    const store = new FileSessionStore(root);
+
+    await expect(store.destroy('already-missing')).resolves.toBeUndefined();
+  });
+});
+
+describe('RedisSessionStore', () => {
+  it('deletes corrupted Redis session payloads and returns null', async () => {
+    const deleted: string[] = [];
+    const client = {
+      async get() {
+        return '{invalid';
+      },
+      async del(key: string) {
+        deleted.push(key);
+      },
+    };
+    const store = new RedisSessionStore({ client, prefix: 'test:' });
+
+    await expect(store.read('corrupt-redis-session')).resolves.toBeNull();
+    expect(deleted).toEqual(['test:corrupt-redis-session']);
+  });
+
+  it('propagates Redis read errors', async () => {
+    const client = {
+      async get() {
+        throw new Error('redis is unavailable');
+      },
+      async del() {},
+    };
+    const store = new RedisSessionStore({ client });
+
+    await expect(store.read('session-id')).rejects.toThrow('redis is unavailable');
   });
 });
 

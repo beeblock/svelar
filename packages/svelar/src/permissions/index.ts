@@ -2,21 +2,19 @@
  * Svelar Permissions
  *
  * Spatie-inspired roles & permissions system. Provides:
- * - Role model with permissions assignment
- * - Permission model
+ * - Role and permission records managed through the Permissions service
  * - HasRoles trait (mixin) for any model
  * - RequirePermission / RequireRole middleware
  * - Default migrations for roles, permissions, and pivot tables
  *
  * @example
  * ```ts
- * import { Permission, Role, HasRoles } from '@beeblock/svelar/permissions';
+ * import { Permissions, HasRoles } from '@beeblock/svelar/permissions';
  *
- * // Models are auto-configured after migrations run
- * const admin = await Role.create({ name: 'admin', guard: 'web' });
- * const perm = await Permission.create({ name: 'manage-users', guard: 'web' });
+ * const admin = await Permissions.createRole({ name: 'admin', guard: 'web' });
+ * const perm = await Permissions.createPermission({ name: 'manage-users', guard: 'web' });
  *
- * await admin.givePermission(perm);
+ * await Permissions.giveRolePermission(admin.id, perm.id);
  *
  * // On a user model:
  * class User extends HasRoles(Model) { ... }
@@ -24,9 +22,9 @@
  * await user.assignRole('admin');
  * await user.givePermission('edit-posts');
  *
- * user.hasRole('admin');            // true
- * user.hasPermission('manage-users'); // true (via admin role)
- * user.can('edit-posts');             // true (direct permission)
+ * await user.hasRole('admin');              // true
+ * await user.hasPermission('manage-users'); // true (via admin role)
+ * await user.can('edit-posts');             // true (direct permission)
  * ```
  */
 
@@ -56,13 +54,6 @@ export interface RoleRecord {
 // ── Permission Manager ─────────────────────────────────────
 
 class PermissionManager {
-  /**
-   * @deprecated Permissions now use Svelar's QueryBuilder and shared Connection.
-   */
-  configure(_getConnection: () => Promise<any>): void {
-    // Kept during alpha for compatibility with older code.
-  }
-
   private permissionsQuery(): QueryBuilder<PermissionRecord> {
     return new QueryBuilder<PermissionRecord>('permissions');
   }
@@ -172,11 +163,12 @@ class PermissionManager {
       .get();
   }
 
-  async roleHasPermission(roleId: number, permissionName: string): Promise<boolean> {
+  async roleHasPermission(roleId: number, permissionName: string, guard: string = 'web'): Promise<boolean> {
     return new QueryBuilder('role_has_permissions rp')
       .join('permissions p', 'p.id', '=', 'rp.permission_id')
       .where('rp.role_id', roleId)
       .where('p.name', permissionName)
+      .where('p.guard', guard)
       .exists();
   }
 
@@ -208,12 +200,13 @@ class PermissionManager {
       .get();
   }
 
-  async modelHasRole(modelType: string, modelId: number, roleName: string): Promise<boolean> {
+  async modelHasRole(modelType: string, modelId: number, roleName: string, guard: string = 'web'): Promise<boolean> {
     return new QueryBuilder('model_has_roles mr')
       .join('roles r', 'r.id', '=', 'mr.role_id')
       .where('mr.model_type', modelType)
       .where('mr.model_id', modelId)
       .where('r.name', roleName)
+      .where('r.guard', guard)
       .exists();
   }
 
@@ -270,23 +263,25 @@ class PermissionManager {
   /**
    * Check if a model has a permission (direct or via role)
    */
-  async modelHasPermission(modelType: string, modelId: number, permissionName: string): Promise<boolean> {
-    // Check direct permission
+  async modelHasPermission(modelType: string, modelId: number, permissionName: string, guard: string = 'web'): Promise<boolean> {
     const direct = await new QueryBuilder('model_has_permissions mp')
       .join('permissions p', 'p.id', '=', 'mp.permission_id')
       .where('mp.model_type', modelType)
       .where('mp.model_id', modelId)
       .where('p.name', permissionName)
+      .where('p.guard', guard)
       .exists();
     if (direct) return true;
 
-    // Check via roles
     return new QueryBuilder('model_has_roles mr')
       .join('role_has_permissions rp', 'rp.role_id', '=', 'mr.role_id')
       .join('permissions p', 'p.id', '=', 'rp.permission_id')
+      .join('roles r', 'r.id', '=', 'mr.role_id')
       .where('mr.model_type', modelType)
       .where('mr.model_id', modelId)
       .where('p.name', permissionName)
+      .where('p.guard', guard)
+      .where('r.guard', guard)
       .exists();
   }
 
@@ -347,13 +342,20 @@ export interface HasRolesInstance {
   readonly _modelId: number;
   assignRole(roleName: string, guard?: string): Promise<void>;
   removeRole(roleName: string, guard?: string): Promise<void>;
+  syncRoles(roleNames: string[], guard?: string): Promise<void>;
   hasRole(roleName: string, guard?: string): Promise<boolean>;
+  hasAnyRole(roleNames: string[], guard?: string): Promise<boolean>;
+  hasAllRoles(roleNames: string[], guard?: string): Promise<boolean>;
   givePermission(permissionName: string, guard?: string): Promise<void>;
   revokePermission(permissionName: string, guard?: string): Promise<void>;
+  syncPermissions(permissionNames: string[], guard?: string): Promise<void>;
   hasPermission(permissionName: string, guard?: string): Promise<boolean>;
   can(permissionName: string, guard?: string): Promise<boolean>;
+  cannot(permissionName: string, guard?: string): Promise<boolean>;
   getRoles(): Promise<RoleRecord[]>;
+  getRoleNames(): Promise<string[]>;
   getAllPermissions(): Promise<PermissionRecord[]>;
+  getPermissionNames(): Promise<string[]>;
   getDirectPermissions(): Promise<PermissionRecord[]>;
 }
 
@@ -395,16 +397,16 @@ export function HasRoles<TBase extends Constructor>(Base: TBase): TBase & (new (
     /**
      * Check if this model has a specific role
      */
-    async hasRole(roleName: string): Promise<boolean> {
-      return Permissions.modelHasRole(this._modelType, this._modelId, roleName);
+    async hasRole(roleName: string, guard: string = 'web'): Promise<boolean> {
+      return Permissions.modelHasRole(this._modelType, this._modelId, roleName, guard);
     }
 
     /**
      * Check if this model has any of the given roles
      */
-    async hasAnyRole(...roleNames: string[]): Promise<boolean> {
+    async hasAnyRole(roleNames: string[], guard: string = 'web'): Promise<boolean> {
       for (const name of roleNames) {
-        if (await this.hasRole(name)) return true;
+        if (await this.hasRole(name, guard)) return true;
       }
       return false;
     }
@@ -412,9 +414,9 @@ export function HasRoles<TBase extends Constructor>(Base: TBase): TBase & (new (
     /**
      * Check if this model has all of the given roles
      */
-    async hasAllRoles(...roleNames: string[]): Promise<boolean> {
+    async hasAllRoles(roleNames: string[], guard: string = 'web'): Promise<boolean> {
       for (const name of roleNames) {
-        if (!(await this.hasRole(name))) return false;
+        if (!(await this.hasRole(name, guard))) return false;
       }
       return true;
     }
@@ -424,6 +426,14 @@ export function HasRoles<TBase extends Constructor>(Base: TBase): TBase & (new (
      */
     async getRoles(): Promise<RoleRecord[]> {
       return Permissions.getModelRoles(this._modelType, this._modelId);
+    }
+
+    /**
+     * Get role names for this model.
+     */
+    async getRoleNames(): Promise<string[]> {
+      const roles = await this.getRoles();
+      return roles.map((role) => role.name);
     }
 
     /**
@@ -454,22 +464,22 @@ export function HasRoles<TBase extends Constructor>(Base: TBase): TBase & (new (
     /**
      * Check if this model has a permission (direct or via role)
      */
-    async hasPermission(permissionName: string): Promise<boolean> {
-      return Permissions.modelHasPermission(this._modelType, this._modelId, permissionName);
+    async hasPermission(permissionName: string, guard: string = 'web'): Promise<boolean> {
+      return Permissions.modelHasPermission(this._modelType, this._modelId, permissionName, guard);
     }
 
     /**
-     * Alias for hasPermission
+     * Laravel-style authorization helper.
      */
-    async can(permissionName: string): Promise<boolean> {
-      return this.hasPermission(permissionName);
+    async can(permissionName: string, guard: string = 'web'): Promise<boolean> {
+      return this.hasPermission(permissionName, guard);
     }
 
     /**
      * Check if this model lacks a permission
      */
-    async cannot(permissionName: string): Promise<boolean> {
-      return !(await this.hasPermission(permissionName));
+    async cannot(permissionName: string, guard: string = 'web'): Promise<boolean> {
+      return !(await this.hasPermission(permissionName, guard));
     }
 
     /**
@@ -477,6 +487,14 @@ export function HasRoles<TBase extends Constructor>(Base: TBase): TBase & (new (
      */
     async getAllPermissions(): Promise<PermissionRecord[]> {
       return Permissions.getModelAllPermissions(this._modelType, this._modelId);
+    }
+
+    /**
+     * Get permission names for this model.
+     */
+    async getPermissionNames(): Promise<string[]> {
+      const permissions = await this.getAllPermissions();
+      return permissions.map((permission) => permission.name);
     }
 
     /**
