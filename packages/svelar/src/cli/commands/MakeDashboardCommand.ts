@@ -552,30 +552,45 @@ export const GET: RequestHandler = async (event) => {
 
   // ── Dashboard Page Templates ──
 
-  private dashboardPageServerTemplate(): string {
-    return `import type { PageServerLoad } from './$types';
+	  private dashboardPageServerTemplate(): string {
+	    return `import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = async ({ fetch }) => {
-  try {
-    // Fetch initial dashboard data
-    const statsRes = await fetch('/api/admin/stats');
-    const stats = await statsRes.json();
+	export const load: PageServerLoad = async ({ fetch }) => {
+	  try {
+	    const [statsRes, healthRes, queueRes, schedulerRes, logsRes] = await Promise.all([
+	      fetch('/api/admin/stats'),
+	      fetch('/api/admin/health'),
+	      fetch('/api/admin/queue?limit=10'),
+	      fetch('/api/admin/scheduler'),
+	      fetch('/api/admin/logs?limit=25'),
+	    ]);
 
-    const healthRes = await fetch('/api/admin/health');
-    const health = await healthRes.json();
+	    const [stats, health, queue, scheduler, logs] = await Promise.all([
+	      statsRes.json(),
+	      healthRes.json(),
+	      queueRes.json(),
+	      schedulerRes.json(),
+	      logsRes.json(),
+	    ]);
 
-    return {
-      stats,
-      health,
-    };
-  } catch (error) {
-    console.error('Failed to load dashboard:', error);
-    return {
-      stats: null,
-      health: null,
-      error: 'Failed to load dashboard data',
-    };
-  }
+	    return {
+	      stats,
+	      health,
+	      queue,
+	      scheduler,
+	      logs,
+	    };
+	  } catch (error) {
+	    console.error('Failed to load dashboard:', error);
+	    return {
+	      stats: null,
+	      health: null,
+	      queue: null,
+	      scheduler: null,
+	      logs: null,
+	      error: 'Failed to load dashboard data',
+	    };
+	  }
 };
 `;
   }
@@ -586,30 +601,82 @@ export const load: PageServerLoad = async ({ fetch }) => {
 
   export let data: PageData;
 
-  let selectedTab: 'overview' | 'queue' | 'scheduler' | 'logs' = 'overview';
-  let loading = false;
+	  let selectedTab: 'overview' | 'queue' | 'scheduler' | 'logs' = 'overview';
+	  let loading = false;
+	  let actionMessage = '';
 
-  async function refreshData() {
-    loading = true;
-    try {
-      const response = await fetch('/api/admin/stats');
-      const newStats = await response.json();
-      data.stats = newStats;
-    } catch (error) {
-      console.error('Failed to refresh:', error);
-    } finally {
-      loading = false;
-    }
-  }
+	  async function refreshData() {
+	    loading = true;
+	    actionMessage = '';
+	    try {
+	      const [statsRes, healthRes, queueRes, schedulerRes, logsRes] = await Promise.all([
+	        fetch('/api/admin/stats'),
+	        fetch('/api/admin/health'),
+	        fetch('/api/admin/queue?limit=10'),
+	        fetch('/api/admin/scheduler'),
+	        fetch('/api/admin/logs?limit=25'),
+	      ]);
+	      data.stats = await statsRes.json();
+	      data.health = await healthRes.json();
+	      data.queue = await queueRes.json();
+	      data.scheduler = await schedulerRes.json();
+	      data.logs = await logsRes.json();
+	    } catch (error) {
+	      console.error('Failed to refresh:', error);
+	      actionMessage = 'Failed to refresh dashboard data';
+	    } finally {
+	      loading = false;
+	    }
+	  }
+
+	  async function retryJob(id: string) {
+	    await postAction(\`/api/admin/queue/\${id}/retry\`, {});
+	  }
+
+	  async function deleteJob(id: string) {
+	    await postAction(\`/api/admin/queue/\${id}\`, {}, 'DELETE');
+	  }
+
+	  async function runTask(name: string) {
+	    await postAction(\`/api/admin/scheduler/\${encodeURIComponent(name)}/run\`, {});
+	  }
+
+	  async function toggleTask(name: string, enabled: boolean) {
+	    await postAction(\`/api/admin/scheduler/\${encodeURIComponent(name)}/toggle\`, { enabled });
+	  }
+
+	  async function postAction(url: string, body: Record<string, unknown>, method = 'POST') {
+	    loading = true;
+	    actionMessage = '';
+	    try {
+	      const response = await fetch(url, {
+	        method,
+	        headers: { 'content-type': 'application/json' },
+	        body: method === 'DELETE' ? undefined : JSON.stringify(body),
+	      });
+	      const payload = await response.json().catch(() => ({}));
+	      if (!response.ok) throw new Error(payload.error ?? 'Dashboard action failed');
+	      actionMessage = payload.message ?? 'Action completed';
+	      await refreshData();
+	    } catch (error: any) {
+	      actionMessage = error.message ?? 'Dashboard action failed';
+	    } finally {
+	      loading = false;
+	    }
+	  }
 </script>
 
 <div class="dashboard">
-  <header class="dashboard-header">
-    <h1>Admin Dashboard</h1>
-    <button on:click={refreshData} disabled={loading}>
-      {loading ? 'Refreshing...' : 'Refresh'}
-    </button>
-  </header>
+	  <header class="dashboard-header">
+	    <h1>Admin Dashboard</h1>
+	    <button on:click={refreshData} disabled={loading}>
+	      {loading ? 'Refreshing...' : 'Refresh'}
+	    </button>
+	  </header>
+
+	  {#if actionMessage}
+	    <p class="notice">{actionMessage}</p>
+	  {/if}
 
   <nav class="tabs">
     <button
@@ -654,17 +721,17 @@ export const load: PageServerLoad = async ({ fetch }) => {
 
         {#if data.stats}
           <div class="stats-grid">
-            <div class="stat-card">
-              <h3>Queue Jobs</h3>
-              <p class="stat-number">{data.stats.queue?.total || 0}</p>
-              <small>Active: {data.stats.queue?.active || 0}</small>
-            </div>
+	            <div class="stat-card">
+	              <h3>Queue Jobs</h3>
+	              <p class="stat-number">{data.stats.queue?.queues?.default?.total || 0}</p>
+	              <small>Active: {data.stats.queue?.queues?.default?.active || 0}</small>
+	            </div>
 
-            <div class="stat-card">
-              <h3>Scheduled Tasks</h3>
-              <p class="stat-number">{data.stats.scheduler?.total || 0}</p>
-              <small>Enabled: {data.stats.scheduler?.enabled || 0}</small>
-            </div>
+	            <div class="stat-card">
+	              <h3>Scheduled Tasks</h3>
+	              <p class="stat-number">{data.stats.scheduler?.totalTasks || 0}</p>
+	              <small>Enabled: {data.stats.scheduler?.enabledTasks || 0}</small>
+	            </div>
 
             <div class="stat-card">
               <h3>Recent Errors</h3>
@@ -674,22 +741,140 @@ export const load: PageServerLoad = async ({ fetch }) => {
           </div>
         {/if}
       </section>
-    {:else if selectedTab === 'queue'}
-      <section class="queue">
-        <h2>Job Queue</h2>
-        <p>Queue management interface coming soon...</p>
-      </section>
-    {:else if selectedTab === 'scheduler'}
-      <section class="scheduler">
-        <h2>Scheduled Tasks</h2>
-        <p>Task management interface coming soon...</p>
-      </section>
-    {:else if selectedTab === 'logs'}
-      <section class="logs">
-        <h2>Application Logs</h2>
-        <p>Log viewer coming soon...</p>
-      </section>
-    {/if}
+	    {:else if selectedTab === 'queue'}
+	      <section class="queue">
+	        <h2>Job Queue</h2>
+	        {#if data.queue?.counts}
+	          <div class="stats-grid compact">
+	            <div class="stat-card"><h3>Waiting</h3><p class="stat-number">{data.queue.counts.waiting}</p></div>
+	            <div class="stat-card"><h3>Active</h3><p class="stat-number">{data.queue.counts.active}</p></div>
+	            <div class="stat-card"><h3>Failed</h3><p class="stat-number">{data.queue.counts.failed}</p></div>
+	            <div class="stat-card"><h3>Delayed</h3><p class="stat-number">{data.queue.counts.delayed}</p></div>
+	          </div>
+	        {/if}
+
+	        <div class="table-wrap">
+	          <table>
+	            <thead>
+	              <tr>
+	                <th>ID</th>
+	                <th>Job</th>
+	                <th>Queue</th>
+	                <th>Status</th>
+	                <th>Attempts</th>
+	                <th>Created</th>
+	                <th>Actions</th>
+	              </tr>
+	            </thead>
+	            <tbody>
+	              {#each data.queue?.jobs ?? [] as job}
+	                <tr>
+	                  <td class="mono">{job.id}</td>
+	                  <td>{job.jobClass}</td>
+	                  <td>{job.queue}</td>
+	                  <td><span class="badge {job.status}">{job.status}</span></td>
+	                  <td>{job.attempts}/{job.maxAttempts}</td>
+	                  <td>{new Date(job.createdAt).toLocaleString()}</td>
+	                  <td class="actions">
+	                    {#if job.status === 'failed'}
+	                      <button on:click={() => retryJob(job.id)} disabled={loading}>Retry</button>
+	                    {/if}
+	                    <button class="danger" on:click={() => deleteJob(job.id)} disabled={loading}>Delete</button>
+	                  </td>
+	                </tr>
+	              {:else}
+	                <tr><td colspan="7" class="empty">No jobs found.</td></tr>
+	              {/each}
+	            </tbody>
+	          </table>
+	        </div>
+	      </section>
+	    {:else if selectedTab === 'scheduler'}
+	      <section class="scheduler">
+	        <h2>Scheduled Tasks</h2>
+	        {#if data.scheduler?.health}
+	          <div class="stats-grid compact">
+	            <div class="stat-card"><h3>Total</h3><p class="stat-number">{data.scheduler.health.totalTasks}</p></div>
+	            <div class="stat-card"><h3>Enabled</h3><p class="stat-number">{data.scheduler.health.enabledTasks}</p></div>
+	            <div class="stat-card"><h3>Running</h3><p class="stat-number">{data.scheduler.health.runningTasks}</p></div>
+	          </div>
+	        {/if}
+
+	        <div class="table-wrap">
+	          <table>
+	            <thead>
+	              <tr>
+	                <th>Task</th>
+	                <th>Schedule</th>
+	                <th>Next Run</th>
+	                <th>Last Status</th>
+	                <th>Enabled</th>
+	                <th>Actions</th>
+	              </tr>
+	            </thead>
+	            <tbody>
+	              {#each data.scheduler?.tasks ?? [] as task}
+	                <tr>
+	                  <td>{task.name}</td>
+	                  <td>{task.humanReadable}</td>
+	                  <td>{task.nextRun ? new Date(task.nextRun).toLocaleString() : 'n/a'}</td>
+	                  <td><span class="badge {task.lastStatus ?? 'waiting'}">{task.lastStatus ?? 'waiting'}</span></td>
+	                  <td>{task.enabled ? 'Yes' : 'No'}</td>
+	                  <td class="actions">
+	                    <button on:click={() => runTask(task.name)} disabled={loading || task.isRunning}>Run</button>
+	                    <button on:click={() => toggleTask(task.name, !task.enabled)} disabled={loading}>
+	                      {task.enabled ? 'Disable' : 'Enable'}
+	                    </button>
+	                  </td>
+	                </tr>
+	              {:else}
+	                <tr><td colspan="6" class="empty">No scheduled tasks registered.</td></tr>
+	              {/each}
+	            </tbody>
+	          </table>
+	        </div>
+	      </section>
+	    {:else if selectedTab === 'logs'}
+	      <section class="logs">
+	        <h2>Application Logs</h2>
+	        {#if data.logs}
+	          <div class="stats-grid compact">
+	            <div class="stat-card"><h3>Total</h3><p class="stat-number">{data.logs.total ?? 0}</p></div>
+	            <div class="stat-card"><h3>Limit</h3><p class="stat-number">{data.logs.limit ?? 0}</p></div>
+	          </div>
+	        {/if}
+
+	        <div class="table-wrap">
+	          <table>
+	            <thead>
+	              <tr>
+	                <th>Time</th>
+	                <th>Level</th>
+	                <th>Channel</th>
+	                <th>Message</th>
+	              </tr>
+	            </thead>
+	            <tbody>
+	              {#each data.logs?.logs ?? [] as log}
+	                <tr>
+	                  <td>{new Date(log.timestamp).toLocaleString()}</td>
+	                  <td><span class="badge {log.level}">{log.level}</span></td>
+	                  <td>{log.channel}</td>
+	                  <td>
+	                    <div>{log.message}</div>
+	                    {#if Object.keys(log.context ?? {}).length}
+	                      <pre>{JSON.stringify(log.context, null, 2)}</pre>
+	                    {/if}
+	                  </td>
+	                </tr>
+	              {:else}
+	                <tr><td colspan="4" class="empty">No log entries captured yet.</td></tr>
+	              {/each}
+	            </tbody>
+	          </table>
+	        </div>
+	      </section>
+	    {/if}
   </main>
 </div>
 
@@ -822,15 +1007,146 @@ export const load: PageServerLoad = async ({ fetch }) => {
     color: #0066cc;
   }
 
-  .stat-card small {
-    display: block;
-    color: #999;
-    font-size: 0.85rem;
-  }
+	  .stat-card small {
+	    display: block;
+	    color: #999;
+	    font-size: 0.85rem;
+	  }
 
-  section h2 {
-    margin-top: 0;
-  }
+	  .notice {
+	    margin: 0 0 1rem;
+	    padding: 0.75rem 1rem;
+	    background: #eef6ff;
+	    border: 1px solid #b8dcff;
+	    border-radius: 6px;
+	    color: #164a7a;
+	  }
+
+	  .compact {
+	    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+	    gap: 1rem;
+	    margin-bottom: 1.5rem;
+	  }
+
+	  .compact .stat-card {
+	    padding: 1rem;
+	  }
+
+	  .table-wrap {
+	    overflow-x: auto;
+	    border: 1px solid #e0e0e0;
+	    border-radius: 8px;
+	    background: white;
+	  }
+
+	  table {
+	    width: 100%;
+	    border-collapse: collapse;
+	    font-size: 0.92rem;
+	  }
+
+	  th,
+	  td {
+	    padding: 0.75rem;
+	    border-bottom: 1px solid #eee;
+	    text-align: left;
+	    vertical-align: top;
+	  }
+
+	  th {
+	    background: #f7f8fa;
+	    color: #555;
+	    font-size: 0.78rem;
+	    text-transform: uppercase;
+	  }
+
+	  tr:last-child td {
+	    border-bottom: 0;
+	  }
+
+	  .mono {
+	    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+	    font-size: 0.82rem;
+	  }
+
+	  .actions {
+	    display: flex;
+	    gap: 0.5rem;
+	    white-space: nowrap;
+	  }
+
+	  .actions button {
+	    padding: 0.35rem 0.65rem;
+	    border: 1px solid #c9d7e8;
+	    border-radius: 6px;
+	    background: #fff;
+	    color: #164a7a;
+	    cursor: pointer;
+	  }
+
+	  .actions button:hover:not(:disabled) {
+	    background: #eef6ff;
+	  }
+
+	  .actions button.danger {
+	    border-color: #f1c0c0;
+	    color: #a52323;
+	  }
+
+	  .actions button.danger:hover:not(:disabled) {
+	    background: #fff0f0;
+	  }
+
+	  .badge {
+	    display: inline-block;
+	    padding: 0.18rem 0.45rem;
+	    border-radius: 999px;
+	    background: #eef0f4;
+	    color: #3f4652;
+	    font-size: 0.75rem;
+	    font-weight: 600;
+	    text-transform: uppercase;
+	  }
+
+	  .badge.active,
+	  .badge.completed,
+	  .badge.success,
+	  .badge.info {
+	    background: #e8f7ee;
+	    color: #176b39;
+	  }
+
+	  .badge.failed,
+	  .badge.error,
+	  .badge.fatal {
+	    background: #fdeeee;
+	    color: #a52323;
+	  }
+
+	  .badge.delayed,
+	  .badge.warn {
+	    background: #fff6df;
+	    color: #8a5a00;
+	  }
+
+	  pre {
+	    margin: 0.5rem 0 0;
+	    padding: 0.5rem;
+	    max-width: 36rem;
+	    overflow: auto;
+	    background: #f7f8fa;
+	    border-radius: 6px;
+	    font-size: 0.78rem;
+	  }
+
+	  .empty {
+	    color: #777;
+	    text-align: center;
+	  }
+
+	  section h2 {
+	    margin-top: 0;
+	  }
 </style>
 `;
   }

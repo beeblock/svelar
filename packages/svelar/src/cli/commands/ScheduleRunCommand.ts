@@ -3,9 +3,14 @@
  */
 
 import { Command } from '../Command.js';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+
+type SchedulerLike = {
+  getTasks(): Array<{ name: string }>;
+  run(): Promise<Array<{ task: string; success: boolean; duration: number; error?: string }>>;
+};
 
 export class ScheduleRunCommand extends Command {
   name = 'schedule:run';
@@ -17,31 +22,22 @@ export class ScheduleRunCommand extends Command {
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
     await this.bootstrap();
 
-    const { Scheduler } = await import('../../scheduler/index.js');
-    let scheduler = await this.loadConfiguredScheduler();
-
+    const scheduler = await this.loadConfiguredScheduler();
     if (!scheduler) {
-      scheduler = new Scheduler().persistToDatabase();
+      this.error(
+        'No scheduler registry found. Create src/lib/shared/scheduler/index.ts (DDD) or src/lib/scheduler/index.ts (flat) and export createScheduler() or scheduler.'
+      );
+      return;
+    }
 
-      // Load tasks from src/lib/shared/scheduler/ (DDD) or src/lib/scheduler/ (flat)
-      const dddDir = join(process.cwd(), 'src', 'lib', 'shared', 'scheduler');
-      const flatDir = join(process.cwd(), 'src', 'lib', 'scheduler');
-      const schedulerDir = existsSync(dddDir) ? dddDir : flatDir;
-      const tasks = await this.loadTasks(schedulerDir);
+    const tasks = scheduler.getTasks();
+    if (tasks.length === 0) {
+      this.warn('No scheduled tasks registered in the scheduler registry.');
+      return;
+    }
 
-      if (tasks.length === 0) {
-        this.warn('No scheduled tasks found in src/lib/shared/scheduler/ or src/lib/scheduler/');
-        return;
-      }
-
-      for (const task of tasks) {
-        scheduler.register(task);
-        this.info(`Registered task: ${task.name}`);
-      }
-    } else {
-      for (const task of scheduler.getTasks()) {
-        this.info(`Registered task: ${task.name}`);
-      }
+    for (const task of tasks) {
+      this.info(`Registered task: ${task.name}`);
     }
 
     this.newLine();
@@ -94,7 +90,7 @@ export class ScheduleRunCommand extends Command {
     await new Promise(() => {});
   }
 
-  private async loadConfiguredScheduler(): Promise<any | null> {
+  private async loadConfiguredScheduler(): Promise<SchedulerLike | null> {
     const candidates = [
       join(process.cwd(), 'src', 'lib', 'shared', 'scheduler', 'index.ts'),
       join(process.cwd(), 'src', 'lib', 'shared', 'scheduler', 'index.js'),
@@ -107,50 +103,23 @@ export class ScheduleRunCommand extends Command {
 
     try {
       const mod = await import(pathToFileURL(entry).href);
-      if (typeof mod.createScheduler === 'function') {
-        return mod.createScheduler();
-      }
-      if (mod.scheduler && typeof mod.scheduler.run === 'function') {
-        return mod.scheduler;
-      }
-    } catch (err: any) {
-      this.error(`Failed to load scheduler registry: ${err.message ?? err}`);
-      process.exit(1);
-    }
+      const scheduler = typeof mod.createScheduler === 'function'
+        ? mod.createScheduler()
+        : mod.scheduler;
 
-    return null;
+      if (this.isSchedulerLike(scheduler)) {
+        return scheduler;
+      }
+
+      throw new Error('export createScheduler() or scheduler with run() and getTasks()');
+    } catch (err: any) {
+      throw new Error(`Failed to load scheduler registry: ${err.message ?? err}`);
+    }
   }
 
-  private async loadTasks(dir: string): Promise<any[]> {
-    let files: string[];
-    try {
-      files = readdirSync(dir)
-        .filter((f) => (f.endsWith('.ts') || f.endsWith('.js')) && !f.startsWith('index'))
-        .sort();
-    } catch {
-      return [];
-    }
-
-    const tasks: any[] = [];
-
-    for (const file of files) {
-      const filePath = join(dir, file);
-      try {
-        const module = await import(pathToFileURL(filePath).href);
-        const TaskClass = module.default ?? Object.values(module).find(
-          (v: any) => typeof v === 'function' && v.prototype && typeof v.prototype.handle === 'function'
-        );
-
-        if (TaskClass) {
-          const instance = new (TaskClass as any)();
-          instance.schedule(); // Initialize the cron expression
-          tasks.push(instance);
-        }
-      } catch (err: any) {
-        this.error(`Failed to load task ${file}: ${err.message ?? err}`);
-      }
-    }
-
-    return tasks;
+  private isSchedulerLike(value: unknown): value is SchedulerLike {
+    return !!value
+      && typeof (value as SchedulerLike).run === 'function'
+      && typeof (value as SchedulerLike).getTasks === 'function';
   }
 }

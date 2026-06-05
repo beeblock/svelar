@@ -24,10 +24,10 @@ export class NewCommandTemplates {
 						"migrate:rollback": "npx svelar migrate --rollback",
 						"migrate:refresh": "npx svelar migrate --refresh",
 						seed: "npx svelar seed:run",
-						test: "vitest run",
-						"test:watch": "vitest",
+						test: "svelte-kit sync && vitest run",
+						"test:watch": "svelte-kit sync && vitest",
 						"test:e2e": "playwright test",
-						"test:coverage": "vitest run --coverage",
+						"test:coverage": "svelte-kit sync && vitest run --coverage",
 						"ui:install":
 							"npx shadcn-svelte@latest add --all --yes && npm install --save-prod @internationalized/date@^3.12.2 bits-ui@^2.18.1 embla-carousel-svelte@^8.6.0 formsnap@^2.0.1 layerchart@^2.0.0-next.48 mode-watcher@^1.1.0 paneforge@^1.0.2 svelte-sonner@^1.1.1 sveltekit-superforms@^2.30.1 tailwind-variants@^3.2.2 typebox@^1.1.39 vaul-svelte@^1.0.0-next.7 zod-v3-to-json-schema@^4.0.0",
 					},
@@ -47,13 +47,18 @@ export class NewCommandTemplates {
 					},
 						dependencies: {
 							"@internationalized/date": "^3.12.2",
+							"@aws-sdk/client-s3": "^3.700.0",
+							"@aws-sdk/s3-request-presigner": "^3.700.0",
 							"better-sqlite3": "^11.0.0",
 							"bits-ui": "^2.18.1",
+							bullmq: "^5.0.0",
 							"drizzle-orm": "^0.45.2",
 							"embla-carousel-svelte": "^8.6.0",
 							formsnap: "^2.0.1",
-							layerchart: "^2.0.0-next.48",
-							mysql2: "^3.11.0",
+								ioredis: "^5.0.0",
+								layerchart: "^2.0.0-next.48",
+								meilisearch: "^0.44.0",
+								mysql2: "^3.11.0",
 							"mode-watcher": "^1.1.0",
 							paneforge: "^1.0.2",
 							postgres: "^3.4.5",
@@ -179,8 +184,8 @@ export default defineConfig({
     },
   },
   ssr: {
-    // Native password hashing drivers must stay external for Node production builds.
-    external: ['bcrypt', 'argon2'],
+    // Node-only optional drivers must stay external for adapter-node production builds.
+	    external: ['bcrypt', 'argon2', 'bullmq', 'ioredis', 'meilisearch', '@aws-sdk/client-s3', '@aws-sdk/s3-request-presigner'],
     // Process Svelte icon components during SSR.
     noExternal: ['@lucide/svelte', '@tabler/icons-svelte', 'bits-ui'],
   },
@@ -499,7 +504,7 @@ export function cn(...inputs: ClassValue[]) {
 		return `/**
  * Svelar Application Bootstrap
  *
- * Configures database, hashing, auth, queue, audit, API keys,
+ * Configures database, hashing, auth, cache, queue, audit, API keys,
  * webhooks, teams, uploads, email templates, feature flags, PDF, and scheduling.
  * This runs once when the server starts.
  */
@@ -508,14 +513,16 @@ import { Connection } from '@beeblock/svelar/database';
 import { config } from '@beeblock/svelar/config';
 import { Hash } from '@beeblock/svelar/hashing';
 import { AuthManager } from '@beeblock/svelar/auth';
+import { Cache } from '@beeblock/svelar/cache';
 import { Queue } from '@beeblock/svelar/queue';
 import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
 import { Audit } from '@beeblock/svelar/audit';
 import { ApiKeys } from '@beeblock/svelar/api-keys';
 import { Webhooks } from '@beeblock/svelar/webhooks';
-import { Teams } from '@beeblock/svelar/teams';
-import { EmailTemplates } from '@beeblock/svelar/email-templates';
-import { Uploads } from '@beeblock/svelar/uploads';
+	import { Teams } from '@beeblock/svelar/teams';
+	import { EmailTemplates } from '@beeblock/svelar/email-templates';
+	import { Mailer } from '@beeblock/svelar/mail';
+	import { Uploads } from '@beeblock/svelar/uploads';
 import { Features } from '@beeblock/svelar/feature-flags';
 import { PDF } from '@beeblock/svelar/pdf';
 import { configureDashboard } from '@beeblock/svelar/dashboard';
@@ -543,6 +550,10 @@ Connection.configure({
       database: config.get('database.connections.postgres.database', process.env.DB_NAME ?? 'svelar_db'),
       user: config.get('database.connections.postgres.user', process.env.DB_USER ?? 'postgres'),
       password: config.get('database.connections.postgres.password', process.env.DB_PASSWORD ?? ''),
+      prepare: config.get(
+        'database.connections.postgres.prepare',
+        process.env.DB_PREPARE ? process.env.DB_PREPARE !== 'false' : process.env.DB_HOST !== 'pgbouncer'
+      ),
     },
     mysql: {
       driver: 'mysql',
@@ -568,6 +579,32 @@ export const auth = new AuthManager({
   },
   appUrl: config.get('app.url', process.env.APP_URL ?? 'http://localhost:5173'),
   appName: config.get('app.name', process.env.APP_NAME ?? 'Svelar'),
+});
+
+// ── Cache ─────────────────────────────────────────────────
+Cache.configure({
+  default: config.get('cache.default', process.env.CACHE_DRIVER ?? 'memory'),
+  stores: {
+    memory: {
+      driver: 'memory',
+      ttl: config.get('cache.stores.memory.ttl', undefined),
+    },
+    file: {
+      driver: 'file',
+      path: config.get('cache.stores.file.path', 'storage/cache'),
+      ttl: config.get('cache.stores.file.ttl', undefined),
+    },
+    redis: {
+      driver: 'redis',
+      url: config.get('cache.stores.redis.url', process.env.REDIS_URL),
+      host: config.get('cache.stores.redis.host', process.env.REDIS_HOST ?? 'localhost'),
+      port: config.get('cache.stores.redis.port', Number(process.env.REDIS_PORT ?? 6379)),
+      password: config.get('cache.stores.redis.password', process.env.REDIS_PASSWORD),
+      db: config.get('cache.stores.redis.db', Number(process.env.REDIS_DB ?? 0)),
+      prefix: config.get('cache.stores.redis.prefix', 'svelar_cache:'),
+      ttl: config.get('cache.stores.redis.ttl', undefined),
+    },
+  },
 });
 
 // ── Queue ─────────────────────────────────────────────────
@@ -623,8 +660,8 @@ Broadcast.configure({
 });
 
 // Channel authorization — private-user-{id} for per-user channels
-Broadcast.channel('private-user-*', async (user: any, params: any) => {
-  return user && String(user.id) === params['0'];
+Broadcast.channel('private-user-{id}', async (user: any, params: any) => {
+  return user && String(user.id) === params.id;
 });
 
 // Presence channel for admin dashboard
@@ -633,10 +670,50 @@ Broadcast.channel('presence-admin', async (user: any) => {
   return { id: user.id, name: user.name };
 });
 
-// ── Feature Flags ────────────────────────────────────────
-Features.configure({ driver: 'database' });
+	// ── Feature Flags ────────────────────────────────────────
+	Features.configure({ driver: 'database' });
 
-// ── PDF ─────────────────────────────────────────────────
+	// ── Mail ─────────────────────────────────────────────────
+	const mailDefault = config.get('mail.default', config.get('mail.driver', process.env.MAIL_DRIVER ?? 'log'));
+	Mailer.configure({
+	  default: mailDefault,
+	  from: {
+	    address: config.get('mail.from.address', process.env.MAIL_FROM ?? 'hello@example.com'),
+	    name: config.get('mail.from.name', process.env.MAIL_FROM_NAME ?? process.env.APP_NAME ?? 'Svelar'),
+	  },
+	  mailers: {
+	    log: { driver: 'log' },
+	    null: { driver: 'null' },
+	    smtp: {
+	      driver: 'smtp',
+	      host: config.get('mail.mailers.smtp.host', config.get('mail.smtp.host', process.env.MAIL_HOST ?? process.env.SMTP_HOST ?? 'localhost')),
+	      port: Number(config.get('mail.mailers.smtp.port', config.get('mail.smtp.port', process.env.MAIL_PORT ?? process.env.SMTP_PORT ?? 587))),
+	      secure: config.get('mail.mailers.smtp.secure', config.get('mail.smtp.secure', process.env.MAIL_SECURE === 'true')),
+	      auth: {
+	        user: config.get('mail.mailers.smtp.auth.user', config.get('mail.smtp.user', process.env.MAIL_USER ?? process.env.SMTP_USER ?? '')),
+	        pass: config.get('mail.mailers.smtp.auth.pass', config.get('mail.smtp.password', process.env.MAIL_PASSWORD ?? process.env.SMTP_PASSWORD ?? '')),
+	      },
+	    },
+	    postmark: {
+	      driver: 'postmark',
+	      apiToken: config.get('mail.mailers.postmark.apiToken', process.env.POSTMARK_API_TOKEN ?? ''),
+	      messageStream: config.get('mail.mailers.postmark.messageStream', process.env.POSTMARK_MESSAGE_STREAM ?? 'outbound'),
+	      endpoint: config.get('mail.mailers.postmark.endpoint', process.env.POSTMARK_ENDPOINT),
+	    },
+	    resend: {
+	      driver: 'resend',
+	      apiKey: config.get('mail.mailers.resend.apiKey', process.env.RESEND_API_KEY ?? ''),
+	      endpoint: config.get('mail.mailers.resend.endpoint', process.env.RESEND_ENDPOINT),
+	    },
+	    mailtrap: {
+	      driver: 'mailtrap',
+	      apiToken: config.get('mail.mailers.mailtrap.apiToken', process.env.MAILTRAP_API_TOKEN ?? ''),
+	      endpoint: config.get('mail.mailers.mailtrap.endpoint', process.env.MAILTRAP_ENDPOINT),
+	    },
+	  },
+	});
+
+	// ── PDF ─────────────────────────────────────────────────
 const pdfDriver = config.get('pdf.driver', process.env.PDF_DRIVER ?? 'pdfkit') as 'pdfkit' | 'gotenberg';
 const parseDurationMs = (value: unknown, fallback: number): number => {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -694,15 +771,18 @@ export { Connection, Hash, Broadcast };
 
 import { createSvelarApp } from '@beeblock/svelar/hooks';
 import { DatabaseSessionStore } from '@beeblock/svelar/session';
-import { env } from '\$env/dynamic/private';
 
 // Import app.ts to trigger database + hashing + auth configuration
 import { auth } from './app.js';
 
 export const { handle, handleError } = createSvelarApp({
   auth,
-  secret: env.APP_KEY,
+  secret: process.env.APP_KEY,
   sessionStore: new DatabaseSessionStore(),
+  rateLimitStore: process.env.RATE_LIMIT_STORE === 'cache' ? 'cache' : 'memory',
+  rateLimitCacheStore: process.env.RATE_LIMIT_CACHE_STORE || process.env.CACHE_DRIVER,
+  authThrottleStore: process.env.RATE_LIMIT_STORE === 'cache' ? 'cache' : 'memory',
+  authThrottleCacheStore: process.env.RATE_LIMIT_CACHE_STORE || process.env.CACHE_DRIVER,
   csrfExcludePaths: ['/api/webhooks', '/api/internal/'],
 });
 `;
@@ -740,6 +820,7 @@ DB_PATH=database.db
 # DB_NAME=svelar_db
 # DB_USER=postgres
 # DB_PASSWORD=secret
+# DB_PREPARE=false # Required when connecting through PgBouncer transaction pooling.
 
 # MySQL (uncomment to switch)
 # DB_DRIVER=mysql
@@ -767,9 +848,9 @@ AUTH_EMAIL_VERIFICATION_REQUIRED=false
 # JWT_SECRET=your-jwt-secret-key
 
 # ── Mail ──────────────────────────────────────────────────
-# MAIL_DRIVER: log | smtp | postmark | resend
-# "log" prints to console (dev). Switch to a real driver for production.
-# MAIL_DRIVER=log
+	# MAIL_DRIVER: log | null | smtp | postmark | resend | mailtrap
+	# "log" prints to console (dev). Switch to a real driver for production.
+	# MAIL_DRIVER=log
 # MAIL_FROM: Default sender address for all outgoing emails.
 # MAIL_FROM=hello@example.com
 # SMTP (uncomment for generic SMTP)
@@ -779,8 +860,10 @@ AUTH_EMAIL_VERIFICATION_REQUIRED=false
 # SMTP_PASSWORD=your-smtp-password
 # Postmark (uncomment to use)
 # POSTMARK_API_TOKEN=your-postmark-server-token
-# Resend (uncomment to use)
-# RESEND_API_KEY=re_your-resend-api-key
+	# Resend (uncomment to use)
+	# RESEND_API_KEY=re_your-resend-api-key
+	# Mailtrap Email API (uncomment to use)
+	# MAILTRAP_API_TOKEN=your-mailtrap-api-token
 
 # ── Queue ─────────────────────────────────────────────────
 # QUEUE_DRIVER: sync | memory | database | redis
@@ -795,9 +878,15 @@ AUTH_EMAIL_VERIFICATION_REQUIRED=false
 # REDIS_PASSWORD: Set a password in production. Docker compose uses this for the Redis container too.
 # REDIS_PASSWORD=
 
+# ── Rate Limiting ─────────────────────────────────────────
+# RATE_LIMIT_STORE: memory | cache. Use "cache" with CACHE_DRIVER=redis for multi-instance production apps.
+# RATE_LIMIT_STORE=memory
+# RATE_LIMIT_CACHE_STORE: cache store name used when RATE_LIMIT_STORE=cache.
+# RATE_LIMIT_CACHE_STORE=redis
+
 # ── Storage ───────────────────────────────────────────────
 # STORAGE_DISK: local | s3
-# "local" stores files on disk. "s3" uses any S3-compatible service (AWS, RustFS, MinIO).
+# "local" stores files on disk. "s3" uses any S3-compatible service (AWS or RustFS).
 # STORAGE_DISK=local
 # S3_ENDPOINT: URL of the S3-compatible service. Use http://rustfs:9000 for Docker RustFS.
 # S3_ENDPOINT=http://localhost:9000
@@ -808,10 +897,10 @@ AUTH_EMAIL_VERIFICATION_REQUIRED=false
 # S3_REGION=us-east-1
 
 # RustFS (S3 storage container — Docker only)
-# RUSTFS_ROOT_USER: Admin username for RustFS/MinIO. Also used as S3_ACCESS_KEY.
-# RUSTFS_ROOT_USER=svelar
-# RUSTFS_ROOT_PASSWORD: Admin password for RustFS/MinIO. Also used as S3_SECRET_KEY.
-# RUSTFS_ROOT_PASSWORD=svelarsecret
+# RUSTFS_ACCESS_KEY: Admin access key for RustFS. Also used as S3_ACCESS_KEY.
+# RUSTFS_ACCESS_KEY=svelar
+# RUSTFS_SECRET_KEY: Admin secret key for RustFS. Also used as S3_SECRET_KEY.
+# RUSTFS_SECRET_KEY=svelarsecret
 # RUSTFS_CONSOLE_PORT: Host port for the RustFS admin console (default: 9001). Change per project on shared droplets.
 # RUSTFS_CONSOLE_PORT=9001
 
@@ -2328,7 +2417,6 @@ export type PostResponse = z.infer<typeof postResponseSchema>;
 	static svelarCoreMigrations(): Array<{ path: string; className: string; label: string; content: string }> {
 		const migrations = [
 			['00000000_000001_create_sessions_table.ts', 'CreateSessionsTable', 'Sessions table'],
-			['00000000_000002_create_personal_access_tokens_table.ts', 'CreatePersonalAccessTokensTable', 'Personal access tokens table'],
 			['00000000_000003_create_refresh_tokens_table.ts', 'CreateRefreshTokensTable', 'Refresh tokens table'],
 			['00000000_000004_create_password_resets_table.ts', 'CreatePasswordResetsTable', 'Password resets table'],
 			['00000000_000005_create_email_verifications_table.ts', 'CreateEmailVerificationsTable', 'Email verifications table'],
@@ -2377,6 +2465,7 @@ export default class CreateUsersTable extends Migration {
       table.string('name');
       table.string('email').unique();
       table.string('password');
+      table.timestamp('email_verified_at').nullable();
       table.timestamps();
     });
   }
@@ -2534,11 +2623,23 @@ export class DatabaseSeeder extends Seeder {
 import { fail, redirect } from '@sveltejs/kit';
 import { superValidate, message } from 'sveltekit-superforms';
 import { zod } from 'sveltekit-superforms/adapters';
+import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { loginSchema } from '$lib/modules/auth/schemas';
 import { AuthService } from '$lib/modules/auth/AuthService';
 import { authConfig } from '../../app.js';
 
 const authService = new AuthService();
+const throttle = new ThrottleMiddleware({
+  maxAttempts: 5,
+  decayMinutes: 1,
+  prefix: 'auth-login',
+  store: process.env.RATE_LIMIT_STORE === 'cache' ? 'cache' : 'memory',
+  cacheStore: process.env.RATE_LIMIT_CACHE_STORE || process.env.CACHE_DRIVER,
+});
+
+function throttleContext(event: any) {
+  return { event, params: event.params ?? {}, locals: event.locals ?? {} };
+}
 
 export const load: PageServerLoad = async ({ locals }) => {
   if (locals.user) throw redirect(302, '/dashboard');
@@ -2548,19 +2649,28 @@ export const load: PageServerLoad = async ({ locals }) => {
 };
 
 export const actions: Actions = {
-  default: async ({ request, locals }) => {
+  default: async (event) => {
+    const { request, locals } = event;
     const form = await superValidate(request, zod(loginSchema));
+    const ctx = throttleContext(event);
+    const block = await throttle.check(ctx);
+    if (block.blocked) {
+      return message(form, 'Too many attempts. Please try again later.', { status: 429 });
+    }
 
     if (!form.valid) {
+      await throttle.hit(ctx);
       return fail(400, { form });
     }
 
     const result = await authService.login(form.data.email, form.data.password);
 
     if (!result.success) {
+      await throttle.hit(ctx);
       return message(form, 'Invalid email or password', { status: 401 });
     }
 
+    await throttle.clear(ctx);
     const user = result.data!;
     locals.session.set('auth_user_id', (user as any).id);
     locals.session.regenerateId();
@@ -2673,11 +2783,23 @@ export const actions: Actions = {
 import { fail, redirect } from '@sveltejs/kit';
 import { superValidate, message, setError } from 'sveltekit-superforms';
 import { zod } from 'sveltekit-superforms/adapters';
+import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { registerSchema } from '$lib/modules/auth/schemas';
 import { AuthService } from '$lib/modules/auth/AuthService';
 import { auth, authConfig } from '../../app.js';
 
 const authService = new AuthService();
+const throttle = new ThrottleMiddleware({
+  maxAttempts: 5,
+  decayMinutes: 2,
+  prefix: 'auth-register',
+  store: process.env.RATE_LIMIT_STORE === 'cache' ? 'cache' : 'memory',
+  cacheStore: process.env.RATE_LIMIT_CACHE_STORE || process.env.CACHE_DRIVER,
+});
+
+function throttleContext(event: any) {
+  return { event, params: event.params ?? {}, locals: event.locals ?? {} };
+}
 
 export const load: PageServerLoad = async ({ locals }) => {
   if (locals.user) throw redirect(302, '/dashboard');
@@ -2687,10 +2809,17 @@ export const load: PageServerLoad = async ({ locals }) => {
 };
 
 export const actions: Actions = {
-  default: async ({ request, locals }) => {
+  default: async (event) => {
+    const { request, locals } = event;
     const form = await superValidate(request, zod(registerSchema));
+    const ctx = throttleContext(event);
+    const block = await throttle.check(ctx);
+    if (block.blocked) {
+      return message(form, 'Too many attempts. Please try again later.', { status: 429 });
+    }
 
     if (!form.valid) {
+      await throttle.hit(ctx);
       return fail(400, { form });
     }
 
@@ -2701,19 +2830,21 @@ export const actions: Actions = {
     });
 
     if (!result.success) {
+      await throttle.hit(ctx);
       if (result.error?.includes('Email')) {
         return setError(form, 'email', result.error);
       }
       return message(form, result.error || 'Registration failed', { status: 422 });
     }
 
+    await throttle.clear(ctx);
     const user = result.data!;
     locals.session.set('auth_user_id', (user as any).id);
     locals.session.regenerateId();
 
     // Send verification email if required
     if (authConfig.emailVerificationRequired) {
-      try { await auth.sendVerificationEmail(user as any); } catch {}
+      await auth.sendVerificationEmail(user as any);
     }
 
     throw redirect(302, '/dashboard');
@@ -2854,8 +2985,21 @@ export const actions: Actions = {
 import { fail } from '@sveltejs/kit';
 import { superValidate, message } from 'sveltekit-superforms';
 import { zod } from 'sveltekit-superforms/adapters';
+import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { forgotPasswordSchema } from '$lib/modules/auth/schemas';
 import { auth } from '../../app.js';
+
+const throttle = new ThrottleMiddleware({
+  maxAttempts: 3,
+  decayMinutes: 5,
+  prefix: 'auth-forgot-password',
+  store: process.env.RATE_LIMIT_STORE === 'cache' ? 'cache' : 'memory',
+  cacheStore: process.env.RATE_LIMIT_CACHE_STORE || process.env.CACHE_DRIVER,
+});
+
+function throttleContext(event: any) {
+  return { event, params: event.params ?? {}, locals: event.locals ?? {} };
+}
 
 export const load: PageServerLoad = async () => {
   const form = await superValidate(zod(forgotPasswordSchema));
@@ -2863,14 +3007,22 @@ export const load: PageServerLoad = async () => {
 };
 
 export const actions: Actions = {
-  default: async ({ request }) => {
+  default: async (event) => {
+    const { request } = event;
     const form = await superValidate(request, zod(forgotPasswordSchema));
+    const ctx = throttleContext(event);
+    const block = await throttle.check(ctx);
+    if (block.blocked) {
+      return message(form, 'Too many attempts. Please try again later.', { status: 429 });
+    }
 
     if (!form.valid) {
+      await throttle.hit(ctx);
       return fail(400, { form });
     }
 
     await auth.sendPasswordReset(form.data.email);
+    await throttle.hit(ctx);
 
     return message(form, 'If that email exists, a reset link has been sent. Check your inbox.');
   },
@@ -2953,8 +3105,21 @@ export const actions: Actions = {
 import { fail, redirect } from '@sveltejs/kit';
 import { superValidate, message } from 'sveltekit-superforms';
 import { zod } from 'sveltekit-superforms/adapters';
+import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { resetPasswordSchema } from '$lib/modules/auth/schemas';
 import { auth } from '../../app.js';
+
+const throttle = new ThrottleMiddleware({
+  maxAttempts: 5,
+  decayMinutes: 5,
+  prefix: 'auth-reset-password',
+  store: process.env.RATE_LIMIT_STORE === 'cache' ? 'cache' : 'memory',
+  cacheStore: process.env.RATE_LIMIT_CACHE_STORE || process.env.CACHE_DRIVER,
+});
+
+function throttleContext(event: any) {
+  return { event, params: event.params ?? {}, locals: event.locals ?? {} };
+}
 
 export const load: PageServerLoad = async ({ url }) => {
   const token = url.searchParams.get('token') ?? '';
@@ -2969,19 +3134,28 @@ export const load: PageServerLoad = async ({ url }) => {
 };
 
 export const actions: Actions = {
-  default: async ({ request }) => {
+  default: async (event) => {
+    const { request } = event;
     const form = await superValidate(request, zod(resetPasswordSchema));
+    const ctx = throttleContext(event);
+    const block = await throttle.check(ctx);
+    if (block.blocked) {
+      return message(form, 'Too many attempts. Please try again later.', { status: 429 });
+    }
 
     if (!form.valid) {
+      await throttle.hit(ctx);
       return fail(400, { form });
     }
 
     const success = await auth.resetPassword(form.data.token, form.data.email, form.data.password);
 
     if (!success) {
+      await throttle.hit(ctx);
       return message(form, 'Invalid or expired reset link. Please request a new one.', { status: 400 });
     }
 
+    await throttle.clear(ctx);
     throw redirect(302, '/login?reset=success');
   },
 };
@@ -3070,8 +3244,28 @@ export const actions: Actions = {
 import { fail, redirect } from '@sveltejs/kit';
 import { superValidate, message } from 'sveltekit-superforms';
 import { zod } from 'sveltekit-superforms/adapters';
+import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { otpRequestSchema, otpVerifySchema } from '$lib/modules/auth/schemas';
 import { auth, authConfig } from '../../app.js';
+
+const sendThrottle = new ThrottleMiddleware({
+  maxAttempts: 3,
+  decayMinutes: 2,
+  prefix: 'auth-otp-send',
+  store: process.env.RATE_LIMIT_STORE === 'cache' ? 'cache' : 'memory',
+  cacheStore: process.env.RATE_LIMIT_CACHE_STORE || process.env.CACHE_DRIVER,
+});
+const verifyThrottle = new ThrottleMiddleware({
+  maxAttempts: 5,
+  decayMinutes: 5,
+  prefix: 'auth-otp-verify',
+  store: process.env.RATE_LIMIT_STORE === 'cache' ? 'cache' : 'memory',
+  cacheStore: process.env.RATE_LIMIT_CACHE_STORE || process.env.CACHE_DRIVER,
+});
+
+function throttleContext(event: any) {
+  return { event, params: event.params ?? {}, locals: event.locals ?? {} };
+}
 
 export const load: PageServerLoad = async ({ locals }) => {
   if (!authConfig.otpEnabled) throw redirect(302, '/login');
@@ -3083,31 +3277,48 @@ export const load: PageServerLoad = async ({ locals }) => {
 };
 
 export const actions: Actions = {
-  send: async ({ request }) => {
+  send: async (event) => {
+    const { request } = event;
     const form = await superValidate(request, zod(otpRequestSchema));
+    const ctx = throttleContext(event);
+    const block = await sendThrottle.check(ctx);
+    if (block.blocked) {
+      return message(form, 'Too many attempts. Please try again later.', { status: 429 });
+    }
 
     if (!form.valid) {
+      await sendThrottle.hit(ctx);
       return fail(400, { requestForm: form });
     }
 
     await auth.sendOtp(form.data.email);
+    await sendThrottle.hit(ctx);
 
     return { requestForm: form, codeSent: true, email: form.data.email };
   },
 
-  verify: async ({ request, locals }) => {
+  verify: async (event) => {
+    const { request, locals } = event;
     const form = await superValidate(request, zod(otpVerifySchema));
+    const ctx = throttleContext(event);
+    const block = await verifyThrottle.check(ctx);
+    if (block.blocked) {
+      return message(form, 'Too many attempts. Please try again later.', { status: 429 });
+    }
 
     if (!form.valid) {
+      await verifyThrottle.hit(ctx);
       return fail(400, { verifyForm: form });
     }
 
     const user = await auth.attemptOtp(form.data.email, form.data.code, locals.session);
 
     if (!user) {
+      await verifyThrottle.hit(ctx);
       return message(form, 'Invalid or expired code. Please try again.', { status: 401 });
     }
 
+    await verifyThrottle.clear(ctx);
     throw redirect(302, '/dashboard');
   },
 };
@@ -5194,13 +5405,18 @@ export const GET: RequestHandler = async () => {
 		return `import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { AuthController } from '$lib/modules/auth/AuthController.js';
 
-const throttle = new ThrottleMiddleware({ maxAttempts: 5, decayMinutes: 2 });
+const throttleOptions = {
+  store: process.env.RATE_LIMIT_STORE === 'cache' ? 'cache' as const : 'memory' as const,
+  cacheStore: process.env.RATE_LIMIT_CACHE_STORE || process.env.CACHE_DRIVER,
+};
+const throttle = new ThrottleMiddleware({ maxAttempts: 5, decayMinutes: 2, ...throttleOptions });
 const ctrl = new AuthController();
 
 export async function POST(event: any) {
-  const blocked = await throttle.handle({ event, params: event.params, locals: event.locals }, async () => {});
-  if (blocked) return blocked;
-  return ctrl.handle('register')(event);
+  return throttle.handle(
+    { event, params: event.params, locals: event.locals },
+    () => ctrl.handle('register')(event)
+  );
 }
 `;
 	}
@@ -5209,13 +5425,18 @@ export async function POST(event: any) {
 		return `import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { AuthController } from '$lib/modules/auth/AuthController.js';
 
-const throttle = new ThrottleMiddleware({ maxAttempts: 5, decayMinutes: 1 });
+const throttleOptions = {
+  store: process.env.RATE_LIMIT_STORE === 'cache' ? 'cache' as const : 'memory' as const,
+  cacheStore: process.env.RATE_LIMIT_CACHE_STORE || process.env.CACHE_DRIVER,
+};
+const throttle = new ThrottleMiddleware({ maxAttempts: 5, decayMinutes: 1, ...throttleOptions });
 const ctrl = new AuthController();
 
 export async function POST(event: any) {
-  const blocked = await throttle.handle({ event, params: event.params, locals: event.locals }, async () => {});
-  if (blocked) return blocked;
-  return ctrl.handle('login')(event);
+  return throttle.handle(
+    { event, params: event.params, locals: event.locals },
+    () => ctrl.handle('login')(event)
+  );
 }
 `;
 	}
@@ -5240,13 +5461,18 @@ export const GET = ctrl.handle('me');
 		return `import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { AuthController } from '$lib/modules/auth/AuthController.js';
 
-const throttle = new ThrottleMiddleware({ maxAttempts: 3, decayMinutes: 5 });
+const throttleOptions = {
+  store: process.env.RATE_LIMIT_STORE === 'cache' ? 'cache' as const : 'memory' as const,
+  cacheStore: process.env.RATE_LIMIT_CACHE_STORE || process.env.CACHE_DRIVER,
+};
+const throttle = new ThrottleMiddleware({ maxAttempts: 3, decayMinutes: 5, ...throttleOptions });
 const ctrl = new AuthController();
 
 export async function POST(event: any) {
-  const blocked = await throttle.handle({ event, params: event.params, locals: event.locals }, async () => {});
-  if (blocked) return blocked;
-  return ctrl.handle('forgotPassword')(event);
+  return throttle.handle(
+    { event, params: event.params, locals: event.locals },
+    () => ctrl.handle('forgotPassword')(event)
+  );
 }
 `;
 	}
@@ -5255,13 +5481,18 @@ export async function POST(event: any) {
 		return `import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { AuthController } from '$lib/modules/auth/AuthController.js';
 
-const throttle = new ThrottleMiddleware({ maxAttempts: 5, decayMinutes: 5 });
+const throttleOptions = {
+  store: process.env.RATE_LIMIT_STORE === 'cache' ? 'cache' as const : 'memory' as const,
+  cacheStore: process.env.RATE_LIMIT_CACHE_STORE || process.env.CACHE_DRIVER,
+};
+const throttle = new ThrottleMiddleware({ maxAttempts: 5, decayMinutes: 5, ...throttleOptions });
 const ctrl = new AuthController();
 
 export async function POST(event: any) {
-  const blocked = await throttle.handle({ event, params: event.params, locals: event.locals }, async () => {});
-  if (blocked) return blocked;
-  return ctrl.handle('resetPassword')(event);
+  return throttle.handle(
+    { event, params: event.params, locals: event.locals },
+    () => ctrl.handle('resetPassword')(event)
+  );
 }
 `;
 	}
@@ -5270,13 +5501,18 @@ export async function POST(event: any) {
 		return `import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { AuthController } from '$lib/modules/auth/AuthController.js';
 
-const throttle = new ThrottleMiddleware({ maxAttempts: 3, decayMinutes: 2 });
+const throttleOptions = {
+  store: process.env.RATE_LIMIT_STORE === 'cache' ? 'cache' as const : 'memory' as const,
+  cacheStore: process.env.RATE_LIMIT_CACHE_STORE || process.env.CACHE_DRIVER,
+};
+const throttle = new ThrottleMiddleware({ maxAttempts: 3, decayMinutes: 2, ...throttleOptions });
 const ctrl = new AuthController();
 
 export async function POST(event: any) {
-  const blocked = await throttle.handle({ event, params: event.params, locals: event.locals }, async () => {});
-  if (blocked) return blocked;
-  return ctrl.handle('sendOtp')(event);
+  return throttle.handle(
+    { event, params: event.params, locals: event.locals },
+    () => ctrl.handle('sendOtp')(event)
+  );
 }
 `;
 	}
@@ -5285,13 +5521,18 @@ export async function POST(event: any) {
 		return `import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { AuthController } from '$lib/modules/auth/AuthController.js';
 
-const throttle = new ThrottleMiddleware({ maxAttempts: 5, decayMinutes: 5 });
+const throttleOptions = {
+  store: process.env.RATE_LIMIT_STORE === 'cache' ? 'cache' as const : 'memory' as const,
+  cacheStore: process.env.RATE_LIMIT_CACHE_STORE || process.env.CACHE_DRIVER,
+};
+const throttle = new ThrottleMiddleware({ maxAttempts: 5, decayMinutes: 5, ...throttleOptions });
 const ctrl = new AuthController();
 
 export async function POST(event: any) {
-  const blocked = await throttle.handle({ event, params: event.params, locals: event.locals }, async () => {});
-  if (blocked) return blocked;
-  return ctrl.handle('verifyOtp')(event);
+  return throttle.handle(
+    { event, params: event.params, locals: event.locals },
+    () => ctrl.handle('verifyOtp')(event)
+  );
 }
 `;
 	}
@@ -5853,7 +6094,7 @@ export class ExportDataJob extends Job {
 
 	// ─── Scheduled Tasks ──────────────────────────────────────
 
-	static cleanupExpiredTokens(): string {
+static cleanupExpiredTokens(): string {
 		return `import { ScheduledTask } from '@beeblock/svelar/scheduler';
 import { QueryBuilder } from '@beeblock/svelar/orm';
 
@@ -5872,18 +6113,10 @@ export default class CleanupExpiredTokens extends ScheduledTask {
       otpCodes: 0,
     };
 
-    try {
-      result.passwordResets = await new QueryBuilder('password_resets').where('expires_at', '<', now).delete();
-    } catch { /* table may not exist */ }
-
-    try {
-      result.verifications = await new QueryBuilder('email_verifications').where('expires_at', '<', now).delete();
-    } catch { /* table may not exist */ }
-
-    try {
-      result.otpCodes = await new QueryBuilder('otp_codes').where('expires_at', '<', now).delete();
-      result.otpCodes += await new QueryBuilder('otp_codes').whereNotNull('used_at').delete();
-    } catch { /* table may not exist */ }
+    result.passwordResets = await new QueryBuilder('password_resets').where('expires_at', '<', now).delete();
+    result.verifications = await new QueryBuilder('email_verifications').where('expires_at', '<', now).delete();
+    result.otpCodes = await new QueryBuilder('otp_codes').where('expires_at', '<', now).delete();
+    result.otpCodes += await new QueryBuilder('otp_codes').whereNotNull('used_at').delete();
 
     console.log(
       \`[CleanupExpiredTokens] Deleted: \${result.passwordResets} password resets, \` +
@@ -5920,7 +6153,7 @@ export function createScheduler(): Scheduler {
 `;
 	}
 
-	static cleanExpiredSessions(): string {
+static cleanExpiredSessions(): string {
 		return `import { ScheduledTask } from '@beeblock/svelar/scheduler';
 import { QueryBuilder } from '@beeblock/svelar/orm';
 
@@ -5932,15 +6165,9 @@ export default class CleanExpiredSessions extends ScheduledTask {
   }
 
   async handle(): Promise<void> {
-    try {
-      const now = new Date().toISOString();
-      await new QueryBuilder('sessions').where('expires_at', '<', now).delete();
-      console.log('[CleanExpiredSessions] Expired sessions cleaned');
-    } catch (err: any) {
-      if (!err.message?.includes('no such table')) {
-        throw err;
-      }
-    }
+    const now = new Date().toISOString();
+    await new QueryBuilder('sessions').where('expires_at', '<', now).delete();
+    console.log('[CleanExpiredSessions] Expired sessions cleaned');
   }
 }
 `;
@@ -6179,7 +6406,7 @@ export class SendWelcomeEmailListener {
     await Queue.dispatch(new SendWelcomeEmail(user.id, user.email, user.name));
 
     // Send welcome notification (persisted to database)
-    await Notifier.send(user, new WelcomeNotification(user));
+    await Notifier.notify(user, new WelcomeNotification(user));
   }
 }
 `;
@@ -6196,7 +6423,7 @@ export class WelcomeNotification extends Notification {
     this.user = user;
   }
 
-  via() {
+  channels() {
     return ['database'] as const;
   }
 
@@ -6301,18 +6528,60 @@ export default defineConfig({
     alias: {
       '$lib': resolve('./src/lib'),
       '$lib/*': resolve('./src/lib/*'),
-      '@beeblock/svelar/testing': resolve(svelarRoot, 'dist/testing/index.js'),
-      '@beeblock/svelar/orm': resolve(svelarRoot, 'dist/orm/index.js'),
-      '@beeblock/svelar/database': resolve(svelarRoot, 'dist/database/index.js'),
+      '@beeblock/svelar/actions': resolve(svelarRoot, 'dist/actions/index.js'),
+      '@beeblock/svelar/api-keys': resolve(svelarRoot, 'dist/api-keys/index.js'),
+      '@beeblock/svelar/audit': resolve(svelarRoot, 'dist/audit/index.js'),
       '@beeblock/svelar/auth': resolve(svelarRoot, 'dist/auth/index.js'),
-      '@beeblock/svelar/validation': resolve(svelarRoot, 'dist/validation/index.js'),
-      '@beeblock/svelar/hashing': resolve(svelarRoot, 'dist/hashing/index.js'),
-      '@beeblock/svelar/session': resolve(svelarRoot, 'dist/session/index.js'),
-      '@beeblock/svelar/events': resolve(svelarRoot, 'dist/events/index.js'),
-      '@beeblock/svelar/queue': resolve(svelarRoot, 'dist/queue/index.js'),
-      '@beeblock/svelar/search': resolve(svelarRoot, 'dist/search/index.js'),
+      '@beeblock/svelar/broadcasting/client': resolve(svelarRoot, 'dist/broadcasting/client.js'),
+      '@beeblock/svelar/broadcasting': resolve(svelarRoot, 'dist/broadcasting/index.js'),
       '@beeblock/svelar/cache': resolve(svelarRoot, 'dist/cache/index.js'),
+      '@beeblock/svelar/cli': resolve(svelarRoot, 'dist/cli/index.js'),
+      '@beeblock/svelar/config': resolve(svelarRoot, 'dist/config/index.js'),
+      '@beeblock/svelar/container': resolve(svelarRoot, 'dist/container/index.js'),
+      '@beeblock/svelar/dashboard': resolve(svelarRoot, 'dist/dashboard/index.js'),
+      '@beeblock/svelar/database': resolve(svelarRoot, 'dist/database/index.js'),
+      '@beeblock/svelar/dates': resolve(svelarRoot, 'dist/support/date.js'),
+      '@beeblock/svelar/email-templates': resolve(svelarRoot, 'dist/email-templates/index.js'),
+      '@beeblock/svelar/errors': resolve(svelarRoot, 'dist/errors/index.js'),
+      '@beeblock/svelar/events': resolve(svelarRoot, 'dist/events/index.js'),
+      '@beeblock/svelar/excel': resolve(svelarRoot, 'dist/excel/index.js'),
+      '@beeblock/svelar/feature-flags': resolve(svelarRoot, 'dist/feature-flags/index.js'),
+      '@beeblock/svelar/forms': resolve(svelarRoot, 'dist/forms/index.js'),
+      '@beeblock/svelar/hashing': resolve(svelarRoot, 'dist/hashing/index.js'),
+      '@beeblock/svelar/hooks': resolve(svelarRoot, 'dist/hooks/index.js'),
+      '@beeblock/svelar/http': resolve(svelarRoot, 'dist/http/index.js'),
+      '@beeblock/svelar/i18n/LanguageSwitcher.svelte': resolve(svelarRoot, 'src/i18n/LanguageSwitcher.svelte'),
+      '@beeblock/svelar/i18n': resolve(svelarRoot, 'dist/i18n/index.js'),
+      '@beeblock/svelar/logging/LogViewer': resolve(svelarRoot, 'dist/logging/LogViewer.js'),
+      '@beeblock/svelar/logging': resolve(svelarRoot, 'dist/logging/index.js'),
       '@beeblock/svelar/mail': resolve(svelarRoot, 'dist/mail/index.js'),
+      '@beeblock/svelar/middleware': resolve(svelarRoot, 'dist/middleware/index.js'),
+      '@beeblock/svelar/notifications': resolve(svelarRoot, 'dist/notifications/index.js'),
+      '@beeblock/svelar/orm': resolve(svelarRoot, 'dist/orm/index.js'),
+      '@beeblock/svelar/pagination': resolve(svelarRoot, 'src/pagination'),
+      '@beeblock/svelar/pdf/GeneratePdfJob': resolve(svelarRoot, 'dist/pdf/GeneratePdfJob.js'),
+      '@beeblock/svelar/pdf': resolve(svelarRoot, 'dist/pdf/index.js'),
+      '@beeblock/svelar/permissions': resolve(svelarRoot, 'dist/permissions/index.js'),
+      '@beeblock/svelar/plugins/PluginInstaller': resolve(svelarRoot, 'dist/plugins/PluginInstaller.js'),
+      '@beeblock/svelar/plugins/PluginPublisher': resolve(svelarRoot, 'dist/plugins/PluginPublisher.js'),
+      '@beeblock/svelar/plugins/PluginRegistry': resolve(svelarRoot, 'dist/plugins/PluginRegistry.js'),
+      '@beeblock/svelar/plugins': resolve(svelarRoot, 'dist/plugins/index.js'),
+      '@beeblock/svelar/queue/JobMonitor': resolve(svelarRoot, 'dist/queue/JobMonitor.js'),
+      '@beeblock/svelar/queue': resolve(svelarRoot, 'dist/queue/index.js'),
+      '@beeblock/svelar/repositories': resolve(svelarRoot, 'dist/repositories/index.js'),
+      '@beeblock/svelar/routing': resolve(svelarRoot, 'dist/routing/index.js'),
+      '@beeblock/svelar/scheduler/ScheduleMonitor': resolve(svelarRoot, 'dist/scheduler/ScheduleMonitor.js'),
+      '@beeblock/svelar/scheduler': resolve(svelarRoot, 'dist/scheduler/index.js'),
+      '@beeblock/svelar/search': resolve(svelarRoot, 'dist/search/index.js'),
+      '@beeblock/svelar/services': resolve(svelarRoot, 'dist/services/index.js'),
+      '@beeblock/svelar/session': resolve(svelarRoot, 'dist/session/index.js'),
+      '@beeblock/svelar/storage': resolve(svelarRoot, 'dist/storage/index.js'),
+      '@beeblock/svelar/support': resolve(svelarRoot, 'dist/support/index.js'),
+      '@beeblock/svelar/teams': resolve(svelarRoot, 'dist/teams/index.js'),
+      '@beeblock/svelar/testing': resolve(svelarRoot, 'dist/testing/index.js'),
+      '@beeblock/svelar/uploads': resolve(svelarRoot, 'dist/uploads/index.js'),
+      '@beeblock/svelar/validation': resolve(svelarRoot, 'dist/validation/index.js'),
+      '@beeblock/svelar/webhooks': resolve(svelarRoot, 'dist/webhooks/index.js'),
       '@beeblock/svelar': resolve(svelarRoot, 'dist/index.js'),
     },
   },

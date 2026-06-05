@@ -34,26 +34,27 @@ export class MakeCommandCommand extends Command {
     // Derive a command name from the class name if not provided
     // SyncUsersCommand → app:sync-users
     const commandName = flags.command ?? this.deriveCommandName(className);
+    const description = this.describeCommand(commandName);
 
     const content = `import { Command } from '@beeblock/svelar/cli';
 
 export class ${className} extends Command {
   name = '${commandName}';
-  description = 'TODO: Describe your command';
-  arguments = ['name'];  // Positional args your command accepts
+  description = '${description}';
+  arguments = [];
   flags = [
-    // { name: 'force', alias: 'f', description: 'Force the operation', type: 'boolean' as const },
-    // { name: 'limit', description: 'Limit results', type: 'string' as const, default: '10' },
+    { name: 'dry-run', description: 'Show what would run without changing data', type: 'boolean' as const },
   ];
 
-  async handle(args: string[], flags: Record<string, any>): Promise<void> {
-    const name = args[0];
-
+  async handle(_args: string[], flags: Record<string, any>): Promise<void> {
     this.info('Running ${commandName}...');
 
-    // Your command logic here
-    // Use this.bootstrap() if you need database access
-    // await this.bootstrap();
+    if (flags['dry-run']) {
+      this.info('Dry run enabled. No changes were made.');
+      return;
+    }
+
+    await this.bootstrap();
 
     this.success('Done!');
   }
@@ -67,6 +68,14 @@ export class ${className} extends Command {
     this.newLine();
     this.info('Your command will be auto-discovered. Run it with:');
     this.log(`  npx svelar ${commandName}`);
+  }
+
+  private describeCommand(commandName: string): string {
+    const label = commandName
+      .replace(/^app:/, '')
+      .replace(/[-:_]+/g, ' ')
+      .replace(/\b\w/g, (char) => char.toUpperCase());
+    return `Run ${label}`;
   }
 
   private deriveCommandName(className: string): string {

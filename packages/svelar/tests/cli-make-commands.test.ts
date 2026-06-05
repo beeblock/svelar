@@ -24,8 +24,10 @@ import { MakePluginCommand } from '../src/cli/commands/MakePluginCommand.js';
 import { MakeFactoryCommand } from '../src/cli/commands/MakeFactoryCommand.js';
 import { MakeDeployCommand } from '../src/cli/commands/MakeDeployCommand.js';
 import { MakeDockerCommand } from '../src/cli/commands/MakeDockerCommand.js';
+import { MakeDashboardCommand } from '../src/cli/commands/MakeDashboardCommand.js';
 import { MakeRouteCommand } from '../src/cli/commands/MakeRouteCommand.js';
 import { MakeMigrationCommand } from '../src/cli/commands/MakeMigrationCommand.js';
+import { NewCommandTemplates } from '../src/cli/commands/NewCommandTemplates.js';
 
 let originalCwd: string;
 let tmpDir: string;
@@ -89,7 +91,7 @@ describe('Make commands — Flat structure', () => {
       const filePath = join(tmpDir, 'src', 'lib', 'scheduler', 'CleanupTokens.ts');
       expect(existsSync(filePath)).toBe(true);
       const content = readFileSync(filePath, 'utf-8');
-      expect(content).toContain('class CleanupTokens extends ScheduledTask');
+      expect(content).toContain('export default class CleanupTokens extends ScheduledTask');
     });
   });
 
@@ -112,6 +114,9 @@ describe('Make commands — Flat structure', () => {
       expect(existsSync(filePath)).toBe(true);
       const content = readFileSync(filePath, 'utf-8');
       expect(content).toContain('registerOrderChannel');
+      expect(content).toContain('return false;');
+      expect(content).not.toContain('TODO');
+      expect(content).not.toContain('return !!user');
     });
   });
 
@@ -123,6 +128,9 @@ describe('Make commands — Flat structure', () => {
       expect(existsSync(filePath)).toBe(true);
       const content = readFileSync(filePath, 'utf-8');
       expect(content).toContain('class SyncUsersCommand extends Command');
+      expect(content).toContain("description = 'Run Sync Users'");
+      expect(content).toContain("name: 'dry-run'");
+      expect(content).not.toContain('TODO');
     });
   });
 
@@ -460,6 +468,84 @@ describe('MakeDeployCommand', () => {
     const dockerFlags = new MakeDockerCommand().flags.map((flag) => flag.name).sort();
 
     expect(deployFlags).toEqual(dockerFlags);
+  });
+});
+
+describe('MakeDashboardCommand', () => {
+  it('scaffolds monitor-backed queue, scheduler, and logs tabs', async () => {
+    const cmd = new MakeDashboardCommand();
+    await cmd.handle([], {});
+
+    const pagePath = join(tmpDir, 'src', 'routes', 'admin', 'dashboard', '+page.svelte');
+    const serverPath = join(tmpDir, 'src', 'routes', 'admin', 'dashboard', '+page.server.ts');
+    const queueApiPath = join(tmpDir, 'src', 'routes', 'api', 'admin', 'queue', '+server.ts');
+
+    expect(existsSync(pagePath)).toBe(true);
+    expect(existsSync(serverPath)).toBe(true);
+    expect(existsSync(queueApiPath)).toBe(true);
+
+    const page = readFileSync(pagePath, 'utf-8');
+    const server = readFileSync(serverPath, 'utf-8');
+    const queueApi = readFileSync(queueApiPath, 'utf-8');
+
+    expect(page).not.toContain('coming soon');
+    expect(page).toContain('retryJob');
+    expect(page).toContain('runTask');
+    expect(page).toContain('data.logs?.logs');
+    expect(page).toContain('data.stats.queue?.queues?.default?.total');
+    expect(server).toContain('/api/admin/queue?limit=10');
+    expect(server).toContain('/api/admin/scheduler');
+    expect(server).toContain('/api/admin/logs?limit=25');
+    expect(queueApi).toContain('JobMonitor.listJobs');
+  });
+});
+
+// ── New project template tests ────────────────────────────
+
+describe('New project templates', () => {
+  it('generates Node-testable SvelteKit hooks without virtual env imports', () => {
+    const hooks = NewCommandTemplates.hooksServerTs();
+
+    expect(hooks).toContain("import { createSvelarApp } from '@beeblock/svelar/hooks'");
+    expect(hooks).toContain('secret: process.env.APP_KEY');
+    expect(hooks).toContain("process.env.RATE_LIMIT_STORE === 'cache'");
+    expect(hooks).toContain("csrfExcludePaths: ['/api/webhooks', '/api/internal/']");
+    expect(hooks).not.toContain('$env/dynamic/private');
+    expect(hooks).not.toContain('secret: env.APP_KEY');
+  });
+
+  it('wraps generated auth controllers with throttle middleware', () => {
+    const login = NewCommandTemplates.apiAuthLogin();
+    const register = NewCommandTemplates.apiAuthRegister();
+
+    for (const template of [login, register]) {
+      expect(template).toContain("process.env.RATE_LIMIT_STORE === 'cache'");
+      expect(template).toContain('process.env.RATE_LIMIT_CACHE_STORE || process.env.CACHE_DRIVER');
+      expect(template).not.toContain('$env/dynamic/private');
+      expect(template).toContain('return throttle.handle(');
+      expect(template).toContain("() => ctrl.handle('");
+      expect(template).not.toContain('async () => {}');
+    }
+  });
+
+  it('throttles generated browser auth page actions', () => {
+    const templates = [
+      NewCommandTemplates.loginPageServer(),
+      NewCommandTemplates.registerPageServer(),
+      NewCommandTemplates.forgotPasswordPageServer(),
+      NewCommandTemplates.resetPasswordPageServer(),
+      NewCommandTemplates.otpLoginPageServer(),
+    ];
+
+    for (const template of templates) {
+      expect(template).toContain("import { ThrottleMiddleware } from '@beeblock/svelar/middleware'");
+      expect(template).toContain("process.env.RATE_LIMIT_STORE === 'cache'");
+      expect(template).toContain('process.env.RATE_LIMIT_CACHE_STORE || process.env.CACHE_DRIVER');
+      expect(template).not.toContain('$env/dynamic/private');
+      expect(template).toContain('throttleContext');
+      expect(template).toContain('.check(ctx)');
+      expect(template).toContain('.hit(ctx)');
+    }
   });
 });
 

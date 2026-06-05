@@ -6,6 +6,7 @@ import {
   MiddlewareStack,
   type MiddlewareContext,
 } from '../src/middleware/Middleware.js';
+import { createSvelarApp } from '../src/hooks/index.js';
 
 // Helper to create request-like mock
 function createCtx(opts: {
@@ -97,6 +98,25 @@ describe('CsrfMiddleware', () => {
     expect((result as Response).status).toBe(200);
   });
 
+  it('should allow POST with valid CSRF token in JSON body', async () => {
+    const csrf = new CsrfMiddleware();
+    const stack = new MiddlewareStack();
+    stack.use(csrf);
+
+    const token = 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890';
+    const ctx = createCtx({
+      method: 'POST',
+      body: JSON.stringify({ _csrf: token }),
+      headers: {
+        cookie: `XSRF-TOKEN=${token}`,
+        'content-type': 'application/json',
+      },
+    });
+    const result = await stack.execute(ctx, async () => new Response('ok'));
+
+    expect((result as Response).status).toBe(200);
+  });
+
   it('should reject POST with mismatched CSRF token', async () => {
     const csrf = new CsrfMiddleware();
     const stack = new MiddlewareStack();
@@ -172,6 +192,65 @@ describe('CsrfMiddleware', () => {
     });
     const result = await stack.execute(ctx, async () => new Response('ok'));
     expect((result as Response).status).toBe(200);
+  });
+
+  it('should respect tokenLength when setting the CSRF cookie', async () => {
+    const csrf = new CsrfMiddleware({ tokenLength: 16 });
+    const stack = new MiddlewareStack();
+    stack.use(csrf);
+
+    const result = await stack.execute(createCtx({ method: 'GET' }), async () => new Response('ok'));
+    const setCookie = (result as Response).headers.get('Set-Cookie') ?? '';
+    const token = setCookie.match(/XSRF-TOKEN=([^;]+)/)?.[1];
+
+    expect(token).toHaveLength(32);
+  });
+
+  it('should apply createSvelarApp CSRF defaults to generated-app style API routes', async () => {
+    const { handle } = createSvelarApp({
+      secret: 'csrf-test-secret',
+      rateLimit: 1000,
+    });
+
+    async function run(pathname: string, headers: Record<string, string> = {}) {
+      const ctx = createCtx({
+        method: 'POST',
+        pathname,
+        origin: 'http://localhost',
+        headers,
+      });
+      return handle({
+        event: ctx.event,
+        resolve: async () => new Response('ok'),
+      });
+    }
+
+    await expect(run('/api/posts')).resolves.toMatchObject({ status: 419 });
+    await expect(run('/api/posts', { authorization: 'Bearer token' })).resolves.toMatchObject({ status: 200 });
+    await expect(run('/api/webhooks/stripe')).resolves.toMatchObject({ status: 200 });
+    await expect(run('/api/internal/broadcast')).resolves.toMatchObject({ status: 200 });
+  });
+
+  it('should default createSvelarApp secret from APP_KEY', async () => {
+    const previous = process.env.APP_KEY;
+    process.env.APP_KEY = 'env-app-key-secret';
+
+    try {
+      const { handle } = createSvelarApp({ rateLimit: 1000 });
+      const ctx = createCtx({ method: 'GET', pathname: '/dashboard' });
+      const response = await handle({
+        event: ctx.event,
+        resolve: async () => new Response('ok'),
+      });
+
+      expect(response.status).toBe(200);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.APP_KEY;
+      } else {
+        process.env.APP_KEY = previous;
+      }
+    }
   });
 });
 

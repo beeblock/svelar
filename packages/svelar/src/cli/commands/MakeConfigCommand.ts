@@ -44,6 +44,7 @@ export default {
       database: env('DB_NAME', 'svelar_db'),
       user: env('DB_USER', 'postgres'),
       password: env('DB_PASSWORD', ''),
+      prepare: env<boolean>('DB_PREPARE', env('DB_HOST', 'localhost') !== 'pgbouncer'),
     },
 
     mysql: {
@@ -87,19 +88,48 @@ export default {
     mail: `import { env } from '@beeblock/svelar/config';
 
 export default {
-  driver: env('MAIL_DRIVER', 'log'),
+  default: env('MAIL_DRIVER', 'log'),
 
   from: {
     address: env('MAIL_FROM', 'hello@example.com'),
     name: env('MAIL_FROM_NAME', 'Svelar'),
   },
 
-  smtp: {
-    host: env('MAIL_HOST', 'localhost'),
-    port: env<number>('MAIL_PORT', 587),
-    user: env('MAIL_USER', ''),
-    password: env('MAIL_PASSWORD', ''),
-    secure: env<boolean>('MAIL_SECURE', false),
+  mailers: {
+    log: {
+      driver: 'log' as const,
+    },
+
+    null: {
+      driver: 'null' as const,
+    },
+
+    smtp: {
+      driver: 'smtp' as const,
+      host: env('MAIL_HOST', env('SMTP_HOST', 'localhost')),
+      port: env<number>('MAIL_PORT', env<number>('SMTP_PORT', 587)),
+      secure: env<boolean>('MAIL_SECURE', false),
+      auth: {
+        user: env('MAIL_USER', env('SMTP_USER', '')),
+        pass: env('MAIL_PASSWORD', env('SMTP_PASSWORD', '')),
+      },
+    },
+
+    postmark: {
+      driver: 'postmark' as const,
+      apiToken: env('POSTMARK_API_TOKEN', ''),
+      messageStream: env('POSTMARK_MESSAGE_STREAM', 'outbound'),
+    },
+
+    resend: {
+      driver: 'resend' as const,
+      apiKey: env('RESEND_API_KEY', ''),
+    },
+
+    mailtrap: {
+      driver: 'mailtrap' as const,
+      apiToken: env('MAILTRAP_API_TOKEN', ''),
+    },
   },
 };
 `,
@@ -121,6 +151,11 @@ export default {
     redis: {
       driver: 'redis' as const,
       url: env('REDIS_URL', 'redis://localhost:6379'),
+      host: env('REDIS_HOST', 'localhost'),
+      port: env<number>('REDIS_PORT', 6379),
+      password: env('REDIS_PASSWORD', ''),
+      db: env<number>('REDIS_DB', 0),
+      prefix: 'svelar_cache:',
     },
   },
 
@@ -185,7 +220,7 @@ export default {
       endpoint: env('S3_ENDPOINT', 'http://localhost:9000'),
       accessKeyId: env('S3_ACCESS_KEY', 'svelar'),
       secretAccessKey: env('S3_SECRET_KEY', 'svelarsecret'),
-      forcePathStyle: true, // Required for RustFS/MinIO
+      forcePathStyle: true, // Required for RustFS and most S3-compatible services
     },
   },
 };

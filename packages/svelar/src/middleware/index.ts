@@ -11,4 +11,9 @@ export {
   type MiddlewareContext,
   type NextFunction,
   type MiddlewareHandler,
+  type CorsOptions,
+  type RateLimitOptions,
+  type LoggingOptions,
+  type CsrfOptions,
+  type ThrottleOptions,
 } from './Middleware.js';

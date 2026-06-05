@@ -29,8 +29,7 @@ export class SeedCommand extends Command {
     }
 
     if (!existsSync(filePath)) {
-      this.error(`Seeder not found: ${seederFile}`);
-      process.exit(1);
+      throw new Error(`Seeder not found: ${seederFile}`);
     }
 
     this.info('Running seeders...');
@@ -42,8 +41,7 @@ export class SeedCommand extends Command {
       );
 
       if (!SeederClass || typeof SeederClass !== 'function') {
-        this.error('No seeder class found in file.');
-        process.exit(1);
+        throw new Error('No seeder class found in file.');
       }
 
       const seeder = new (SeederClass as any)();
@@ -51,9 +49,7 @@ export class SeedCommand extends Command {
       this.success('Database seeded successfully.');
     } catch (err: any) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.error(`Seeding failed: ${msg}`);
-      if (err?.stack) console.error(err.stack);
-      process.exit(1);
+      throw new Error(`Seeding failed: ${msg}`);
     }
   }
 }

@@ -31,7 +31,7 @@ export class MakeTaskCommand extends Command {
 
     const content = `import { ScheduledTask } from '@beeblock/svelar/scheduler';
 
-export class ${taskName} extends ScheduledTask {
+export default class ${taskName} extends ScheduledTask {
   name = '${this.toKebabCase(taskName)}';
 
   schedule() {

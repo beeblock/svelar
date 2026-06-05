@@ -27,15 +27,13 @@ export class NewCommand extends Command {
 
     const projectName = args[0];
     if (!projectName) {
-      this.error('Please provide a project name: npx svelar new my-app');
-      process.exit(1);
+      throw new Error('Please provide a project name: npx svelar new my-app');
     }
 
     const projectDir = resolve(process.cwd(), projectName);
 
     if (existsSync(projectDir)) {
-      this.error(`Directory "${projectName}" already exists.`);
-      process.exit(1);
+      throw new Error(`Directory "${projectName}" already exists.`);
     }
 
     const flat = flags['flat'] || false;

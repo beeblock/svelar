@@ -17,6 +17,7 @@
  */
 
 import { createHmac } from 'node:crypto';
+import { Cache } from '../cache/index.js';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -130,111 +131,239 @@ export class MiddlewareStack {
 // ── Built-in Middleware ─────────────────────────────────────
 
 /** CORS Middleware */
+export interface CorsOptions {
+  origin?: string | string[];
+  methods?: string[];
+  headers?: string[];
+  /** Alias for methods, matching the public docs. */
+  allowMethods?: string[];
+  /** Alias for headers, matching the public docs. */
+  allowHeaders?: string[];
+  exposeHeaders?: string[];
+  credentials?: boolean;
+  maxAge?: number;
+}
+
 export class CorsMiddleware extends Middleware {
-  constructor(
-    private options: {
-      origin?: string | string[];
-      methods?: string[];
-      headers?: string[];
-      credentials?: boolean;
-      maxAge?: number;
-    } = {}
-  ) {
+  constructor(private options: CorsOptions = {}) {
     super();
   }
 
   async handle(ctx: MiddlewareContext, next: NextFunction): Promise<Response | void> {
+    if (ctx.event.request.method === 'OPTIONS') {
+      return new Response(null, {
+        status: 204,
+        headers: this.buildHeaders(ctx),
+      });
+    }
+
     const response = await next();
 
     // If there's no response to modify, bail
     if (!response) return;
 
-    const origin = Array.isArray(this.options.origin)
-      ? this.options.origin.join(', ')
-      : this.options.origin ?? '*';
+    const headers = this.buildHeaders(ctx);
+    headers.forEach((value, key) => {
+      response.headers.set(key, value);
+    });
 
-    response.headers.set('Access-Control-Allow-Origin', origin);
-    response.headers.set(
+    return response;
+  }
+
+  private buildHeaders(ctx: MiddlewareContext): Headers {
+    const headers = new Headers();
+    const origin = this.resolveOrigin(ctx);
+
+    if (origin) {
+      headers.set('Access-Control-Allow-Origin', origin);
+      if (origin !== '*') {
+        headers.set('Vary', 'Origin');
+      }
+    }
+
+    headers.set(
       'Access-Control-Allow-Methods',
-      (this.options.methods ?? ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS']).join(', ')
+      (this.options.methods ?? this.options.allowMethods ?? ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS']).join(', ')
     );
-    response.headers.set(
+    headers.set(
       'Access-Control-Allow-Headers',
-      (this.options.headers ?? ['Content-Type', 'Authorization']).join(', ')
+      (this.options.headers ?? this.options.allowHeaders ?? ['Content-Type', 'Authorization']).join(', ')
     );
+
+    if (this.options.exposeHeaders?.length) {
+      headers.set('Access-Control-Expose-Headers', this.options.exposeHeaders.join(', '));
+    }
 
     if (this.options.credentials) {
-      response.headers.set('Access-Control-Allow-Credentials', 'true');
+      headers.set('Access-Control-Allow-Credentials', 'true');
     }
 
     if (this.options.maxAge) {
-      response.headers.set('Access-Control-Max-Age', String(this.options.maxAge));
+      headers.set('Access-Control-Max-Age', String(this.options.maxAge));
     }
 
-    // Handle preflight
-    if (ctx.event.request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: response.headers });
+    return headers;
+  }
+
+  private resolveOrigin(ctx: MiddlewareContext): string | null {
+    const requestOrigin = ctx.event.request.headers.get('origin');
+    const configured = this.options.origin;
+
+    if (configured === undefined || configured === '*') {
+      return this.options.credentials && requestOrigin ? requestOrigin : '*';
     }
 
-    return response;
+    if (Array.isArray(configured)) {
+      if (configured.includes('*')) {
+        return this.options.credentials && requestOrigin ? requestOrigin : '*';
+      }
+      if (requestOrigin && configured.includes(requestOrigin)) {
+        return requestOrigin;
+      }
+      return null;
+    }
+
+    return configured;
   }
 }
 
 /** Rate Limiting Middleware */
+export interface RateLimitOptions {
+  maxRequests?: number;
+  windowMs?: number;
+  /** Override the identity used for limiting. Defaults to client IP. */
+  keyGenerator?: (ctx: MiddlewareContext) => string | Promise<string>;
+  /** Override the 429 response. */
+  handler?: (ctx: MiddlewareContext, retryAfter: number) => Response | Promise<Response>;
+  /** Use Svelar cache for shared limits across app instances. Defaults to in-memory. */
+  store?: 'memory' | 'cache';
+  /** Cache store name when store is "cache". Defaults to the configured default cache store. */
+  cacheStore?: string;
+  /** Prefix for rate-limit keys. */
+  prefix?: string;
+}
+
 export class RateLimitMiddleware extends Middleware {
   private requests = new Map<string, { count: number; resetAt: number }>();
   private maxRequests: number;
   private windowMs: number;
+  private keyGenerator: (ctx: MiddlewareContext) => string | Promise<string>;
+  private handler?: (ctx: MiddlewareContext, retryAfter: number) => Response | Promise<Response>;
+  private store: 'memory' | 'cache';
+  private cacheStore?: string;
+  private prefix: string;
 
-  constructor(options: { maxRequests?: number; windowMs?: number } = {}) {
+  constructor(options: RateLimitOptions = {}) {
     super();
     this.maxRequests = options.maxRequests ?? 60;
     this.windowMs = options.windowMs ?? 60_000;
+    this.keyGenerator = options.keyGenerator ?? ((ctx) => this.defaultKey(ctx));
+    this.handler = options.handler;
+    this.store = options.store ?? 'memory';
+    this.cacheStore = options.cacheStore;
+    this.prefix = options.prefix ?? 'rate-limit';
   }
 
   async handle(ctx: MiddlewareContext, next: NextFunction): Promise<Response | void> {
-    const ip =
-      ctx.event.request.headers.get('x-forwarded-for') ??
-      ctx.event.getClientAddress?.() ??
-      'unknown';
+    const key = await this.keyGenerator(ctx);
+    const { count, resetAt } = this.store === 'cache'
+      ? await this.hitCacheStore(key)
+      : this.hitMemoryStore(key);
 
-    const now = Date.now();
-    const entry = this.requests.get(ip);
-
-    if (entry && now < entry.resetAt) {
-      if (entry.count >= this.maxRequests) {
-        return new Response(
-          JSON.stringify({ error: 'Too many requests' }),
-          {
-            status: 429,
-            headers: {
-              'Content-Type': 'application/json',
-              'Retry-After': String(Math.ceil((entry.resetAt - now) / 1000)),
-            },
-          }
-        );
+    if (count > this.maxRequests) {
+      const retryAfter = Math.max(1, Math.ceil((resetAt - Date.now()) / 1000));
+      if (this.handler) {
+        return this.handler(ctx, retryAfter);
       }
-      entry.count++;
-    } else {
-      this.requests.set(ip, { count: 1, resetAt: now + this.windowMs });
+
+      return new Response(
+        JSON.stringify({ error: 'Too many requests' }),
+        {
+          status: 429,
+          headers: {
+            'Content-Type': 'application/json',
+            'Retry-After': String(retryAfter),
+          },
+        }
+      );
     }
 
     return next();
   }
+
+  private defaultKey(ctx: MiddlewareContext): string {
+    return (
+      ctx.event.request.headers.get('x-forwarded-for') ??
+      ctx.event.getClientAddress?.() ??
+      'unknown'
+    );
+  }
+
+  private hitMemoryStore(key: string): { count: number; resetAt: number } {
+    const now = Date.now();
+    const entry = this.requests.get(key);
+
+    if (entry && now < entry.resetAt) {
+      entry.count++;
+      return entry;
+    }
+
+    const fresh = { count: 1, resetAt: now + this.windowMs };
+    this.requests.set(key, fresh);
+    return fresh;
+  }
+
+  private async hitCacheStore(key: string): Promise<{ count: number; resetAt: number }> {
+    const store = Cache.store(this.cacheStore);
+    const cacheKey = `${this.prefix}:${key}`;
+    const now = Date.now();
+    let entry = await store.get<{ count: number; resetAt: number }>(cacheKey);
+
+    if (!entry || now >= entry.resetAt) {
+      entry = { count: 1, resetAt: now + this.windowMs };
+    } else {
+      entry = { count: entry.count + 1, resetAt: entry.resetAt };
+    }
+
+    const ttl = Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
+    await store.put(cacheKey, entry, ttl);
+    return entry;
+  }
 }
 
 /** Logging Middleware */
+export interface LoggingOptions {
+  level?: 'debug' | 'info' | 'warn' | 'error';
+  format?: string;
+}
+
 export class LoggingMiddleware extends Middleware {
+  private level: 'debug' | 'info' | 'warn' | 'error';
+  private format: string;
+
+  constructor(options: LoggingOptions = {}) {
+    super();
+    this.level = options.level ?? 'info';
+    this.format = options.format ?? '[{timestamp}] {method} {path} → {status} ({duration}ms)';
+  }
+
   async handle(ctx: MiddlewareContext, next: NextFunction): Promise<Response | void> {
     const start = Date.now();
     const method = ctx.event.request.method;
-    const url = ctx.event.url.pathname;
+    const path = ctx.event.url.pathname;
 
     const response = await next();
 
     const duration = Date.now() - start;
     const status = response instanceof Response ? response.status : 200;
-    console.log(`[${new Date().toISOString()}] ${method} ${url} → ${status} (${duration}ms)`);
+    const message = this.format
+      .replaceAll('{timestamp}', new Date().toISOString())
+      .replaceAll('{method}', method)
+      .replaceAll('{path}', path)
+      .replaceAll('{status}', String(status))
+      .replaceAll('{duration}', String(duration));
+
+    console[this.level](message);
 
     return response;
   }
@@ -252,27 +381,31 @@ export class LoggingMiddleware extends Middleware {
  * Safe methods (GET, HEAD, OPTIONS) and API requests with Bearer tokens
  * are exempt since they are not vulnerable to CSRF.
  */
+export interface CsrfOptions {
+  cookieName?: string;
+  headerName?: string;
+  fieldName?: string;
+  /** Random token byte length before hex encoding (default: 32 bytes = 64 hex chars). */
+  tokenLength?: number;
+  excludePaths?: string[];
+  /** If set, CSRF validation only applies to requests matching these path prefixes */
+  onlyPaths?: string[];
+}
+
 export class CsrfMiddleware extends Middleware {
   private cookieName: string;
   private headerName: string;
   private fieldName: string;
+  private tokenLength: number;
   private excludePaths: string[];
   private onlyPaths: string[] | null;
 
-  constructor(
-    options: {
-      cookieName?: string;
-      headerName?: string;
-      fieldName?: string;
-      excludePaths?: string[];
-      /** If set, CSRF validation only applies to requests matching these path prefixes */
-      onlyPaths?: string[];
-    } = {}
-  ) {
+  constructor(options: CsrfOptions = {}) {
     super();
     this.cookieName = options.cookieName ?? 'XSRF-TOKEN';
     this.headerName = options.headerName ?? 'X-CSRF-Token';
     this.fieldName = options.fieldName ?? '_csrf';
+    this.tokenLength = options.tokenLength ?? 32;
     this.excludePaths = options.excludePaths ?? [];
     this.onlyPaths = options.onlyPaths ?? null;
   }
@@ -342,7 +475,8 @@ export class CsrfMiddleware extends Middleware {
 
   private getCookieToken(event: any): string | null {
     const cookies = event.request.headers.get('cookie') ?? '';
-    const match = cookies.match(new RegExp(`${this.cookieName}=([^;]+)`));
+    const escaped = this.cookieName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = cookies.match(new RegExp(`(?:^|;\\s*)${escaped}=([^;]+)`));
     return match ? match[1] : null;
   }
 
@@ -366,7 +500,7 @@ export class CsrfMiddleware extends Middleware {
   }
 
   private generateToken(): string {
-    const bytes = new Uint8Array(32);
+    const bytes = new Uint8Array(this.tokenLength);
     crypto.getRandomValues(bytes);
     return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
   }
@@ -590,89 +724,169 @@ export class SignatureMiddleware extends Middleware {
  * Unlike the global RateLimitMiddleware, this is designed for specific
  * sensitive routes (login, register, password reset) with lower thresholds.
  */
+export interface ThrottleOptions {
+  /** Max attempts before blocking (default: 5) */
+  maxAttempts?: number;
+  /** Decay period in minutes (default: 1) */
+  decayMinutes?: number;
+  /** Override the identity used for throttling. Defaults to client IP + path. */
+  keyGenerator?: (ctx: MiddlewareContext) => string | Promise<string>;
+  /** Use Svelar cache for shared throttles across app instances. Defaults to in-memory. */
+  store?: 'memory' | 'cache';
+  /** Cache store name when store is "cache". Defaults to the configured default cache store. */
+  cacheStore?: string;
+  /** Prefix for throttle keys. */
+  prefix?: string;
+}
+
 export class ThrottleMiddleware extends Middleware {
-  private attempts = new Map<string, { count: number; blockedUntil: number }>();
+  private attempts = new Map<string, { count: number; blockedUntil: number; resetAt: number }>();
   private maxAttempts: number;
   private decayMinutes: number;
+  private keyGenerator: (ctx: MiddlewareContext) => string | Promise<string>;
+  private store: 'memory' | 'cache';
+  private cacheStore?: string;
+  private prefix: string;
 
-  constructor(
-    options: {
-      /** Max attempts before blocking (default: 5) */
-      maxAttempts?: number;
-      /** Decay period in minutes (default: 1) */
-      decayMinutes?: number;
-    } = {}
-  ) {
+  constructor(options: ThrottleOptions = {}) {
     super();
     this.maxAttempts = options.maxAttempts ?? 5;
     this.decayMinutes = options.decayMinutes ?? 1;
+    this.keyGenerator = options.keyGenerator ?? ((ctx) => this.defaultKey(ctx));
+    this.store = options.store ?? 'memory';
+    this.cacheStore = options.cacheStore;
+    this.prefix = options.prefix ?? 'throttle';
   }
 
   async handle(ctx: MiddlewareContext, next: NextFunction): Promise<Response | void> {
-    const ip =
-      ctx.event.request.headers.get('x-forwarded-for') ??
-      ctx.event.getClientAddress?.() ??
-      'unknown';
-    const key = `${ip}:${ctx.event.url.pathname}`;
+    const block = await this.check(ctx);
+    if (block.blocked) {
+      return this.blockedResponse(block.retryAfter);
+    }
+
+    const response = await next();
+
+    if (this.isFailure(response)) {
+      await this.hit(ctx);
+    }
+
+    return response;
+  }
+
+  async check(ctx: MiddlewareContext): Promise<{ blocked: boolean; retryAfter: number }> {
     const now = Date.now();
-    const entry = this.attempts.get(key);
+    const key = await this.keyGenerator(ctx);
+    const entry = await this.getEntry(key);
 
     if (entry) {
       if (now < entry.blockedUntil) {
-        const retryAfter = Math.ceil((entry.blockedUntil - now) / 1000);
-        return new Response(
-          JSON.stringify({
-            message: 'Too many attempts. Please try again later.',
-            retry_after: retryAfter,
-          }),
-          {
-            status: 429,
-            headers: {
-              'Content-Type': 'application/json',
-              'Retry-After': String(retryAfter),
-            },
-          }
-        );
+        return { blocked: true, retryAfter: Math.ceil((entry.blockedUntil - now) / 1000) };
       }
 
       if (entry.count >= this.maxAttempts) {
         entry.blockedUntil = now + this.decayMinutes * 60_000;
         entry.count = 0;
-        const retryAfter = this.decayMinutes * 60;
-        return new Response(
-          JSON.stringify({
-            message: 'Too many attempts. Please try again later.',
-            retry_after: retryAfter,
-          }),
-          {
-            status: 429,
-            headers: {
-              'Content-Type': 'application/json',
-              'Retry-After': String(retryAfter),
-            },
-          }
-        );
+        await this.putEntry(key, entry);
+        return { blocked: true, retryAfter: this.decayMinutes * 60 };
       }
     }
 
-    const response = await next();
+    return { blocked: false, retryAfter: 0 };
+  }
 
-    // Only count failed attempts (4xx responses)
-    if (response instanceof Response && response.status >= 400 && response.status < 500) {
-      const current = this.attempts.get(key) ?? { count: 0, blockedUntil: 0 };
-      current.count++;
-      this.attempts.set(key, current);
+  async hit(ctx: MiddlewareContext): Promise<void> {
+    const now = Date.now();
+    const key = await this.keyGenerator(ctx);
+    const current = (await this.getEntry(key)) ?? { count: 0, blockedUntil: 0, resetAt: now + this.decayMinutes * 60_000 };
+    current.count++;
+    current.resetAt = current.resetAt || now + this.decayMinutes * 60_000;
+    await this.putEntry(key, current);
 
-      // Clean up old entries periodically
-      if (this.attempts.size > 10000) {
-        for (const [k, v] of this.attempts) {
-          if (now > v.blockedUntil + this.decayMinutes * 60_000 * 2) {
-            this.attempts.delete(k);
-          }
+    // Clean up old entries periodically
+    if (this.store === 'memory' && this.attempts.size > 10000) {
+      for (const [k, v] of this.attempts) {
+        if (now > v.blockedUntil + this.decayMinutes * 60_000 * 2) {
+          this.attempts.delete(k);
         }
       }
     }
+  }
 
-    return response;
+  async clear(ctx: MiddlewareContext): Promise<void> {
+    const key = await this.keyGenerator(ctx);
+    await this.forgetEntry(key);
+  }
+
+  private blockedResponse(retryAfter: number): Response {
+    return new Response(
+      JSON.stringify({
+        message: 'Too many attempts. Please try again later.',
+        retry_after: retryAfter,
+      }),
+      {
+        status: 429,
+        headers: {
+          'Content-Type': 'application/json',
+          'Retry-After': String(retryAfter),
+        },
+      }
+    );
+  }
+
+  private isFailure(response: any): boolean {
+    const status = response instanceof Response ? response.status : response?.status;
+    return typeof status === 'number' && status >= 400 && status < 500;
+  }
+
+  private defaultKey(ctx: MiddlewareContext): string {
+    const ip =
+      ctx.event.request.headers.get('x-forwarded-for') ??
+      ctx.event.getClientAddress?.() ??
+      'unknown';
+    return `${ip}:${ctx.event.url.pathname}`;
+  }
+
+  private cacheKey(key: string): string {
+    return `${this.prefix}:${key}`;
+  }
+
+  private async getEntry(key: string): Promise<{ count: number; blockedUntil: number; resetAt: number } | undefined> {
+    const now = Date.now();
+    let entry: { count: number; blockedUntil: number; resetAt: number } | undefined;
+
+    if (this.store === 'cache') {
+      entry = (await Cache.store(this.cacheStore).get<{ count: number; blockedUntil: number; resetAt: number }>(this.cacheKey(key))) ?? undefined;
+    } else {
+      entry = this.attempts.get(key);
+    }
+
+    if (entry && now >= entry.resetAt && now >= entry.blockedUntil) {
+      await this.forgetEntry(key);
+      return undefined;
+    }
+
+    return entry;
+  }
+
+  private async putEntry(key: string, entry: { count: number; blockedUntil: number; resetAt: number }): Promise<void> {
+    if (this.store === 'cache') {
+      const ttl = Math.max(
+        1,
+        Math.ceil((Math.max(entry.blockedUntil, entry.resetAt) - Date.now()) / 1000),
+      );
+      await Cache.store(this.cacheStore).put(this.cacheKey(key), entry, ttl);
+      return;
+    }
+
+    this.attempts.set(key, entry);
+  }
+
+  private async forgetEntry(key: string): Promise<void> {
+    if (this.store === 'cache') {
+      await Cache.store(this.cacheStore).forget(this.cacheKey(key));
+      return;
+    }
+
+    this.attempts.delete(key);
   }
 }

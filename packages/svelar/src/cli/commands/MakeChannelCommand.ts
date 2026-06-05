@@ -69,12 +69,11 @@ export class MakeChannelCommand extends Command {
  */
 export function register${className}(): void {
   Broadcast.channel('${pattern}', async (user, { ${paramName} }) => {
-    // TODO: Check if the user is authorized to access this channel
-    // Example:
-    // const ${modelName.toLowerCase()} = await ${modelName}.findOrFail(${paramName});
-    // return ${modelName.toLowerCase()}.user_id === user.id;
+    if (!user) return false;
 
-    return !!user;
+    // Load ${modelName} or membership data here and return true only when this user owns
+    // or can access the requested channel resource.
+    return false;
   });
 }
 `;
@@ -92,18 +91,16 @@ export function register${className}(): void {
  */
 export function register${className}(): void {
   Broadcast.channel('${pattern}', async (user, { ${paramName} }) => {
-    // TODO: Check if the user is authorized to join this channel
-    // Example:
-    // const ${modelName.toLowerCase()} = await ${modelName}.findOrFail(${paramName});
-    // if (!${modelName.toLowerCase()}.hasMember(user.id)) return false;
-
     if (!user) return false;
 
-    // Return user info visible to other presence members
+    // Load ${modelName} or membership data here and return user info only when this user
+    // can access the requested presence channel resource.
+    const canJoin = false;
+    if (!canJoin) return false;
+
     return {
       id: user.id,
       name: user.name,
-      // avatar: user.avatar,
     };
   });
 }

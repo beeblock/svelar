@@ -12,7 +12,10 @@
  * import { createSvelarApp } from '@beeblock/svelar/hooks';
  * import { auth } from './app';
  *
- * export const { handle, handleError } = createSvelarApp({ auth });
+ * export const { handle, handleError } = createSvelarApp({
+ *   auth,
+ *   secret: process.env.APP_KEY,
+ * });
  * ```
  *
  * @example Advanced (manual pipeline)
@@ -76,10 +79,16 @@ export interface SvelarAppConfig {
   /** Rate limit: window in ms (default: 60000 = 1min) */
   rateLimitWindow?: number;
 
+  /** Rate limit storage (default: memory). Use "cache" with Redis cache for multi-instance production apps. */
+  rateLimitStore?: 'memory' | 'cache';
+
+  /** Cache store name when rateLimitStore is "cache" */
+  rateLimitCacheStore?: string;
+
   /** CSRF: paths to protect (default: ['/api/']) */
   csrfPaths?: string[];
 
-  /** CSRF: paths to exclude (default: ['/api/webhooks']) */
+  /** CSRF: paths to exclude (default: ['/api/webhooks', '/api/internal/']) */
   csrfExcludePaths?: string[];
 
   /** Auth throttle: max login attempts (default: 5) */
@@ -87,6 +96,12 @@ export interface SvelarAppConfig {
 
   /** Auth throttle: decay in minutes (default: 1) */
   authThrottleDecay?: number;
+
+  /** Auth throttle storage (default: same as rateLimitStore) */
+  authThrottleStore?: 'memory' | 'cache';
+
+  /** Cache store name when authThrottleStore is "cache" */
+  authThrottleCacheStore?: string;
 
   /** Enable debug error output (default: auto from NODE_ENV) */
   debug?: boolean;
@@ -142,15 +157,19 @@ export interface SvelarAppConfig {
 export function createSvelarApp(appConfig: SvelarAppConfig = {}) {
   const {
     auth,
-    secret = (() => { throw new Error('APP_KEY is not set. Pass `secret` to createSvelarApp() — e.g. secret: env.APP_KEY (from $env/dynamic/private).'); })(),
+    secret = process.env.APP_KEY ?? (() => { throw new Error('APP_KEY is not set. Set it in your environment or pass `secret` to createSvelarApp() — e.g. secret: process.env.APP_KEY.'); })(),
     sessionStore,
     sessionLifetime = 86400,
     rateLimit = 100,
     rateLimitWindow = 60_000,
+    rateLimitStore = 'memory',
+    rateLimitCacheStore,
     csrfPaths = ['/api/'],
-    csrfExcludePaths = ['/api/webhooks'],
+    csrfExcludePaths = ['/api/webhooks', '/api/internal/'],
     authThrottleAttempts = 5,
     authThrottleDecay = 1,
+    authThrottleStore = rateLimitStore,
+    authThrottleCacheStore = rateLimitCacheStore,
     debug = process.env.NODE_ENV !== 'production',
     middleware: extraMiddleware = [],
     namedMiddleware: extraNamedMiddleware = {},
@@ -161,7 +180,12 @@ export function createSvelarApp(appConfig: SvelarAppConfig = {}) {
   // Build default middleware stack
   const defaultMiddleware: Array<Middleware | MiddlewareHandler> = [
     new OriginMiddleware(),
-    new RateLimitMiddleware({ maxRequests: rateLimit, windowMs: rateLimitWindow }),
+    new RateLimitMiddleware({
+      maxRequests: rateLimit,
+      windowMs: rateLimitWindow,
+      store: rateLimitStore,
+      cacheStore: rateLimitCacheStore,
+    }),
     new CsrfMiddleware({ onlyPaths: csrfPaths, excludePaths: csrfExcludePaths }),
     new SessionMiddleware({
       store: sessionStore ?? new DatabaseSessionStore(),
@@ -183,6 +207,8 @@ export function createSvelarApp(appConfig: SvelarAppConfig = {}) {
     'auth-throttle': new ThrottleMiddleware({
       maxAttempts: authThrottleAttempts,
       decayMinutes: authThrottleDecay,
+      store: authThrottleStore,
+      cacheStore: authThrottleCacheStore,
     }),
     ...extraNamedMiddleware as any,
   };

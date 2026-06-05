@@ -233,8 +233,8 @@ export class MakeDockerCommand extends Command {
 
     if (rustfs) {
       lines.push('      - S3_ENDPOINT=http://rustfs:9000');
-      lines.push('      - S3_ACCESS_KEY=${RUSTFS_ROOT_USER:-svelar}');
-      lines.push('      - S3_SECRET_KEY=${RUSTFS_ROOT_PASSWORD:-svelarsecret}');
+      lines.push('      - S3_ACCESS_KEY=${RUSTFS_ACCESS_KEY:-svelar}');
+      lines.push('      - S3_SECRET_KEY=${RUSTFS_SECRET_KEY:-svelarsecret}');
       lines.push('      - S3_BUCKET=${S3_BUCKET:-svelar}');
       lines.push('      - S3_REGION=us-east-1');
       lines.push('      - STORAGE_DISK=s3');
@@ -473,13 +473,15 @@ export class MakeDockerCommand extends Command {
       lines.push('    ports:');
       lines.push('      - "${RUSTFS_CONSOLE_PORT:-9001}:9001"   # Admin console (protect with firewall)');
       lines.push('    environment:');
-      lines.push('      RUSTFS_ROOT_USER: ${RUSTFS_ROOT_USER:-svelar}');
-      lines.push('      RUSTFS_ROOT_PASSWORD: ${RUSTFS_ROOT_PASSWORD:-svelarsecret}');
-      lines.push('    command: server /data --console-address ":9001"');
+      lines.push('      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-svelar}');
+      lines.push('      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-svelarsecret}');
+      lines.push('      RUSTFS_CONSOLE_ENABLE: "true"');
+      lines.push('      RUSTFS_ADDRESS: ":9000"');
+      lines.push('    command: /data');
       lines.push('    volumes:');
       lines.push('      - rustfs_data:/data');
       lines.push('    healthcheck:');
-      lines.push('      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]');
+      lines.push('      test: ["CMD-SHELL", "curl -s -o /dev/null http://localhost:9000/"]');
       lines.push('      interval: 10s');
       lines.push('      timeout: 5s');
       lines.push('      retries: 5');

@@ -30,7 +30,7 @@ export { Application } from './container/Application.js';
 
 // Middleware
 export { Middleware, MiddlewareStack, CorsMiddleware, RateLimitMiddleware, LoggingMiddleware, CsrfMiddleware, OriginMiddleware, ThrottleMiddleware, SignatureMiddleware } from './middleware/Middleware.js';
-export type { MiddlewareContext, NextFunction, MiddlewareHandler } from './middleware/Middleware.js';
+export type { MiddlewareContext, NextFunction, MiddlewareHandler, CorsOptions, RateLimitOptions, LoggingOptions, CsrfOptions, ThrottleOptions } from './middleware/Middleware.js';
 
 // Routing & Controllers
 export { Controller, resource, ValidationError, NotFoundError, UnauthorizedError, ForbiddenError } from './routing/Controller.js';

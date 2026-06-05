@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { config, env } from '../src/config/Config';
 
@@ -53,6 +56,60 @@ describe('ConfigManager', () => {
       config.load({});
 
       expect(config.all()).toEqual({});
+    });
+  });
+
+  describe('loadFromDirectory', () => {
+    it('loads configuration files from a directory', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'svelar-config-'));
+
+      try {
+        await writeFile(join(root, 'app.js'), 'export default { name: "Svelar", debug: true };', 'utf-8');
+        await writeFile(join(root, 'database.js'), 'export const config = { default: "sqlite" };', 'utf-8');
+
+        await expect(config.loadFromDirectory(root)).resolves.toEqual(['app', 'database']);
+        expect(config.get('app.name')).toBe('Svelar');
+        expect(config.get('app.debug')).toBe(true);
+        expect(config.get('database.default')).toBe('sqlite');
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+
+    it('keeps missing config directories as a no-op', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'svelar-config-missing-'));
+      const missing = join(root, 'config');
+
+      try {
+        await expect(config.loadFromDirectory(missing)).resolves.toEqual([]);
+        expect(config.all()).toEqual({});
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+
+    it('throws when a config file does not export an object', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'svelar-config-invalid-'));
+
+      try {
+        await writeFile(join(root, 'app.js'), 'export default "not config";', 'utf-8');
+
+        await expect(config.loadFromDirectory(root)).rejects.toThrow('must export a configuration object');
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+
+    it('throws when a config file fails to import', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'svelar-config-broken-'));
+
+      try {
+        await writeFile(join(root, 'app.js'), 'export default { name: ;', 'utf-8');
+
+        await expect(config.loadFromDirectory(root)).rejects.toThrow();
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
     });
   });
 

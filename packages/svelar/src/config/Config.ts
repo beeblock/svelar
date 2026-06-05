@@ -89,21 +89,18 @@ class ConfigManager {
     for (const file of files) {
       const key = basename(file, extname(file)); // 'database.ts' → 'database'
       const filePath = resolve(fullPath, file);
+      const fileUrl = pathToFileURL(filePath).href;
+      const mod = await import(fileUrl);
 
-      try {
-        const fileUrl = pathToFileURL(filePath).href;
-        const mod = await import(fileUrl);
+      // Support: export default { ... } or export const config = { ... }
+      const configObj = mod.default ?? mod.config ?? mod;
 
-        // Support: export default { ... } or export const config = { ... }
-        const configObj = mod.default ?? mod.config ?? mod;
-
-        if (configObj && typeof configObj === 'object' && !Array.isArray(configObj)) {
-          this.set(key, configObj);
-          loaded.push(key);
-        }
-      } catch {
-        // Skip files that fail to import
+      if (!configObj || typeof configObj !== 'object' || Array.isArray(configObj)) {
+        throw new Error(`Config file "${file}" must export a configuration object.`);
       }
+
+      this.set(key, configObj);
+      loaded.push(key);
     }
 
     return loaded;

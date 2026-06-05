@@ -30,13 +30,9 @@ export class MigrateCommand extends Command {
     // Check production safety for destructive operations
     const activeDestructive = this.destructiveFlags.find((f) => flags[f]);
     if (activeDestructive && this.isProduction() && !flags.force) {
-      this.error(
-        `The --${activeDestructive} flag is destructive and cannot be run in production.`
+      throw new Error(
+        `The --${activeDestructive} flag is destructive and cannot be run in production. Use --force to run this command in production: npx svelar migrate --${activeDestructive} --force`
       );
-      this.error(
-        `Use --force to run this command in production: npx svelar migrate --${activeDestructive} --force`
-      );
-      process.exit(1);
     }
 
     // Dynamically import to avoid loading DB deps at CLI parse time
