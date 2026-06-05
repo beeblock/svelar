@@ -34,7 +34,15 @@
     "smoke:browser:headed": "node scripts/release-smoke.mjs --app ddd --browser --headed --slow-mo 350",
     "smoke:prod": "node scripts/release-smoke.mjs --app ddd --browser --prod",
     "smoke:db": "node scripts/release-smoke.mjs --app ddd --db all --services",
-    "smoke:db:prod": "node scripts/release-smoke.mjs --app ddd --db all --services --browser --prod"
+    "smoke:db:prod": "node scripts/release-smoke.mjs --app ddd --db all --services --browser --prod",
+    "smoke:redis": "node scripts/release-smoke.mjs --app ddd --db sqlite --redis --skip-shadcn --skip-build",
+    "smoke:pdf": "node scripts/release-smoke.mjs --app ddd --db sqlite --gotenberg --skip-shadcn --skip-build",
+    "smoke:search": "node scripts/release-smoke.mjs --app ddd --db sqlite --meilisearch --skip-shadcn --skip-build",
+    "smoke:pgbouncer": "node scripts/release-smoke.mjs --app ddd --db postgres --pgbouncer --skip-shadcn --skip-build",
+    "smoke:s3": "node scripts/release-smoke.mjs --app ddd --db sqlite --s3 --skip-shadcn --skip-build",
+    "certify": "node scripts/certify-release.mjs",
+    "certify:fast": "node scripts/certify-release.mjs --fast",
+    "certify:inventory": "node scripts/certify-release.mjs --inventory"
   },
   "devDependencies": {
     "typescript": "^5.7.0"
