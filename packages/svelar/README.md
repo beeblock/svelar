@@ -123,6 +123,7 @@ Most first-party facades are also available from the root package, for example `
 ```bash
 npx svelar new my-app                  # scaffold with shadcn-svelte + all components
 npx svelar update                      # update scaffold files without overwriting
+npx svelar make:entity Invoice --module billing --fields "title:string,total:number" --crud
 npx svelar make:model Post -m -c       # model + migration + controller
 npx svelar make:service PaymentService # service class
 npx svelar make:job SendEmail          # queue job

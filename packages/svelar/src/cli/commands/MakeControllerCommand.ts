@@ -30,7 +30,7 @@ export class MakeControllerCommand extends Command {
       this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
     }
 
-    const moduleDir = this.moduleDir(moduleName, 'controllers');
+    const moduleDir = this.moduleDir(moduleName, 'controllers', 'controller');
     mkdirSync(moduleDir, { recursive: true });
 
     const filePath = join(moduleDir, `${controllerName}.ts`);
@@ -40,14 +40,14 @@ export class MakeControllerCommand extends Command {
     }
 
     const modelImportPath = flags.model
-      ? (this.isDDD() ? `./${flags.model}.js` : `../models/${flags.model}.js`)
+      ? this.moduleImportPath(moduleName, 'controller', 'model', flags.model)
       : undefined;
     const content = flags.resource
       ? this.generateResourceController(controllerName, flags.model, modelImportPath)
       : this.generateBasicController(controllerName);
 
     writeFileSync(filePath, content);
-    const relDir = this.isDDD() ? `src/lib/modules/${moduleName}` : 'src/lib/controllers';
+    const relDir = this.moduleRelDir(moduleName, 'controllers', 'controller');
     this.success(`Controller created: ${relDir}/${controllerName}.ts`);
   }
 

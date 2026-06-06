@@ -30,7 +30,7 @@ export class MakeServiceCommand extends Command {
       this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
     }
 
-    const moduleDir = this.moduleDir(moduleName, 'services');
+    const moduleDir = this.moduleDir(moduleName, 'services', 'service');
     mkdirSync(moduleDir, { recursive: true });
 
     const filePath = join(moduleDir, `${serviceName}.ts`);
@@ -41,14 +41,14 @@ export class MakeServiceCommand extends Command {
 
     const modelName = flags.crud ? this.resolveCrudModel(baseName, moduleName, flags.model) : undefined;
     const modelImportPath = modelName
-      ? (this.isDDD() ? `./${modelName}.js` : `../models/${modelName}.js`)
+      ? this.moduleImportPath(moduleName, 'service', 'model', modelName)
       : undefined;
     const content = flags.crud
       ? this.generateCrudService(serviceName, modelName!, modelImportPath!)
       : this.generateBasicService(serviceName);
 
     writeFileSync(filePath, content);
-    const relDir = this.isDDD() ? `src/lib/modules/${moduleName}` : 'src/lib/services';
+    const relDir = this.moduleRelDir(moduleName, 'services', 'service');
     this.success(`Service created: ${relDir}/${serviceName}.ts`);
   }
 
@@ -56,7 +56,7 @@ export class MakeServiceCommand extends Command {
     if (explicitModel) return explicitModel;
 
     const modelDir = this.isDDD()
-      ? join(process.cwd(), 'src', 'lib', 'modules', moduleName)
+      ? this.moduleDir(moduleName, 'models', 'model')
       : join(process.cwd(), 'src', 'lib', 'models');
     const models = this.findModelsInDir(modelDir);
 

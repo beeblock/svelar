@@ -26,7 +26,7 @@ export class MakeEventCommand extends Command {
       this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
     }
 
-    const moduleDir = this.moduleDir(moduleName, 'events');
+    const moduleDir = this.moduleDir(moduleName, 'events', 'event');
     mkdirSync(moduleDir, { recursive: true });
 
     const filePath = join(moduleDir, `${name}.ts`);
@@ -56,7 +56,7 @@ export class ${name} {
 `;
 
     writeFileSync(filePath, content);
-    const relDir = this.isDDD() ? `src/lib/modules/${moduleName}` : 'src/lib/events';
+    const relDir = this.moduleRelDir(moduleName, 'events', 'event');
     this.success(`Event created: ${relDir}/${name}.ts`);
   }
 }

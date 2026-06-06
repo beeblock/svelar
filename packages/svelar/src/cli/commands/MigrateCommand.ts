@@ -5,7 +5,6 @@
 import { Command } from '../Command.js';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 
 export class MigrateCommand extends Command {
   name = 'migrate';
@@ -184,8 +183,8 @@ export class MigrateCommand extends Command {
     for (const file of files) {
       const filePath = join(dir, file);
       try {
-        const module = await import(pathToFileURL(filePath).href);
-        const MigrationClass = module.default ?? Object.values(module).find(
+        const module = await this.importUserModule(filePath);
+        const MigrationClass = [module.default, ...Object.values(module)].find(
           (v: any) => typeof v === 'function' && v.prototype && typeof v.prototype.up === 'function'
         );
 

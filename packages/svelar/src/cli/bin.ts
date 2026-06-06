@@ -11,6 +11,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { register } from 'node:module';
 import { readFileSync, existsSync } from 'node:fs';
+import { createJiti } from 'jiti';
 
 // Load .env file (zero-dependency, won't override existing env vars)
 const envPath = join(process.cwd(), '.env');
@@ -40,6 +41,7 @@ import { Cli } from './Cli.js';
 
 // Code generators
 import { MakeModelCommand } from './commands/MakeModelCommand.js';
+import { MakeEntityCommand } from './commands/MakeEntityCommand.js';
 import { MakeMigrationCommand } from './commands/MakeMigrationCommand.js';
 import { MakeControllerCommand } from './commands/MakeControllerCommand.js';
 import { MakeMiddlewareCommand } from './commands/MakeMiddlewareCommand.js';
@@ -95,6 +97,9 @@ import { QueueFailedCommand } from './commands/QueueFailedCommand.js';
 import { QueueRetryCommand } from './commands/QueueRetryCommand.js';
 import { QueueFlushCommand } from './commands/QueueFlushCommand.js';
 
+// Search
+import { SearchSetupCommand } from './commands/SearchSetupCommand.js';
+
 // Utilities
 import { TinkerCommand } from './commands/TinkerCommand.js';
 
@@ -121,6 +126,7 @@ cli.register(NewCommand);
 cli.register(UpdateCommand);
 cli.register(KeyGenerateCommand);
 cli.register(MakeModelCommand);
+cli.register(MakeEntityCommand);
 cli.register(MakeMigrationCommand);
 cli.register(MakeControllerCommand);
 cli.register(MakeMiddlewareCommand);
@@ -160,6 +166,7 @@ cli.register(QueueWorkCommand);
 cli.register(QueueFailedCommand);
 cli.register(QueueRetryCommand);
 cli.register(QueueFlushCommand);
+cli.register(SearchSetupCommand);
 cli.register(TinkerCommand);
 cli.register(PluginListCommand);
 cli.register(PluginPublishCommand);
@@ -183,12 +190,27 @@ cli.register(ProdDeployCommand);
 async function discoverUserCommands(): Promise<void> {
   const { join } = await import('node:path');
   const { existsSync, readdirSync } = await import('node:fs');
-  const { pathToFileURL } = await import('node:url');
 
   const commandDirs = [
     join(process.cwd(), 'src', 'lib', 'shared', 'commands'),
     join(process.cwd(), 'src', 'lib', 'commands'),
   ].filter((dir, index, dirs) => existsSync(dir) && dirs.indexOf(dir) === index);
+
+  if (commandDirs.length === 0) return;
+
+  const libPath = join(process.cwd(), 'src', 'lib');
+  let jiti: ReturnType<typeof createJiti>;
+  try {
+    jiti = createJiti(pathToFileURL(join(process.cwd(), 'svelar-cli.mjs')).href, {
+      alias: {
+        '$lib': libPath,
+        '$lib/*': `${libPath}/*`,
+      },
+      tsconfigPaths: true,
+    });
+  } catch {
+    return;
+  }
 
   for (const commandsDir of commandDirs) {
     const files = readdirSync(commandsDir).filter(
@@ -198,11 +220,11 @@ async function discoverUserCommands(): Promise<void> {
     for (const file of files) {
       try {
         const filePath = join(commandsDir, file);
-        const fileUrl = pathToFileURL(filePath).href;
-        const mod = await import(fileUrl);
+        const mod = filePath.endsWith('.ts')
+          ? await jiti.import(filePath)
+          : await import(pathToFileURL(filePath).href);
 
-        // Try default export first, then named exports
-        const CommandClass = mod.default ?? Object.values(mod).find(
+        const CommandClass = [mod.default, ...Object.values(mod)].find(
           (v: any) => typeof v === 'function' && v.prototype && 'handle' in v.prototype
         );
 
@@ -216,5 +238,9 @@ async function discoverUserCommands(): Promise<void> {
   }
 }
 
-// Discover user commands then run
-discoverUserCommands().then(() => cli.run());
+// Discover user commands then run. Finite CLI commands can bootstrap app
+// services that leave open handles; force a clean process exit after the
+// command has completed and Cli teardown has run.
+discoverUserCommands()
+  .then(() => cli.run())
+  .then(() => process.exit(0));

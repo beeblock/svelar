@@ -60,6 +60,10 @@ class WebhookManager {
     this.config = { ...this.config, ...config };
   }
 
+  private toBoolean(value: unknown): boolean {
+    return value === true || value === 1 || value === '1' || value === 'true' || value === 't';
+  }
+
   private endpointsTable(): string {
     return assertSqlIdentifier(this.config.table ?? 'webhooks', 'Webhooks table name');
   }
@@ -83,7 +87,7 @@ class WebhookManager {
       url: row.url,
       events: JSON.parse(row.events),
       secret: row.secret,
-      active: Boolean(row.active),
+      active: this.toBoolean(row.active),
       metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
       createdAt: row.created_at ?? row.createdAt ?? row.createdat,
     };
@@ -180,7 +184,7 @@ class WebhookManager {
         url: record.url,
         events: JSON.stringify(record.events),
         secret: record.secret,
-        active: record.active ? 1 : 0,
+        active: record.active,
         metadata: record.metadata ? JSON.stringify(record.metadata) : null,
         created_at: record.createdAt,
       });

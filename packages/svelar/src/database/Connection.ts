@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 /**
  * Svelar Database Connection
  *
@@ -96,6 +98,7 @@ class ConnectionManager {
   private connections = new Map<string, ActiveConnection>();
   private config: ConnectionsConfig | null = null;
   private defaultName: string = 'default';
+  private transactionClients = new AsyncLocalStorage<Map<string, any>>();
 
   /**
    * Initialize the connection manager with configuration
@@ -156,6 +159,10 @@ class ConnectionManager {
    */
   async rawClient(name?: string): Promise<any> {
     const connName = name ?? this.defaultName;
+    const transactionClient = this.transactionClients.getStore()?.get(connName);
+    if (transactionClient) {
+      return transactionClient;
+    }
 
     // Ensure connection exists
     await this.connection(connName);
@@ -252,6 +259,7 @@ class ConnectionManager {
    * Automatically commits on success, rolls back on error.
    */
   async transaction<T>(callback: () => Promise<T>, connectionName?: string): Promise<T> {
+    const connName = connectionName ?? this.defaultName;
     const config = this.getConfig(connectionName);
     const client = await this.rawClient(connectionName);
 
@@ -268,22 +276,21 @@ class ConnectionManager {
         }
       }
       case 'postgres': {
-        // postgres.js uses sql`...` template strings
-        await client`BEGIN`;
-        try {
-          const result = await callback();
-          await client`COMMIT`;
-          return result;
-        } catch (err) {
-          await client`ROLLBACK`;
-          throw err;
-        }
+        return client.begin(async (tx: any) => {
+          const current = this.transactionClients.getStore();
+          const scoped = new Map(current ?? []);
+          scoped.set(connName, tx);
+          return await this.transactionClients.run(scoped, callback);
+        });
       }
       case 'mysql': {
         const conn = await client.getConnection();
         await conn.beginTransaction();
         try {
-          const result = await callback();
+          const current = this.transactionClients.getStore();
+          const scoped = new Map(current ?? []);
+          scoped.set(connName, conn);
+          const result = await this.transactionClients.run(scoped, callback);
           await conn.commit();
           conn.release();
           return result;

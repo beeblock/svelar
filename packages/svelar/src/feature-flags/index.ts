@@ -60,6 +60,16 @@ export interface FeatureFlagDefinition {
   percentage?: number | null;
 }
 
+function toBoolean(value: unknown): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return ['1', 'true', 't', 'yes', 'y', 'on'].includes(normalized);
+  }
+  return Boolean(value);
+}
+
 // ── Manager ────────────────────────────────────────────────
 
 class FeatureFlagManager {
@@ -98,7 +108,7 @@ class FeatureFlagManager {
       id: row.id,
       name: row.name,
       description: row.description || '',
-      enabled: Boolean(row.enabled),
+      enabled: toBoolean(row.enabled),
       percentage: row.percentage != null ? Number(row.percentage) : null,
       metadata: row.metadata ? (typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata) : undefined,
       createdAt: new Date(row.created_at).getTime(),
@@ -112,7 +122,7 @@ class FeatureFlagManager {
       flagName: row.flag_name,
       scopeType: row.scope_type,
       scopeId: row.scope_id,
-      enabled: Boolean(row.enabled),
+      enabled: toBoolean(row.enabled),
       createdAt: new Date(row.created_at).getTime(),
     };
   }
@@ -156,7 +166,7 @@ class FeatureFlagManager {
         id: flag.id,
         name: flag.name,
         description: flag.description,
-        enabled: flag.enabled ? 1 : 0,
+        enabled: flag.enabled,
         percentage: flag.percentage,
         metadata: null,
         created_at: nowIso,
@@ -211,7 +221,7 @@ class FeatureFlagManager {
 
       await this.flagsQuery().where('name', name).update({
         description: desc,
-        enabled: enabled ? 1 : 0,
+        enabled,
         percentage: pct,
         metadata: meta,
         updated_at: nowIso,
@@ -347,7 +357,7 @@ class FeatureFlagManager {
           flag_name: flagName,
           scope_type: scopeType,
           scope_id: String(scopeId),
-          enabled: enabled ? 1 : 0,
+          enabled,
           created_at: nowIso,
         },
         ['flag_name', 'scope_type', 'scope_id'],

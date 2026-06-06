@@ -45,7 +45,6 @@ export class TinkerCommand extends Command {
     try {
       const { readdirSync } = await import('node:fs');
       const { join } = await import('node:path');
-      const { pathToFileURL } = await import('node:url');
 
       const { existsSync } = await import('node:fs');
       const flatDir = join(process.cwd(), 'src', 'lib', 'models');
@@ -60,23 +59,23 @@ export class TinkerCommand extends Command {
           (f) => (f.endsWith('.ts') || f.endsWith('.js')) && !f.startsWith('index')
         );
       } else if (existsSync(dddDir)) {
-        // DDD structure: scan src/lib/modules/*/  for model-like files
+        // DDD structure: scan src/lib/modules/*/domain/models/ for model files
         modelsDir = dddDir;
         for (const mod of readdirSync(dddDir, { withFileTypes: true })) {
           if (!mod.isDirectory()) continue;
-          const moduleDir = join(dddDir, mod.name);
+          const moduleDir = join(dddDir, mod.name, 'domain', 'models');
+          if (!existsSync(moduleDir)) continue;
           for (const f of readdirSync(moduleDir)) {
             if (!(f.endsWith('.ts') || f.endsWith('.js'))) continue;
-            if (f.startsWith('index') || f.includes('Controller') || f.includes('Service') || f.includes('Repository') || f.includes('Request') || f.includes('Resource') || f.includes('schema') || f.includes('gates')) continue;
-            // Remaining files are likely models (User.ts, Post.ts, etc.)
-            modelFiles.push(join(mod.name, f));
+            if (f.startsWith('index')) continue;
+            modelFiles.push(join(mod.name, 'domain', 'models', f));
           }
         }
       }
 
       for (const file of modelFiles) {
         try {
-          const mod = await import(pathToFileURL(join(modelsDir, file)).href);
+          const mod = await this.importUserModule(join(modelsDir, file));
           for (const [name, exported] of Object.entries(mod)) {
             if (typeof exported === 'function') {
               server.context[name] = exported;

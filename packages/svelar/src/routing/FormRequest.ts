@@ -6,7 +6,7 @@
  *
  * @example
  * ```ts
- * import { FormRequest } from '@beeblock/svelar/routing';
+ * import { FormRequest } from '@beeblock/svelar/forms';
  * import { z } from '@beeblock/svelar/validation';
  *
  * class CreateUserRequest extends FormRequest {

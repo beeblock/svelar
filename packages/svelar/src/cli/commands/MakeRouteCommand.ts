@@ -103,9 +103,7 @@ export class MakeRouteCommand extends Command {
       return;
     }
 
-    const importPath = this.isDDD()
-      ? `$lib/modules/${moduleName}/${controllerName}.js`
-      : `$lib/controllers/${controllerName}.js`;
+    const importPath = this.moduleAliasPath(moduleName, 'controllers', `${controllerName}.js`, 'controller');
 
     const exports = bindings
       .map((b) => `export const ${b.method} = ctrl.handle('${b.handler}');`)
@@ -157,8 +155,8 @@ ${exports}
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
       .filter((moduleName) =>
-        existsSync(join(modulesDir, moduleName, `${controllerName}.ts`))
-        || existsSync(join(modulesDir, moduleName, `${controllerName}.js`))
+        existsSync(join(modulesDir, moduleName, 'interface', 'http', 'controllers', `${controllerName}.ts`))
+        || existsSync(join(modulesDir, moduleName, 'interface', 'http', 'controllers', `${controllerName}.js`))
       );
 
     if (matches.length === 1) {

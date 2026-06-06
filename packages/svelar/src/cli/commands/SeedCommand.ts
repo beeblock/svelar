@@ -4,7 +4,6 @@
 
 import { Command } from '../Command.js';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { existsSync } from 'node:fs';
 
 export class SeedCommand extends Command {
@@ -35,8 +34,8 @@ export class SeedCommand extends Command {
     this.info('Running seeders...');
 
     try {
-      const module = await import(pathToFileURL(filePath).href);
-      const SeederClass = module.default ?? module.DatabaseSeeder ?? Object.values(module).find(
+      const module = await this.importUserModule(filePath);
+      const SeederClass = [module.DatabaseSeeder, module.default, ...Object.values(module)].find(
         (v: any) => typeof v === 'function' && v.prototype && typeof v.prototype.run === 'function'
       );
 

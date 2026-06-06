@@ -104,7 +104,8 @@ export interface ImportStreamOptions extends ImportOptions {
 
 async function getExcelJS(): Promise<any> {
   try {
-    return await import('exceljs');
+    const mod = await import('exceljs');
+    return (mod as any).default?.Workbook ? (mod as any).default : mod;
   } catch (error: any) {
     if (error.code === 'MODULE_NOT_FOUND' || error.code === 'ERR_MODULE_NOT_FOUND') {
       throw new Error('Excel support requires exceljs. Install: npm install exceljs');

@@ -159,7 +159,15 @@ describe('Feature flags', () => {
       metadata: { tier: 'enterprise' },
     });
 
+    await Features.enable(name);
+    expect(await Features.enabled(name)).toBe(true);
+    await Features.disable(name);
+    expect(await Features.enabled(name)).toBe(false);
+
     expect(await Features.enabledFor(name, 123)).toBe(true);
+    expect(await Features.enabledForTeam(name, 'enabled-team')).toBe(false);
+    await Features.enableForTeam(name, 'enabled-team');
+    expect(await Features.enabledForTeam(name, 'enabled-team')).toBe(true);
     expect(await Features.enabledForTeam(name, 456)).toBe(false);
 
     const overrides = await Features.getOverrides(name);

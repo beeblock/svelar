@@ -30,6 +30,13 @@ describe('ORM soft deletes', () => {
       table.string('title');
       table.softDeletes();
     });
+
+    await new Schema().createTable('soft_delete_post_notes', (table) => {
+      table.increments('id');
+      table.integer('post_id');
+      table.string('body');
+      table.softDeletes();
+    });
   });
 
   afterEach(async () => {
@@ -83,13 +90,35 @@ describe('ORM soft deletes', () => {
 
   it('applies soft-delete SQL scopes for model queries', () => {
     expect(SoftDeletePost.query().toSQL().sql).toBe(
-      'SELECT * FROM "soft_delete_posts" WHERE "deleted_at" IS NULL'
+      'SELECT * FROM "soft_delete_posts" WHERE "soft_delete_posts"."deleted_at" IS NULL'
     );
     expect(SoftDeletePost.withTrashed().toSQL().sql).toBe(
       'SELECT * FROM "soft_delete_posts"'
     );
     expect(SoftDeletePost.onlyTrashed().toSQL().sql).toBe(
-      'SELECT * FROM "soft_delete_posts" WHERE "deleted_at" IS NOT NULL'
+      'SELECT * FROM "soft_delete_posts" WHERE "soft_delete_posts"."deleted_at" IS NOT NULL'
     );
+  });
+
+  it('qualifies the soft-delete scope when model queries join tables with deleted_at columns', async () => {
+    const post = await SoftDeletePost.create({ title: 'Joined' });
+    await Connection.raw(
+      'INSERT INTO soft_delete_post_notes (post_id, body, deleted_at) VALUES (?, ?, ?)',
+      [post.id, 'Note', null],
+    );
+
+    const rows = await SoftDeletePost.query()
+      .select('soft_delete_posts.title', 'soft_delete_post_notes.body as note_body')
+      .join('soft_delete_post_notes', 'soft_delete_posts.id', '=', 'soft_delete_post_notes.post_id')
+      .get() as Array<SoftDeletePost & { note_body: string }>;
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].getAttribute('title')).toBe('Joined');
+    expect(rows[0].getAttribute('note_body')).toBe('Note');
+    expect(
+      SoftDeletePost.query()
+        .join('soft_delete_post_notes', 'soft_delete_posts.id', '=', 'soft_delete_post_notes.post_id')
+        .toSQL().sql,
+    ).toContain('WHERE "soft_delete_posts"."deleted_at" IS NULL');
   });
 });

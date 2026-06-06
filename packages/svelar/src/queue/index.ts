@@ -489,7 +489,7 @@ class RedisDriver implements QueueDriverInterface {
     queueName: string,
     registry: JobRegistry,
     failedStore: FailedJobStore,
-    options?: { concurrency?: number },
+    options?: { concurrency?: number; autorun?: boolean },
   ): Promise<any> {
     const bullmq = await this.getBullMQ();
     const connection = this.getRedisConnection();
@@ -507,6 +507,7 @@ class RedisDriver implements QueueDriverInterface {
         connection,
         prefix,
         concurrency: options?.concurrency ?? 1,
+        autorun: options?.autorun ?? true,
       },
     );
 
@@ -690,6 +691,10 @@ class JobRegistry {
    * Reconstruct a Job instance from its class name and serialized payload.
    */
   resolve(className: string, serializedPayload: string): Job {
+    if (className === ChainedJob.name) {
+      return ChainedJob.restoreFrom(serializedPayload, this);
+    }
+
     const JobClass = this.jobs.get(className);
     if (!JobClass) {
       throw new Error(
@@ -899,12 +904,69 @@ class QueueManager {
 
     // ── Redis / BullMQ path ──────────────────────────────────
     if (driver instanceof RedisDriver) {
+      const maxJobs = options?.maxJobs;
+      if (maxJobs !== undefined && maxJobs <= 0) {
+        return 0;
+      }
+      if (maxJobs !== undefined && await driver.size(queue) === 0) {
+        return 0;
+      }
+
+      if (maxJobs !== undefined) {
+        const worker = await driver.createWorker(queue, this.jobRegistry, this.failedStore, {
+          concurrency: 1,
+          autorun: false,
+        });
+
+        this.processing = true;
+        this._activeWorker = worker;
+        let processed = 0;
+        let attempted = 0;
+        let workerError: Error | null = null;
+
+        const onCompleted = () => {
+          processed += 1;
+        };
+
+        const onWorkerError = (error: any) => {
+          workerError = error instanceof Error ? error : new Error(String(error));
+        };
+
+        worker.on('completed', onCompleted);
+        worker.on('svelar:error', onWorkerError);
+        worker.on('error', onWorkerError);
+
+        try {
+          while (this.processing && attempted < maxJobs) {
+            const token = crypto.randomUUID();
+            const bullJob = await worker.getNextJob(token, { block: false });
+            if (!bullJob) break;
+
+            attempted += 1;
+            await worker.processJob(bullJob, token, () => false);
+            if (workerError) throw workerError;
+          }
+        } finally {
+          worker.off('completed', onCompleted);
+          worker.off('svelar:error', onWorkerError);
+          worker.off('error', onWorkerError);
+          await worker.close();
+          if (this._activeWorker === worker) {
+            this._activeWorker = null;
+          }
+          this.processing = false;
+        }
+
+        return processed;
+      }
+
       const worker = await driver.createWorker(queue, this.jobRegistry, this.failedStore, {
         concurrency: options?.concurrency ?? 1,
       });
 
       this.processing = true;
       this._activeWorker = worker;
+      let processed = 0;
 
       // Block until stop() is called, or until BullMQ reports an infrastructure error.
       await new Promise<void>((resolve, reject) => {
@@ -913,6 +975,7 @@ class QueueManager {
 
         const cleanup = () => {
           if (timer) clearTimeout(timer);
+          worker.off('completed', onCompleted);
           worker.off('svelar:error', onWorkerError);
           worker.off('error', onWorkerError);
         };
@@ -944,6 +1007,13 @@ class QueueManager {
           reject(error instanceof Error ? error : new Error(String(error)));
         };
 
+        const onCompleted = () => {
+          processed += 1;
+          if (maxJobs !== undefined && processed >= maxJobs) {
+            void finish();
+          }
+        };
+
         const check = () => {
           if (!this.processing) {
             void finish();
@@ -952,12 +1022,13 @@ class QueueManager {
           }
         };
 
+        worker.on('completed', onCompleted);
         worker.on('svelar:error', onWorkerError);
         worker.on('error', onWorkerError);
         check();
       });
 
-      return 0; // BullMQ tracks its own processed count
+      return processed;
     }
 
     // ── Poll-based path (sync / memory / database) ───────────
@@ -1221,6 +1292,33 @@ class ChainedJob extends Job {
         payload: j.serialize(),
       })),
     });
+  }
+
+  static restoreFrom(serializedPayload: string, registry: JobRegistry): ChainedJob {
+    let data: Record<string, any>;
+    try {
+      data = JSON.parse(serializedPayload);
+    } catch (error: any) {
+      throw new Error(
+        `Failed to deserialize payload for job "${ChainedJob.name}": ${error.message ?? error}`
+      );
+    }
+
+    if (!Array.isArray(data.jobs)) {
+      throw new Error(`Failed to deserialize payload for job "${ChainedJob.name}": expected jobs array`);
+    }
+
+    const jobs = data.jobs.map((item: any) => {
+      if (!item || typeof item.jobClass !== 'string' || typeof item.payload !== 'string') {
+        throw new Error(
+          `Failed to deserialize payload for job "${ChainedJob.name}": expected chained job entries with jobClass and payload`
+        );
+      }
+
+      return registry.resolve(item.jobClass, item.payload);
+    });
+
+    return new ChainedJob(jobs);
   }
 }
 

@@ -22,6 +22,14 @@ function locksQuery(): QueryBuilder<any> {
   return new QueryBuilder('scheduler_locks');
 }
 
+function affectedRows(result: any): number | null {
+  if (typeof result?.changes === 'number') return result.changes;
+  if (typeof result?.affectedRows === 'number') return result.affectedRows;
+  if (typeof result?.rowCount === 'number') return result.rowCount;
+  if (typeof result?.count === 'number') return result.count;
+  return null;
+}
+
 export class SchedulerLock {
   /**
    * Get the unique owner ID for this process.
@@ -36,20 +44,30 @@ export class SchedulerLock {
    */
   static async acquire(taskKey: string, ttlMinutes: number = 5): Promise<boolean> {
     const conn = await getConnection();
+    const driver = conn.getDriver();
     const now = new Date().toISOString();
     const expiresAt = new Date(Date.now() + ttlMinutes * 60_000).toISOString();
+    let result: any;
 
-    await conn.transaction(async () => {
-      await locksQuery().where('task_key', taskKey).where('expires_at', '<', now).delete();
-      await locksQuery().upsert(
-        { task_key: taskKey, owner: ownerId, expires_at: expiresAt },
-        'task_key',
-        [],
+    if (driver === 'mysql') {
+      result = await conn.raw(
+        'INSERT INTO scheduler_locks (task_key, owner, expires_at) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE owner = IF(expires_at < ?, VALUES(owner), owner), expires_at = IF(expires_at < ?, VALUES(expires_at), expires_at)',
+        [taskKey, ownerId, expiresAt, now, now],
       );
-    });
+    } else {
+      result = await conn.raw(
+        'INSERT INTO scheduler_locks (task_key, owner, expires_at) VALUES (?, ?, ?) ON CONFLICT (task_key) DO UPDATE SET owner = excluded.owner, expires_at = excluded.expires_at WHERE scheduler_locks.expires_at < ?',
+        [taskKey, ownerId, expiresAt, now],
+      );
+    }
 
-    const row = await locksQuery().select('owner').where('task_key', taskKey).first();
-    return row?.owner === ownerId;
+    const changed = affectedRows(result);
+    if (changed !== null) {
+      return changed > 0;
+    }
+
+    const row = await locksQuery().select('owner', 'expires_at').where('task_key', taskKey).first();
+    return row?.owner === ownerId && row?.expires_at === expiresAt;
   }
 
   /**

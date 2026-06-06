@@ -31,7 +31,7 @@ export class MakeModelCommand extends Command {
       this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
     }
 
-    const modelsDir = this.moduleDir(moduleName, 'models');
+    const modelsDir = this.moduleDir(moduleName, 'models', 'model');
     mkdirSync(modelsDir, { recursive: true });
 
     const filePath = join(modelsDir, `${name}.ts`);
@@ -60,7 +60,7 @@ export class ${name} extends Model {
 `;
 
     writeFileSync(filePath, content);
-    const relDir = this.isDDD() ? `src/lib/modules/${moduleName}` : 'src/lib/models';
+    const relDir = this.moduleRelDir(moduleName, 'models', 'model');
     this.success(`Model created: ${relDir}/${name}.ts`);
 
     // Create migration if requested
@@ -96,17 +96,17 @@ export default class Create${name}sTable extends Migration {
     // Create controller if requested
     if (flags.controller || flags.resource || flags.all) {
       const controllerName = `${name}Controller`;
-      const controllerDir = this.moduleDir(moduleName, 'controllers');
+      const controllerDir = this.moduleDir(moduleName, 'controllers', 'controller');
       mkdirSync(controllerDir, { recursive: true });
 
       const isResource = flags.resource || flags.all;
-      const modelImportPath = this.isDDD() ? `./${name}.js` : `../models/${name}.js`;
+      const modelImportPath = this.moduleImportPath(moduleName, 'controller', 'model', name);
       const controllerContent = isResource
         ? this.generateResourceController(name, controllerName, modelImportPath)
         : this.generateBasicController(name, controllerName, modelImportPath);
 
       writeFileSync(join(controllerDir, `${controllerName}.ts`), controllerContent);
-      const ctrlRelDir = this.isDDD() ? `src/lib/modules/${moduleName}` : 'src/lib/controllers';
+      const ctrlRelDir = this.moduleRelDir(moduleName, 'controllers', 'controller');
       this.success(`Controller created: ${ctrlRelDir}/${controllerName}.ts`);
     }
   }

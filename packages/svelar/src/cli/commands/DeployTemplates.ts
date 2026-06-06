@@ -22,12 +22,14 @@ RUN addgroup -g 1001 sveltekit && adduser -u 1001 -G sveltekit -s /bin/sh -D sve
 FROM base AS deps
 WORKDIR /app
 COPY package*.json ./
+COPY .svelar-local ./.svelar-local
 RUN npm ci --omit=dev
 
 # ── Builder (full install + build) ───────────────────────
 FROM base AS builder
 WORKDIR /app
 COPY package*.json ./
+COPY .svelar-local ./.svelar-local
 RUN npm ci
 COPY . .
 RUN npm run build
@@ -40,18 +42,20 @@ ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=3000
 
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=builder /app/build ./build
-COPY --from=builder /app/package.json ./
-COPY --from=builder /app/ecosystem.config.cjs ./
+COPY --chown=sveltekit:sveltekit --from=deps /app/node_modules ./node_modules
+COPY --chown=sveltekit:sveltekit --from=builder /app/build ./build
+COPY --chown=sveltekit:sveltekit --from=builder /app/src ./src
+COPY --chown=sveltekit:sveltekit --from=builder /app/package.json ./
+COPY --chown=sveltekit:sveltekit --from=builder /app/ecosystem.config.cjs ./
+COPY --chown=sveltekit:sveltekit --from=builder /app/svelar.database.json ./
 
-RUN mkdir -p storage/logs storage/public && chown -R sveltekit:sveltekit /app
+RUN mkdir -p storage/logs storage/public && chown -R sveltekit:sveltekit storage
 
 USER sveltekit
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \\
-  CMD wget -qO- http://localhost:3000/api/health || exit 1
+  CMD wget -qO- http://127.0.0.1:3000/api/health || exit 1
 
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["node", "build/index.js"]
@@ -63,6 +67,7 @@ WORKDIR /app
 ENV NODE_ENV=development
 
 COPY package*.json ./
+COPY .svelar-local ./.svelar-local
 RUN npm ci
 COPY . .
 

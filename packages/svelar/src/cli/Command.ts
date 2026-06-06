@@ -14,6 +14,56 @@ export interface CommandFlag {
   default?: any;
 }
 
+export type ModuleArtifactKind =
+  | 'action'
+  | 'controller'
+  | 'dto'
+  | 'event'
+  | 'listener'
+  | 'model'
+  | 'notification'
+  | 'observer'
+  | 'policy'
+  | 'repository'
+  | 'request'
+  | 'resource'
+  | 'schema'
+  | 'service';
+
+const DDD_MODULE_DIRS: Record<ModuleArtifactKind, string> = {
+  action: 'application/actions',
+  controller: 'interface/http/controllers',
+  dto: 'application/dto',
+  event: 'domain/events',
+  listener: 'application/listeners',
+  model: 'domain/models',
+  notification: 'application/notifications',
+  observer: 'domain/observers',
+  policy: 'domain/policies',
+  repository: 'infrastructure/repositories',
+  request: 'interface/http/requests',
+  resource: 'interface/http/resources',
+  schema: 'contracts/schemas',
+  service: 'application/services',
+};
+
+const FLAT_DIRS: Record<ModuleArtifactKind, string> = {
+  action: 'actions',
+  controller: 'controllers',
+  dto: 'dtos',
+  event: 'events',
+  listener: 'listeners',
+  model: 'models',
+  notification: 'notifications',
+  observer: 'observers',
+  policy: 'policies',
+  repository: 'repositories',
+  request: 'dtos',
+  resource: 'resources',
+  schema: 'schemas',
+  service: 'services',
+};
+
 export abstract class Command {
   /** Command name (e.g. 'make:model') */
   abstract name: string;
@@ -59,7 +109,7 @@ export abstract class Command {
     const appPath = appCandidates.find((path) => existsSync(path));
     if (appPath) {
       try {
-        await import(pathToFileURL(appPath).href);
+        await this.importUserModule(appPath);
         try {
           Connection.getDriver();
           this.info(`Application bootstrapped from src/app.${appPath.endsWith('.ts') ? 'ts' : 'js'}`);
@@ -105,6 +155,23 @@ export abstract class Command {
       },
     });
     this.info(`Using ${driver} database${driver === 'sqlite' ? `: ${dbPath}` : ''}`);
+  }
+
+  protected async importUserModule(modulePath: string): Promise<any> {
+    if (modulePath.endsWith('.ts')) {
+      const { createJiti } = await import('jiti');
+      const libPath = join(process.cwd(), 'src', 'lib');
+      const jiti = createJiti(pathToFileURL(join(process.cwd(), 'svelar-cli.mjs')).href, {
+        alias: {
+          '$lib': libPath,
+          '$lib/*': `${libPath}/*`,
+        },
+        tsconfigPaths: true,
+      });
+      return jiti.import(modulePath);
+    }
+
+    return import(pathToFileURL(modulePath).href);
   }
 
   // ── Output Helpers ──
@@ -169,12 +236,41 @@ export abstract class Command {
   }
 
   /**
-   * Resolve a module directory path (models, controllers, services, etc.)
-   * DDD: src/lib/modules/{module}/  |  Flat: src/lib/{type}/
+   * Resolve a module directory path.
+   *
+   * DDD apps use layered bounded-context folders:
+   * src/lib/modules/{module}/{domain|application|infrastructure|interface|contracts}/...
+   *
+   * Flat apps keep the Laravel-style src/lib/{type}/ folders.
    */
-  protected moduleDir(moduleName: string, flatType: string): string {
-    return this.isDDD()
-      ? join(process.cwd(), 'src', 'lib', 'modules', moduleName)
-      : join(process.cwd(), 'src', 'lib', flatType);
+  protected moduleDir(moduleName: string, flatType: string, kind?: ModuleArtifactKind): string {
+    if (!this.isDDD()) return join(process.cwd(), 'src', 'lib', flatType);
+
+    const subdir = kind ? DDD_MODULE_DIRS[kind] : '';
+    return join(process.cwd(), 'src', 'lib', 'modules', moduleName, subdir);
+  }
+
+  protected moduleRelDir(moduleName: string, flatType: string, kind?: ModuleArtifactKind): string {
+    if (!this.isDDD()) return `src/lib/${flatType}`;
+
+    const subdir = kind ? DDD_MODULE_DIRS[kind] : '';
+    return ['src/lib/modules', moduleName, subdir].filter(Boolean).join('/');
+  }
+
+  protected moduleImportPath(
+    moduleName: string,
+    fromKind: ModuleArtifactKind,
+    toKind: ModuleArtifactKind,
+    fileName: string,
+  ): string {
+    void fromKind;
+    if (!this.isDDD()) return `$lib/${FLAT_DIRS[toKind]}/${fileName}.js`;
+    return `$lib/modules/${moduleName}/${DDD_MODULE_DIRS[toKind]}/${fileName}.js`;
+  }
+
+  protected moduleAliasPath(moduleName: string, flatType: string, fileName: string, kind?: ModuleArtifactKind): string {
+    if (!this.isDDD()) return `$lib/${flatType}/${fileName}`;
+    const subdir = kind ? `/${DDD_MODULE_DIRS[kind]}` : '';
+    return `$lib/modules/${moduleName}${subdir}/${fileName}`;
   }
 }

@@ -46,8 +46,8 @@ export class NewCommand extends Command {
     // Templates always use DDD paths internally. When --flat is set,
     // both the file path and import paths are transformed automatically.
     const write = (dddPath: string, content: string) => {
-      const relativePath = flat ? toFlatPath(dddPath) : dddPath;
-      const transformedContent = flat ? toFlatImports(content, dddPath) : content;
+      const relativePath = flat ? toFlatPath(dddPath) : toLayeredDddPath(dddPath);
+      const transformedContent = flat ? toFlatImports(content, dddPath) : toLayeredDddImports(content, dddPath, relativePath);
       const fullPath = join(projectDir, relativePath);
       mkdirSync(join(fullPath, '..'), { recursive: true });
       writeFileSync(fullPath, transformedContent);
@@ -71,7 +71,22 @@ export class NewCommand extends Command {
       'tests/unit', 'tests/feature', 'tests/e2e', 'src/lib/factories',
     ] : [
       '', 'src', 'src/lib',
-      'src/lib/modules/auth', 'src/lib/modules/posts', 'src/lib/modules/admin',
+      ...['auth', 'posts', 'admin', 'api-keys', 'team'].flatMap((mod) => [
+        `src/lib/modules/${mod}/contracts/schemas`,
+        `src/lib/modules/${mod}/domain/events`,
+        `src/lib/modules/${mod}/domain/models`,
+        `src/lib/modules/${mod}/domain/observers`,
+        `src/lib/modules/${mod}/domain/policies`,
+        `src/lib/modules/${mod}/application/actions`,
+        `src/lib/modules/${mod}/application/dto`,
+        `src/lib/modules/${mod}/application/listeners`,
+        `src/lib/modules/${mod}/application/notifications`,
+        `src/lib/modules/${mod}/application/services`,
+        `src/lib/modules/${mod}/infrastructure/repositories`,
+        `src/lib/modules/${mod}/interface/http/controllers`,
+        `src/lib/modules/${mod}/interface/http/requests`,
+        `src/lib/modules/${mod}/interface/http/resources`,
+      ]),
       'src/lib/shared/jobs', 'src/lib/shared/scheduler', 'src/lib/shared/middleware',
       'src/lib/shared/components', 'src/lib/components/ui', 'src/lib/hooks',
       'src/lib/shared/stores', 'src/lib/shared/plugins',
@@ -161,6 +176,8 @@ export class NewCommand extends Command {
     // Admin module
     write('src/lib/modules/admin/AdminService.ts', T.adminService());
     write('src/lib/modules/admin/AdminController.ts', T.adminController());
+    write('src/lib/modules/admin/AdminDtos.ts', T.adminDtos());
+    write('src/lib/modules/admin/AdminActions.ts', T.adminActions());
     write('src/lib/modules/admin/UpdateUserRoleRequest.ts', T.updateUserRoleRequest());
     write('src/lib/modules/admin/DeleteUserRequest.ts', T.deleteUserRequest());
     write('src/lib/modules/admin/CreateRoleRequest.ts', T.createRoleRequest());
@@ -174,6 +191,16 @@ export class NewCommand extends Command {
     write('src/lib/modules/admin/RoleResource.ts', T.roleResource());
     write('src/lib/modules/admin/PermissionResource.ts', T.permissionResource());
     write('src/lib/modules/admin/schemas.ts', T.adminSchema());
+
+    // API key and team modules
+    write('src/lib/modules/api-keys/api-key.schema.ts', T.apiKeySchema());
+    write('src/lib/modules/api-keys/ApiKeyDtos.ts', T.apiKeyDtos());
+    write('src/lib/modules/api-keys/ApiKeyRequests.ts', T.apiKeyRequests());
+    write('src/lib/modules/api-keys/ApiKeyActions.ts', T.apiKeyActions());
+    write('src/lib/modules/team/team.schema.ts', T.teamSchema());
+    write('src/lib/modules/team/TeamDtos.ts', T.teamDtos());
+    write('src/lib/modules/team/TeamRequests.ts', T.teamRequests());
+    write('src/lib/modules/team/TeamActions.ts', T.teamActions());
 
     // Shared providers
     write('src/lib/shared/providers/EventServiceProvider.ts', T.eventServiceProvider());
@@ -368,12 +395,14 @@ export class NewCommand extends Command {
  * E.g. "AuthService.ts" → "services", "User.ts" → "models"
  */
 function fileCategory(name: string): string {
+  if (/\.schema\.ts$/.test(name)) return 'schemas';
   if (/Service\./.test(name)) return 'services';
   if (/Controller\./.test(name)) return 'controllers';
   if (/Repository\./.test(name)) return 'repositories';
-  if (/Request\./.test(name)) return 'dtos';
+  if (/Requests?\./.test(name)) return 'dtos';
   if (/Resource\./.test(name)) return 'resources';
-  if (/Action\./.test(name)) return 'actions';
+  if (/Actions?\./.test(name)) return 'actions';
+  if (/Dtos?\.|DTOs?\./.test(name)) return 'dtos';
   if (/Listener\./.test(name)) return 'listeners';
   if (/Notification\./.test(name)) return 'notifications';
   // Event classes typically contain past-tense verbs
@@ -389,7 +418,7 @@ function fileCategory(name: string): string {
  */
 function toFlatPath(dddPath: string): string {
   // Module files: src/lib/modules/{mod}/{File}.ts
-  const moduleMatch = dddPath.match(/^src\/lib\/modules\/(\w+)\/(.+)$/);
+  const moduleMatch = dddPath.match(/^src\/lib\/modules\/([^/]+)\/(.+)$/);
   if (moduleMatch) {
     const [, mod, fileName] = moduleMatch;
     if (fileName === 'schemas.ts') return `src/lib/schemas/${mod}.ts`;
@@ -417,12 +446,14 @@ function flatImport(mod: string, name: string, ext: string): string {
  * Like fileCategory but works on the import name (no extension).
  */
 function fileCategoryByName(name: string): string {
+  if (/\.schema$/.test(name)) return 'schemas';
   if (/Service$/.test(name)) return 'services';
   if (/Controller$/.test(name)) return 'controllers';
   if (/Repository$/.test(name)) return 'repositories';
-  if (/Request$/.test(name)) return 'dtos';
+  if (/Requests?$/.test(name)) return 'dtos';
   if (/Resource$/.test(name)) return 'resources';
-  if (/Action$/.test(name)) return 'actions';
+  if (/Actions?$/.test(name)) return 'actions';
+  if (/Dtos?$|DTOs?$/.test(name)) return 'dtos';
   if (/Listener$/.test(name)) return 'listeners';
   if (/Notification$/.test(name)) return 'notifications';
   if (/Registered|Created|Updated|Deleted|Verified|Invited/.test(name)) return 'events';
@@ -435,18 +466,18 @@ function fileCategoryByName(name: string): string {
  */
 function toFlatImports(content: string, dddPath: string): string {
   // Determine which module this file is in (empty for non-module files)
-  const moduleMatch = dddPath.match(/modules\/(\w+)\//);
+  const moduleMatch = dddPath.match(/modules\/([^/]+)\//);
   const mod = moduleMatch?.[1] || '';
 
   // 1. Replace $lib/modules/{mod}/{Name}(.js)? with flat import paths
   content = content.replace(
-    /\$lib\/modules\/(\w+)\/(\w+)(\.js)?/g,
+    /\$lib\/modules\/([^/]+)\/([\w-]+(?:\.schema)?)(\.js)?/g,
     (_match, m: string, name: string, ext: string) => flatImport(m, name, ext || ''),
   );
 
   // 2. Replace ./lib/modules/{mod}/{Name}(.js)? (app.ts style, relative from project root)
   content = content.replace(
-    /\.\/lib\/modules\/(\w+)\/(\w+)(\.js)?/g,
+    /\.\/lib\/modules\/([^/]+)\/([\w-]+(?:\.schema)?)(\.js)?/g,
     (_match, m: string, name: string, ext: string) => {
       if (name === 'schemas') return `./lib/schemas/${m}${ext || ''}`;
       if (name === 'gates') return `./lib/gates${ext || ''}`;
@@ -471,7 +502,7 @@ function toFlatImports(content: string, dddPath: string): string {
   //    Only for files that are inside a module directory
   if (mod) {
     content = content.replace(
-      /from '\.\/(\w+)(\.js)?'/g,
+      /from '\.\/([\w-]+(?:\.schema)?)(\.js)?'/g,
       (match, name: string, ext: string) => {
         // Don't transform SvelteKit $types or local non-module files
         if (name.startsWith('$') || name === 'app') return match;
@@ -482,11 +513,88 @@ function toFlatImports(content: string, dddPath: string): string {
 
     // Also handle standalone import './file.js' (no from keyword, e.g. side-effect imports)
     content = content.replace(
-      /import '\.\/(\w+)(\.js)?'/g,
+      /import '\.\/([\w-]+(?:\.schema)?)(\.js)?'/g,
       (match, name: string, ext: string) => {
         if (name.startsWith('$') || name === 'app') return match;
         ext = ext || '';
         return `import '${flatImport(mod, name, ext)}'`;
+      },
+    );
+  }
+
+  return content;
+}
+
+// ── Path transformation helpers (legacy DDD → layered DDD) ──
+
+function layeredCategory(fileName: string): string {
+  if (fileName === 'schemas.ts' || /\.schema\.ts$/.test(fileName)) return 'contracts/schemas';
+  if (fileName === 'gates.ts') return 'domain/policies';
+  if (/Service\.ts$/.test(fileName)) return 'application/services';
+  if (/Controller\.ts$/.test(fileName)) return 'interface/http/controllers';
+  if (/Repository\.ts$/.test(fileName)) return 'infrastructure/repositories';
+  if (/Requests?\.ts$/.test(fileName)) return 'interface/http/requests';
+  if (/Resource\.ts$/.test(fileName)) return 'interface/http/resources';
+  if (/Actions?\.ts$/.test(fileName)) return 'application/actions';
+  if (/Dtos?\.ts$|DTOs?\.ts$/.test(fileName)) return 'application/dto';
+  if (/Listener\.ts$/.test(fileName)) return 'application/listeners';
+  if (/Notification\.ts$/.test(fileName)) return 'application/notifications';
+  if (/Observer\.ts$/.test(fileName)) return 'domain/observers';
+  if (/Policy\.ts$/.test(fileName)) return 'domain/policies';
+  if (/Registered|Created|Updated|Deleted|Verified|Invited|Changed/.test(fileName)) return 'domain/events';
+  return 'domain/models';
+}
+
+function layeredCategoryByName(name: string): string {
+  return layeredCategory(`${name}.ts`);
+}
+
+function toLayeredDddPath(dddPath: string): string {
+  const moduleMatch = dddPath.match(/^src\/lib\/modules\/([^/]+)\/(.+)$/);
+  if (!moduleMatch) return dddPath;
+
+  const [, mod, fileName] = moduleMatch;
+  if (fileName.includes('/')) return dddPath;
+
+  return `src/lib/modules/${mod}/${layeredCategory(fileName)}/${fileName}`;
+}
+
+function layeredAliasImport(mod: string, name: string, ext: string): string {
+  return `$lib/modules/${mod}/${layeredCategoryByName(name)}/${name}${ext}`;
+}
+
+function toLayeredDddImports(content: string, dddPath: string, layeredPath: string): string {
+  void layeredPath;
+  const moduleMatch = dddPath.match(/modules\/([^/]+)\//);
+  const mod = moduleMatch?.[1] || '';
+
+  content = content.replace(
+    /\$lib\/modules\/([^/]+)\/([\w-]+(?:\.schema)?)(\.js)?/g,
+    (_match, m: string, name: string, ext: string) => layeredAliasImport(m, name, ext || ''),
+  );
+
+  content = content.replace(
+    /\.\/lib\/modules\/([^/]+)\/([\w-]+(?:\.schema)?)(\.js)?/g,
+    (_match, m: string, name: string, ext: string) =>
+      layeredAliasImport(m, name, ext || ''),
+  );
+
+  content = content.replace(/\.\/lib\/shared\//g, '$lib/shared/');
+
+  if (mod) {
+    content = content.replace(
+      /from '\.\/([\w-]+(?:\.schema)?)(\.js)?'/g,
+      (match, name: string, ext: string) => {
+        if (name.startsWith('$') || name === 'app') return match;
+        return `from '${layeredAliasImport(mod, name, ext || '')}'`;
+      },
+    );
+
+    content = content.replace(
+      /import '\.\/([\w-]+(?:\.schema)?)(\.js)?'/g,
+      (match, name: string, ext: string) => {
+        if (name.startsWith('$') || name === 'app') return match;
+        return `import '${layeredAliasImport(mod, name, ext || '')}'`;
       },
     );
   }

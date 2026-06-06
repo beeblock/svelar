@@ -25,7 +25,7 @@ export class MakeObserverCommand extends Command {
     const modelName = flags.model || name.replace(/Observer$/, '');
     const moduleName = flags.module || this.toSnakeCase(this.pluralize(modelName));
 
-    const observersDir = this.moduleDir(moduleName, 'observers');
+    const observersDir = this.moduleDir(moduleName, 'observers', 'observer');
     mkdirSync(observersDir, { recursive: true });
 
     const filePath = join(observersDir, `${name}.ts`);
@@ -34,7 +34,7 @@ export class MakeObserverCommand extends Command {
       return;
     }
 
-    const modelImportPath = this.isDDD() ? `./${modelName}.js` : `../models/${modelName}.js`;
+    const modelImportPath = this.moduleImportPath(moduleName, 'observer', 'model', modelName);
     const content = `import { ModelObserver } from '@beeblock/svelar/orm';
 import type { ${modelName} } from '${modelImportPath}';
 
@@ -76,7 +76,7 @@ export class ${name} extends ModelObserver {
 `;
 
     writeFileSync(filePath, content);
-    const relDir = this.isDDD() ? `src/lib/modules/${moduleName}` : 'src/lib/observers';
+    const relDir = this.moduleRelDir(moduleName, 'observers', 'observer');
     this.success(`Observer created: ${relDir}/${name}.ts`);
     this.info(`Register it in your app: ${modelName}.observe(new ${name}());`);
   }

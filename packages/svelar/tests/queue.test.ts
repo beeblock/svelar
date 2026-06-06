@@ -872,6 +872,35 @@ describe.sequential('Queue failed jobs', () => {
     expect(rows[0]).toMatchObject({ attempts: 0, reserved_at: null });
   });
 
+  it('runs chained jobs in order after restoring the internal chain wrapper from the database queue', async () => {
+    const execution: string[] = [];
+
+    class DatabaseChainJob extends Job {
+      constructor(public label = '') {
+        super();
+      }
+
+      async handle(): Promise<void> {
+        execution.push(this.label);
+      }
+    }
+
+    Queue.configure({
+      default: 'database',
+      connections: { database: { driver: 'database', table: 'svelar_jobs' } },
+    });
+    Queue.register(DatabaseChainJob);
+
+    await Queue.chain([
+      new DatabaseChainJob('first'),
+      new DatabaseChainJob('second'),
+      new DatabaseChainJob('third'),
+    ]);
+
+    await expect(Queue.work({ maxJobs: 1, sleep: 0 })).resolves.toBe(1);
+    expect(execution).toEqual(['first', 'second', 'third']);
+  });
+
   it('fails worker processing when exhausted jobs cannot be persisted', async () => {
     await Connection.raw('DROP TABLE svelar_failed_jobs');
 

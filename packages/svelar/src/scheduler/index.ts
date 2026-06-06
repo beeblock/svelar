@@ -343,32 +343,34 @@ export abstract class ScheduledTask {
     }
 
     const start = Date.now();
-
-    // Distributed lock: acquire before running if preventOverlap is enabled
     let lockAcquired = false;
-    if (this.withoutOverlapping) {
-      try {
-        const { SchedulerLock } = await import('./SchedulerLock.js');
-        lockAcquired = await SchedulerLock.acquire(this.name, this._lockTtlMinutes);
-        if (!lockAcquired) {
-          return { task: this.name, success: true, duration: 0, timestamp: new Date() };
-        }
-      } catch (error: any) {
-        await this.onFailure(error);
 
-        return {
-          task: this.name,
-          success: false,
-          duration: Date.now() - start,
-          error: error.message,
-          timestamp: new Date(),
-        };
-      }
-    }
-
+    // Mark running before any awaited lock work so concurrent calls in this
+    // process cannot both pass the local overlap gate.
     this._running = true;
 
     try {
+      // Distributed lock: acquire before running if preventOverlap is enabled
+      if (this.withoutOverlapping) {
+        try {
+          const { SchedulerLock } = await import('./SchedulerLock.js');
+          lockAcquired = await SchedulerLock.acquire(this.name, this._lockTtlMinutes);
+          if (!lockAcquired) {
+            return { task: this.name, success: true, duration: 0, timestamp: new Date() };
+          }
+        } catch (error: any) {
+          await this.onFailure(error);
+
+          return {
+            task: this.name,
+            success: false,
+            duration: Date.now() - start,
+            error: error?.message ?? String(error),
+            timestamp: new Date(),
+          };
+        }
+      }
+
       await this.handle();
       const duration = Date.now() - start;
 
@@ -389,7 +391,7 @@ export abstract class ScheduledTask {
         task: this.name,
         success: false,
         duration,
-        error: error.message,
+        error: error?.message ?? String(error),
         timestamp: new Date(),
       };
     } finally {

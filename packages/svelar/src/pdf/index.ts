@@ -1105,7 +1105,7 @@ export const PDF = {
   },
 
   /** Convert office documents (docx, xlsx, pptx, odt, etc.) to PDF. Requires Gotenberg driver. */
-  office(pathOrBuffer: string | Buffer, filename?: string): OfficePdfBuilder {
+  office(pathOrBuffer?: string | Buffer, filename?: string): OfficePdfBuilder {
     return new OfficePdfBuilder(pathOrBuffer, filename);
   },
 

@@ -49,6 +49,8 @@ export class MakeDockerCommand extends Command {
       return;
     }
 
+    mkdirSync(join(cwd, '.svelar-local'), { recursive: true });
+
     // Ensure health endpoint directory exists
     const healthDir = join(cwd, 'src', 'routes', 'api', 'health');
     mkdirSync(healthDir, { recursive: true });
@@ -86,6 +88,11 @@ export class MakeDockerCommand extends Command {
         path: join(cwd, '.dockerignore'),
         content: this.dockerignoreTemplate(),
         label: '.dockerignore',
+      },
+      {
+        path: join(cwd, '.svelar-local', '.gitkeep'),
+        content: '',
+        label: '.svelar-local/.gitkeep',
       },
       {
         path: join(cwd, 'ecosystem.config.cjs'),
@@ -199,13 +206,17 @@ export class MakeDockerCommand extends Command {
 
     // ── App service ──
     lines.push('  app:');
-    lines.push('    build: .');
+    lines.push('    build:');
+    lines.push('      context: .');
+    lines.push('      target: production');
     lines.push('    restart: unless-stopped');
     lines.push('    ports:');
     lines.push('      - "${APP_PORT:-3000}:3000"');
     lines.push('    env_file: .env');
     lines.push('    environment:');
     lines.push('      - NODE_ENV=production');
+    lines.push('      - ORIGIN=${APP_URL:-http://localhost:3000}');
+    lines.push('      - INTERNAL_APP_URL=http://app:3000');
 
     if (db === 'postgres') {
       lines.push('      - DB_HOST=pgbouncer');
@@ -266,7 +277,7 @@ export class MakeDockerCommand extends Command {
     lines.push('    volumes:');
     lines.push('      - app_storage:/app/storage');
     lines.push('    healthcheck:');
-    lines.push('      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]');
+    lines.push('      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]');
     lines.push('      interval: 30s');
     lines.push('      timeout: 5s');
     lines.push('      start_period: 15s');
@@ -324,13 +335,14 @@ export class MakeDockerCommand extends Command {
       lines.push('    #   - "6432:6432"');
       lines.push('    environment:');
       lines.push('      DATABASE_URL: postgres://${DB_USER:-svelar}:${DB_PASSWORD:-secret}@postgres:5432/${DB_NAME:-svelar}');
+      lines.push('      AUTH_TYPE: scram-sha-256');
       lines.push('    volumes:');
       lines.push('      - ./docker/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro');
       lines.push('    depends_on:');
       lines.push('      postgres:');
       lines.push('        condition: service_healthy');
       lines.push('    healthcheck:');
-      lines.push('      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "6432"]');
+      lines.push('      test: ["CMD-SHELL", "PGPASSWORD=${DB_PASSWORD:-secret} pg_isready -h 127.0.0.1 -p 6432 -U ${DB_USER:-svelar} -d ${DB_NAME:-svelar}"]');
       lines.push('      interval: 10s');
       lines.push('      timeout: 5s');
       lines.push('      retries: 5');
@@ -383,7 +395,7 @@ export class MakeDockerCommand extends Command {
       lines.push('    image: redis:7-alpine');
       lines.push('    restart: unless-stopped');
       lines.push('    # No ports exposed — only reachable by app via Docker network');
-      lines.push('    command: redis-server --requirepass ${REDIS_PASSWORD:-svelarsecret}');
+      lines.push('    command: redis-server --requirepass ${REDIS_PASSWORD:-svelarsecret} --save "" --appendonly no --stop-writes-on-bgsave-error no');
       lines.push('    volumes:');
       lines.push('      - redisdata:/data');
       lines.push('    healthcheck:');
@@ -408,10 +420,8 @@ export class MakeDockerCommand extends Command {
       lines.push('  soketi:');
       lines.push('    image: quay.io/soketi/soketi:1.6-16-debian');
       lines.push('    restart: unless-stopped');
-      lines.push('    # No ports exposed — only reachable by app via Docker network');
-      lines.push('    # Expose 6001 to host only if clients connect directly (uncomment below)');
-      lines.push('    # ports:');
-      lines.push('    #   - "${SOKETI_PORT:-6001}:6001"');
+      lines.push('    ports:');
+      lines.push('      - "${SOKETI_PORT:-5334}:6001"');
       lines.push('    environment:');
       lines.push('      SOKETI_DEBUG: "${SOKETI_DEBUG:-0}"');
       lines.push('      SOKETI_DEFAULT_APP_ID: ${PUSHER_APP_ID}');
@@ -421,7 +431,7 @@ export class MakeDockerCommand extends Command {
       lines.push('      SOKETI_DEFAULT_APP_ENABLE_CLIENT_MESSAGES: "true"');
       lines.push('      SOKETI_DEFAULT_APP_MAX_BACKEND_EVENTS_PER_SEC: "-1"');
       lines.push('    healthcheck:');
-      lines.push('      test: ["CMD", "wget", "-qO-", "http://localhost:6001"]');
+      lines.push(`      test: ["CMD-SHELL", "node -e \\"require('http').get('http://127.0.0.1:6001', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))\\""]`);
       lines.push('      interval: 10s');
       lines.push('      timeout: 5s');
       lines.push('      retries: 3');
@@ -449,7 +459,7 @@ export class MakeDockerCommand extends Command {
       lines.push('      API_TIMEOUT: "${GOTENBERG_TIMEOUT:-60s}"');
       lines.push('      LOG_LEVEL: "${GOTENBERG_LOG_LEVEL:-info}"');
       lines.push('    healthcheck:');
-      lines.push('      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]');
+      lines.push('      test: ["CMD", "curl", "-f", "http://127.0.0.1:3000/health"]');
       lines.push('      interval: 10s');
       lines.push('      timeout: 5s');
       lines.push('      retries: 5');
@@ -502,10 +512,8 @@ export class MakeDockerCommand extends Command {
       lines.push('  meilisearch:');
       lines.push('    image: getmeili/meilisearch:v1.13');
       lines.push('    restart: unless-stopped');
-      lines.push('    # No ports exposed — only reachable by app via Docker network');
-      lines.push('    # Uncomment below to access the dashboard from the host');
-      lines.push('    # ports:');
-      lines.push('    #   - "${MEILI_PORT:-7700}:7700"');
+      lines.push('    ports:');
+      lines.push('      - "${MEILI_PORT:-5333}:7700"');
       lines.push('    environment:');
       lines.push('      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-svelar-meili-master-key}');
       lines.push('      MEILI_ENV: production');
@@ -514,7 +522,7 @@ export class MakeDockerCommand extends Command {
       lines.push('    volumes:');
       lines.push('      - meili_data:/meili_data');
       lines.push('    healthcheck:');
-      lines.push('      test: ["CMD", "wget", "--no-verbose", "--spider", "http://localhost:7700/health"]');
+      lines.push('      test: ["CMD", "wget", "--no-verbose", "--spider", "http://127.0.0.1:7700/health"]');
       lines.push('      interval: 10s');
       lines.push('      timeout: 5s');
       lines.push('      retries: 5');

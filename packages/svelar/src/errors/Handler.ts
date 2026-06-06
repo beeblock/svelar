@@ -23,18 +23,47 @@
  * ```
  */
 
+// SvelteKit recognizes HTTP errors by instanceof its internal HttpError class.
+// The runtime subpath is exported, but its declaration is not a normal module in every Kit version.
+// @ts-expect-error intentional runtime import from SvelteKit internals
+import { HttpError as SvelteKitHttpError } from '@sveltejs/kit/internal';
 import { Log } from '../logging/index.js';
 
 // ── Error Classes ──────────────────────────────────────────
 
-export class HttpError extends Error {
-  constructor(
-    public readonly statusCode: number,
-    message: string,
-    public readonly details?: Record<string, any>
-  ) {
-    super(message);
+type ErrorLike = {
+  name: string;
+  message: string;
+  stack?: string;
+  statusCode?: number;
+  status?: number;
+  body?: Record<string, any>;
+  details?: Record<string, any>;
+  errors?: Record<string, string[]>;
+};
+
+type HttpErrorLike = ErrorLike & ({ statusCode: number } | { status: number });
+
+export class HttpError extends SvelteKitHttpError implements ErrorLike {
+  public readonly statusCode: number;
+  public readonly details?: Record<string, any>;
+  declare public readonly body: Record<string, any>;
+  public name: string;
+  public readonly message: string;
+  public readonly stack?: string;
+
+  constructor(statusCode: number, message: string, details?: Record<string, any>) {
+    super(statusCode, { message, ...(details ?? {}) });
+    this.statusCode = statusCode;
+    this.details = details;
+    this.message = message;
     this.name = 'HttpError';
+
+    if (typeof Error.captureStackTrace === 'function') {
+      Error.captureStackTrace(this, new.target);
+    } else {
+      this.stack = new Error(message).stack;
+    }
   }
 }
 
@@ -100,6 +129,40 @@ export class ModelNotFoundError extends NotFoundError {
   }
 }
 
+function normalizeError(error: Error | unknown): ErrorLike {
+  if (error instanceof Error || isHttpErrorLike(error)) {
+    const err = error as ErrorLike;
+    if (!err.message && err.body?.message) err.message = err.body.message;
+    if (!err.name) err.name = 'Error';
+    return err;
+  }
+
+  return new Error(String(error)) as ErrorLike;
+}
+
+function errorStatus(error: unknown): number | undefined {
+  const err = error as any;
+  return typeof err?.statusCode === 'number'
+    ? err.statusCode
+    : typeof err?.status === 'number'
+      ? err.status
+      : undefined;
+}
+
+function errorDetails(error: unknown): Record<string, any> | undefined {
+  const err = error as any;
+  return err?.details ?? err?.body;
+}
+
+function isHttpErrorLike(error: unknown): error is HttpErrorLike {
+  const status = errorStatus(error);
+  return typeof status === 'number' && status >= 400;
+}
+
+function isValidationErrorLike(error: unknown): error is ErrorLike & { errors: Record<string, string[]> } {
+  return error instanceof ValidationError || !!(error as any).errors || !!(error as any).body?.errors;
+}
+
 // ── Abort Helper ───────────────────────────────────────────
 
 /**
@@ -129,11 +192,11 @@ export interface ErrorHandlerConfig {
   /** Show detailed errors (stack traces, etc.) */
   debug?: boolean;
   /** Custom error reporter (e.g. Sentry) */
-  report?: (error: Error, context?: Record<string, any>) => void | Promise<void>;
+  report?: (error: ErrorLike, context?: Record<string, any>) => void | Promise<void>;
   /** Errors that should not be reported */
-  dontReport?: Array<new (...args: any[]) => Error>;
+  dontReport?: Array<new (...args: any[]) => unknown>;
   /** Custom render function */
-  render?: (error: Error, event?: any) => Response | Promise<Response>;
+  render?: (error: ErrorLike, event?: any) => Response | Promise<Response>;
 }
 
 export class ErrorHandler {
@@ -156,7 +219,7 @@ export class ErrorHandler {
    * Handle an error and return a Response
    */
   async handle(error: Error | unknown, event?: any): Promise<Response> {
-    const err = error instanceof Error ? error : new Error(String(error));
+    const err = normalizeError(error);
 
     // Report error (if not in the dontReport list)
     await this.reportError(err, event);
@@ -175,17 +238,17 @@ export class ErrorHandler {
    */
   handleSvelteKitError(): (input: { error: unknown; event: any; status: number; message: string }) => any {
     return ({ error, event, status, message }) => {
-      const err = error instanceof Error ? error : new Error(String(error));
+      const err = normalizeError(error);
 
       // Report
       this.reportError(err, event);
 
       // Return error body for SvelteKit
-      if (err instanceof HttpError) {
+      if (err instanceof HttpError || isHttpErrorLike(err)) {
         return {
           message: err.message,
-          status: err.statusCode,
-          ...(err.details ?? {}),
+          status: errorStatus(err),
+          ...(errorDetails(err) ?? {}),
           ...(this.config.debug ? { stack: err.stack } : {}),
         };
       }
@@ -214,7 +277,7 @@ export class ErrorHandler {
 
   // ── Private ──
 
-  private async reportError(error: Error, event?: any): Promise<void> {
+  private async reportError(error: ErrorLike, event?: any): Promise<void> {
     // Skip reporting for certain error types
     if (this.config.dontReport) {
       for (const ErrorClass of this.config.dontReport) {
@@ -241,27 +304,28 @@ export class ErrorHandler {
     }
   }
 
-  private renderError(error: Error): Response {
-    if (error instanceof HttpError) {
+  private renderError(error: ErrorLike): Response {
+    if (error instanceof HttpError || isHttpErrorLike(error)) {
       const body: Record<string, any> = {
         message: error.message,
       };
 
-      if (error instanceof ValidationError) {
-        body.errors = error.errors;
+      if (isValidationErrorLike(error)) {
+        body.errors = (error as any).errors ?? (error as any).body?.errors;
       }
 
-      if (error.details) {
-        Object.assign(body, error.details);
+      const details = errorDetails(error);
+      if (details) {
+        Object.assign(body, details);
       }
 
       if (this.config.debug) {
         body.exception = error.name;
-        body.stack = error.stack?.split('\n').map((l) => l.trim());
+        body.stack = error.stack?.split('\n').map((l: string) => l.trim());
       }
 
       return new Response(JSON.stringify(body), {
-        status: error.statusCode,
+        status: errorStatus(error),
         headers: { 'Content-Type': 'application/json' },
       });
     }
@@ -273,7 +337,7 @@ export class ErrorHandler {
 
     if (this.config.debug) {
       body.exception = error.name;
-      body.stack = error.stack?.split('\n').map((l) => l.trim());
+      body.stack = error.stack?.split('\n').map((l: string) => l.trim());
     }
 
     return new Response(JSON.stringify(body), {

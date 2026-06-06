@@ -1,5 +1,5 @@
 /**
- * make:request — Generate a new FormRequest (DTO) class
+ * make:request — Generate a new FormRequest class
  */
 
 import { Command } from '../Command.js';
@@ -28,7 +28,7 @@ export class MakeRequestCommand extends Command {
       this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
     }
 
-    const moduleDir = this.moduleDir(moduleName, 'dtos');
+    const moduleDir = this.moduleDir(moduleName, 'dtos', 'request');
     mkdirSync(moduleDir, { recursive: true });
 
     const filePath = join(moduleDir, `${requestName}.ts`);
@@ -37,7 +37,7 @@ export class MakeRequestCommand extends Command {
       return;
     }
 
-    const content = `import { FormRequest } from '@beeblock/svelar/routing';
+    const content = `import { FormRequest } from '@beeblock/svelar/forms';
 import { z } from '@beeblock/svelar/validation';
 
 export class ${requestName} extends FormRequest {
@@ -69,7 +69,7 @@ export class ${requestName} extends FormRequest {
 `;
 
     writeFileSync(filePath, content);
-    const relDir = this.isDDD() ? `src/lib/modules/${moduleName}` : 'src/lib/dtos';
+    const relDir = this.moduleRelDir(moduleName, 'dtos', 'request');
     this.success(`Request created: ${relDir}/${requestName}.ts`);
   }
 }

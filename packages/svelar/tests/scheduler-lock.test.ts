@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,6 +22,20 @@ class LockedTask extends ScheduledTask {
 
   onFailure(error: Error): void {
     this.failure = error.message;
+  }
+}
+
+class SlowLockedTask extends ScheduledTask {
+  name = 'slow-locked-task';
+  runs = 0;
+
+  schedule(): this {
+    return this.everyMinute().preventOverlap().lockExpiresAfter(1);
+  }
+
+  async handle(): Promise<void> {
+    this.runs += 1;
+    await new Promise((resolve) => setTimeout(resolve, 25));
   }
 }
 
@@ -49,7 +63,10 @@ describe('SchedulerLock', () => {
 
       await new Migrator().fresh(svelarCoreMigrations());
 
+      const transactionSpy = vi.spyOn(Connection, 'transaction');
       await expect(SchedulerLock.acquire('billing-digest')).resolves.toBe(true);
+      await expect(SchedulerLock.acquire('billing-digest')).resolves.toBe(false);
+      expect(transactionSpy).not.toHaveBeenCalled();
 
       const rows = await Connection.raw(
         'SELECT owner FROM scheduler_locks WHERE task_key = ?',
@@ -59,6 +76,42 @@ describe('SchedulerLock', () => {
 
       await SchedulerLock.release('billing-digest');
       await expect(SchedulerLock.acquire('billing-digest')).resolves.toBe(true);
+      transactionSpy.mockRestore();
+    } finally {
+      await Connection.disconnect();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('skips concurrent preventOverlap runs for the same due task', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'svelar-scheduler-overlap-'));
+    const filename = join(root, 'database.sqlite');
+
+    try {
+      await Connection.disconnect();
+      Connection.configure({
+        default: 'sqlite',
+        connections: {
+          sqlite: { driver: 'sqlite', filename },
+        },
+      });
+
+      await new Migrator().fresh(svelarCoreMigrations());
+
+      const scheduler = new Scheduler();
+      const task = new SlowLockedTask();
+      scheduler.register(task);
+
+      const [first, second] = await Promise.all([
+        scheduler.run(new Date('2026-06-04T12:00:00Z')),
+        scheduler.run(new Date('2026-06-04T12:00:00Z')),
+      ]);
+      const results = [...first, ...second].filter((result) => result.task === task.name);
+
+      expect(task.runs).toBe(1);
+      expect(results).toHaveLength(2);
+      expect(results.some((result) => result.success && result.duration === 0)).toBe(true);
+      expect(results.some((result) => result.success && result.duration > 0)).toBe(true);
     } finally {
       await Connection.disconnect();
       await rm(root, { recursive: true, force: true });

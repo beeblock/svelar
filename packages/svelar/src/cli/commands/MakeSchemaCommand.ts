@@ -29,26 +29,26 @@ export class MakeSchemaCommand extends Command {
     const fileName = this.toKebab(rawName) + '.schema';
     const moduleName = flags.module || rawName.toLowerCase();
 
-    const moduleDir = this.moduleDir(moduleName, 'schemas');
+    const moduleDir = this.moduleDir(moduleName, 'schemas', 'schema');
     mkdirSync(moduleDir, { recursive: true });
 
     const filePath = join(moduleDir, `${fileName}.ts`);
     if (existsSync(filePath)) {
-      const relDir = this.isDDD() ? `src/lib/modules/${moduleName}` : 'src/lib/schemas';
+      const relDir = this.moduleRelDir(moduleName, 'schemas', 'schema');
       this.warn(`Schema already exists: ${relDir}/${fileName}.ts`);
       return;
     }
 
     const content = this.generateSchema(entityName);
     writeFileSync(filePath, content);
-    const relDir2 = this.isDDD() ? `src/lib/modules/${moduleName}` : 'src/lib/schemas';
+    const relDir2 = this.moduleRelDir(moduleName, 'schemas', 'schema');
     this.success(`Schema created: ${relDir2}/${fileName}.ts`);
     this.info('');
     this.info('  Use this schema across your entire stack:');
     this.info('');
     this.info(`    Resource:    extends Resource<${entityName}, ${entityName}Data>`);
     this.info(`    FormRequest: uses create${entityName}Schema / update${entityName}Schema`);
-    const frontendPath = this.isDDD() ? `$lib/modules/${moduleName}/${fileName}` : `$lib/schemas/${fileName}`;
+    const frontendPath = this.moduleAliasPath(moduleName, 'schemas', fileName, 'schema');
     this.info(`    Frontend:    import type { ${entityName}Data } from '${frontendPath}'`);
   }
 

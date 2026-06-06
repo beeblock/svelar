@@ -201,6 +201,7 @@ describe('Webhooks', () => {
       expect.objectContaining({
         id: endpoint.id,
         userId: 'user-1',
+        active: true,
         metadata: { source: 'test' },
       }),
     ]);

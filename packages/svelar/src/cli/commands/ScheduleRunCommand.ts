@@ -5,7 +5,6 @@
 import { Command } from '../Command.js';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 
 type SchedulerLike = {
   getTasks(): Array<{ name: string }>;
@@ -102,7 +101,7 @@ export class ScheduleRunCommand extends Command {
     if (!entry) return null;
 
     try {
-      const mod = await import(pathToFileURL(entry).href);
+      const mod = await this.importUserModule(entry);
       const scheduler = typeof mod.createScheduler === 'function'
         ? mod.createScheduler()
         : mod.scheduler;

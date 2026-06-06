@@ -107,10 +107,25 @@ export class QueryBuilder<TModel = any> {
 
     this.whereClauses.push({
       type: mode === 'only' ? 'notNull' : 'null',
-      column: this.deletedAtColumn,
+      column: this.qualifyTableColumn(this.deletedAtColumn),
       boolean: 'AND',
       softDeleteScope: true,
     });
+  }
+
+  private qualifyTableColumn(column: string): string {
+    if (column.includes('.')) return column;
+    return `${this.tableReferenceForColumn()}.${column}`;
+  }
+
+  private tableReferenceForColumn(): string {
+    const aliased = this.tableName.match(/\s+as\s+([A-Za-z_][A-Za-z0-9_]*)$/i);
+    if (aliased) return aliased[1];
+
+    const implicitAlias = this.tableName.match(/^[A-Za-z_][A-Za-z0-9_$.]*\s+([A-Za-z_][A-Za-z0-9_]*)$/);
+    if (implicitAlias) return implicitAlias[1];
+
+    return this.tableName;
   }
 
   // ── SELECT ───────────────────────────────────────────────
@@ -1047,9 +1062,18 @@ export class QueryBuilder<TModel = any> {
 
   private buildAggregate(fn: string, column: string): { sql: string; bindings: any[] } {
     const savedSelect = this.selectColumns;
+    const savedOrder = this.orderClauses;
+    const savedLimit = this.limitValue;
+    const savedOffset = this.offsetValue;
     this.selectColumns = [`${fn}(${this.quoteIdentifier(column, 'Aggregate column')}) as aggregate`];
+    this.orderClauses = [];
+    this.limitValue = null;
+    this.offsetValue = null;
     const result = this.toSQL();
     this.selectColumns = savedSelect;
+    this.orderClauses = savedOrder;
+    this.limitValue = savedLimit;
+    this.offsetValue = savedOffset;
     return result;
   }
 

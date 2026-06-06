@@ -17,6 +17,7 @@ import { DevUpCommand } from '../src/cli/commands/DevUpCommand';
 import { KeyGenerateCommand } from '../src/cli/commands/KeyGenerateCommand';
 import { MakeCiCommand } from '../src/cli/commands/MakeCiCommand';
 import { MakeDeployCommand } from '../src/cli/commands/MakeDeployCommand';
+import { MakeDockerCommand } from '../src/cli/commands/MakeDockerCommand';
 import { MakeInfraCommand } from '../src/cli/commands/MakeInfraCommand';
 import { MakeSeederCommand } from '../src/cli/commands/MakeSeederCommand';
 import { MakeTestCommand } from '../src/cli/commands/MakeTestCommand';
@@ -108,6 +109,38 @@ describe('CLI deployment and utility commands', () => {
     expect(existsSync(join(tmpDir, 'docker-compose.yml'))).toBe(true);
     expect(existsSync(join(tmpDir, '.github', 'workflows', 'deploy.yml'))).toBe(true);
     expect(existsSync(join(tmpDir, 'infra', 'setup-droplet.sh'))).toBe(true);
+  });
+
+  it('generates production-hardened Docker runtime templates', async () => {
+    writeFileSync(join(tmpDir, 'package.json'), JSON.stringify({ name: '@scope/my-app' }));
+
+    await new MakeDockerCommand().handle([], {
+      force: true,
+      meilisearch: true,
+    });
+
+    const dockerfile = readFileSync(join(tmpDir, 'Dockerfile'), 'utf8');
+    const compose = readFileSync(join(tmpDir, 'docker-compose.yml'), 'utf8');
+
+    expect(existsSync(join(tmpDir, '.svelar-local', '.gitkeep'))).toBe(true);
+    expect(dockerfile).toContain('COPY .svelar-local ./.svelar-local');
+    expect(dockerfile).toContain('COPY --chown=sveltekit:sveltekit --from=builder /app/src ./src');
+    expect(dockerfile).toContain('COPY --chown=sveltekit:sveltekit --from=builder /app/svelar.database.json ./');
+    expect(dockerfile).toContain('CMD ["node", "build/index.js"]');
+    expect(dockerfile).toContain('http://127.0.0.1:3000/api/health');
+
+    expect(compose).toContain('      target: production');
+    expect(compose).toContain('- ORIGIN=${APP_URL:-http://localhost:3000}');
+    expect(compose).toContain('- INTERNAL_APP_URL=http://app:3000');
+    expect(compose).toContain('AUTH_TYPE: scram-sha-256');
+    expect(compose).toContain('PGPASSWORD=${DB_PASSWORD:-secret} pg_isready -h 127.0.0.1 -p 6432 -U ${DB_USER:-svelar} -d ${DB_NAME:-svelar}');
+    expect(compose).toContain('redis-server --requirepass ${REDIS_PASSWORD:-svelarsecret} --save "" --appendonly no --stop-writes-on-bgsave-error no');
+    expect(compose).toContain('- "${SOKETI_PORT:-5334}:6001"');
+    expect(compose).toContain("node -e \\\"require('http').get('http://127.0.0.1:6001'");
+    expect(compose).toContain('image: rustfs/rustfs:latest');
+    expect(compose).not.toContain('minio/minio');
+    expect(compose).toContain('- "${MEILI_PORT:-5333}:7700"');
+    expect(compose).toContain('http://127.0.0.1:7700/health');
   });
 
   it('builds docker compose commands for dev and prod runtime commands without shelling unsafe service names', async () => {

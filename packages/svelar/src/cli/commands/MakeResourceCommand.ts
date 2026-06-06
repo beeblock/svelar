@@ -30,7 +30,7 @@ export class MakeResourceCommand extends Command {
       this.warn(`No --module specified, using "${moduleName}". Use --module=<name> to target a specific module.`);
     }
 
-    const moduleDir = this.moduleDir(moduleName, 'resources');
+    const moduleDir = this.moduleDir(moduleName, 'resources', 'resource');
     mkdirSync(moduleDir, { recursive: true });
 
     const filePath = join(moduleDir, `${resourceName}.ts`);
@@ -40,11 +40,11 @@ export class MakeResourceCommand extends Command {
     }
 
     const modelName = flags.model || this.inferModelName(resourceName);
-    const modelImportPath = this.isDDD() ? `./${modelName}.js` : `../models/${modelName}.js`;
+    const modelImportPath = this.moduleImportPath(moduleName, 'resource', 'model', modelName);
     const content = this.generateResource(resourceName, modelName, modelImportPath);
 
     writeFileSync(filePath, content);
-    const relDir = this.isDDD() ? `src/lib/modules/${moduleName}` : 'src/lib/resources';
+    const relDir = this.moduleRelDir(moduleName, 'resources', 'resource');
     this.success(`Resource created: ${relDir}/${resourceName}.ts`);
 
     // Optionally create a collection resource
@@ -53,10 +53,10 @@ export class MakeResourceCommand extends Command {
       const collectionPath = join(moduleDir, `${collectionName}.ts`);
 
       if (!existsSync(collectionPath)) {
-        const collModelPath = this.isDDD() ? `./${modelName}.js` : `../models/${modelName}.js`;
+        const collModelPath = this.moduleImportPath(moduleName, 'resource', 'model', modelName);
         const collectionContent = this.generateCollectionResource(collectionName, resourceName, modelName, collModelPath);
         writeFileSync(collectionPath, collectionContent);
-        const collRelDir = this.isDDD() ? `src/lib/modules/${moduleName}` : 'src/lib/resources';
+        const collRelDir = this.moduleRelDir(moduleName, 'resources', 'resource');
         this.success(`Collection resource created: ${collRelDir}/${collectionName}.ts`);
       }
     }
@@ -70,7 +70,7 @@ import type { ${modelName} } from '${modelPath}';
 // ── API Contract ────────────────────────────────────────────
 // Define the shape once — import this type on the frontend.
 //
-//   import type { ${shapeName} } from '$lib/modules/.../${resourceName}';
+//   import type { ${shapeName} } from '$lib/modules/.../interface/http/resources/${resourceName}';
 //
 
 export interface ${shapeName} {
