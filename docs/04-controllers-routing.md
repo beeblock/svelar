@@ -130,7 +130,7 @@ Each file is pre-wired to the controller:
 
 ```typescript
 // src/routes/api/posts/+server.ts (generated)
-import { PostController } from '$lib/modules/posts/PostController.js';
+import { PostController } from '$lib/modules/posts/interface/http/controllers/PostController.js';
 
 const ctrl = new PostController();
 export const GET = ctrl.handle('index');
@@ -201,7 +201,7 @@ const authService = new AuthService();
 export class AuthController extends Controller {
   /** POST /api/auth/register */
   async register(event: any) {
-    // Validate request with FormRequest DTO
+    // Validate request with FormRequest
     const data = await RegisterRequest.validate(event);
 
     // Run action
@@ -548,7 +548,7 @@ npx svelar make:resource User --module=auth
 npx svelar make:resource User --module=auth --collection  # also creates UserCollectionResource
 ```
 
-This creates `src/lib/modules/auth/UserResource.ts` with a typed API contract:
+This creates `src/lib/modules/auth/interface/http/resources/UserResource.ts` with a typed API contract:
 
 ```typescript
 import { Resource } from '@beeblock/svelar/routing';
@@ -588,7 +588,7 @@ Instead of defining types separately in resources, DTOs, validation, and fronten
 npx svelar make:schema User --module=auth
 ```
 
-This creates `src/lib/modules/auth/user.schema.ts`:
+This creates `src/lib/modules/auth/contracts/schemas/user.schema.ts`:
 
 ```typescript
 import { z } from 'zod';
@@ -645,8 +645,8 @@ export class UserResource extends Resource<User, UserData> {
 **FormRequest** — uses the input schema:
 
 ```typescript
-import { FormRequest } from '@beeblock/svelar/routing';
-import { createUserSchema } from './user.schema.js';
+import { FormRequest } from '@beeblock/svelar/forms';
+import { createUserSchema } from '../../../contracts/schemas/user.schema.js';
 
 export class CreateUserRequest extends FormRequest {
   rules() {
@@ -671,7 +671,7 @@ export class UserController extends Controller {
 **Frontend** — imports the same types:
 
 ```typescript
-import type { UserData, CreateUserInput } from '$lib/modules/auth/user.schema';
+import type { UserData, CreateUserInput } from '$lib/modules/auth/contracts/schemas/user.schema';
 import { apiFetchJson } from '@beeblock/svelar/http';
 
 // Response is typed
@@ -701,7 +701,7 @@ For typed `apiFetchJson` calls, use the utility types:
 
 ```typescript
 import type { ResourceData, ResourceCollection, InferResource } from '@beeblock/svelar/routing';
-import type { UserResource } from '$lib/modules/auth/UserResource';
+import type { UserResource } from '$lib/modules/auth/interface/http/resources/UserResource';
 
 // Single: { data: UserData }
 const user = await apiFetchJson<ResourceData<UserResource>>('/api/users/1');

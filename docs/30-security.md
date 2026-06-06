@@ -177,18 +177,18 @@ await Gate.forUser(user).authorize('update', post);
 
 ### Port Exposure
 
-Only the application port should be exposed to the host. All backing services (database, Redis, Soketi, Gotenberg) communicate over the internal Docker network.
+Only the application port should be public. Backing service APIs (database, Redis, Gotenberg, RustFS S3) communicate over the internal Docker network. Generated Docker files expose Soketi and Meilisearch on non-default host ports for browser WebSocket clients and local dashboard/API access; put those behind HTTPS/firewall rules before production traffic.
 
 | Service | Exposed to host? | Notes |
 |---------|-------------------|-------|
 | **app** | Yes (port 3000) | The only public-facing service |
 | **postgres/mysql** | No | Internal only |
 | **redis** | No | Internal only, password required |
-| **soketi** | No | Uncomment port if browser clients connect directly |
+| **soketi** | Yes (port 5334 by default) | Needed when browser clients connect directly; protect with HTTPS/firewall rules |
 | **gotenberg** | No | Internal only |
 | **rustfs S3 API** | No | Internal only (app connects via Docker network) |
 | **rustfs console** | Yes (port 9001) | Admin dashboard — protect with firewall |
-| **meilisearch** | No | Internal only (opt-in with `--meilisearch`) |
+| **meilisearch** | Yes (port 5333 by default, opt-in) | Protect the dashboard/API with firewall rules and a strong `MEILI_MASTER_KEY` |
 
 ### Redis Authentication
 
@@ -264,8 +264,8 @@ Before deploying to production:
 - [ ] Enable HTTPS (use a reverse proxy like Traefik or Nginx)
 - [ ] Restrict CORS origins to your domain
 - [ ] Configure rate limiting appropriate for your traffic
-- [ ] Remove or firewall the RustFS console port (9001)
-- [ ] Review exposed Docker ports — only app:3000 should be public
+- [ ] Remove or firewall admin/service host ports (`SOKETI_PORT`, `MEILI_PORT`, `RUSTFS_CONSOLE_PORT`)
+- [ ] Review exposed Docker ports — only intentionally public app/realtime endpoints should be reachable
 - [ ] Set up log rotation to prevent disk exhaustion
 - [ ] Enable database backups
 - [ ] Never commit `.env` files to version control

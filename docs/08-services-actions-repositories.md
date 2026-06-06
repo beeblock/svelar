@@ -336,12 +336,12 @@ Actions encapsulate single, well-defined use cases. Each action does one thing w
 npx svelar make:action RegisterUser --module=auth
 ```
 
-This creates `src/lib/modules/auth/RegisterUserAction.ts`:
+This creates `src/lib/modules/auth/application/actions/RegisterUserAction.ts`:
 
 ```typescript
 import { Action } from '@beeblock/svelar/actions';
 import { Hash } from '@beeblock/svelar/hashing';
-import { User } from './User.js';
+import { User } from '../../domain/models/User.js';
 
 interface RegisterInput {
   name: string;
@@ -656,7 +656,7 @@ const order = await Pipeline.send(orderData)
 await Event.dispatch(new OrderCompleted(order));
 ```
 
-## Controller → Service → Action → Repository → Model Flow
+## Route → Controller → FormRequest → DTO → Action → Service → Repository → Model → Resource Flow
 
 Here's a complete example showing all layers from a scaffolded Svelar project:
 
@@ -675,18 +675,14 @@ export const POST = ctrl.handle('register');
 ```typescript
 // src/lib/controllers/AuthController.ts
 import { Controller } from '@beeblock/svelar/routing';
-import { RegisterRequest } from '../dtos/RegisterRequest.js';
+import { RegisterRequest } from '../requests/RegisterRequest.js';
 import { RegisterUserAction } from '../actions/RegisterUserAction.js';
+import { UserResource } from '../resources/UserResource.js';
 
 export class AuthController extends Controller {
   async register(event: any) {
-    const data = await RegisterRequest.validate(event);
-
-    const result = await registerAction.run({
-      name: data.name,
-      email: data.email,
-      password: data.password,
-    });
+    const dto = await RegisterRequest.validate(event);
+    const result = await registerAction.run(dto);
 
     if (!result.success) {
       return this.json({ message: result.error }, 422);
@@ -695,39 +691,70 @@ export class AuthController extends Controller {
     const user = result.data!;
     event.locals.session.set('auth_user_id', (user as any).id);
 
-    return this.created({
-      message: 'Registration successful',
-      user: { id: (user as any).id, name: (user as any).name, email: (user as any).email },
-    });
+    return UserResource.make(user).status(201).toResponse();
   }
 }
 ```
 
-### 3. Action
+### 3. FormRequest and DTO
+
+```typescript
+// src/lib/requests/RegisterRequest.ts
+import { FormRequest } from '@beeblock/svelar/forms';
+import { registerSchema } from '../schemas/auth.schema.js';
+import { RegisterUserDto } from '../dtos/RegisterUserDto.js';
+
+export class RegisterRequest extends FormRequest {
+  rules() {
+    return registerSchema;
+  }
+
+  passedValidation(data: any) {
+    return RegisterUserDto.from(data);
+  }
+}
+
+// src/lib/dtos/RegisterUserDto.ts
+export class RegisterUserDto {
+  constructor(
+    public readonly name: string,
+    public readonly email: string,
+    public readonly password: string,
+  ) {}
+
+  static from(data: any) {
+    return new RegisterUserDto(data.name, data.email, data.password);
+  }
+}
+```
+
+### 4. Action
 
 ```typescript
 // src/lib/actions/RegisterUserAction.ts
 import { Action } from '@beeblock/svelar/actions';
 import { AuthService } from '../services/AuthService.js';
+import type { RegisterUserDto } from '../dtos/RegisterUserDto.js';
 import type { ServiceResult } from '@beeblock/svelar/services';
 
-export class RegisterUserAction extends Action<RegisterInput, ServiceResult<User>> {
-  async execute(input: RegisterInput): Promise<ServiceResult<User>> {
+export class RegisterUserAction extends Action<RegisterUserDto, ServiceResult<User>> {
+  async execute(input: RegisterUserDto): Promise<ServiceResult<User>> {
     return authService.register(input);
   }
 }
 ```
 
-### 4. Service
+### 5. Service
 
 ```typescript
 // src/lib/services/AuthService.ts
 import { Service } from '@beeblock/svelar/services';
 import { Hash } from '@beeblock/svelar/hashing';
 import { UserRepository } from '../repositories/UserRepository.js';
+import type { RegisterUserDto } from '../dtos/RegisterUserDto.js';
 
 export class AuthService extends Service {
-  async register(data: any) {
+  async register(data: RegisterUserDto) {
     const existing = await userRepo.findByEmail(data.email);
     if (existing) {
       return this.fail('Email already registered');
@@ -746,7 +773,7 @@ export class AuthService extends Service {
 }
 ```
 
-### 5. Repository
+### 6. Repository
 
 ```typescript
 // src/lib/repositories/UserRepository.ts
@@ -764,7 +791,7 @@ export class UserRepository extends Repository<User> {
 }
 ```
 
-### 6. Model
+### 7. Model
 
 ```typescript
 // src/lib/models/User.ts
@@ -783,16 +810,35 @@ export class User extends Model {
 }
 ```
 
+### 8. Resource
+
+```typescript
+// src/lib/resources/UserResource.ts
+import { Resource } from '@beeblock/svelar/routing';
+
+export class UserResource extends Resource {
+  toJSON() {
+    return {
+      id: this.data.id,
+      name: this.data.name,
+      email: this.data.email,
+    };
+  }
+}
+```
+
 ## Best Practices
 
-1. **Controllers delegate to services** - Controllers should be thin request handlers
-2. **Services orchestrate operations** - Compose multiple repositories and actions
+1. **Controllers delegate to actions** - Controllers should validate, authorize, invoke a use case, and return a resource
+2. **FormRequests and DTOs protect boundaries** - FormRequests validate/authorize; DTOs carry trusted data inward
 3. **Actions encapsulate use cases** - Each action should do one thing well
-4. **Repositories abstract data access** - Never query models directly in services
-5. **Keep models simple** - Models define data, relationships, and basic queries
-6. **Use strong typing** - Define input/output types for better IDE support
-7. **Emit events** - Use events for loose coupling between components
-8. **Test services** - Unit test services independently from HTTP layer
+4. **Services orchestrate operations** - Compose repositories, framework services, and side effects
+5. **Repositories abstract data access** - Keep query details behind repositories
+6. **Keep models simple** - Models define data, relationships, casts, scopes, and persistence behavior
+7. **Resources shape responses** - Never leak hidden/internal fields by returning raw models from APIs
+8. **Use strong typing** - Define input/output types for better IDE support
+9. **Emit events** - Use events for loose coupling between components
+10. **Test actions and services** - Unit test use cases and service orchestration independently from HTTP
 
 ## Next Steps
 

@@ -227,7 +227,7 @@ Svelar provides three levels of extensibility for third-party integrations:
 Create a service class that wraps `Http` for a specific API. This is the simplest and most common pattern:
 
 ```typescript
-// src/lib/modules/billing/StripeService.ts
+// src/lib/modules/billing/application/services/StripeService.ts
 import { Http, HttpClient, HttpRequestError } from '@beeblock/svelar/http';
 
 export class StripeService {
@@ -264,9 +264,9 @@ export class StripeService {
 Use it in your controllers:
 
 ```typescript
-// src/lib/modules/billing/BillingController.ts
+// src/lib/modules/billing/interface/http/controllers/BillingController.ts
 import { Controller } from '@beeblock/svelar/routing';
-import { StripeService } from './StripeService.js';
+import { StripeService } from '../../../application/services/StripeService.js';
 
 export class BillingController extends Controller {
   private stripe = new StripeService();

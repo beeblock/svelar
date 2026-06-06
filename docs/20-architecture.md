@@ -9,39 +9,155 @@ Each module in `src/lib/modules/` is a self-contained domain:
 ```
 src/lib/modules/
 ├── auth/
-│   ├── User.ts              # Model
-│   ├── UserObserver.ts       # Model observer
-│   ├── AuthController.ts     # Controller
-│   ├── AuthService.ts        # Service (business logic)
-│   ├── UserRepository.ts     # Repository (data access)
-│   ├── RegisterUserAction.ts # Action (single use-case)
-│   ├── StoreUserRequest.ts   # FormRequest DTO (validation)
-│   └── UserResource.ts       # API resource (response shaping)
+│   ├── contracts/
+│   │   └── schemas/          # Shared Zod schemas and inferred types
+│   ├── domain/
+│   │   ├── models/           # ORM models
+│   │   ├── events/           # Module events
+│   │   ├── observers/        # Model observers
+│   │   └── policies/         # Gates and policies
+│   ├── application/
+│   │   ├── actions/          # Single use-case classes
+│   │   ├── dto/              # Validated payload objects
+│   │   ├── listeners/        # Event listeners
+│   │   ├── notifications/    # Notifications
+│   │   └── services/         # Business/application services
+│   ├── infrastructure/
+│   │   └── repositories/     # Data-access repositories
+│   └── interface/
+│       └── http/
+│           ├── controllers/  # HTTP controllers
+│           ├── requests/     # FormRequest validation/authorization
+│           └── resources/    # API response resources
 ├── billing/
-│   ├── Invoice.ts
-│   ├── BillingService.ts
-│   ├── InvoiceRepository.ts
-│   └── CreateInvoice.ts
+│   └── ...
 └── posts/
-    ├── Post.ts
-    ├── PostObserver.ts
-    ├── PostController.ts
-    ├── PostService.ts
-    └── PostRepository.ts
+    └── ...
 ```
 
 A module owns its **models, services, controllers, repositories, actions, observers, and DTOs**. Everything related to one domain lives together.
 
-## The Golden Rule: Modules Never Import Each Other
+The CLI follows this layout automatically:
 
-This is the most important architectural principle in Svelar:
+| Artifact | DDD path |
+|---|---|
+| Model | `src/lib/modules/<module>/domain/models/` |
+| Event | `src/lib/modules/<module>/domain/events/` |
+| Observer | `src/lib/modules/<module>/domain/observers/` |
+| Policy/gates | `src/lib/modules/<module>/domain/policies/` |
+| Action | `src/lib/modules/<module>/application/actions/` |
+| DTO | `src/lib/modules/<module>/application/dto/` |
+| Listener | `src/lib/modules/<module>/application/listeners/` |
+| Notification | `src/lib/modules/<module>/application/notifications/` |
+| Service | `src/lib/modules/<module>/application/services/` |
+| Repository | `src/lib/modules/<module>/infrastructure/repositories/` |
+| Controller | `src/lib/modules/<module>/interface/http/controllers/` |
+| FormRequest | `src/lib/modules/<module>/interface/http/requests/` |
+| Resource | `src/lib/modules/<module>/interface/http/resources/` |
+| Contract schema | `src/lib/modules/<module>/contracts/schemas/` |
+
+For a full resource scaffold, use `make:entity`:
+
+```bash
+npx svelar make:entity Invoice --module=billing --fields "title:string,total:number,status:enum(draft,paid)" --crud
+```
+
+This creates the model, contract schema, DTOs, requests, actions, resource, repository, service, controller, and a focused table migration using the layered module layout.
+
+Use `$lib/...` aliases for app-owned imports across this structure:
+
+```typescript
+import { Invoice } from '$lib/modules/billing/domain/models/Invoice.js';
+import { BillingAccessService } from '$lib/modules/billing/application/services/BillingAccessService.js';
+import { EventServiceProvider } from '$lib/shared/providers/EventServiceProvider.js';
+```
+
+Keep relative imports for local SvelteKit conventions such as `./$types`, same-component helpers, stylesheets, or files outside `src/lib` such as `src/app.ts`.
+
+## Module Boundaries
+
+The most important architectural principle in Svelar is that modules must not reach into each other's internals:
 
 ```
-auth/ ──✖──► billing/     # NEVER import across modules
-auth/ ──✔──► Event system  # Always communicate through events
+auth/ ──✖──► billing/domain/models/Invoice       # do not reach into internals
+auth/ ──✖──► billing/infrastructure/repositories # do not bypass the owner module
+auth/ ──✔──► billing/application/services         # allowed public application API
+auth/ ──✔──► Event system                         # side-effect communication
 ```
 
-If `AuthService` needs to trigger something in `BillingService`, it **must not** import `BillingService` directly. Instead, it fires an event, and the billing module listens for it.
+Controllers should also never be imported by another module. Controllers are HTTP adapters; reusable behavior belongs in an action, service, query, or facade.
+
+## Cross-Module Reads vs Side Effects
+
+Use different communication tools depending on whether the caller needs data back.
+
+| Need | Use | Returns data? |
+|---|---|---|
+| "Something happened; other modules may react" | Event + listener | No |
+| "Run slow/retryable work after something happened" | Event listener dispatches a queue job | No |
+| "I need data owned by another module now" | Public application service/query/facade | Yes |
+
+Events are not request/response APIs. `Event.dispatch()` returns `Promise<void>`, and listeners should not be used to answer queries.
+
+Events are synchronous unless a listener explicitly hands work to a queue. Keep direct listeners small for immediate side effects, and dispatch queue jobs from listeners for slow, retryable, or external work.
+
+For cross-module reads, create a narrow public service/query/facade in the owning module's `application/services` folder and return plain data from that module's `contracts` layer. Do not return the owning module's ORM models to another module.
+
+Example: boards needs billing access information before creating a board.
+
+```typescript
+// src/lib/modules/billing/contracts/billing-access.ts
+export type BillingAccess = {
+  userId: number;
+  plan: 'free' | 'pro' | 'team';
+  canCreateBoards: boolean;
+  maxBoards: number | null;
+};
+```
+
+```typescript
+// src/lib/modules/billing/application/services/BillingAccessService.ts
+import type { BillingAccess } from '$lib/modules/billing/contracts/billing-access.js';
+import { Subscription } from '$lib/modules/billing/domain/models/Subscription.js';
+
+export class BillingAccessService {
+  async forUser(userId: number): Promise<BillingAccess> {
+    const subscription = await Subscription.query()
+      .where('user_id', userId)
+      .first();
+
+    const plan = subscription?.plan ?? 'free';
+
+    return {
+      userId,
+      plan,
+      canCreateBoards: plan !== 'free',
+      maxBoards: plan === 'team' ? null : 10,
+    };
+  }
+}
+```
+
+```typescript
+// src/lib/modules/boards/application/services/BoardService.ts
+import { BillingAccessService } from '$lib/modules/billing/application/services/BillingAccessService.js';
+
+const billingAccess = new BillingAccessService();
+
+export class BoardService {
+  async createBoard(dto: CreateBoardDto, user: UserLike) {
+    const access = await billingAccess.forUser(user.id);
+
+    if (!access.canCreateBoards) {
+      throw new Error('Your current plan cannot create boards.');
+    }
+
+    // Continue with board creation in the boards module...
+  }
+}
+```
+
+This keeps `billing` responsible for billing data and rules, while `boards` depends only on a small public application API and a plain contract type.
 
 ### Why?
 
@@ -55,10 +171,10 @@ If `AuthService` needs to trigger something in `BillingService`, it **must not**
 ### Step 1: Module A fires an event
 
 ```typescript
-// src/lib/modules/auth/AuthService.ts
+// src/lib/modules/auth/application/services/AuthService.ts
 import { Service } from '@beeblock/svelar/services';
 import { Event } from '@beeblock/svelar/events';
-import { User } from './User.js';
+import { User } from '$lib/modules/auth/domain/models/User.js';
 
 export class AuthService extends Service {
   async register(data: RegisterDTO) {
@@ -78,10 +194,10 @@ export class AuthService extends Service {
 
 ### Step 2: Define the event
 
-Events live in `src/lib/events/` — they are **shared contracts**, not owned by any module:
+Events live in the module that owns the domain fact. Cross-cutting listeners subscribe through `EventServiceProvider` instead of importing other modules directly.
 
 ```typescript
-// src/lib/events/UserRegistered.ts
+// src/lib/modules/auth/domain/events/UserRegistered.ts
 import type { Model } from '@beeblock/svelar/orm';
 
 export class UserRegistered {
@@ -92,10 +208,10 @@ export class UserRegistered {
 ### Step 3: Module B listens for the event
 
 ```typescript
-// src/lib/listeners/CreateFreePlan.ts
+// src/lib/modules/billing/application/listeners/CreateFreePlan.ts
 import { Listener } from '@beeblock/svelar/events';
-import type { UserRegistered } from '../events/UserRegistered.js';
-import { Invoice } from '../modules/billing/Invoice.js';
+import type { UserRegistered } from '$lib/modules/auth/domain/events/UserRegistered.js';
+import { Invoice } from '$lib/modules/billing/domain/models/Invoice.js';
 
 export class CreateFreePlan extends Listener<UserRegistered> {
   async handle(event: UserRegistered) {
@@ -113,10 +229,10 @@ export class CreateFreePlan extends Listener<UserRegistered> {
 ```typescript
 // src/lib/shared/providers/EventServiceProvider.ts
 import { EventServiceProvider as BaseProvider } from '@beeblock/svelar/events';
-import { UserRegistered } from '../../events/UserRegistered.js';
-import { CreateFreePlan } from '../../listeners/CreateFreePlan.js';
-import { SendWelcomeEmail } from '../../listeners/SendWelcomeEmail.js';
-import { SyncToAnalytics } from '../../listeners/SyncToAnalytics.js';
+import { UserRegistered } from '$lib/modules/auth/domain/events/UserRegistered.js';
+import { CreateFreePlan } from '$lib/modules/billing/application/listeners/CreateFreePlan.js';
+import { SendWelcomeEmail } from '$lib/modules/auth/application/listeners/SendWelcomeEmail.js';
+import { SyncToAnalytics } from '$lib/modules/analytics/application/listeners/SyncToAnalytics.js';
 
 export class EventServiceProvider extends BaseProvider {
   protected listen = {
@@ -163,7 +279,7 @@ For events that don't map to model lifecycle (e.g. "order shipped", "subscriptio
 ### Custom Model Events
 
 ```typescript
-// src/lib/modules/orders/Order.ts
+// src/lib/modules/orders/domain/models/Order.ts
 export class Order extends Model {
   static table = 'orders';
   static events = ['shipped', 'cancelled', 'refunded'];
@@ -243,8 +359,8 @@ Do **not** put module-specific code in `shared/` — only contracts and infrastr
 ### 1. Direct cross-module imports
 
 ```typescript
-// BAD — auth module imports billing module directly
-import { BillingService } from '../billing/BillingService.js';
+// BAD — auth module directly performs a billing side effect
+import { BillingService } from '$lib/modules/billing/application/services/BillingService.js';
 
 export class AuthService extends Service {
   async register(data: RegisterDTO) {

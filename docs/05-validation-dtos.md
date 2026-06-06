@@ -10,7 +10,7 @@ Instead of defining Zod schemas inline in FormRequests and types separately on t
 npx svelar make:schema Post --module=posts
 ```
 
-This creates `src/lib/modules/posts/post.schema.ts`:
+This creates `src/lib/modules/posts/contracts/schemas/post.schema.ts`:
 
 ```typescript
 import { z } from 'zod';
@@ -50,13 +50,36 @@ Now every layer imports from this one file — zero type duplication:
 | Layer | Imports | Uses |
 |-------|---------|------|
 | **FormRequest** | `createPostSchema` | Validation rules |
+| **DTO** | `CreatePostInput` | Validated service/action payload |
 | **Resource** | `PostData` | `Resource<Post, PostData>` output shape |
 | **Controller** | nothing extra | data typed automatically |
 | **Frontend** | `PostData`, `CreatePostInput` | Type-safe forms and responses |
 
-## FormRequest Classes (DTOs)
+## FormRequest Classes
 
-FormRequest classes encapsulate validation logic and authorization checks. They import their schema from the contract file.
+FormRequest classes encapsulate validation logic and authorization checks. They import their schema from the contract file. A FormRequest is not the DTO itself; it is the request boundary that validates input and can return a DTO from `passedValidation()`.
+
+## DTO Classes
+
+DTOs carry validated data into services and actions. Services should accept DTOs instead of raw `FormData`, request bodies, or unvalidated objects.
+
+```typescript
+// src/lib/modules/posts/application/dto/CreatePostDto.ts
+import type { CreatePostInput } from '../../contracts/schemas/post.schema.js';
+
+export class CreatePostDto {
+  constructor(
+    public readonly title: string,
+    public readonly slug: string | undefined,
+    public readonly body: string,
+    public readonly published: boolean
+  ) {}
+
+  static from(input: CreatePostInput): CreatePostDto {
+    return new CreatePostDto(input.title, input.slug, input.body, input.published ?? false);
+  }
+}
+```
 
 ### Creating a FormRequest
 
@@ -67,9 +90,10 @@ npx svelar make:request CreatePost --module=posts
 Wire it to the contract schema:
 
 ```typescript
-// src/lib/modules/posts/CreatePostRequest.ts
-import { FormRequest } from '@beeblock/svelar/routing';
-import { createPostSchema } from './post.schema.js';
+// src/lib/modules/posts/interface/http/requests/CreatePostRequest.ts
+import { FormRequest } from '@beeblock/svelar/forms';
+import { CreatePostDto } from '../../../application/dto/CreatePostDto.js';
+import { createPostSchema } from '../../../contracts/schemas/post.schema.js';
 
 export class CreatePostRequest extends FormRequest {
   rules() {
@@ -80,14 +104,14 @@ export class CreatePostRequest extends FormRequest {
     return !!event.locals.user;
   }
 
-  passedValidation(data: any) {
+  passedValidation(data: any): CreatePostDto {
     if (!data.slug) {
       data.slug = data.title
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-|-$/g, '');
     }
-    return data;
+    return CreatePostDto.from(data);
   }
 }
 ```
@@ -95,8 +119,8 @@ export class CreatePostRequest extends FormRequest {
 The update request reuses the same schema with `.partial()`:
 
 ```typescript
-// src/lib/modules/posts/UpdatePostRequest.ts
-import { FormRequest } from '@beeblock/svelar/routing';
+// src/lib/modules/posts/interface/http/requests/UpdatePostRequest.ts
+import { FormRequest } from '@beeblock/svelar/forms';
 import { updatePostSchema } from './post.schema.js';
 
 export class UpdatePostRequest extends FormRequest {
@@ -120,13 +144,10 @@ import { PostResource } from './PostResource.js';
 export class PostController extends Controller {
   async store(event: any) {
     // Validate and authorize — throws 422 or 403 on failure
-    // data is typed as CreatePostInput
+    // data is a CreatePostDto returned by passedValidation()
     const data = await CreatePostRequest.validate(event);
 
-    const post = await Post.create({
-      ...data,
-      user_id: event.locals.user.id,
-    });
+    const post = await postService.create(data, event.locals.user.id);
 
     return PostResource.make(post).status(201).toResponse();
   }
@@ -137,7 +158,7 @@ export class PostController extends Controller {
 
 ```typescript
 // +page.svelte or any client component
-import type { PostData, CreatePostInput } from '$lib/modules/posts/post.schema';
+import type { PostData, CreatePostInput } from '$lib/modules/posts/contracts/schemas/post.schema';
 import { apiFetchJson } from '@beeblock/svelar/http';
 
 // Form data is typed — IDE catches missing fields
@@ -204,7 +225,7 @@ There are two approaches to localize validation messages with Paraglide.
 **Approach 1: In the contract schema** (recommended — messages live with the schema):
 
 ```typescript
-// src/lib/modules/auth/user.schema.ts
+// src/lib/modules/auth/contracts/schemas/user.schema.ts
 import { z } from 'zod';
 import * as m from '$lib/paraglide/messages';
 
@@ -352,7 +373,7 @@ passedValidation(data: any) {
 ### Auth Module
 
 ```typescript
-// src/lib/modules/auth/user.schema.ts
+// src/lib/modules/auth/contracts/schemas/user.schema.ts
 import { z } from 'zod';
 
 export const userSchema = z.object({
@@ -383,8 +404,8 @@ export type LoginInput = z.infer<typeof loginSchema>;
 ```
 
 ```typescript
-// src/lib/modules/auth/RegisterRequest.ts
-import { FormRequest } from '@beeblock/svelar/routing';
+// src/lib/modules/auth/interface/http/requests/RegisterRequest.ts
+import { FormRequest } from '@beeblock/svelar/forms';
 import { registerSchema } from './user.schema.js';
 
 export class RegisterRequest extends FormRequest {
@@ -395,8 +416,8 @@ export class RegisterRequest extends FormRequest {
 ```
 
 ```typescript
-// src/lib/modules/auth/LoginRequest.ts
-import { FormRequest } from '@beeblock/svelar/routing';
+// src/lib/modules/auth/interface/http/requests/LoginRequest.ts
+import { FormRequest } from '@beeblock/svelar/forms';
 import { loginSchema } from './user.schema.js';
 
 export class LoginRequest extends FormRequest {
@@ -408,7 +429,7 @@ export class LoginRequest extends FormRequest {
 
 ```typescript
 // Frontend — register form
-import type { RegisterInput } from '$lib/modules/auth/user.schema';
+import type { RegisterInput } from '$lib/modules/auth/contracts/schemas/user.schema';
 
 let form: RegisterInput = {
   name: '',
@@ -421,7 +442,7 @@ let form: RegisterInput = {
 ### Posts Module
 
 ```typescript
-// src/lib/modules/posts/post.schema.ts
+// src/lib/modules/posts/contracts/schemas/post.schema.ts
 import { z } from 'zod';
 
 export const postSchema = z.object({
@@ -449,8 +470,8 @@ export type UpdatePostInput = z.infer<typeof updatePostSchema>;
 ```
 
 ```typescript
-// src/lib/modules/posts/CreatePostRequest.ts
-import { FormRequest } from '@beeblock/svelar/routing';
+// src/lib/modules/posts/interface/http/requests/CreatePostRequest.ts
+import { FormRequest } from '@beeblock/svelar/forms';
 import { createPostSchema } from './post.schema.js';
 
 export class CreatePostRequest extends FormRequest {
@@ -475,8 +496,8 @@ export class CreatePostRequest extends FormRequest {
 ```
 
 ```typescript
-// src/lib/modules/posts/UpdatePostRequest.ts
-import { FormRequest } from '@beeblock/svelar/routing';
+// src/lib/modules/posts/interface/http/requests/UpdatePostRequest.ts
+import { FormRequest } from '@beeblock/svelar/forms';
 import { updatePostSchema } from './post.schema.js';
 
 export class UpdatePostRequest extends FormRequest {
@@ -492,7 +513,7 @@ export class UpdatePostRequest extends FormRequest {
 ```
 
 ```typescript
-// src/lib/modules/posts/PostResource.ts
+// src/lib/modules/posts/interface/http/resources/PostResource.ts
 import { Resource } from '@beeblock/svelar/routing';
 import type { Post } from './Post.js';
 import type { PostData } from './post.schema.js';
@@ -513,7 +534,7 @@ export class PostResource extends Resource<Post, PostData> {
 ```
 
 ```typescript
-// src/lib/modules/posts/PostController.ts — thin controller
+// src/lib/modules/posts/interface/http/controllers/PostController.ts — thin controller
 import { Controller } from '@beeblock/svelar/routing';
 import { CreatePostRequest } from './CreatePostRequest.js';
 import { UpdatePostRequest } from './UpdatePostRequest.js';
@@ -742,7 +763,7 @@ post.schema.ts  →  CreatePostRequest  →  PostController  →  PostResource  
 ```
 
 ```typescript
-// 1. Contract — src/lib/modules/posts/post.schema.ts
+// 1. Contract — src/lib/modules/posts/contracts/schemas/post.schema.ts
 export const createPostSchema = z.object({
   title: z.string().min(3).max(255),
   body: z.string().min(10),
@@ -750,18 +771,18 @@ export const createPostSchema = z.object({
 export type CreatePostInput = z.infer<typeof createPostSchema>;
 export type PostData = z.infer<typeof postSchema>;
 
-// 2. FormRequest — src/lib/modules/posts/CreatePostRequest.ts
+// 2. FormRequest — src/lib/modules/posts/interface/http/requests/CreatePostRequest.ts
 export class CreatePostRequest extends FormRequest {
   rules() { return createPostSchema; }
   authorize(event: any) { return !!event.locals.user; }
 }
 
-// 3. Resource — src/lib/modules/posts/PostResource.ts
+// 3. Resource — src/lib/modules/posts/interface/http/resources/PostResource.ts
 export class PostResource extends Resource<Post, PostData> {
   toJSON(): PostData { return { id: this.data.id, title: this.data.title, ... }; }
 }
 
-// 4. Controller — src/lib/modules/posts/PostController.ts
+// 4. Controller — src/lib/modules/posts/interface/http/controllers/PostController.ts
 export class PostController extends Controller {
   async store(event: any) {
     const data = await CreatePostRequest.validate(event); // typed as CreatePostInput
@@ -775,7 +796,7 @@ const ctrl = new PostController();
 export const POST = ctrl.handle('store');
 
 // 6. Frontend — src/routes/posts/new/+page.svelte
-import type { CreatePostInput, PostData } from '$lib/modules/posts/post.schema';
+import type { CreatePostInput, PostData } from '$lib/modules/posts/contracts/schemas/post.schema';
 let form: CreatePostInput = { title: '', body: '' };
 const { data } = await apiFetchJson<{ data: PostData }>('/api/posts', {
   method: 'POST',
@@ -790,7 +811,7 @@ It's common for forms to submit a base model alongside related pivot data in a s
 ### 1. Define a nested schema
 
 ```typescript
-// src/lib/modules/orders/schemas.ts
+// src/lib/modules/orders/contracts/schemas/schemas.ts
 import { z } from 'zod';
 
 export const createOrderSchema = z.object({
@@ -813,9 +834,9 @@ export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 ### 2. Create the FormRequest
 
 ```typescript
-// src/lib/modules/orders/CreateOrderRequest.ts
-import { FormRequest } from '@beeblock/svelar/routing';
-import { createOrderSchema } from './schemas';
+// src/lib/modules/orders/interface/http/requests/CreateOrderRequest.ts
+import { FormRequest } from '@beeblock/svelar/forms';
+import { createOrderSchema } from '../../../contracts/schemas/schemas.js';
 
 export class CreateOrderRequest extends FormRequest {
   rules() {
@@ -831,10 +852,10 @@ export class CreateOrderRequest extends FormRequest {
 ### 3. Handle in controller/service — split base fields from pivot data
 
 ```typescript
-// src/lib/modules/orders/OrderController.ts
+// src/lib/modules/orders/interface/http/controllers/OrderController.ts
 import { Controller } from '@beeblock/svelar/routing';
-import { CreateOrderRequest } from './CreateOrderRequest';
-import { Order } from './Order';
+import { CreateOrderRequest } from '../requests/CreateOrderRequest.js';
+import { Order } from '../../../domain/models/Order.js';
 
 export class OrderController extends Controller {
   async store(event: any) {
@@ -865,7 +886,7 @@ export class OrderController extends Controller {
 ### 4. The model relationship
 
 ```typescript
-// src/lib/modules/orders/Order.ts
+// src/lib/modules/orders/domain/models/Order.ts
 import { Model } from '@beeblock/svelar/orm';
 import { Product } from '../products/Product';
 
@@ -934,7 +955,7 @@ const response = await apiFetch('/api/orders', {
 5. **Validate authorization in `authorize()`** — Keeps auth logic in one place
 6. **Transform data in `passedValidation()`** — Hash passwords, slugify fields, etc.
 7. **Keep controllers thin** — Validate with FormRequest, respond with Resource, logic in Services/Actions
-8. **Share types with the frontend** — `import type { PostData } from '$lib/modules/posts/post.schema'`
+8. **Share types with the frontend** — `import type { PostData } from '$lib/modules/posts/contracts/schemas/post.schema'`
 
 ## Next Steps
 

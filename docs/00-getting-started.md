@@ -12,7 +12,7 @@ npm run dev
 
 That's it. The `new` command installs dependencies, generates `.env` with secure random `APP_KEY` and `INTERNAL_SECRET`, runs migrations, and seeds the database. You now have a complete SaaS starter with authentication, dashboard, admin panel, teams, API keys, background jobs, and more — all pre-configured and ready to go.
 
-By default, projects use a **DDD modular structure** (`src/lib/modules/{domain}/`). If you prefer a traditional flat layout, use `--flat`:
+By default, projects use a **DDD modular structure** (`src/lib/modules/{domain}/...`) with domain, application, infrastructure, interface, and contract layers inside each module. If you prefer a traditional flat layout, use `--flat`:
 
 ```bash
 npx svelar new my-app --flat   # src/lib/models/, src/lib/services/, etc.
@@ -234,13 +234,13 @@ Svelar handles the repetitive SaaS infrastructure. You focus on your core busine
 ### Generate Domain Code
 
 ```bash
-# Create a new domain module (e.g., invoices)
+# Create a new resource inside a domain module
+npx svelar make:entity Invoice --module=billing --fields "title:string,total:number,status:enum(draft,paid)" --crud
+
+# Or generate individual artifacts when you only need one file
 npx svelar make:model Invoice --module=billing
 npx svelar make:controller Invoice --module=billing
-npx svelar make:service Billing --module=billing --crud
-npx svelar make:repository Invoice --module=billing --model=Invoice
 npx svelar make:schema Invoice --module=billing
-npx svelar make:migration CreateInvoicesTable
 
 # Create API routes
 npx svelar make:route invoices --api --resource -c InvoiceController
@@ -256,14 +256,14 @@ npx svelar make:event InvoicePaid --module=billing
 npx svelar make:listener NotifyCustomer --event=InvoicePaid --module=billing
 ```
 
-Every generator creates files in the right location following the DDD module structure. Run `npx svelar migrate` after creating migrations.
+Every generator creates files in the right layered module location. `make:entity` creates the model, contract schema, DTOs, FormRequests, actions, resource, repository, service, controller, and a focused migration. Run `npx svelar migrate` after creating migrations.
 
 ### The Pattern
 
 For any new feature, the workflow is:
 
 ```
-1. npx svelar make:model + make:migration   → Define your data
+1. npx svelar make:entity or make:model + make:migration → Define your data
 2. npx svelar migrate                        → Create the table
 3. npx svelar make:schema                    → Define the contract (Zod types)
 4. npx svelar make:controller + make:service → Handle requests + business logic
@@ -325,6 +325,8 @@ Svelar ships 35+ modules. Here's what each one does and when you'll use it:
 | **Uploads** | `@beeblock/svelar/uploads` | File upload tracking with MIME/size validation |
 | **PDF** | `@beeblock/svelar/pdf` | PDF generation via PDFKit (default) or Gotenberg |
 | **Email Templates** | `@beeblock/svelar/email-templates` | Reusable templates: welcome, password-reset, invoice, team-invite |
+
+Most first-party facades are also available from the root package, for example `import { PDF, ApiKeys, Teams } from '@beeblock/svelar'`. Subpath imports remain supported when you want a narrower import.
 
 ### You'll Use for Developer Experience
 
@@ -392,7 +394,7 @@ docker compose exec app npx svelar migrate
 docker compose exec app npx svelar seed:run
 ```
 
-This sets up: your app (clustered via PM2), PostgreSQL, Redis, queue workers, scheduler, and optionally Soketi (WebSockets), Gotenberg (PDFs), and RustFS (S3-compatible storage).
+This sets up: your adapter-node app, PostgreSQL through PgBouncer, Redis, and optional Soketi (WebSockets), Gotenberg (PDFs), RustFS (S3-compatible storage), and Meilisearch.
 
 See the [Production Checklist](./17-saas-guide.md#production-checklist) for the full list.
 

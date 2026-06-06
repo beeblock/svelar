@@ -10,7 +10,7 @@ Svelar projects come with two UI layers out of the box:
 
 ## shadcn-svelte (Recommended)
 
-When you scaffold a project with `npx svelar new`, all shadcn-svelte components are installed automatically at `$lib/components/ui/`. Use them in your pages:
+When you scaffold a project with `npx svelar new`, all shadcn-svelte components are installed automatically at `$lib/components/ui/`. If you scaffold with `--no-install`, run `npm run ui:install` after `npm install`; that script keeps Shadcn runtime packages in production dependencies for adapter-node builds. Use components in your pages:
 
 ```svelte
 <script>
@@ -191,15 +191,15 @@ Tab navigation with content panels:
 
 ### Icon
 
-A generic icon wrapper that supports [lucide-svelte](https://lucide.dev) and [@tabler/icons-svelte](https://tabler.io/icons) components, raw SVG path data, or inline SVG children.
+A generic icon wrapper that supports [@lucide/svelte](https://lucide.dev) and [@tabler/icons-svelte](https://tabler.io/icons) components, raw SVG path data, or inline SVG children.
 
-**Important:** Always import lucide icons individually. The barrel export (`from 'lucide-svelte'`) causes SSR issues.
+**Important:** Always import lucide icons individually. The barrel export (`from '@lucide/svelte'`) causes SSR issues.
 
 ```svelte
 <script lang="ts">
   import { Icon } from '@beeblock/svelar/ui';
-  import Users from 'lucide-svelte/icons/users';
-  import KeyRound from 'lucide-svelte/icons/key-round';
+  import Users from '@lucide/svelte/icons/users';
+  import KeyRound from '@lucide/svelte/icons/key-round';
 </script>
 
 <!-- Pass a Svelte icon component -->
@@ -219,16 +219,16 @@ Props: `icon` (Component), `path` (string), `size` (number, default 24), `stroke
 
 #### Vite Configuration for Icon Libraries
 
-When using `lucide-svelte` or `@tabler/icons-svelte`, add these to your `vite.config.ts`:
+When using `@lucide/svelte` or `@tabler/icons-svelte`, add these to your `vite.config.ts`:
 
 ```typescript
 export default defineConfig({
   // ...
   ssr: {
-    noExternal: ['lucide-svelte'],
+    noExternal: ['@lucide/svelte'],
   },
   optimizeDeps: {
-    exclude: ['lucide-svelte'],
+    exclude: ['@lucide/svelte'],
   },
 });
 ```
@@ -324,8 +324,8 @@ The `<Toaster />` component accepts props for global and per-variant styling:
 ```svelte
 <script>
   import { Toaster } from '@beeblock/svelar/ui';
-  import PartyPopper from 'lucide-svelte/icons/party-popper';
-  import Flame from 'lucide-svelte/icons/flame';
+  import PartyPopper from '@lucide/svelte/icons/party-popper';
+  import Flame from '@lucide/svelte/icons/flame';
 </script>
 
 <Toaster

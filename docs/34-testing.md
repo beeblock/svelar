@@ -77,7 +77,7 @@ Factories generate model instances with sensible defaults. Extend the `Factory<T
 
 ```typescript
 import { Factory } from '@beeblock/svelar/testing';
-import { User } from '$lib/modules/auth/User';
+import { User } from '$lib/modules/auth/domain/models/User';
 
 export class UserFactory extends Factory<User> {
   model() {
@@ -236,7 +236,7 @@ Combine factories, `actingAs()`, and `createRequestEvent()` to test your control
 import { describe, it, expect } from 'vitest';
 import { useSvelarTest, actingAs, createRequestEvent, assertDatabaseHas } from '@beeblock/svelar/testing';
 import UserFactory from '$lib/factories/UserFactory';
-import { PostController } from '$lib/modules/posts/PostController';
+import { PostController } from '$lib/modules/posts/interface/http/controllers/PostController';
 
 describe('PostController', () => {
   useSvelarTest({ refreshDatabase: true });

@@ -24,7 +24,7 @@ That's it. The CLI scaffolds a complete SvelteKit + Svelar project, installs dep
 - **Tailwind CSS 4** with theme variables (`--color-brand`, etc.)
 - **Svelar Framework** — ORM, Auth, Sessions, Middleware, Queue, Scheduler, and 35+ modules
 - **SQLite Database** — Pre-configured, zero setup
-- **Icon Libraries** — `lucide-svelte` and `@tabler/icons-svelte` included
+- **Icon Libraries** — `@lucide/svelte` and `@tabler/icons-svelte` included
 - **Environment Config** — `.env.example` with sensible defaults
 - **Vite Config** — All `@beeblock/svelar/*` aliases, SSR config, and `fs.allow` pre-wired
 - **EventServiceProvider** — Pre-wired for event listeners, subscribers, and model observers
@@ -41,9 +41,23 @@ my-app/
 │   ├── hooks.server.ts           # Middleware pipeline
 │   ├── lib/
 │   │   ├── modules/              # Domain modules (DDD)
-│   │   │   ├── auth/             #   User.ts, UserObserver.ts, AuthController.ts, AuthService.ts
-│   │   │   ├── billing/          #   Invoice.ts, BillingService.ts, billing.schema.ts
-│   │   │   └── posts/            #   Post.ts, PostController.ts, PostService.ts
+│   │   │   ├── auth/
+│   │   │   │   ├── contracts/schemas/
+│   │   │   │   ├── domain/models/
+│   │   │   │   ├── domain/events/
+│   │   │   │   ├── domain/observers/
+│   │   │   │   ├── domain/policies/
+│   │   │   │   ├── application/actions/
+│   │   │   │   ├── application/dto/
+│   │   │   │   ├── application/listeners/
+│   │   │   │   ├── application/services/
+│   │   │   │   ├── infrastructure/repositories/
+│   │   │   │   └── interface/http/
+│   │   │   │       ├── controllers/
+│   │   │   │       ├── requests/
+│   │   │   │       └── resources/
+│   │   │   ├── billing/
+│   │   │   └── posts/
 │   │   ├── shared/               # Cross-cutting concerns
 │   │   │   ├── middleware/       #   Custom middleware
 │   │   │   ├── components/       #   Shared Svelte components
@@ -54,8 +68,6 @@ my-app/
 │   │   │   ├── commands/         #   Custom CLI commands
 │   │   │   ├── providers/        #   Service providers (EventServiceProvider, etc.)
 │   │   │   └── scheduler/        #   Scheduled tasks
-│   │   ├── events/               # Event classes (npx svelar make:event)
-│   │   ├── listeners/            # Listener classes (npx svelar make:listener)
 │   │   └── database/
 │   │       ├── migrations/
 │   │       └── seeders/
@@ -76,7 +88,7 @@ my-app/
 └── package.json
 ```
 
-Each **module** is a self-contained domain — its model, controller, service, repository, observers, DTOs, and schema all live together. The `shared/` folder holds cross-cutting infrastructure. The `events/` and `listeners/` folders hold application-wide event classes and their handlers.
+Each **module** is a self-contained domain. Domain concerns (`models`, `events`, `observers`, `policies`), application concerns (`actions`, `dto`, `listeners`, `services`), infrastructure concerns (`repositories`), interface concerns (`controllers`, `requests`, `resources`), and contracts (`schemas`) stay grouped inside that module. The `shared/` folder holds cross-cutting infrastructure.
 
 ## Step 1: Environment Variables
 
@@ -149,7 +161,7 @@ import { Migration } from '@beeblock/svelar/database';
 export default class CreateUsersTable extends Migration {
   async up() {
     await this.schema.createTable('users', (table) => {
-      table.increments('id');
+      table.id();
       table.string('name');
       table.string('email').unique();
       table.string('password');
@@ -195,10 +207,11 @@ This generates:
 
 | File | Description |
 |------|-------------|
-| `Dockerfile` | Multi-stage Node 20 Alpine build with PM2 |
-| `docker-compose.yml` | App + PostgreSQL + Redis + Soketi + Gotenberg + RustFS |
+| `Dockerfile` | Multi-stage Node 20 Alpine adapter-node build that runs `node build/index.js` and includes app source/config for CLI runtime tasks |
+| `docker-compose.yml` | App + PgBouncer/PostgreSQL + Redis + Soketi + Gotenberg + RustFS |
 | `ecosystem.config.cjs` | PM2 config: web (clustered), queue workers, scheduler |
 | `.dockerignore` | Excludes node_modules, .env, build artifacts |
+| `.svelar-local/.gitkeep` | Keeps optional local package archive directory available for Docker builds |
 
 ### Docker Flags
 
@@ -310,6 +323,7 @@ All commands available after installation:
 # Project
 npx svelar new <name>              # Scaffold new project (DDD modular structure)
 npx svelar new <name> --flat       # Scaffold with flat folder structure
+npm run ui:install                 # Install shadcn-svelte components after --no-install
 npx svelar key:generate            # Generate a new APP_KEY
 npx svelar key:generate --show     # Display key without writing
 npx svelar key:generate --force    # Overwrite existing key
@@ -326,16 +340,19 @@ npx svelar migrate --seed          # Run seeders after migrating
 # Seeding
 npx svelar seed:run                # Run database seeders
 
-# Code Generation — Domain (goes into src/lib/modules/<module>/)
-npx svelar make:model User --module=auth        # Model
-npx svelar make:controller User --module=auth   # Controller
+# Code Generation — Full resource scaffold
+npx svelar make:entity Invoice --module=billing --fields "title:string,total:number,status:enum(draft,paid)" --crud
+
+# Code Generation — Domain modules (goes into layered src/lib/modules/<module>/ folders)
+npx svelar make:model User --module=auth        # domain/models
+npx svelar make:controller User --module=auth   # interface/http/controllers
 npx svelar make:service Billing --module=billing --crud # CRUD Service
-npx svelar make:repository User --module=auth   # Repository (--model=X)
-npx svelar make:action CreateUser --module=auth  # Action
-npx svelar make:request StoreUser --module=auth  # FormRequest DTO
-npx svelar make:resource User --module=auth     # API Resource (response)
-npx svelar make:schema User --module=auth       # Contract schema (Zod + shared types)
-npx svelar make:observer UserObserver --model=User --module=auth  # Model Observer
+npx svelar make:repository User --module=auth   # infrastructure/repositories
+npx svelar make:action CreateUser --module=auth --dto --request --schema  # action + boundaries
+npx svelar make:request StoreUser --module=auth  # interface/http/requests
+npx svelar make:resource User --module=auth     # interface/http/resources
+npx svelar make:schema User --module=auth       # contracts/schemas
+npx svelar make:observer UserObserver --model=User --module=auth  # domain/observers
 
 # Code Generation — Routes
 npx svelar make:route posts --api --resource -c PostController    # CRUD routes
@@ -344,9 +361,9 @@ npx svelar routes:list                           # Show all routes
 npx svelar routes:list --api                     # API routes only
 npx svelar routes:list --method POST             # Filter by method
 
-# Code Generation — Events (goes into src/lib/modules/<module>/)
-npx svelar make:event UserRegistered --module=auth               # Event class
-npx svelar make:listener SendWelcomeEmail --event=UserRegistered --module=auth  # Listener class
+# Code Generation — Events
+npx svelar make:event UserRegistered --module=auth               # domain/events
+npx svelar make:listener SendWelcomeEmail --event=UserRegistered --module=auth  # application/listeners
 
 # Code Generation — Shared (goes into src/lib/shared/<type>/)
 npx svelar make:middleware RateLimit  # Middleware

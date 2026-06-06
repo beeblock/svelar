@@ -1,6 +1,10 @@
 # Excel Import/Export
 
-Import and export Excel files with streaming support for large datasets. Included in scaffolded projects (`npx svelar new`) — works out of the box.
+Import and export Excel files with streaming support for large datasets. Excel support is optional: install `exceljs` in apps that use this feature.
+
+```bash
+npm install exceljs
+```
 
 ### Quick Export
 
@@ -26,6 +30,12 @@ return new Response(buffer, {
     'Content-Disposition': 'attachment; filename="users.xlsx"',
   },
 });
+```
+
+You can also import the facade from the root package:
+
+```typescript
+import { Excel } from '@beeblock/svelar';
 ```
 
 ### Quick Import

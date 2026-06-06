@@ -58,7 +58,7 @@ Your app is now running at `http://localhost:5173` with hot-reload, backed by Po
 For production:
 
 ```bash
-# Build and start production containers locally
+# Start production containers from the configured image
 npx svelar prod:up
 
 # Or deploy latest image from registry
@@ -72,7 +72,7 @@ npx svelar prod:deploy
 | Command | What it generates |
 |---------|-------------------|
 | `npx svelar make:deploy` | Runs all three commands below |
-| `npx svelar make:docker` | `Dockerfile`, `docker-compose.yml`, `docker-compose.dev.yml`, `docker-compose.prod.yml`, `.dockerignore`, `ecosystem.config.cjs`, `src/routes/api/health/+server.ts`, `docker/postgres/postgresql.conf`, `docker/postgres/init.sql`, `docker/pgbouncer/pgbouncer.ini` (PostgreSQL only) |
+| `npx svelar make:docker` | `Dockerfile`, `docker-compose.yml`, `docker-compose.dev.yml`, `docker-compose.prod.yml`, `.dockerignore`, `.svelar-local/.gitkeep`, `ecosystem.config.cjs`, `src/routes/api/health/+server.ts`, `docker/postgres/postgresql.conf`, `docker/postgres/init.sql`, `docker/pgbouncer/pgbouncer.ini` (PostgreSQL only) |
 | `npx svelar make:ci` | `.github/workflows/deploy.yml` |
 | `npx svelar make:infra` | `infra/setup-droplet.sh`, `infra/droplet.env.example` |
 
@@ -155,6 +155,7 @@ your-project/
 ├── docker-compose.dev.yml              # Dev override — builds development target, bind-mounts source
 ├── docker-compose.prod.yml             # Prod override — uses pre-built image from registry
 ├── .dockerignore                       # Excludes node_modules, .env, build artifacts
+├── .svelar-local/.gitkeep              # Keeps optional local package archive directory available to Docker
 ├── ecosystem.config.cjs                # PM2 config (web, worker, scheduler)
 ├── src/routes/api/health/+server.ts    # Health endpoint
 ├── docker/                             # Database & pooler config (PostgreSQL only)
@@ -198,7 +199,7 @@ PostgreSQL, PgBouncer, Redis, and all other services are defined in the base `do
 - Uses a **pre-built image** from Docker Hub / your registry
 - Runs `node build/index.js` via dumb-init as a non-root user
 - Exposes port **3000**
-- PM2 manages web, worker, and scheduler processes
+- Includes `src/` and `svelar.database.json` so CLI commands, migrations, seeders, workers, and scheduler bootstrap from the same app runtime
 - Health check on `/api/health`
 
 ### Development without Docker (hybrid approach)
@@ -239,12 +240,14 @@ RUN addgroup -g 1001 sveltekit && adduser -u 1001 -G sveltekit -s /bin/sh -D sve
 FROM base AS deps
 WORKDIR /app
 COPY package*.json ./
+COPY .svelar-local ./.svelar-local
 RUN npm ci --omit=dev
 
 # ── Builder (full install + build) ───────────────────────
 FROM base AS builder
 WORKDIR /app
 COPY package*.json ./
+COPY .svelar-local ./.svelar-local
 RUN npm ci
 COPY . .
 RUN npm run build
@@ -253,15 +256,17 @@ RUN npm run build
 FROM base AS production
 WORKDIR /app
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=builder /app/build ./build
-COPY --from=builder /app/package.json ./
-COPY --from=builder /app/ecosystem.config.cjs ./
-RUN mkdir -p storage/logs storage/public && chown -R sveltekit:sveltekit /app
+COPY --chown=sveltekit:sveltekit --from=deps /app/node_modules ./node_modules
+COPY --chown=sveltekit:sveltekit --from=builder /app/build ./build
+COPY --chown=sveltekit:sveltekit --from=builder /app/src ./src
+COPY --chown=sveltekit:sveltekit --from=builder /app/package.json ./
+COPY --chown=sveltekit:sveltekit --from=builder /app/ecosystem.config.cjs ./
+COPY --chown=sveltekit:sveltekit --from=builder /app/svelar.database.json ./
+RUN mkdir -p storage/logs storage/public && chown -R sveltekit:sveltekit storage
 USER sveltekit
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget -qO- http://localhost:3000/api/health || exit 1
+  CMD wget -qO- http://127.0.0.1:3000/api/health || exit 1
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["node", "build/index.js"]
 
@@ -270,6 +275,7 @@ FROM base AS development
 WORKDIR /app
 ENV NODE_ENV=development
 COPY package*.json ./
+COPY .svelar-local ./.svelar-local
 RUN npm ci
 COPY . .
 EXPOSE 5173
@@ -286,7 +292,7 @@ CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
 | **Multi-stage** | Final production image is ~150MB instead of ~800MB |
 | **Layer caching** | `package*.json` is copied first so `npm ci` is cached unless dependencies change |
 | **Node adapter output** | The scaffold uses `@sveltejs/adapter-node`, so production runs the explicit Node server from `build/index.js` |
-| **Migrations at runtime** | Run `npx svelar migrate` inside the container after deploy; the CLI boots `src/app.ts` before falling back to config |
+| **Runtime CLI support** | `src/` and `svelar.database.json` are copied into the production image so `npx svelar migrate`, seeders, queue workers, scheduler tasks, and app bootstrap can run inside the container |
 | **Health check** | Docker monitors `/api/health` every 30s. Failed containers are restarted automatically |
 | **Development target** | `docker compose.dev.yml` builds this stage for hot-reload in Docker |
 
@@ -296,7 +302,7 @@ CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
 
 ### `docker-compose.yml` (base)
 
-The base compose file defines all services — app, database, Redis, Soketi, Gotenberg, RustFS. It uses `build: .` for the app service (builds the production Dockerfile target by default).
+The base compose file defines all services — app, database, Redis, Soketi, Gotenberg, RustFS. It builds the `production` Dockerfile target for the app service.
 
 The dev and prod override files **replace** the app service's build/image configuration.
 
@@ -541,15 +547,23 @@ The base `docker-compose.yml` includes up to 7 services depending on your flags:
 
 ```yaml
 app:
-  build: .
+  build:
+    context: .
+    target: production
   restart: unless-stopped
   ports:
     - "${APP_PORT:-3000}:3000"
   env_file: .env
+  environment:
+    - NODE_ENV=production
+    - ORIGIN=${APP_URL:-http://localhost:3000}
+    - INTERNAL_APP_URL=http://app:3000
+    - DB_HOST=pgbouncer
+    - DB_PORT=6432
   volumes:
     - app_storage:/app/storage
   depends_on:
-    postgres:
+    pgbouncer:
       condition: service_healthy
     redis:
       condition: service_healthy
@@ -601,13 +615,14 @@ pgbouncer:
   restart: unless-stopped
   environment:
     DATABASE_URL: postgres://${DB_USER:-svelar}:${DB_PASSWORD:-secret}@postgres:5432/${DB_NAME:-svelar}
+    AUTH_TYPE: scram-sha-256
   volumes:
     - ./docker/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
   depends_on:
     postgres:
       condition: service_healthy
   healthcheck:
-    test: ["CMD", "pg_isready", "-h", "localhost", "-p", "6432"]
+    test: ["CMD-SHELL", "PGPASSWORD=${DB_PASSWORD:-secret} pg_isready -h 127.0.0.1 -p 6432 -U ${DB_USER:-svelar} -d ${DB_NAME:-svelar}"]
     interval: 10s
     timeout: 5s
     retries: 5
@@ -639,7 +654,7 @@ redis:
   image: redis:7-alpine
   restart: unless-stopped
   # No ports exposed — only reachable by app via Docker network
-  command: redis-server --requirepass ${REDIS_PASSWORD:-svelarsecret}
+  command: redis-server --requirepass ${REDIS_PASSWORD:-svelarsecret} --save "" --appendonly no --stop-writes-on-bgsave-error no
   volumes:
     - redisdata:/data
   healthcheck:
@@ -655,13 +670,16 @@ redis:
 soketi:
   image: quay.io/soketi/soketi:1.6-16-debian
   restart: unless-stopped
-  # No ports exposed — only reachable by app via Docker network
+  ports:
+    - "${SOKETI_PORT:-5334}:6001"
   environment:
     SOKETI_DEFAULT_APP_ID: ${PUSHER_APP_ID}
     SOKETI_DEFAULT_APP_KEY: ${PUSHER_KEY}
     SOKETI_DEFAULT_APP_SECRET: ${PUSHER_SECRET}
     SOKETI_DEFAULT_APP_MAX_CONNS: "${SOKETI_MAX_CONNS:-1000}"
     SOKETI_DEFAULT_APP_ENABLE_CLIENT_MESSAGES: "true"
+  healthcheck:
+    test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:6001', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))\""]
 ```
 
 ### Gotenberg (PDF Generation)
@@ -703,6 +721,8 @@ Opt-in with `npx svelar make:docker --meilisearch`:
 meilisearch:
   image: getmeili/meilisearch:v1.13
   restart: unless-stopped
+  ports:
+    - "${MEILI_PORT:-5333}:7700"
   environment:
     MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-svelar-meili-master-key}
     MEILI_ENV: production
@@ -711,7 +731,7 @@ meilisearch:
   volumes:
     - meili_data:/meili_data
   healthcheck:
-    test: ["CMD", "wget", "--no-verbose", "--spider", "http://localhost:7700/health"]
+    test: ["CMD", "wget", "--no-verbose", "--spider", "http://127.0.0.1:7700/health"]
     interval: 10s
     timeout: 5s
     retries: 5
@@ -795,7 +815,9 @@ docker compose exec app pm2 scale worker 4
 | `NODE_ENV` | `production` | Node environment |
 | `APP_PORT` | `3000` | Host port mapping (production) |
 | `DEV_PORT` | `5173` | Host port mapping (development) |
-| `APP_URL` | — | Public URL (for email links, OAuth callbacks) |
+| `APP_URL` | `http://localhost:3000` | Public URL used by Compose to set `ORIGIN` |
+| `ORIGIN` | `${APP_URL}` | SvelteKit adapter-node origin for CSRF-safe production requests |
+| `INTERNAL_APP_URL` | `http://app:3000` | Internal Docker URL for server-side callbacks, scheduler broadcasts, and service-to-app requests |
 | `APP_KEY` | — | Secret key for session encryption |
 | `INTERNAL_SECRET` | — | Secret for internal API bridge (scheduler broadcasts) |
 | `DOCKER_IMAGE` | package.json name | Docker image for `docker-compose.prod.yml` |
@@ -827,6 +849,7 @@ docker compose exec app pm2 scale worker 4
 |----------|---------|-------------|
 | `PUSHER_HOST` | `soketi` | Soketi hostname (auto-set in Docker) |
 | `PUSHER_PORT` | `6001` | Soketi port |
+| `SOKETI_PORT` | `5334` | Host port mapping for browser WebSocket clients |
 | `PUSHER_APP_ID` | `svelar-app` | Soketi app ID |
 | `PUSHER_KEY` | `svelar-key` | Soketi app key |
 | `PUSHER_SECRET` | `svelar-secret` | Soketi app secret |
@@ -839,7 +862,6 @@ docker compose exec app pm2 scale worker 4
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GOTENBERG_URL` | `http://gotenberg:3000` | Gotenberg service URL |
-| `GOTENBERG_PORT` | `3001` | Host port mapping |
 | `GOTENBERG_TIMEOUT` | `60s` | PDF generation timeout |
 
 ### Storage (RustFS / S3)
@@ -862,6 +884,7 @@ docker compose exec app pm2 scale worker 4
 | `MEILISEARCH_HOST` | `http://meilisearch:7700` | Meilisearch host URL (auto-set in Docker) |
 | `MEILISEARCH_KEY` | `svelar-meili-master-key` | Meilisearch API key (must match `MEILI_MASTER_KEY`) |
 | `MEILI_MASTER_KEY` | `svelar-meili-master-key` | Meilisearch master key (container config) |
+| `MEILI_PORT` | `5333` | Host port mapping for local dashboard/API access |
 
 ### Auth
 

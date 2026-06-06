@@ -14,7 +14,7 @@ Svelar is a Laravel-inspired framework built on top of SvelteKit 2. It brings en
 - **i18n**: Paraglide-js 2.x integration with server middleware, reroute hooks, and LanguageSwitcher component
 - **Forms**: Superforms + Zod bridge with `createFormAction` and `loadForm` helpers
 - **HTTP Utilities**: CSRF-aware fetch wrapper for client-side API calls
-- **Form Validation**: Zod-based validation with FormRequest classes (DTOs)
+- **Form Validation**: Zod-based validation with FormRequest classes and DTO payloads
 - **Service Layer & Actions**: Clean separation of concerns with services, repositories, and single-use actions
 - **Plugin System**: Extensible plugin architecture with lifecycle hooks
 - **Job Queue**: Background job processing with retry logic
@@ -46,7 +46,7 @@ Svelar is a Laravel-inspired framework built on top of SvelteKit 2. It brings en
 15. [Broadcasting](./25-broadcasting.md) - Real-time SSE and Pusher/Soketi WebSocket
 16. [Storage](./26-storage.md) - Local and S3-compatible file storage
 17. [PDF Generation](./27-pdf.md) - PDFKit (default) and Gotenberg drivers
-18. [Excel Import/Export](./28-excel.md) - Streaming Excel with ExcelJS
+18. [Excel Import/Export](./28-excel.md) - Optional streaming Excel support with ExcelJS
 19. [Feature Flags](./21-feature-flags.md) - Per-user, per-team, and percentage rollout
 20. [More Features](./12-additional-features.md) - Hashing, caching, logging, notifications, config, CLI, audit, and more
 21. [UI Components](./13-ui-components.md) - Component library with theming and extension guide
@@ -99,7 +99,7 @@ npm run certify:inventory
 npm run certify
 ```
 
-Run `npm run certify` before publishing. It prints the release certification inventory, runs the core test suite, then runs Redis, PDF, Meilisearch, S3, and PgBouncer/`pg_stat_statements` service smoke plus the full generated-app database and production-browser smoke gate. These commands build and pack the local `@beeblock/svelar` package, scaffold real apps into the sibling `svelar-testing-area`, install UI components with the generated `npm run ui:install` script, run migrations and seeders, execute generated tests, verify production builds, and exercise the generated app in a real browser, including real `EventSource` checks for SSE public/private/presence channels. DDD smoke apps also receive an injected certification test that covers the intended `route -> controller -> DTO/schema -> action -> service -> repository -> model -> resource` flow, complex ORM queries, events/listeners, model observers, queues, middleware/rate limiting, sessions, auth recovery tokens, Teams roles/invitations, SSE public/private/presence broadcasting, and Postmark/Resend/Mailtrap mail transport payloads across the configured database driver, Redis cache/session/BullMQ behavior when `REDIS_URL` is present, PDFKit/Gotenberg behavior when `GOTENBERG_URL` is present, Meilisearch `Searchable` indexing when `MEILISEARCH_HOST` is present, S3-compatible storage when `S3_CERTIFICATION` is present, and PostgreSQL through PgBouncer with `pg_stat_statements` when `PGBOUNCER_CERTIFICATION` is present. Use `npm run smoke:browser:headed` when you want to watch Chromium open and step through the browser smoke flow locally. The database, Redis, Gotenberg, Meilisearch, RustFS, and PgBouncer smoke scripts start Docker containers with random localhost ports, so they do not require 5432, 3306, 6379, 3000, 6432, 7700, or 9000 to be free. If Playwright has not downloaded Chromium locally yet, run `cd ../svelar-testing-area/apps/svelar-smoke-ddd && npx playwright install chromium`.
+Run `npm run certify` before publishing. It prints the release certification inventory, runs the core test suite, then runs Redis, PDF, Meilisearch, S3, and PgBouncer/`pg_stat_statements` service smoke plus the full generated-app database and production-browser smoke gate. These commands build and pack the local `@beeblock/svelar` package, scaffold real apps into the sibling `svelar-testing-area`, install UI components with the generated `npm run ui:install` script, run migrations and seeders, execute generated tests, verify production builds, and exercise the generated app in a real browser, including real `EventSource` checks for SSE public/private/presence channels. DDD smoke apps also receive an injected certification test that covers the intended `route -> controller -> FormRequest/schema -> DTO -> action -> service -> repository -> model -> resource` flow, complex ORM queries, events/listeners, model observers, queues, middleware/rate limiting, sessions, auth recovery tokens, Teams roles/invitations, SSE public/private/presence broadcasting, and Postmark/Resend/Mailtrap mail transport payloads across the configured database driver, Redis cache/session/BullMQ behavior when `REDIS_URL` is present, PDFKit/Gotenberg behavior when `GOTENBERG_URL` is present, Meilisearch `Searchable` indexing when `MEILISEARCH_HOST` is present, S3-compatible storage when `S3_CERTIFICATION` is present, and PostgreSQL through PgBouncer with `pg_stat_statements` when `PGBOUNCER_CERTIFICATION` is present. Use `npm run smoke:browser:headed` when you want to watch Chromium open and step through the browser smoke flow locally. The database, Redis, Gotenberg, Meilisearch, RustFS, and PgBouncer smoke scripts start Docker containers with random localhost ports, so they do not require 5432, 3306, 6379, 3000, 6432, 7700, or 9000 to be free. If Playwright has not downloaded Chromium locally yet, run `cd ../svelar-testing-area/apps/svelar-smoke-ddd && npx playwright install chromium`.
 
 ## Project Structure (DDD Modular Monolith)
 
@@ -148,7 +148,7 @@ my-app/
 └── vite.config.ts
 ```
 
-Each **module** under `modules/` is a self-contained domain — model, controller, service, repository, observers, DTOs, and schema all live together. The `shared/` folder holds cross-cutting infrastructure that spans multiple domains.
+Each **module** under `modules/` is a self-contained domain with its own `domain/`, `application/`, `infrastructure/`, `interface/http/`, and `contracts/` layers. The `shared/` folder holds cross-cutting infrastructure that spans multiple domains.
 
 ## Architecture
 
@@ -161,7 +161,7 @@ Route (+server.ts)
    ↓
 Controller (handle request, delegate)
    ↓
-DTO/FormRequest (validation & authorization)
+FormRequest (validation & authorization) -> DTO
    ↓
 Service (orchestrate business logic)
    ↓
@@ -176,7 +176,9 @@ Model (ORM, database interaction)
 
 **Controllers**: Accept HTTP requests and delegate to services/actions. Handle response formatting (JSON, HTML, redirects).
 
-**DTOs/FormRequest**: Validate incoming data with Zod schemas. Authorize requests before processing. Transform data if needed.
+**FormRequests**: Validate incoming data with Zod schemas and authorize requests before processing.
+
+**DTOs**: Carry validated data from FormRequests into services and actions.
 
 **Services**: Orchestrate multiple operations, compose repositories, emit events. Return `ServiceResult<T>` (ok/fail).
 

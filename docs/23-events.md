@@ -8,7 +8,7 @@ Svelar provides a Laravel-inspired event system for decoupling your application.
 npx svelar make:event UserRegistered --module=auth
 ```
 
-This generates `src/lib/modules/auth/UserRegistered.ts` (or `src/lib/events/UserRegistered.ts` in flat projects):
+This generates `src/lib/modules/auth/domain/events/UserRegistered.ts` (or `src/lib/events/UserRegistered.ts` in flat projects):
 
 ```typescript
 export class UserRegistered {
@@ -19,7 +19,7 @@ export class UserRegistered {
 }
 ```
 
-Events are plain classes — no base class required. They carry the data that listeners need.
+Events are plain classes — no base class required. They carry the data that listeners need. A constructor-only event class is valid: TypeScript public constructor properties are the event payload, and Svelar uses the class constructor name as the event name for class-based dispatch and provider mappings.
 
 ### Creating Listeners
 
@@ -27,11 +27,11 @@ Events are plain classes — no base class required. They carry the data that li
 npx svelar make:listener SendWelcomeEmail --event=UserRegistered --module=auth
 ```
 
-This generates `src/lib/modules/auth/SendWelcomeEmail.ts` (or `src/lib/listeners/SendWelcomeEmail.ts` in flat projects):
+This generates `src/lib/modules/auth/application/listeners/SendWelcomeEmail.ts` (or `src/lib/listeners/SendWelcomeEmail.ts` in flat projects):
 
 ```typescript
 import { Listener } from '@beeblock/svelar/events';
-import type { UserRegistered } from './UserRegistered.js';
+import type { UserRegistered } from '$lib/modules/auth/domain/events/UserRegistered.js';
 
 export class SendWelcomeEmail extends Listener<UserRegistered> {
   async handle(event: UserRegistered): Promise<void> {
@@ -44,6 +44,30 @@ export class SendWelcomeEmail extends Listener<UserRegistered> {
   }
 }
 ```
+
+### Sync vs Queued Work
+
+Event dispatch is **synchronous by default**: `await Event.dispatch(new UserRegistered(user))` waits for every registered listener to finish. Use this for small, important side effects that should complete before the original request finishes, such as cache invalidation, audit bookkeeping, or writing local metadata.
+
+For expensive or retryable work, keep the listener small and dispatch a job from inside the listener:
+
+```typescript
+import { Listener } from '@beeblock/svelar/events';
+import { Queue } from '@beeblock/svelar/queue';
+import { SendWelcomeEmailJob } from '$lib/shared/jobs/SendWelcomeEmailJob.js';
+import type { UserRegistered } from '$lib/modules/auth/domain/events/UserRegistered.js';
+
+export class SendWelcomeEmail extends Listener<UserRegistered> {
+  async handle(event: UserRegistered): Promise<void> {
+    await Queue.dispatch(
+      new SendWelcomeEmailJob({ userId: event.user.id }),
+      { queue: 'mail' }
+    );
+  }
+}
+```
+
+This gives you the same module-decoupling benefits while letting the queue system handle retries, backoff, worker isolation, and slow external services.
 
 ### Dispatching Events
 
@@ -98,14 +122,14 @@ Then extend the built-in `EventServiceProvider` base:
 ```typescript
 // src/lib/shared/providers/EventServiceProvider.ts
 import { EventServiceProvider as BaseProvider } from '@beeblock/svelar/events';
-import { UserRegistered } from '$lib/modules/auth/UserRegistered.js';
-import { OrderPlaced } from '$lib/modules/orders/OrderPlaced.js';
-import { SendWelcomeEmail } from '$lib/modules/auth/SendWelcomeEmail.js';
-import { CreateUserProfile } from '$lib/modules/auth/CreateUserProfile.js';
-import { NotifyWarehouse } from '$lib/modules/orders/NotifyWarehouse.js';
-import { User } from '$lib/modules/auth/User.js';
-import { UserObserver } from '$lib/modules/auth/UserObserver.js';
-import { AuditObserver } from '$lib/modules/auth/AuditObserver.js';
+import { UserRegistered } from '$lib/modules/auth/domain/events/UserRegistered.js';
+import { OrderPlaced } from '$lib/modules/orders/domain/events/OrderPlaced.js';
+import { SendWelcomeEmail } from '$lib/modules/auth/application/listeners/SendWelcomeEmail.js';
+import { CreateUserProfile } from '$lib/modules/auth/application/listeners/CreateUserProfile.js';
+import { NotifyWarehouse } from '$lib/modules/orders/application/listeners/NotifyWarehouse.js';
+import { User } from '$lib/modules/auth/domain/models/User.js';
+import { UserObserver } from '$lib/modules/auth/domain/observers/UserObserver.js';
+import { AuditObserver } from '$lib/modules/auth/domain/observers/AuditObserver.js';
 
 export class EventServiceProvider extends BaseProvider {
   // Map events to their listeners
@@ -133,9 +157,9 @@ Register the provider and models in your app bootstrap:
 // src/app.ts
 import { Application } from '@beeblock/svelar/container';
 import { EventServiceProvider as BaseProvider } from '@beeblock/svelar/events';
-import { EventServiceProvider } from './lib/shared/providers/EventServiceProvider.js';
-import { User } from './lib/modules/users/User.js';
-import { Post } from './lib/modules/posts/Post.js';
+import { EventServiceProvider } from '$lib/shared/providers/EventServiceProvider.js';
+import { User } from '$lib/modules/users/domain/models/User.js';
+import { Post } from '$lib/modules/posts/domain/models/Post.js';
 
 // Register models so observers can be attached by name
 BaseProvider.registerModels(User, Post);

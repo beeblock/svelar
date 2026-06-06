@@ -273,7 +273,7 @@ For API routes that return JSON, the client receives the `message` field. If you
 Paraglide 2.x makes message functions available on the server within the request context. Import them in your controllers or services:
 
 ```typescript
-// src/lib/modules/posts/PostController.ts
+// src/lib/modules/posts/interface/http/controllers/PostController.ts
 import { Controller } from '@beeblock/svelar/routing';
 import { NotFoundError, ForbiddenError } from '@beeblock/svelar/errors';
 import * as m from '$lib/paraglide/messages';
@@ -323,8 +323,8 @@ Add the corresponding message keys to all locale files:
 Validation errors often need field-level localization. Use Paraglide messages in your `FormRequest` classes:
 
 ```typescript
-// src/lib/modules/auth/RegisterRequest.ts
-import { FormRequest } from '@beeblock/svelar/routing';
+// src/lib/modules/auth/interface/http/requests/RegisterRequest.ts
+import { FormRequest } from '@beeblock/svelar/forms';
 import { z } from 'zod';
 import * as m from '$lib/paraglide/messages';
 

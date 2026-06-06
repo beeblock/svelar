@@ -185,46 +185,36 @@ const posts = await Post.query().whereIn('id', ids).get();
 
 ## Configuring Index Settings
 
-Set filterable, sortable, and searchable attributes. Run this once (e.g., in a seeder or migration):
+Set filterable, sortable, and searchable attributes on the model:
 
 ```typescript
-await Post.configureSearchIndex({
-  searchableAttributes: ['title', 'content', 'tags'],
-  filterableAttributes: ['status', 'author_id', 'category', 'published_at'],
-  sortableAttributes: ['created_at', 'title', 'published_at'],
-  displayedAttributes: ['id', 'title', 'content', 'author_name', 'created_at'],
-});
-```
-
-You can also create a project CLI command for this. In a DDD project, put it in `src/lib/shared/commands`; in a flat project, use `src/lib/commands`.
-
-```typescript
-// src/lib/shared/commands/SetupSearchCommand.ts
-import { Command } from '@beeblock/svelar/cli';
-import { Post } from '../../modules/posts/Post.js';
-
-export default class SetupSearchCommand extends Command {
-  name = 'search:setup';
-  description = 'Configure Meilisearch indexes';
-  flags = [];
-
-  async handle(): Promise<void> {
-    await this.bootstrap();
-
-    await Post.configureSearchIndex({
-      searchableAttributes: ['title', 'content', 'tags'],
-      filterableAttributes: ['status', 'category'],
-      sortableAttributes: ['created_at'],
-    });
-
-    this.success('Search indexes configured!');
-  }
+class Post extends Searchable(Model) {
+  static table = 'posts';
+  static searchIndexSettings = {
+    searchableAttributes: ['title', 'content', 'tags'],
+    filterableAttributes: ['status', 'author_id', 'category', 'published_at'],
+    sortableAttributes: ['created_at', 'title', 'published_at'],
+    displayedAttributes: ['id', 'title', 'content', 'author_name', 'created_at'],
+  };
 }
 ```
+
+Then apply settings with the built-in CLI command:
 
 ```bash
 npx svelar search:setup
 ```
+
+The command auto-discovers Searchable models under `src/lib/models` and `src/lib/modules`. If you want a method instead of a static object, expose `static searchIndexSettings()` or `static searchSettings()`.
+
+To rebuild documents after applying settings:
+
+```bash
+npx svelar search:setup --reindex
+npx svelar search:setup --fresh --batch-size=1000
+```
+
+If your app needs custom behavior, you can still create a user command named `search:setup`; app commands override the built-in command during CLI discovery.
 
 ---
 
@@ -285,7 +275,7 @@ await Post.makeAllSearchable();
 ```typescript
 // src/lib/database/seeders/PostSeeder.ts
 import { Search } from '@beeblock/svelar/search';
-import { Post } from '../../modules/posts/Post.js';
+import { Post } from '../../modules/posts/domain/models/Post.js';
 
 export default class PostSeeder {
   async run() {
@@ -370,7 +360,7 @@ A search endpoint for your frontend:
 // src/routes/api/search/+server.ts
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from '@sveltejs/kit';
-import { Post } from '$lib/modules/posts/Post.js';
+import { Post } from '$lib/modules/posts/domain/models/Post.js';
 
 export const GET: RequestHandler = async ({ url }) => {
   const query = url.searchParams.get('q') ?? '';
@@ -402,7 +392,7 @@ export const GET: RequestHandler = async ({ url }) => {
 ## Full Example
 
 ```typescript
-// src/lib/modules/posts/Post.ts
+// src/lib/modules/posts/domain/models/Post.ts
 import { Model } from '@beeblock/svelar/orm';
 import { Searchable } from '@beeblock/svelar/search';
 

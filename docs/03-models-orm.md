@@ -982,7 +982,7 @@ When a model has many lifecycle concerns (sending emails, logging, syncing cache
 npx svelar make:observer UserObserver --model User --module users
 ```
 
-This generates `src/lib/modules/users/UserObserver.ts`:
+This generates `src/lib/modules/users/domain/observers/UserObserver.ts`:
 
 ```typescript
 import { ModelObserver } from '@beeblock/svelar/orm';
