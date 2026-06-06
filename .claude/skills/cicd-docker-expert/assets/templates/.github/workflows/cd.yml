@@ -1,0 +1,299 @@
+name: CD Pipeline - Blue-Green Deployment
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      version:
+        description: 'Version/tag to deploy'
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-${{ github.event.inputs.environment || 'production' }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  prepare:
+    name: Prepare Deployment
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      environment: ${{ steps.env.outputs.environment }}
+
+    steps:
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref_type }}" == "tag" ]; then
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${{ github.sha }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Determine environment
+        id: env
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref_type }}" == "tag" ]; then
+            echo "environment=production" >> $GITHUB_OUTPUT
+          else
+            echo "environment=staging" >> $GITHUB_OUTPUT
+          fi
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: prepare
+    if: needs.prepare.outputs.environment == 'staging'
+    environment:
+      name: staging
+      url: https://staging.example.com
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.STAGING_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.STAGING_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to staging
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          ssh ${{ secrets.STAGING_USER }}@${{ secrets.STAGING_HOST }} << 'ENDSSH'
+            cd /opt/myapp
+            export VERSION=${{ needs.prepare.outputs.version }}
+            docker-compose pull
+            docker-compose up -d --no-deps --build app
+            docker-compose exec -T app npm run migrate
+          ENDSSH
+
+      - name: Run smoke tests
+        run: |
+          sleep 30
+          curl -f https://staging.example.com/health || exit 1
+
+      - name: Notify deployment
+        if: always()
+        run: |
+          echo "Staging deployment ${{ job.status }}"
+          # Add notification logic
+
+  deploy-production:
+    name: Deploy to Production (Blue-Green)
+    runs-on: ubuntu-latest
+    needs: prepare
+    if: needs.prepare.outputs.environment == 'production'
+    environment:
+      name: production
+      url: https://example.com
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.PRODUCTION_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Determine current environment
+        id: current
+        run: |
+          CURRENT=$(ssh ${{ secrets.PRODUCTION_USER }}@${{ secrets.PRODUCTION_HOST }} \
+            "cat /opt/myapp/current-environment.txt 2>/dev/null || echo blue")
+          echo "environment=$CURRENT" >> $GITHUB_OUTPUT
+          if [ "$CURRENT" == "blue" ]; then
+            echo "target=green" >> $GITHUB_OUTPUT
+          else
+            echo "target=blue" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deploy to ${{ steps.current.outputs.target }} environment
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TARGET_ENV: ${{ steps.current.outputs.target }}
+        run: |
+          ssh ${{ secrets.PRODUCTION_USER }}@${{ secrets.PRODUCTION_HOST }} << ENDSSH
+            cd /opt/myapp
+
+            # Pull new image
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}
+
+            # Start target environment
+            export ${TARGET_ENV^^}_VERSION=${VERSION}
+            docker-compose -f docker-compose.blue-green.yml up -d app-${TARGET_ENV}
+
+            # Wait for health check
+            timeout 60 bash -c '
+              until docker inspect --format="{{.State.Health.Status}}" app-${TARGET_ENV} | grep -q healthy; do
+                echo "Waiting for health check..."
+                sleep 2
+              done
+            '
+          ENDSSH
+
+      - name: Run smoke tests on ${{ steps.current.outputs.target }}
+        run: |
+          sleep 30
+          # Test target environment directly (before switching traffic)
+          ssh ${{ secrets.PRODUCTION_USER }}@${{ secrets.PRODUCTION_HOST }} \
+            "docker exec app-${{ steps.current.outputs.target }} curl -f http://localhost:3000/health"
+
+      - name: Run integration tests
+        run: |
+          # Run comprehensive integration tests
+          ssh ${{ secrets.PRODUCTION_USER }}@${{ secrets.PRODUCTION_HOST }} \
+            "cd /opt/myapp && ./scripts/integration-tests.sh ${{ steps.current.outputs.target }}"
+
+      - name: Switch traffic to ${{ steps.current.outputs.target }}
+        run: |
+          ssh ${{ secrets.PRODUCTION_USER }}@${{ secrets.PRODUCTION_HOST }} << ENDSSH
+            cd /opt/myapp
+
+            # Update nginx config to point to target environment
+            export ACTIVE_ENV=${{ steps.current.outputs.target }}
+            docker-compose -f docker-compose.blue-green.yml up -d nginx
+
+            # Update current environment file
+            echo "${{ steps.current.outputs.target }}" > current-environment.txt
+          ENDSSH
+
+      - name: Monitor deployment
+        id: monitor
+        run: |
+          # Monitor for 5 minutes
+          if ssh ${{ secrets.PRODUCTION_USER }}@${{ secrets.PRODUCTION_HOST }} \
+            "cd /opt/myapp && ./scripts/monitor.sh 300"; then
+            echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Rollback on failure
+        if: steps.monitor.outputs.status == 'failure'
+        run: |
+          echo "Errors detected! Rolling back..."
+          ssh ${{ secrets.PRODUCTION_USER }}@${{ secrets.PRODUCTION_HOST }} << ENDSSH
+            cd /opt/myapp
+
+            # Switch traffic back to current environment
+            export ACTIVE_ENV=${{ steps.current.outputs.environment }}
+            docker-compose -f docker-compose.blue-green.yml up -d nginx
+
+            # Stop failed deployment
+            docker-compose -f docker-compose.blue-green.yml stop app-${{ steps.current.outputs.target }}
+          ENDSSH
+          exit 1
+
+      - name: Stop old environment
+        if: steps.monitor.outputs.status == 'success'
+        run: |
+          echo "Deployment successful! Stopping old environment..."
+          ssh ${{ secrets.PRODUCTION_USER }}@${{ secrets.PRODUCTION_HOST }} \
+            "cd /opt/myapp && docker-compose -f docker-compose.blue-green.yml stop app-${{ steps.current.outputs.environment }}"
+
+      - name: Notify deployment result
+        if: always()
+        run: |
+          if [ "${{ steps.monitor.outputs.status }}" == "success" ]; then
+            echo "✅ Production deployment successful!"
+            echo "Active environment: ${{ steps.current.outputs.target }}"
+            echo "Version: ${{ needs.prepare.outputs.version }}"
+          else
+            echo "❌ Production deployment failed and rolled back"
+            echo "Active environment: ${{ steps.current.outputs.environment }}"
+          fi
+          # Add notification logic (Slack, email, etc.)
+
+  # Swarm deployment alternative
+  deploy-swarm:
+    name: Deploy to Docker Swarm
+    runs-on: ubuntu-latest
+    needs: prepare
+    if: false  # Enable if using Swarm
+    environment:
+      name: production-swarm
+      url: https://swarm.example.com
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure Docker context
+        env:
+          DOCKER_HOST: ${{ secrets.SWARM_MANAGER_HOST }}
+          DOCKER_CERT_PATH: /tmp/docker-certs
+          DOCKER_TLS_VERIFY: "1"
+        run: |
+          mkdir -p $DOCKER_CERT_PATH
+          echo "${{ secrets.DOCKER_CA_CERT }}" > $DOCKER_CERT_PATH/ca.pem
+          echo "${{ secrets.DOCKER_CLIENT_CERT }}" > $DOCKER_CERT_PATH/cert.pem
+          echo "${{ secrets.DOCKER_CLIENT_KEY }}" > $DOCKER_CERT_PATH/key.pem
+          chmod 600 $DOCKER_CERT_PATH/*.pem
+
+      - name: Create secrets
+        run: |
+          echo "${{ secrets.DB_PASSWORD }}" | docker secret create db_password_new -
+          echo "${{ secrets.REDIS_PASSWORD }}" | docker secret create redis_password_new -
+
+      - name: Deploy stack
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          docker stack deploy -c docker-stack.yml --with-registry-auth myapp
+
+      - name: Monitor deployment
+        run: |
+          # Wait for services to converge
+          sleep 60
+
+          # Check service status
+          docker service ls --filter name=myapp
+
+          # Check for failed tasks
+          if [ $(docker service ps myapp_app --filter "desired-state=running" --format "{{.CurrentState}}" | grep -c "Running") -lt 3 ]; then
+            echo "Deployment failed!"
+            docker service rollback myapp_app
+            exit 1
+          fi
+
+      - name: Run health checks
+        run: |
+          # Test service endpoints
+          curl -f https://swarm.example.com/health || exit 1
+
+      - name: Clean up old secrets
+        run: |
+          docker secret rm db_password || true
+          docker secret rm redis_password || true

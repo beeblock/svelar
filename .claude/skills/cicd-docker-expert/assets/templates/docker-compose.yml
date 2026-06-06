@@ -1,0 +1,144 @@
+# Docker Compose for Development Environment
+# Use: docker-compose up
+
+version: '3.8'
+
+services:
+  # Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: myapp_dev
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+      - "9229:9229"  # Node.js debug port
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgres://postgres:password@database:5432/myapp_dev
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=debug
+    volumes:
+      # Hot reload - mount source code
+      - ./src:/app/src:ro
+      - ./package.json:/app/package.json:ro
+      # Prevent overwriting node_modules
+      - /app/node_modules
+    networks:
+      - app_network
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 40s
+
+  # PostgreSQL Database
+  database:
+    image: postgres:16-alpine
+    container_name: myapp_postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=myapp_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: myapp_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # Nginx (optional - for local testing)
+  nginx:
+    image: nginx:alpine
+    container_name: myapp_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.dev.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - app_network
+    depends_on:
+      - app
+    profiles:
+      - with-nginx
+
+  # Database Admin (optional)
+  adminer:
+    image: adminer:latest
+    container_name: myapp_adminer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    networks:
+      - app_network
+    depends_on:
+      - database
+    profiles:
+      - admin
+
+  # Redis Commander (optional)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: myapp_redis_commander
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    networks:
+      - app_network
+    depends_on:
+      - redis
+    profiles:
+      - admin
+
+networks:
+  app_network:
+    driver: bridge
+    name: myapp_network
+
+volumes:
+  postgres_data:
+    name: myapp_postgres_data
+  redis_data:
+    name: myapp_redis_data
+
+# Usage:
+# Development: docker-compose up
+# With Nginx: docker-compose --profile with-nginx up
+# With Admin Tools: docker-compose --profile admin up
+# All profiles: docker-compose --profile with-nginx --profile admin up

@@ -9,16 +9,30 @@
 
 - This is a TypeScript monorepo for Svelar, a Laravel-inspired framework on top of SvelteKit 2.
 - `packages/svelar` is the core framework package.
+- Focus `packages/svelar` core first. Do not touch plugin packages unless the user explicitly asks.
 - Project scaffolding is owned by `packages/svelar` through the published `svelar new` CLI command.
 - `packages/svelar-*` packages are framework plugins/extensions and must stay consistent with core plugin conventions.
 
 ## Working Rules
 
+- Use Svelar CLI commands to scaffold project artifacts whenever a generator exists.
+- Keep the Laravel-like flow consistent: route -> controller -> shared schema/request validation -> service/action -> repository -> model/resource -> response and side effects.
+- Use Svelar ORM and migrations. Avoid raw SQL unless it is an explicit low-level driver/infrastructure exception.
+- Keep one migration per table or focused schema change.
 - Prefer production-grade fixes that harden behavior instead of bypassing validation, auth, CSRF, typing, or security controls.
 - Keep changes scoped to the feature being fixed unless a shared contract must change.
 - When adding a new core subpath export, update `packages/svelar/package.json`, `packages/svelar/tsup.config.ts`, and any scaffold templates that need the path.
 - After changes to `packages/svelar`, run the relevant package tests and build when feasible.
 - Do not revert unrelated user changes in the working tree.
+
+## Runtime Verification
+
+- Before release, prefer `npm run build`, targeted tests, `npm run release:dry-run`, and `npm run certify`.
+- For real app dogfooding, create sibling apps under `/Users/rzeradev/projects/beeblock/svelar-testing-area/` and keep a step-by-step timeline in the app docs.
+- Use Docker services on non-default host ports because other local projects may already be running.
+- Production-grade dogfood coverage should include Postgres/PgBouncer with prepared statements disabled, `pg_stat_statements`, Redis, BullMQ queues, cache, RustFS, Gotenberg, Meilisearch, auth/session/API tokens, policies/permissions, teams, webhooks, uploads, PDF, SSE, Soketi/Pusher realtime, logs, audit, exceptions, scheduler, CLI commands, and tinker.
+- PDF tests that claim Gotenberg coverage must set `PDF_DRIVER=gotenberg`.
+- Realtime tests should prove visible cross-browser updates. A health ping alone is not enough for Soketi.
 
 ## Svelte And UI Rules
 
@@ -28,6 +42,7 @@
 
 ## Plugin Rules
 
+- Plugins are postponed while core is being production-hardened unless explicitly requested.
 - Plugin packages must keep server-only plugin classes out of client-safe `index.ts` barrels.
 - Plugin classes must live in a dedicated server entry such as `src/plugin.ts` and default-export the plugin class.
 - Plugin models should extend `Model`; avoid direct `Connection.raw()` CRUD unless the feature explicitly requires raw SQL.

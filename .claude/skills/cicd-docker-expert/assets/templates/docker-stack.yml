@@ -1,0 +1,329 @@
+# Docker Swarm Stack File
+# Deploy: docker stack deploy -c docker-stack.yml myapp
+
+version: '3.8'
+
+services:
+  # Application Service
+  app:
+    image: myregistry.com/myapp:${VERSION:-latest}
+    networks:
+      - frontend
+      - backend
+    secrets:
+      - source: db_password
+        target: /run/secrets/db_password
+        uid: '1001'
+        gid: '1001'
+        mode: 0400
+      - source: redis_password
+        target: /run/secrets/redis_password
+        uid: '1001'
+        gid: '1001'
+        mode: 0400
+    configs:
+      - source: app_config
+        target: /app/config.yml
+        uid: '1001'
+        gid: '1001'
+        mode: 0440
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgres://postgres@database:5432/myapp
+      - REDIS_URL=redis://redis:6379
+    deploy:
+      replicas: 5
+      update_config:
+        parallelism: 2
+        delay: 10s
+        failure_action: rollback
+        monitor: 60s
+        max_failure_ratio: 0.2
+        order: start-first
+      rollback_config:
+        parallelism: 1
+        delay: 5s
+        failure_action: pause
+        monitor: 30s
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      placement:
+        constraints:
+          - node.role == worker
+          - node.labels.type == backend
+        preferences:
+          - spread: node.labels.datacenter
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+      labels:
+        - "com.example.service=app"
+        - "com.example.version=${VERSION:-latest}"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Background Worker
+  worker:
+    image: myregistry.com/myapp:${VERSION:-latest}
+    command: ["node", "dist/worker.js"]
+    networks:
+      - backend
+    secrets:
+      - db_password
+      - redis_password
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgres://postgres@database:5432/myapp
+      - REDIS_URL=redis://redis:6379
+    deploy:
+      replicas: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 3
+      placement:
+        constraints:
+          - node.role == worker
+          - node.labels.type == backend
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Nginx Load Balancer
+  nginx:
+    image: nginx:alpine
+    ports:
+      - target: 80
+        published: 80
+        protocol: tcp
+        mode: ingress
+      - target: 443
+        published: 443
+        protocol: tcp
+        mode: ingress
+    networks:
+      - frontend
+    configs:
+      - source: nginx_config
+        target: /etc/nginx/nginx.conf
+      - source: nginx_ssl_cert
+        target: /etc/nginx/ssl/cert.pem
+      - source: nginx_ssl_key
+        target: /etc/nginx/ssl/key.pem
+    deploy:
+      replicas: 2
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      placement:
+        constraints:
+          - node.labels.type == frontend
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  # PostgreSQL Database
+  database:
+    image: postgres:16-alpine
+    networks:
+      - backend
+    secrets:
+      - db_password
+    environment:
+      - POSTGRES_DB=myapp
+      - POSTGRES_PASSWORD_FILE=/run/secrets/db_password
+    volumes:
+      - database_data:/var/lib/postgresql/data
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+          - node.labels.type == database
+          - node.hostname == db-server-1
+      restart_policy:
+        condition: any
+        delay: 5s
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass-file /run/secrets/redis_password --appendonly yes
+    networks:
+      - backend
+    secrets:
+      - redis_password
+    volumes:
+      - redis_data:/data
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+          - node.labels.type == cache
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # Monitoring - Prometheus (optional)
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    configs:
+      - source: prometheus_config
+        target: /etc/prometheus/prometheus.yml
+    volumes:
+      - prometheus_data:/prometheus
+    networks:
+      - monitoring
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+    profiles:
+      - monitoring
+
+  # Monitoring - Grafana (optional)
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD__FILE=/run/secrets/grafana_password
+    secrets:
+      - grafana_password
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - monitoring
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+    profiles:
+      - monitoring
+
+networks:
+  frontend:
+    driver: overlay
+    driver_opts:
+      encrypted: "true"
+  backend:
+    driver: overlay
+    internal: true
+    driver_opts:
+      encrypted: "true"
+  monitoring:
+    driver: overlay
+    driver_opts:
+      encrypted: "true"
+
+volumes:
+  database_data:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+secrets:
+  db_password:
+    external: true
+    name: db_password_${VERSION:-v1}
+  redis_password:
+    external: true
+    name: redis_password_${VERSION:-v1}
+  grafana_password:
+    external: true
+    name: grafana_password_v1
+
+configs:
+  app_config:
+    external: true
+    name: app_config_${VERSION:-v1}
+  nginx_config:
+    external: true
+    name: nginx_config_v1
+  nginx_ssl_cert:
+    external: true
+    name: nginx_ssl_cert_v1
+  nginx_ssl_key:
+    external: true
+    name: nginx_ssl_key_v1
+  prometheus_config:
+    external: true
+    name: prometheus_config_v1
+
+# Deployment commands:
+# docker stack deploy -c docker-stack.yml myapp
+# docker stack deploy -c docker-stack.yml --with-registry-auth myapp
+# docker stack deploy -c docker-stack.yml --profile monitoring myapp
+# docker stack services myapp
+# docker stack ps myapp
+# docker stack rm myapp

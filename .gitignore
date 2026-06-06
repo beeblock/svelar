@@ -55,6 +55,15 @@ svelar-datatable/
 svelar-*/
 !packages/svelar-cli/
 !packages/svelar-cli/**
+!.codex/
+!.codex/skills/
+!.codex/skills/svelar-specialist/
+!.codex/skills/svelar-specialist/**
 
 # Claude
 .claude/
+!.claude/
+!.claude/skills/
+!.claude/skills/svelar-specialist/
+!.claude/skills/svelar-specialist/**
+!.claude/skills/svelar-specialist.skill
