@@ -5,6 +5,7 @@
     "packages/svelar",
     "packages/svelar-cli",
     "packages/svelar-datatable",
+    "packages/svelar-stripe",
     "packages/svelar-media",
     "packages/svelar-social-auth",
     "packages/svelar-two-factor",

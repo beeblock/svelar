@@ -1,6 +1,6 @@
 # Stripe Billing
 
-The  plugin provides Stripe billing with a polymorphic Billable mixin, subscriptions, one-time payments, checkout, invoices, refunds, and webhook handling.
+The `@beeblock/svelar-stripe` plugin provides Stripe billing with a polymorphic Billable mixin, subscriptions, one-time payments, checkout, invoices, refunds, guarded admin endpoints, and signed webhook handling.
 
 ## Setup
 
@@ -31,22 +31,28 @@ Get these from [Stripe Dashboard](https://dashboard.stripe.com/apikeys):
 Add Stripe configuration and register your billable models in `src/app.ts`:
 
 ```typescript
-import { Stripe } from '@beeblock/svelar-stripe';
-import { User } from '$lib/models/User';
+import { env } from '@beeblock/svelar/config';
+import { Stripe, registerDefaultWebhookHandlers } from '@beeblock/svelar-stripe';
+import { User } from '$lib/modules/users/domain/models/User.js';
 
 Stripe.configure({
-  secretKey: process.env.STRIPE_SECRET_KEY ?? '',
-  publishableKey: process.env.STRIPE_PUBLISHABLE_KEY ?? '',
-  webhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? '',
+  secretKey: env('STRIPE_SECRET_KEY'),
+  publishableKey: env('STRIPE_PUBLISHABLE_KEY'),
+  webhookSecret: env('STRIPE_WEBHOOK_SECRET'),
   currency: 'usd',
+  adminGuard: (event) => event.locals.user?.role === 'admin',
 });
 
 // Register every model that can be billed
 Stripe.registerBillable(User);
 // Stripe.registerBillable(Team);   // if teams are billable too
+
+// Optional, but recommended: sync common subscription and invoice events to the local ORM models
+registerDefaultWebhookHandlers(Stripe.webhooks());
 ```
 
 `registerBillable()` tells the plugin which ORM Model corresponds to each table name, so all billing queries go through the Svelar ORM — no raw SQL.
+`adminGuard` protects the published admin billing endpoints. Without it, those admin routes deny every request by default.
 
 ### 4. Publish & Run Migrations
 
@@ -116,11 +122,12 @@ stripe listen --forward-to localhost:5173/api/webhooks/stripe
 ```typescript
 Stripe.configure({
   // Required
-  secretKey: process.env.STRIPE_SECRET_KEY ?? '',
-  publishableKey: process.env.STRIPE_PUBLISHABLE_KEY ?? '',
-  webhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? '',
+  secretKey: env('STRIPE_SECRET_KEY'),
+  publishableKey: env('STRIPE_PUBLISHABLE_KEY'),
+  webhookSecret: env('STRIPE_WEBHOOK_SECRET'),
 
   // Optional
+  adminGuard: (event) => event.locals.user?.role === 'admin', // Required for admin billing routes
   currency: 'usd',                                    // Default currency for new subscriptions
   trialDays: 14,                                       // Default trial period
   portalReturnUrl: '/dashboard/billing',               // Return URL after Stripe Portal
@@ -168,20 +175,20 @@ Add plans to your database so the app knows about them:
 
 ```typescript
 // src/lib/database/seeders/DatabaseSeeder.ts
-import { Connection } from '@beeblock/svelar/database';
+import { SubscriptionPlan } from '@beeblock/svelar-stripe';
 
 // Inside your seed method:
-await Connection.raw(`INSERT INTO subscription_plans (name, stripe_price_id, stripe_product_id, price, currency, interval, trial_days, features, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
-  'Pro',
-  'price_xxxxx',        // Your Stripe Price ID
-  'prod_xxxxx',         // Your Stripe Product ID
-  2900,                 // $29.00 in cents
-  'usd',
-  'month',
-  14,                   // 14-day trial
-  '["unlimited-projects", "api-access", "priority-support"]',
-  1,
-]);
+await SubscriptionPlan.create({
+  name: 'Pro',
+  stripe_price_id: 'price_xxxxx',   // Your Stripe Price ID
+  stripe_product_id: 'prod_xxxxx',  // Your Stripe Product ID
+  price: 2900,                      // $29.00 in cents
+  currency: 'usd',
+  interval: 'month',
+  trial_days: 14,
+  features: JSON.stringify(['unlimited-projects', 'api-access', 'priority-support']),
+  active: 1,
+});
 ```
 
 ## Currencies
@@ -488,6 +495,28 @@ const ctrl = new BillingController();
 export const GET = ctrl.handle('listSubscriptions');
 ```
 
+Admin billing controllers return Svelar resource-style envelopes:
+
+```json
+{
+  "data": {
+    "subscriptions": []
+  },
+  "meta": {
+    "hasMore": false
+  }
+}
+```
+
+The published admin routes call `Stripe.authorizeAdmin(event)` before touching Stripe. Configure `adminGuard` in `Stripe.configure()` instead of leaving route stubs open:
+
+```typescript
+Stripe.configure({
+  // ...
+  adminGuard: (event) => event.locals.user?.role === 'admin',
+});
+```
+
 ```typescript
 // src/routes/api/webhooks/stripe/+server.ts
 import { StripeWebhookController } from '@beeblock/svelar-stripe/server';
@@ -496,21 +525,7 @@ const ctrl = new StripeWebhookController();
 export const POST = ctrl.handle('handleWebhook');
 ```
 
-You can extend these controllers to add custom auth checks or behavior:
-
-```typescript
-import { BillingController } from '@beeblock/svelar-stripe/server';
-import { Gate } from '@beeblock/svelar/auth';
-
-class MyBillingController extends BillingController {
-  async listSubscriptions(event: any) {
-    if (await Gate.denies('admin-access', event.locals.user)) {
-      return this.json({ message: 'Unauthorized' }, 403);
-    }
-    return super.listSubscriptions(event);
-  }
-}
-```
+The webhook controller reads the raw request body and verifies `stripe-signature` with Stripe's `constructEvent()` before dispatching any registered handlers. Missing or invalid signatures return a `400` resource envelope and do not dispatch handlers.
 
 ## Products & Prices API
 
@@ -548,54 +563,33 @@ Use Stripe test mode keys (prefixed with `sk_test_` and `pk_test_`) during devel
 
 ```typescript
 // 1. Configure in app.ts
+import { env } from '@beeblock/svelar/config';
+import { Stripe, registerDefaultWebhookHandlers } from '@beeblock/svelar-stripe';
+import { User } from '$lib/modules/users/domain/models/User.js';
+
 Stripe.configure({
-  secretKey: process.env.STRIPE_SECRET_KEY!,
-  publishableKey: process.env.STRIPE_PUBLISHABLE_KEY!,
-  webhookSecret: process.env.STRIPE_WEBHOOK_SECRET!,
+  secretKey: env('STRIPE_SECRET_KEY'),
+  publishableKey: env('STRIPE_PUBLISHABLE_KEY'),
+  webhookSecret: env('STRIPE_WEBHOOK_SECRET'),
   currency: 'usd',
+  adminGuard: (event) => event.locals.user?.role === 'admin',
 });
 
-// 2. Register webhook handlers in app.ts
-Stripe.webhooks()
-  .on('customer.subscription.created', async (event) => {
-    const sub = event.data.object as any;
-    const userId = sub.metadata?.userId;
-    if (userId) {
-      // Update user's subscription in your database
-    }
-  })
-  .on('invoice.payment_failed', async (event) => {
-    const invoice = event.data.object as any;
-    // Send payment failed notification
-  });
+Stripe.registerBillable(User);
+registerDefaultWebhookHandlers(Stripe.webhooks());
 
 // 3. Pricing page — create checkout session
 // src/routes/pricing/+page.server.ts
 export const actions = {
   subscribe: async ({ locals }) => {
     const user = locals.user;
-    const service = Stripe.service();
-
-    // Create or get Stripe customer
-    let customerId = user.stripe_customer_id;
-    if (!customerId) {
-      const customer = await service.createCustomer({
-        id: user.id,
-        email: user.email,
-        name: user.name,
-      });
-      customerId = customer.id;
-      await User.query().where('id', user.id).update({
-        stripe_customer_id: customerId,
-      });
-    }
-
-    // Create checkout session
-    const session = await service.createCheckoutSession(
-      customerId,
-      'price_xxxxx',  // Your price ID
-      'https://yourapp.com/dashboard?status=success',
-      'https://yourapp.com/pricing?status=canceled',
+    const session = await user.checkout(
+      [{ priceId: 'price_xxxxx', quantity: 1 }],
+      {
+        mode: 'subscription',
+        successUrl: 'https://yourapp.com/dashboard?status=success',
+        cancelUrl: 'https://yourapp.com/pricing?status=canceled',
+      },
     );
 
     throw redirect(303, session.url!);

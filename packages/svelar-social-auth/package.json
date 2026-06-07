@@ -1,0 +1,62 @@
+{
+  "name": "@beeblock/svelar-social-auth",
+  "version": "0.1.0",
+  "description": "OAuth social authentication plugin for Svelar — Google and GitHub",
+  "type": "module",
+  "keywords": ["svelar-plugin", "social-auth", "oauth", "google", "github", "svelte", "sveltekit", "socialite"],
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "svelte": "./src/ui/index.ts",
+  "sideEffects": false,
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./plugin": {
+      "types": "./dist/plugin.d.ts",
+      "default": "./dist/plugin.js"
+    },
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "default": "./dist/server/index.js"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "default": "./dist/types.js"
+    },
+    "./ui": {
+      "types": "./src/ui/index.ts",
+      "svelte": "./src/ui/index.ts",
+      "import": "./src/ui/index.ts"
+    },
+    "./ui/*": {
+      "svelte": "./src/ui/*",
+      "import": "./src/ui/*"
+    }
+  },
+  "files": ["dist", "src/ui", "src/publishable", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsup && tsc --emitDeclarationOnly",
+    "dev": "tsup --watch",
+    "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build && npm run test"
+  },
+  "peerDependencies": {
+    "@beeblock/svelar": ">=0.6.7",
+    "svelte": "^5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@beeblock/svelar": { "optional": false }
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.8",
+    "svelte": "^5.0.0"
+  }
+}

@@ -1,12 +1,12 @@
 /**
- * plugin:publish — Publish a plugin's config and migrations
+ * plugin:publish — Publish a plugin's config, migrations, and assets
  */
 
 import { Command } from '../Command.js';
 
 export class PluginPublishCommand extends Command {
   name = 'plugin:publish';
-  description = 'Publish a plugin\'s config and migration files';
+  description = 'Publish a plugin\'s config, migrations, and assets';
   arguments = ['name'];
   flags = [
     {
@@ -95,7 +95,7 @@ export class PluginPublishCommand extends Command {
 
   private async loadPluginClass(packageName: string): Promise<any> {
     try {
-      const mod = await import(packageName);
+      const mod = await import(`${packageName}/plugin`);
       return mod.default || Object.values(mod)[0];
     } catch {
       return null;
