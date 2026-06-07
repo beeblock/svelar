@@ -471,9 +471,16 @@ export class UpdateCommand extends Command {
 
   private getFileManifest(isDDD: boolean, projectName: string): ScaffoldFile[] {
     const files: ScaffoldFile[] = [];
+    const validation = this.validationProvider();
 
     const add = (path: string, content: () => string, category: ScaffoldFile['category'], description: string, ownership: 'framework' | 'user' = 'framework') => {
-      files.push({ path, content, category, description, ownership });
+      files.push({
+        path,
+        content: () => T.applyValidationProvider(content(), validation),
+        category,
+        description,
+        ownership,
+      });
     };
 
     // ── Config ──
@@ -483,6 +490,7 @@ export class UpdateCommand extends Command {
     add('vite.config.ts', () => T.viteConfig(), 'config', 'Vite configuration', 'user');
     add('.env.example', () => T.envExample(), 'config', 'Environment template');
     add('svelar.database.json', () => T.svelarDatabaseJson(), 'config', 'Database config');
+    add('svelar.validation.json', () => T.validationConfig(validation), 'config', 'Validation provider config');
     add('src/app.css', () => T.appCss(), 'config', 'Global styles');
     add('src/app.html', () => T.appHtml(), 'config', 'HTML shell');
 
@@ -520,7 +528,7 @@ export class UpdateCommand extends Command {
     // Auth resource, gates, schemas
     add(`${isDDD ? authDir : `${authDir}/resources`}/UserResource.ts`, () => T.userResource(), 'domain', 'User resource');
     add(`${isDDD ? authDir : `${authDir}/schemas`}/gates.ts`, () => T.gates(), 'domain', 'Authorization gates');
-    add(`${isDDD ? authDir + '/schemas' : `${authDir}/schemas`}.ts`, () => T.authSchema(), 'domain', 'Auth Zod schemas');
+    add(`${isDDD ? authDir + '/schemas' : `${authDir}/schemas`}.ts`, () => T.authSchema(validation), 'domain', 'Auth validation schemas');
 
     // ── Posts Domain — user-owned (example code users modify) ──
     const postsDir = isDDD ? 'src/lib/modules/posts' : 'src/lib';

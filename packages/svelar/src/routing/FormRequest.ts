@@ -41,13 +41,63 @@
 import { z, type ZodTypeAny } from 'zod';
 import type { RequestEvent } from './Controller.js';
 
+type FormRequestSchema = ZodTypeAny | unknown;
+
+type NormalizedValidationIssue = {
+  path: string;
+  code: string;
+  message: string;
+};
+
+type NormalizedValidationResult =
+  | { success: true; data: any }
+  | { success: false; issues: NormalizedValidationIssue[] };
+
+async function parseSchema(schema: FormRequestSchema, data: unknown): Promise<NormalizedValidationResult> {
+  if (schema && typeof (schema as any).safeParse === 'function') {
+    const result = (schema as any).safeParse(data);
+
+    if (result.success) {
+      return { success: true, data: result.data };
+    }
+
+    return {
+      success: false,
+      issues: (result.error?.issues ?? []).map((issue: any) => ({
+        path: issue.path?.length ? issue.path.join('.') : '_root',
+        code: issue.code ?? 'invalid',
+        message: issue.message ?? 'The given data was invalid.',
+      })),
+    };
+  }
+
+  const valibot = await import('valibot');
+  const result = valibot.safeParse(schema as any, data);
+
+  if (result.success) {
+    return { success: true, data: result.output };
+  }
+
+  return {
+    success: false,
+    issues: (result.issues ?? []).map((issue: any) => ({
+      path: Array.isArray(issue.path) && issue.path.length
+        ? issue.path.map((item: any) => item.key).filter((key: any) => key !== undefined).join('.') || '_root'
+        : '_root',
+      code: issue.type ?? 'invalid',
+      message: issue.message ?? 'The given data was invalid.',
+    })),
+  };
+}
+
 // ── Form Request Base ──────────────────────────────────────
 
 export abstract class FormRequest {
   /**
-   * Define the validation rules (return a Zod schema)
+   * Define the validation rules. Return a Zod schema by default, or a Valibot schema
+   * when the app was scaffolded with Valibot.
    */
-  abstract rules(): ZodTypeAny;
+  abstract rules(): FormRequestSchema;
 
   /**
    * Determine if the user is authorized to make this request.
@@ -123,7 +173,7 @@ export abstract class FormRequest {
   static async validate<T extends FormRequest>(
     this: new () => T,
     event: RequestEvent
-  ): Promise<z.infer<ReturnType<T['rules']>>> {
+  ): Promise<any> {
     const instance = new this();
 
     // Authorization check
@@ -144,15 +194,15 @@ export abstract class FormRequest {
 
     // Validate
     const schema = instance.rules();
-    const result = schema.safeParse(data);
+    const result = await parseSchema(schema, data);
 
     if (!result.success) {
       const errors: Record<string, string[]> = {};
       const customMessages = instance.messages();
       const customAttributes = instance.attributes();
 
-      for (const issue of result.error.issues) {
-        const path = issue.path.join('.');
+      for (const issue of result.issues) {
+        const path = issue.path;
         const displayPath = customAttributes[path] ?? path;
 
         if (!errors[displayPath]) errors[displayPath] = [];
@@ -167,7 +217,7 @@ export abstract class FormRequest {
       instance.failedValidation(errors);
     }
 
-    return instance.passedValidation(result.data);
+    return instance.passedValidation((result as { success: true; data: any }).data);
   }
 }
 

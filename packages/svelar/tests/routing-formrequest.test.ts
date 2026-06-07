@@ -5,6 +5,7 @@ import {
   FormAuthorizationError,
 } from '../src/routing/FormRequest.js';
 import { z } from 'zod';
+import * as v from 'valibot';
 
 describe('FormValidationError', () => {
   it('should store errors and have correct status', () => {
@@ -82,6 +83,15 @@ describe('FormRequest', () => {
     }
   }
 
+  class ValibotCreateUserRequest extends FormRequest {
+    rules() {
+      return v.object({
+        name: v.pipe(v.string(), v.minLength(2, 'Name is too short')),
+        email: v.pipe(v.string(), v.email('Email is invalid')),
+      });
+    }
+  }
+
   function createEvent(body: any, contentType = 'application/json') {
     return {
       request: new Request('http://localhost/test', {
@@ -130,6 +140,24 @@ describe('FormRequest', () => {
     const event = createEvent({ name: 'alice' });
     const data = await TransformingRequest.validate(event);
     expect(data.name).toBe('ALICE');
+  });
+
+  it('should validate Valibot schemas', async () => {
+    const event = createEvent({ name: 'Alice', email: 'alice@example.com' });
+    const data = await ValibotCreateUserRequest.validate(event);
+
+    expect(data).toEqual({ name: 'Alice', email: 'alice@example.com' });
+  });
+
+  it('should normalize Valibot field validation errors', async () => {
+    const event = createEvent({ name: 'A', email: 'not-email' });
+
+    await expect(ValibotCreateUserRequest.validate(event)).rejects.toMatchObject({
+      errors: {
+        name: ['Name is too short'],
+        email: ['Email is invalid'],
+      },
+    });
   });
 
   it('should merge query params, route params, and body', async () => {

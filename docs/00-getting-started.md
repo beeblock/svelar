@@ -265,7 +265,7 @@ For any new feature, the workflow is:
 ```
 1. npx svelar make:entity or make:model + make:migration → Define your data
 2. npx svelar migrate                        → Create the table
-3. npx svelar make:schema                    → Define the contract (Zod types)
+3. npx svelar make:schema                    -> Define the contract (Zod or Valibot types)
 4. npx svelar make:controller + make:service → Handle requests + business logic
 5. npx svelar make:route                     → Wire up API endpoints
 6. Build your UI in src/routes/              → Svelte pages
@@ -284,7 +284,7 @@ Svelar ships 35+ modules. Here's what each one does and when you'll use it:
 | **ORM** | `@beeblock/svelar/orm` | Eloquent-style query builder, models, relationships, eager loading |
 | **Database** | `@beeblock/svelar/database` | Migrations, seeders, multi-driver (SQLite, PostgreSQL, MySQL) |
 | **Routing** | `@beeblock/svelar/routing` | Controllers, FormRequests, Resources, response objects |
-| **Validation** | `@beeblock/svelar/validation` | Zod-based validation with named rules |
+| **Validation** | `@beeblock/svelar/validation` | Zod helpers; FormRequest also accepts Valibot schemas |
 | **Auth** | `@beeblock/svelar/auth` | Session, JWT, API token auth, gates, policies |
 | **Middleware** | `@beeblock/svelar/middleware` | CORS, CSRF, rate limiting, origin validation, request signatures |
 | **Session** | `@beeblock/svelar/session` | Cookie sessions with memory, database, file, or Redis store |
@@ -298,7 +298,7 @@ Svelar ships 35+ modules. Here's what each one does and when you'll use it:
 | **Actions** | `@beeblock/svelar/actions` | Single-responsibility operations with hooks and middleware |
 | **Repositories** | `@beeblock/svelar/repositories` | Data access layer with CRUD, pagination, scoped queries |
 | **Events** | `@beeblock/svelar/events` | Pub/sub event system with typed listeners and subscribers |
-| **Forms** | `@beeblock/svelar/forms` | SuperForms + Zod bridge for SvelteKit form actions |
+| **Forms** | `@beeblock/svelar/forms` | SuperForms bridge for Zod or Valibot form actions |
 
 ### You'll Use for Infrastructure
 

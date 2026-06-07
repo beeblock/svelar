@@ -88,6 +88,16 @@ class TestController extends Controller {
     if (!result.success) throw new ValidationError(result.error);
   }
 
+  async validateWithValibot(event: RequestEvent) {
+    const v = await import('valibot');
+    const data = await this.validate(event, v.object({
+      email: v.pipe(v.string(), v.email('Email is invalid')),
+      name: v.pipe(v.string(), v.minLength(2, 'Name is too short')),
+    }));
+
+    return this.json(data);
+  }
+
   async returnRawData() {
     return { key: 'value' };
   }
@@ -201,6 +211,26 @@ describe('Controller', () => {
       const body = await res.json();
       expect(body.message).toBe('Validation failed');
       expect(body.errors).toBeDefined();
+    });
+
+    it('should validate request bodies with Valibot schemas', async () => {
+      const handler = ctrl.handle('validateWithValibot');
+      const res = await handler(createEvent({ method: 'POST', body: { email: 'alice@example.com', name: 'Alice' } }));
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ email: 'alice@example.com', name: 'Alice' });
+    });
+
+    it('should render Valibot validation errors as controller 422 responses', async () => {
+      const handler = ctrl.handle('validateWithValibot');
+      const res = await handler(createEvent({ method: 'POST', body: { email: 'bad', name: 'A' } }));
+
+      expect(res.status).toBe(422);
+      const body = await res.json();
+      expect(body.errors).toEqual({
+        email: ['Email is invalid'],
+        name: ['Name is too short'],
+      });
     });
   });
 });

@@ -2,7 +2,7 @@
  * Svelar CLI Command Base
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -13,6 +13,8 @@ export interface CommandFlag {
   type: 'boolean' | 'string';
   default?: any;
 }
+
+export type ValidationProvider = 'zod' | 'valibot';
 
 export type ModuleArtifactKind =
   | 'action'
@@ -223,6 +225,18 @@ export abstract class Command {
    */
   protected isDDD(): boolean {
     return existsSync(join(process.cwd(), 'src', 'lib', 'modules'));
+  }
+
+  protected validationProvider(): ValidationProvider {
+    const configPath = join(process.cwd(), 'svelar.validation.json');
+    if (!existsSync(configPath)) return 'zod';
+
+    try {
+      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+      return config.validation === 'valibot' ? 'valibot' : 'zod';
+    } catch {
+      return 'zod';
+    }
   }
 
   /**

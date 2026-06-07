@@ -37,7 +37,38 @@ export class MakeRequestCommand extends Command {
       return;
     }
 
-    const content = `import { FormRequest } from '@beeblock/svelar/forms';
+    const content = this.validationProvider() === 'valibot'
+      ? `import { FormRequest } from '@beeblock/svelar/forms';
+import * as v from 'valibot';
+
+export class ${requestName} extends FormRequest {
+  rules() {
+    return v.object({
+      // Define validation rules
+      // name: v.pipe(v.string(), v.minLength(2), v.maxLength(100)),
+      // email: v.pipe(v.string(), v.email()),
+    });
+  }
+
+  messages() {
+    return {
+      // Custom error messages (optional)
+      // 'name.min_length': 'Name must be at least 2 characters',
+    };
+  }
+
+  authorize(event: any): boolean {
+    // Return false to throw 403 Forbidden
+    return true;
+  }
+
+  passedValidation(data: any) {
+    // Transform data after validation (optional)
+    return data;
+  }
+}
+`
+      : `import { FormRequest } from '@beeblock/svelar/forms';
 import { z } from '@beeblock/svelar/validation';
 
 export class ${requestName} extends FormRequest {

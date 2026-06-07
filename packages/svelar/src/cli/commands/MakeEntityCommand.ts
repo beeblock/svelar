@@ -73,7 +73,41 @@ ${fields.map((field) => `  declare ${field.name}${field.optional ? '?' : ''}: ${
   private writeSchema(moduleName: string, name: string, fields: Field[]): void {
     const lower = this.toCamelCase(name);
     const fileName = `${this.toKebabCase(name)}.schema.ts`;
-    const fieldLines = fields.map((field) => `  ${field.name}: ${this.zodFor(field)},`);
+    const validation = this.validationProvider();
+    const fieldLines = fields.map((field) => `  ${field.name}: ${validation === 'valibot' ? this.valibotFor(field) : this.zodFor(field)},`);
+
+    if (validation === 'valibot') {
+      const needsNumber = fields.some((field) => field.kind === 'number' || field.kind === 'integer');
+      const needsBoolean = fields.some((field) => field.kind === 'boolean');
+      const needsDate = fields.some((field) => field.kind === 'date');
+      const helpers = [
+        needsNumber ? "const numberInput = () => v.pipe(v.unknown(), v.transform((input) => Number(input)), v.number());" : '',
+        needsBoolean ? "const booleanInput = () => v.pipe(v.unknown(), v.transform((input) => input === true || input === 'true' || input === 'on' || input === '1'), v.boolean());" : '',
+        needsDate ? "const dateInput = () => v.pipe(v.unknown(), v.transform((input) => input instanceof Date ? input : new Date(String(input))), v.date());" : '',
+      ].filter(Boolean).join('\n');
+
+      this.writeModuleFile(moduleName, 'schemas', 'schema', fileName, `import * as v from 'valibot';
+${helpers ? `\n${helpers}\n` : ''}
+export const ${lower}Schema = v.object({
+  id: v.number(),
+${fieldLines.join('\n')}
+  created_at: v.optional(v.string()),
+  updated_at: v.optional(v.string()),
+});
+
+export const create${name}Schema = v.object({
+${fieldLines.join('\n')}
+});
+
+export const update${name}Schema = v.partial(create${name}Schema);
+
+export type ${name}Data = v.InferOutput<typeof ${lower}Schema>;
+export type Create${name}Input = v.InferOutput<typeof create${name}Schema>;
+export type Update${name}Input = v.InferOutput<typeof update${name}Schema>;
+`);
+      return;
+    }
+
     this.writeModuleFile(moduleName, 'schemas', 'schema', fileName, `import { z } from '@beeblock/svelar/validation';
 
 export const ${lower}Schema = z.object({
@@ -225,7 +259,36 @@ export class Delete${name}Action extends Action<Delete${name}Dto, void> {
   private writeRequests(moduleName: string, name: string, crud: boolean): void {
     const dtoPath = this.moduleImportPath(moduleName, 'request', 'dto', `${name}Dtos`);
     const schemaPath = this.moduleImportPath(moduleName, 'request', 'schema', `${this.toKebabCase(name)}.schema`);
-    let content = `import { FormRequest } from '@beeblock/svelar/forms';
+    const validation = this.validationProvider();
+    let content = validation === 'valibot'
+      ? `import { FormRequest } from '@beeblock/svelar/forms';
+import * as v from 'valibot';
+import { Create${name}Dto${crud ? `, Delete${name}Dto, Update${name}Dto` : ''} } from '${dtoPath}';
+import { create${name}Schema${crud ? `, update${name}Schema` : ''} } from '${schemaPath}';
+
+const idSchema = v.pipe(
+  v.unknown(),
+  v.transform((input) => Number(input)),
+  v.number(),
+  v.integer(),
+  v.minValue(1)
+);
+
+export class Create${name}Request extends FormRequest {
+  rules() {
+    return create${name}Schema;
+  }
+
+  authorize(event: any): boolean {
+    return !!event.locals.user;
+  }
+
+  passedValidation(data: any): Create${name}Dto {
+    return Create${name}Dto.from(data);
+  }
+}
+`
+      : `import { FormRequest } from '@beeblock/svelar/forms';
 import { z } from '@beeblock/svelar/validation';
 import { Create${name}Dto${crud ? `, Delete${name}Dto, Update${name}Dto` : ''} } from '${dtoPath}';
 import { create${name}Schema${crud ? `, update${name}Schema` : ''} } from '${schemaPath}';
@@ -246,7 +309,37 @@ export class Create${name}Request extends FormRequest {
 `;
 
     if (crud) {
-      content += `
+      content += validation === 'valibot'
+        ? `
+export class Update${name}Request extends FormRequest {
+  rules() {
+    return v.intersect([update${name}Schema, v.object({ id: idSchema })]);
+  }
+
+  authorize(event: any): boolean {
+    return !!event.locals.user;
+  }
+
+  passedValidation(data: any): Update${name}Dto {
+    return Update${name}Dto.from(Number(data.id), data);
+  }
+}
+
+export class Delete${name}Request extends FormRequest {
+  rules() {
+    return v.object({ id: idSchema });
+  }
+
+  authorize(event: any): boolean {
+    return !!event.locals.user;
+  }
+
+  passedValidation(data: any): Delete${name}Dto {
+    return new Delete${name}Dto(Number(data.id));
+  }
+}
+`
+        : `
 export class Update${name}Request extends FormRequest {
   rules() {
     return update${name}Schema.extend({ id: z.coerce.number() });
@@ -440,6 +533,19 @@ ${fields.map((field) => `      ${this.migrationColumn(field)};`).join('\n')}
             ? `z.enum([${field.enumValues.map((value) => `'${value}'`).join(', ')}] as const)`
             : 'z.string().trim()';
     return field.optional ? `${base}.optional()` : base;
+  }
+
+  private valibotFor(field: Field): string {
+    const base = field.kind === 'number' || field.kind === 'integer'
+      ? 'numberInput()'
+      : field.kind === 'boolean'
+        ? 'booleanInput()'
+        : field.kind === 'date'
+          ? 'dateInput()'
+          : field.kind === 'enum'
+            ? `v.picklist([${field.enumValues.map((value) => `'${value}'`).join(', ')}])`
+            : 'v.pipe(v.string(), v.trim())';
+    return field.optional ? `v.optional(${base})` : base;
   }
 
   private tsType(field: Field): string {

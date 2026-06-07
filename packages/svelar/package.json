@@ -280,6 +280,7 @@
 		"sveltekit-superforms": "^2.30.1",
 		"tsup": "^8.3.0",
 		"typescript": "^5.7.0",
+		"valibot": "^1.4.1",
 		"vitest": "^4.1.8"
 	},
 	"peerDependencies": {
@@ -298,6 +299,7 @@
 		"pdfkit": ">=0.18.0",
 		"postgres": "*",
 		"sveltekit-superforms": ">=2.0.0",
+		"valibot": ">=1.0.0",
 		"vitest": ">=1.0.0"
 	},
 	"peerDependenciesMeta": {
@@ -341,6 +343,9 @@
 			"optional": true
 		},
 		"meilisearch": {
+			"optional": true
+		},
+		"valibot": {
 			"optional": true
 		},
 		"vitest": {

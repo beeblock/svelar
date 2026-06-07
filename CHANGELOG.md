@@ -4,6 +4,14 @@ All notable changes to `@beeblock/svelar` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Valibot validation provider support** — `npx svelar new` can scaffold Zod or Valibot apps via `--validation=zod|valibot`, stores the choice in `svelar.validation.json`, and keeps schema/request/entity generators aligned with the selected provider.
+- **Valibot runtime validation paths** — FormRequest, controller body validation, and forms helpers now accept Valibot schemas alongside Zod schemas.
+- **Valibot documentation and tests** — validation/forms docs, generated agent guidance, and core tests now cover Valibot scaffold templates, generator output, FormRequest validation, and controller validation.
+
 ## [0.7.2] - 2026-06-07
 
 ### Fixed

@@ -5,10 +5,16 @@
  * Used by NewCommand.ts to write project files.
  */
 
+export type ValidationProvider = 'zod' | 'valibot';
+
 export class NewCommandTemplates {
 	// ─── Config ─────────────────────────────────────────────────
 
-	static packageJson(name: string, svelarVersion: string = "0.4.0"): string {
+	static packageJson(name: string, svelarVersion: string = "0.4.0", validation: ValidationProvider = 'zod'): string {
+		const validationDependencies = validation === 'valibot'
+			? { valibot: "^1.4.1" }
+			: { zod: "^3.25.0" };
+
 		return (
 			JSON.stringify(
 				{
@@ -74,9 +80,8 @@ export class NewCommandTemplates {
 						"tw-animate-css": "^1.2.0",
 						typebox: "^1.1.39",
 						"vaul-svelte": "^1.0.0-next.7",
-						valibot: "^1.2.0",
 						"zod-v3-to-json-schema": "^4.0.0",
-						zod: "^3.25.0",
+						...validationDependencies,
 					},
 					overrides: {
 						cookie: "^0.7.2",
@@ -86,6 +91,18 @@ export class NewCommandTemplates {
 				2,
 			) + "\n"
 		);
+	}
+
+	static validationConfig(validation: ValidationProvider = 'zod'): string {
+		return JSON.stringify({ validation }, null, 2) + "\n";
+	}
+
+	static applyValidationProvider(content: string, validation: ValidationProvider = 'zod'): string {
+		if (validation === 'zod') return content;
+
+		return content
+			.replace(/import \{ zod \} from 'sveltekit-superforms\/adapters';/g, "import { valibot } from 'sveltekit-superforms/adapters';")
+			.replace(/\bzod\(/g, 'valibot(');
 	}
 
 	static svelteConfig(): string {
@@ -1117,6 +1134,7 @@ coverage/
 - Use Svelar ORM and migrations. Avoid raw SQL unless it is a low-level driver/infrastructure exception.
 - Keep one migration per table or focused schema change.
 - Use shared schemas for backend validation and frontend forms. Use Superforms where app forms need shared validation.
+- Keep validation consistent with \`svelar.validation.json\`. Use Zod schemas in Zod apps and Valibot schemas in Valibot apps.
 - Use policies, permissions, teams, middleware, rate limits, sessions, jobs, events, listeners, observers, cache, storage, search, PDF, and broadcasting through Svelar APIs instead of ad hoc implementations.
 
 ## Imports
@@ -1157,6 +1175,7 @@ Use this skill for Svelar app work. Svelar is Laravel-inspired on SvelteKit 2.
 
 - Keep the app flow consistent: route -> controller/page action -> FormRequest/shared schema validation -> DTO -> action/service -> repository -> model/resource -> response.
 - Use both FormRequest classes and DTOs for write paths.
+- Keep validation consistent with \`svelar.validation.json\`: Zod apps use \`z.infer\`; Valibot apps import \`valibot\` directly and use \`v.InferOutput\`.
 - Side effects belong in actions/services and events/listeners, not scattered through pages.
 - Cross-module reads should go through a narrow public application service/query/facade from the owning module and return plain DTO/contract data. Events are for side effects, not request/response queries.
 - Use Svelar ORM and migrations. Avoid raw SQL unless it is a low-level infrastructure exception.
@@ -2079,7 +2098,107 @@ export class PostResource extends Resource {
 `;
 	}
 
-	static adminSchema(): string {
+	static adminSchema(validation: ValidationProvider = 'zod'): string {
+		if (validation === 'valibot') {
+			return `import * as v from 'valibot';
+
+const positiveInteger = () => v.pipe(
+  v.unknown(),
+  v.transform((input) => Number(input)),
+  v.number(),
+  v.integer(),
+  v.minValue(1)
+);
+
+const optionalTrimmedString = (max?: number) =>
+  max
+    ? v.optional(v.pipe(v.string(), v.trim(), v.maxLength(max)), '')
+    : v.optional(v.pipe(v.string(), v.trim()), '');
+
+export const updateUserRoleSchema = v.object({
+  userId: positiveInteger(),
+  role: v.picklist(['user', 'admin']),
+});
+
+export const deleteUserSchema = v.object({
+  userId: positiveInteger(),
+});
+
+export const createRoleSchema = v.object({
+  name: v.pipe(v.string(), v.trim(), v.minLength(2, 'Role name must be at least 2 characters'), v.maxLength(50)),
+  guard: optionalTrimmedString(),
+  description: optionalTrimmedString(255),
+});
+
+export const deleteRoleSchema = v.object({
+  name: v.pipe(v.string(), v.trim(), v.minLength(1)),
+  guard: optionalTrimmedString(),
+});
+
+export const createPermissionSchema = v.object({
+  name: v.pipe(v.string(), v.trim(), v.minLength(2, 'Permission name must be at least 2 characters'), v.maxLength(50)),
+  guard: optionalTrimmedString(),
+  description: optionalTrimmedString(255),
+});
+
+export const deletePermissionSchema = v.object({
+  name: v.pipe(v.string(), v.trim(), v.minLength(1)),
+  guard: optionalTrimmedString(),
+});
+
+export const rolePermissionSchema = v.object({
+  roleId: positiveInteger(),
+  permissionId: positiveInteger(),
+});
+
+export const userRoleSchema = v.object({
+  userId: positiveInteger(),
+  roleId: positiveInteger(),
+});
+
+export const userPermissionSchema = v.object({
+  userId: positiveInteger(),
+  permissionId: positiveInteger(),
+});
+
+export const exportDataSchema = v.object({
+  format: v.optional(v.picklist(['csv', 'json']), 'csv'),
+});
+
+// ── Inferred Types ───────────────────────────────────────
+
+export type UpdateUserRoleInput = v.InferOutput<typeof updateUserRoleSchema>;
+export type DeleteUserInput = v.InferOutput<typeof deleteUserSchema>;
+export type CreateRoleInput = v.InferOutput<typeof createRoleSchema>;
+export type DeleteRoleInput = v.InferOutput<typeof deleteRoleSchema>;
+export type CreatePermissionInput = v.InferOutput<typeof createPermissionSchema>;
+export type DeletePermissionInput = v.InferOutput<typeof deletePermissionSchema>;
+export type RolePermissionInput = v.InferOutput<typeof rolePermissionSchema>;
+export type UserRoleInput = v.InferOutput<typeof userRoleSchema>;
+export type UserPermissionInput = v.InferOutput<typeof userPermissionSchema>;
+export type ExportDataInput = v.InferOutput<typeof exportDataSchema>;
+
+// ── Response Schemas ─────────────────────────────────────
+
+export const roleResponseSchema = v.object({
+  id: v.number(),
+  name: v.string(),
+  guard: v.string(),
+  description: v.nullable(v.string()),
+});
+
+export const permissionResponseSchema = v.object({
+  id: v.number(),
+  name: v.string(),
+  guard: v.string(),
+  description: v.nullable(v.string()),
+});
+
+export type RoleResponse = v.InferOutput<typeof roleResponseSchema>;
+export type PermissionResponse = v.InferOutput<typeof permissionResponseSchema>;
+`;
+		}
+
 		return "import { z } from 'zod';\n\nexport const updateUserRoleSchema = z.object({\n  userId: z.coerce.number().int().positive(),\n  role: z.enum(['user', 'admin']),\n});\n\nexport const deleteUserSchema = z.object({\n  userId: z.coerce.number().int().positive(),\n});\n\nexport const createRoleSchema = z.object({\n  name: z.string().trim().min(2, 'Role name must be at least 2 characters').max(50),\n  guard: z.string().trim().optional().or(z.literal('')),\n  description: z.string().trim().max(255).optional().or(z.literal('')),\n});\n\nexport const deleteRoleSchema = z.object({\n  name: z.string().trim().min(1),\n  guard: z.string().trim().optional().or(z.literal('')),\n});\n\nexport const createPermissionSchema = z.object({\n  name: z.string().trim().min(2, 'Permission name must be at least 2 characters').max(50),\n  guard: z.string().trim().optional().or(z.literal('')),\n  description: z.string().trim().max(255).optional().or(z.literal('')),\n});\n\nexport const deletePermissionSchema = z.object({\n  name: z.string().trim().min(1),\n  guard: z.string().trim().optional().or(z.literal('')),\n});\n\nexport const rolePermissionSchema = z.object({\n  roleId: z.coerce.number().int().positive(),\n  permissionId: z.coerce.number().int().positive(),\n});\n\nexport const userRoleSchema = z.object({\n  userId: z.coerce.number().int().positive(),\n  roleId: z.coerce.number().int().positive(),\n});\n\nexport const userPermissionSchema = z.object({\n  userId: z.coerce.number().int().positive(),\n  permissionId: z.coerce.number().int().positive(),\n});\n\nexport const exportDataSchema = z.object({\n  format: z.enum(['csv', 'json']).default('csv'),\n});\n\n// ── Inferred Types ───────────────────────────────────────\n\nexport type UpdateUserRoleInput = z.infer<typeof updateUserRoleSchema>;\nexport type DeleteUserInput = z.infer<typeof deleteUserSchema>;\nexport type CreateRoleInput = z.infer<typeof createRoleSchema>;\nexport type DeleteRoleInput = z.infer<typeof deleteRoleSchema>;\nexport type CreatePermissionInput = z.infer<typeof createPermissionSchema>;\nexport type DeletePermissionInput = z.infer<typeof deletePermissionSchema>;\nexport type RolePermissionInput = z.infer<typeof rolePermissionSchema>;\nexport type UserRoleInput = z.infer<typeof userRoleSchema>;\nexport type UserPermissionInput = z.infer<typeof userPermissionSchema>;\nexport type ExportDataInput = z.infer<typeof exportDataSchema>;\n\n// ── Response Schemas ─────────────────────────────────────\n\nexport const roleResponseSchema = z.object({\n  id: z.number(),\n  name: z.string(),\n  guard: z.string(),\n  description: z.string().nullable(),\n});\n\nexport const permissionResponseSchema = z.object({\n  id: z.number(),\n  name: z.string(),\n  guard: z.string(),\n  description: z.string().nullable(),\n});\n\nexport type RoleResponse = z.infer<typeof roleResponseSchema>;\nexport type PermissionResponse = z.infer<typeof permissionResponseSchema>;\n";
 	}
 
@@ -2341,7 +2460,79 @@ Gate.defineSuperUser((user) => user?.role === 'admin');
 `;
 	}
 
-	static authSchema(): string {
+	static authSchema(validation: ValidationProvider = 'zod'): string {
+		if (validation === 'valibot') {
+			return `import * as v from 'valibot';
+
+// ── Input Schemas (DTOs + UI validation) ─────────────────
+
+export const loginSchema = v.object({
+  email: v.pipe(v.string(), v.email('Please enter a valid email address')),
+  password: v.pipe(v.string(), v.minLength(1, 'Password is required')),
+});
+
+export const registerSchema = v.pipe(
+  v.object({
+    name: v.pipe(v.string(), v.minLength(2, 'Name must be at least 2 characters'), v.maxLength(100)),
+    email: v.pipe(v.string(), v.email('Please enter a valid email address')),
+    password: v.pipe(v.string(), v.minLength(8, 'Password must be at least 8 characters')),
+    password_confirmation: v.string(),
+  }),
+  v.forward(
+    v.check((data) => data.password === data.password_confirmation, 'Passwords do not match'),
+    ['password_confirmation']
+  )
+);
+
+export const forgotPasswordSchema = v.object({
+  email: v.pipe(v.string(), v.email('Please enter a valid email address')),
+});
+
+export const resetPasswordSchema = v.pipe(
+  v.object({
+    token: v.string(),
+    email: v.pipe(v.string(), v.email()),
+    password: v.pipe(v.string(), v.minLength(8, 'Password must be at least 8 characters')),
+    password_confirmation: v.string(),
+  }),
+  v.forward(
+    v.check((data) => data.password === data.password_confirmation, 'Passwords do not match'),
+    ['password_confirmation']
+  )
+);
+
+export const otpRequestSchema = v.object({
+  email: v.pipe(v.string(), v.email('Please enter a valid email address')),
+});
+
+export const otpVerifySchema = v.object({
+  email: v.pipe(v.string(), v.email()),
+  code: v.pipe(v.string(), v.length(6, 'Code must be 6 digits')),
+});
+
+// ── Inferred Types ───────────────────────────────────────
+
+export type LoginInput = v.InferOutput<typeof loginSchema>;
+export type RegisterInput = v.InferOutput<typeof registerSchema>;
+export type ForgotPasswordInput = v.InferOutput<typeof forgotPasswordSchema>;
+export type ResetPasswordInput = v.InferOutput<typeof resetPasswordSchema>;
+export type OtpRequestInput = v.InferOutput<typeof otpRequestSchema>;
+export type OtpVerifyInput = v.InferOutput<typeof otpVerifySchema>;
+
+// ── Response Schemas (Resources + API contracts) ─────────
+
+export const userResponseSchema = v.object({
+  id: v.number(),
+  name: v.string(),
+  email: v.pipe(v.string(), v.email()),
+  role: v.string(),
+  created_at: v.nullable(v.string()),
+});
+
+export type UserResponse = v.InferOutput<typeof userResponseSchema>;
+`;
+		}
+
 		return `import { z } from 'zod';
 
 // ── Input Schemas (DTOs + UI validation) ─────────────────
@@ -2407,7 +2598,48 @@ export type UserResponse = z.infer<typeof userResponseSchema>;
 `;
 	}
 
-	static postSchema(): string {
+	static postSchema(validation: ValidationProvider = 'zod'): string {
+		if (validation === 'valibot') {
+			return `import * as v from 'valibot';
+
+// ── Input Schemas ────────────────────────────────────────
+
+export const createPostSchema = v.object({
+  title: v.pipe(v.string(), v.minLength(3, 'Title must be at least 3 characters'), v.maxLength(255)),
+  slug: v.optional(v.pipe(v.string(), v.regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with dashes'))),
+  body: v.pipe(v.string(), v.minLength(10, 'Body must be at least 10 characters')),
+  published: v.optional(v.boolean(), false),
+});
+
+export const updatePostSchema = v.object({
+  title: v.optional(v.pipe(v.string(), v.minLength(3), v.maxLength(255))),
+  slug: v.optional(v.pipe(v.string(), v.regex(/^[a-z0-9-]+$/))),
+  body: v.optional(v.pipe(v.string(), v.minLength(10))),
+  published: v.optional(v.boolean()),
+});
+
+// ── Inferred Types ───────────────────────────────────────
+
+export type CreatePostInput = v.InferOutput<typeof createPostSchema>;
+export type UpdatePostInput = v.InferOutput<typeof updatePostSchema>;
+
+// ── Response Schema (Resources + API contracts) ──────────
+
+export const postResponseSchema = v.object({
+  id: v.number(),
+  title: v.string(),
+  slug: v.string(),
+  body: v.string(),
+  published: v.boolean(),
+  user_id: v.number(),
+  created_at: v.nullable(v.string()),
+  updated_at: v.nullable(v.string()),
+});
+
+export type PostResponse = v.InferOutput<typeof postResponseSchema>;
+`;
+		}
+
 		return `import { z } from 'zod';
 
 // ── Input Schemas ────────────────────────────────────────
@@ -3554,7 +3786,11 @@ export const load: PageServerLoad = async ({ url }) => {
 </div>
 `;
 	}
-	static apiKeySchema(): string {
+	static apiKeySchema(validation: ValidationProvider = 'zod'): string {
+		if (validation === 'valibot') {
+			return "import * as v from 'valibot';\n\nexport const createApiKeySchema = v.object({\n  name: v.pipe(v.string(), v.trim(), v.minLength(2, 'Key name must be at least 2 characters'), v.maxLength(120)),\n  permissions: v.pipe(v.string(), v.trim(), v.minLength(1, 'At least one permission is required')),\n});\n\nexport const revokeApiKeySchema = v.object({\n  keyId: v.pipe(v.string(), v.trim(), v.minLength(1, 'Key is required')),\n});\n\nexport type CreateApiKeyInput = v.InferOutput<typeof createApiKeySchema>;\nexport type RevokeApiKeyInput = v.InferOutput<typeof revokeApiKeySchema>;\n";
+		}
+
 		return "import { z } from '@beeblock/svelar/validation';\n\nexport const createApiKeySchema = z.object({\n  name: z.string().trim().min(2, 'Key name must be at least 2 characters').max(120),\n  permissions: z.string().trim().min(1, 'At least one permission is required'),\n});\n\nexport const revokeApiKeySchema = z.object({\n  keyId: z.string().trim().min(1, 'Key is required'),\n});\n\nexport type CreateApiKeyInput = z.infer<typeof createApiKeySchema>;\nexport type RevokeApiKeyInput = z.infer<typeof revokeApiKeySchema>;\n";
 	}
 
@@ -3570,7 +3806,11 @@ export const load: PageServerLoad = async ({ url }) => {
 		return "import { Action } from '@beeblock/svelar/actions';\nimport { ApiKeys } from '@beeblock/svelar/api-keys';\nimport type { CreateApiKeyDto, RevokeApiKeyDto } from './ApiKeyDtos.js';\n\nexport class CreateApiKeyAction extends Action<{ userId: number; dto: CreateApiKeyDto }, { plainTextKey: string; record: any }> {\n  async execute(input: { userId: number; dto: CreateApiKeyDto }): Promise<{ plainTextKey: string; record: any }> {\n    return ApiKeys.create({\n      name: input.dto.name,\n      userId: input.userId,\n      permissions: input.dto.permissions,\n    });\n  }\n}\n\nexport class RevokeApiKeyAction extends Action<RevokeApiKeyDto, void> {\n  async execute(dto: RevokeApiKeyDto): Promise<void> {\n    await ApiKeys.revoke(dto.keyId);\n  }\n}\n";
 	}
 
-	static teamSchema(): string {
+	static teamSchema(validation: ValidationProvider = 'zod'): string {
+		if (validation === 'valibot') {
+			return "import * as v from 'valibot';\n\nexport const inviteTeamMemberSchema = v.object({\n  teamId: v.pipe(v.string(), v.trim(), v.minLength(1, 'Team is required')),\n  email: v.pipe(v.string(), v.trim(), v.email('Enter a valid email address')),\n  role: v.optional(v.picklist(['member', 'admin']), 'member'),\n});\n\nexport const updateTeamSchema = v.object({\n  teamId: v.pipe(v.string(), v.trim(), v.minLength(1, 'Team is required')),\n  name: v.pipe(v.string(), v.trim(), v.minLength(2, 'Team name must be at least 2 characters'), v.maxLength(120)),\n});\n\nexport const updateTeamMemberRoleSchema = v.object({\n  teamId: v.pipe(v.string(), v.trim(), v.minLength(1, 'Team is required')),\n  userId: v.pipe(v.string(), v.trim(), v.minLength(1, 'User is required')),\n  role: v.picklist(['member', 'admin']),\n});\n\nexport const removeTeamMemberSchema = v.object({\n  teamId: v.pipe(v.string(), v.trim(), v.minLength(1, 'Team is required')),\n  userId: v.pipe(v.string(), v.trim(), v.minLength(1, 'User is required')),\n});\n\nexport const cancelTeamInvitationSchema = v.object({\n  invitationId: v.pipe(v.string(), v.trim(), v.minLength(1, 'Invitation is required')),\n});\n\nexport type InviteTeamMemberInput = v.InferOutput<typeof inviteTeamMemberSchema>;\nexport type UpdateTeamInput = v.InferOutput<typeof updateTeamSchema>;\nexport type UpdateTeamMemberRoleInput = v.InferOutput<typeof updateTeamMemberRoleSchema>;\nexport type RemoveTeamMemberInput = v.InferOutput<typeof removeTeamMemberSchema>;\nexport type CancelTeamInvitationInput = v.InferOutput<typeof cancelTeamInvitationSchema>;\n";
+		}
+
 		return "import { z } from '@beeblock/svelar/validation';\n\nexport const inviteTeamMemberSchema = z.object({\n  teamId: z.string().trim().min(1, 'Team is required'),\n  email: z.string().trim().email('Enter a valid email address'),\n  role: z.enum(['member', 'admin']).default('member'),\n});\n\nexport const updateTeamSchema = z.object({\n  teamId: z.string().trim().min(1, 'Team is required'),\n  name: z.string().trim().min(2, 'Team name must be at least 2 characters').max(120),\n});\n\nexport const updateTeamMemberRoleSchema = z.object({\n  teamId: z.string().trim().min(1, 'Team is required'),\n  userId: z.string().trim().min(1, 'User is required'),\n  role: z.enum(['member', 'admin']),\n});\n\nexport const removeTeamMemberSchema = z.object({\n  teamId: z.string().trim().min(1, 'Team is required'),\n  userId: z.string().trim().min(1, 'User is required'),\n});\n\nexport const cancelTeamInvitationSchema = z.object({\n  invitationId: z.string().trim().min(1, 'Invitation is required'),\n});\n\nexport type InviteTeamMemberInput = z.infer<typeof inviteTeamMemberSchema>;\nexport type UpdateTeamInput = z.infer<typeof updateTeamSchema>;\nexport type UpdateTeamMemberRoleInput = z.infer<typeof updateTeamMemberRoleSchema>;\nexport type RemoveTeamMemberInput = z.infer<typeof removeTeamMemberSchema>;\nexport type CancelTeamInvitationInput = z.infer<typeof cancelTeamInvitationSchema>;\n";
 	}
 

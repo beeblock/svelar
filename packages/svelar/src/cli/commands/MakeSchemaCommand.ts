@@ -1,7 +1,7 @@
 /**
- * make:schema — Generate a Zod contract schema for a domain entity
+ * make:schema — Generate a contract schema for a domain entity
  *
- * Creates a .schema.ts file with Zod schemas and inferred types that serve
+ * Creates a .schema.ts file with validation schemas and inferred types that serve
  * as the single source of truth for validation, resources, DTOs, and frontend types.
  */
 
@@ -11,7 +11,7 @@ import { join } from 'node:path';
 
 export class MakeSchemaCommand extends Command {
   name = 'make:schema';
-  description = 'Create a contract schema (Zod schemas + shared types)';
+  description = 'Create a contract schema (validation schemas + shared types)';
   arguments = ['name'];
   flags = [
     { name: 'module', description: 'Module name (e.g. auth, billing)', type: 'string' as const },
@@ -39,7 +39,7 @@ export class MakeSchemaCommand extends Command {
       return;
     }
 
-    const content = this.generateSchema(entityName);
+    const content = this.generateSchema(entityName, this.validationProvider());
     writeFileSync(filePath, content);
     const relDir2 = this.moduleRelDir(moduleName, 'schemas', 'schema');
     this.success(`Schema created: ${relDir2}/${fileName}.ts`);
@@ -52,9 +52,49 @@ export class MakeSchemaCommand extends Command {
     this.info(`    Frontend:    import type { ${entityName}Data } from '${frontendPath}'`);
   }
 
-  private generateSchema(name: string): string {
+  private generateSchema(name: string, validation: 'zod' | 'valibot'): string {
     const lower = name.charAt(0).toLowerCase() + name.slice(1);
     const kebab = this.toKebab(name);
+
+    if (validation === 'valibot') {
+      return `import * as v from 'valibot';
+
+// ── ${name} Contract Schema ──────────────────────────────────
+//
+// Single source of truth for validation, API responses, and frontend types.
+// Import the Valibot schemas for validation, the types for everything else.
+//
+// Usage:
+//   Resource:     import type { ${name}Data } from './${kebab}.schema.js';
+//   FormRequest:  import { create${name}Schema } from './${kebab}.schema.js';
+//   Frontend:     import type { ${name}Data, Create${name}Input } from '$lib/modules/.../${kebab}.schema';
+
+// ── Response schema (what the API returns) ──────────────────
+
+export const ${lower}Schema = v.object({
+  id: v.number(),
+  // name: v.string(),
+  // email: v.pipe(v.string(), v.email()),
+  // created_at: v.string(),
+});
+
+// ── Input schemas (what the API accepts) ────────────────────
+
+export const create${name}Schema = v.object({
+  // name: v.pipe(v.string(), v.minLength(2, 'Name must be at least 2 characters')),
+  // email: v.pipe(v.string(), v.email('Please enter a valid email')),
+});
+
+export const update${name}Schema = v.partial(create${name}Schema);
+
+// ── Inferred types — shared between server and frontend ─────
+
+export type ${name}Data = v.InferOutput<typeof ${lower}Schema>;
+export type Create${name}Input = v.InferOutput<typeof create${name}Schema>;
+export type Update${name}Input = v.InferOutput<typeof update${name}Schema>;
+`;
+    }
+
     return `import { z } from 'zod';
 
 // ── ${name} Contract Schema ──────────────────────────────────

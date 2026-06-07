@@ -144,7 +144,17 @@ export class ${requestName} extends FormRequest {
       this.warn(`Schema ${fileName}.ts already exists.`);
       return;
     }
-    writeFileSync(filePath, `import { z } from '@beeblock/svelar/validation';
+    if (this.validationProvider() === 'valibot') {
+      writeFileSync(filePath, `import * as v from 'valibot';
+
+export const ${schemaName} = v.object({
+  // name: v.pipe(v.string(), v.minLength(2), v.maxLength(100)),
+});
+
+export type ${baseName}Input = v.InferOutput<typeof ${schemaName}>;
+`);
+    } else {
+      writeFileSync(filePath, `import { z } from '@beeblock/svelar/validation';
 
 export const ${schemaName} = z.object({
   // name: z.string().min(2).max(100),
@@ -152,6 +162,7 @@ export const ${schemaName} = z.object({
 
 export type ${baseName}Input = z.infer<typeof ${schemaName}>;
 `);
+    }
     this.success(`Schema created: ${this.moduleRelDir(moduleName, 'schemas', 'schema')}/${fileName}.ts`);
   }
 

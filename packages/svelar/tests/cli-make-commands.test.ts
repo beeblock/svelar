@@ -15,6 +15,7 @@ import { MakeRequestCommand } from '../src/cli/commands/MakeRequestCommand.js';
 import { MakeActionCommand } from '../src/cli/commands/MakeActionCommand.js';
 import { MakeObserverCommand } from '../src/cli/commands/MakeObserverCommand.js';
 import { MakeSchemaCommand } from '../src/cli/commands/MakeSchemaCommand.js';
+import { MakeEntityCommand } from '../src/cli/commands/MakeEntityCommand.js';
 import { MakeEventCommand } from '../src/cli/commands/MakeEventCommand.js';
 import { MakeListenerCommand } from '../src/cli/commands/MakeListenerCommand.js';
 import { MakeChannelCommand } from '../src/cli/commands/MakeChannelCommand.js';
@@ -258,6 +259,19 @@ describe('Make commands — Flat structure', () => {
       const content = readFileSync(filePath, 'utf-8');
       expect(content).toContain('class CreatePostRequest extends FormRequest');
     });
+
+    it('should create Valibot request stubs when configured', async () => {
+      writeFileSync(join(tmpDir, 'svelar.validation.json'), JSON.stringify({ validation: 'valibot' }));
+
+      const cmd = new MakeRequestCommand();
+      await cmd.handle(['CreatePostRequest'], {});
+
+      const filePath = join(tmpDir, 'src', 'lib', 'dtos', 'CreatePostRequest.ts');
+      const content = readFileSync(filePath, 'utf-8');
+      expect(content).toContain("import * as v from 'valibot'");
+      expect(content).toContain('v.object({');
+      expect(content).not.toContain('@beeblock/svelar/validation');
+    });
   });
 
   describe('MakeActionCommand', () => {
@@ -271,6 +285,19 @@ describe('Make commands — Flat structure', () => {
       expect(content).toContain('class CreatePostAction');
       expect(content).toContain('async execute(input: CreatePostActionInput)');
       expect(content).not.toContain('async handle(input');
+    });
+
+    it('should create Valibot schema stubs from make:action --schema when configured', async () => {
+      writeFileSync(join(tmpDir, 'svelar.validation.json'), JSON.stringify({ validation: 'valibot' }));
+
+      const cmd = new MakeActionCommand();
+      await cmd.handle(['CreatePost'], { schema: true });
+
+      const filePath = join(tmpDir, 'src', 'lib', 'schemas', 'create-post.schema.ts');
+      const content = readFileSync(filePath, 'utf-8');
+      expect(content).toContain("import * as v from 'valibot'");
+      expect(content).toContain('v.InferOutput');
+      expect(content).not.toContain('z.infer');
     });
   });
 
@@ -293,6 +320,42 @@ describe('Make commands — Flat structure', () => {
       expect(existsSync(filePath)).toBe(true);
       const content = readFileSync(filePath, 'utf-8');
       expect(content).toContain('zod');
+    });
+
+    it('should create Valibot schema files when configured', async () => {
+      writeFileSync(join(tmpDir, 'svelar.validation.json'), JSON.stringify({ validation: 'valibot' }));
+
+      const cmd = new MakeSchemaCommand();
+      await cmd.handle(['Post'], {});
+
+      const filePath = join(tmpDir, 'src', 'lib', 'schemas', 'post.schema.ts');
+      const content = readFileSync(filePath, 'utf-8');
+      expect(content).toContain("import * as v from 'valibot'");
+      expect(content).toContain('v.partial(createPostSchema)');
+      expect(content).toContain('v.InferOutput');
+      expect(content).not.toContain("import { z }");
+    });
+  });
+
+  describe('MakeEntityCommand', () => {
+    it('should create Valibot entity schemas when configured', async () => {
+      writeFileSync(join(tmpDir, 'svelar.validation.json'), JSON.stringify({ validation: 'valibot' }));
+
+      const cmd = new MakeEntityCommand();
+      await cmd.handle(['Task'], { fields: 'title:string,done:boolean,status:enum(todo,doing,done)', crud: true, 'no-migration': true });
+
+      const filePath = join(tmpDir, 'src', 'lib', 'schemas', 'task.schema.ts');
+      const content = readFileSync(filePath, 'utf-8');
+      const requestPath = join(tmpDir, 'src', 'lib', 'dtos', 'TaskRequests.ts');
+      const requestContent = readFileSync(requestPath, 'utf-8');
+      expect(content).toContain("import * as v from 'valibot'");
+      expect(content).toContain('const booleanInput');
+      expect(content).toContain("status: v.picklist(['todo', 'doing', 'done'])");
+      expect(content).toContain('export const updateTaskSchema = v.partial(createTaskSchema)');
+      expect(content).not.toContain('@beeblock/svelar/validation');
+      expect(requestContent).toContain("import * as v from 'valibot'");
+      expect(requestContent).toContain('v.intersect([updateTaskSchema, v.object({ id: idSchema })])');
+      expect(requestContent).not.toContain('@beeblock/svelar/validation');
     });
   });
 
@@ -508,6 +571,30 @@ describe('New project templates', () => {
 
     expect(pkg.scripts['dev:worker']).toBe('node scripts/svelar-dev-runtime.mjs queue:work --queue=default');
     expect(pkg.scripts['dev:scheduler']).toBe('node scripts/svelar-dev-runtime.mjs schedule:run');
+  });
+
+  it('selects Valibot dependencies and schema templates when requested', () => {
+    const pkg = JSON.parse(NewCommandTemplates.packageJson('example-app', '0.0.0', 'valibot'));
+    const authSchema = NewCommandTemplates.authSchema('valibot');
+    const adminSchema = NewCommandTemplates.adminSchema('valibot');
+
+    expect(pkg.dependencies.valibot).toBeDefined();
+    expect(pkg.dependencies.zod).toBeUndefined();
+    expect(NewCommandTemplates.validationConfig('valibot')).toContain('"validation": "valibot"');
+    expect(authSchema).toContain("import * as v from 'valibot'");
+    expect(authSchema).toContain('v.forward(');
+    expect(authSchema).toContain('v.InferOutput');
+    expect(adminSchema).toContain('const positiveInteger');
+    expect(adminSchema).toContain("v.picklist(['user', 'admin'])");
+  });
+
+  it('switches generated Superforms page servers to the Valibot adapter', () => {
+    const template = NewCommandTemplates.applyValidationProvider(NewCommandTemplates.loginPageServer(), 'valibot');
+
+    expect(template).toContain("import { valibot } from 'sveltekit-superforms/adapters'");
+    expect(template).toContain('superValidate(valibot(loginSchema))');
+    expect(template).toContain('superValidate(request, valibot(loginSchema))');
+    expect(template).not.toContain('zod(');
   });
 
   it('generates the local Svelar dev runtime helper', () => {

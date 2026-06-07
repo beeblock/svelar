@@ -8,7 +8,38 @@
  */
 
 import { Command } from '../Command.js';
-import { NewCommandTemplates as T } from './NewCommandTemplates.js';
+import { NewCommandTemplates as T, type ValidationProvider } from './NewCommandTemplates.js';
+
+async function chooseValidationProvider(raw: unknown): Promise<ValidationProvider> {
+  const value = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+
+  if (value === 'zod' || value === 'valibot') {
+    return value;
+  }
+
+  if (value) {
+    throw new Error('Invalid validation library. Use --validation=zod or --validation=valibot.');
+  }
+
+  if (!process.stdin.isTTY || process.env.CI) {
+    return 'zod';
+  }
+
+  const { createInterface } = await import('node:readline');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+  const answer = await new Promise<string>((resolve) => {
+    rl.question('  Validation library? [Zod/Valibot] (zod) ', (input) => {
+      rl.close();
+      resolve(input.trim().toLowerCase());
+    });
+  });
+
+  if (answer === 'valibot' || answer === 'v') return 'valibot';
+  if (!answer || answer === 'zod' || answer === 'z') return 'zod';
+
+  throw new Error('Invalid validation library. Use "zod" or "valibot".');
+}
 
 export class NewCommand extends Command {
   name = 'new';
@@ -18,6 +49,7 @@ export class NewCommand extends Command {
   flags = [
     { name: 'no-install', alias: 'n', description: 'Skip npm install', type: 'boolean' as const, default: false },
     { name: 'flat', description: 'Use flat folder structure instead of DDD modules', type: 'boolean' as const, default: false },
+    { name: 'validation', alias: 'v', description: 'Validation library: zod or valibot', type: 'string' as const, default: '' },
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
@@ -37,17 +69,19 @@ export class NewCommand extends Command {
     }
 
     const flat = flags['flat'] || false;
+    const validationProvider = await chooseValidationProvider(flags.validation);
     const structureLabel = flat ? 'flat' : 'DDD modular';
 
     this.log('');
-    this.log(`  \x1b[1m\x1b[38;5;208m</>  Svelar\x1b[0m  — Creating new project (${structureLabel})\n`);
+    this.log(`  \x1b[1m\x1b[38;5;208m</>  Svelar\x1b[0m  — Creating new project (${structureLabel}, ${validationProvider})\n`);
 
     // Helper to write a file, creating parent dirs as needed.
     // Templates always use DDD paths internally. When --flat is set,
     // both the file path and import paths are transformed automatically.
     const write = (dddPath: string, content: string) => {
       const relativePath = flat ? toFlatPath(dddPath) : toLayeredDddPath(dddPath);
-      const transformedContent = flat ? toFlatImports(content, dddPath) : toLayeredDddImports(content, dddPath, relativePath);
+      const validationContent = T.applyValidationProvider(content, validationProvider);
+      const transformedContent = flat ? toFlatImports(validationContent, dddPath) : toLayeredDddImports(validationContent, dddPath, relativePath);
       const fullPath = join(projectDir, relativePath);
       mkdirSync(join(fullPath, '..'), { recursive: true });
       writeFileSync(fullPath, transformedContent);
@@ -110,7 +144,7 @@ export class NewCommand extends Command {
     const ownPkg = JSON.parse((await import('node:fs')).readFileSync(ownPkgPath, 'utf-8'));
     const svelarVersion = ownPkg.version ?? '0.4.0';
 
-    write('package.json', T.packageJson(projectName, svelarVersion));
+    write('package.json', T.packageJson(projectName, svelarVersion, validationProvider));
     write('svelte.config.js', T.svelteConfig());
     write('vite.config.ts', T.viteConfig());
     write('tsconfig.json', T.tsConfig());
@@ -137,6 +171,7 @@ export class NewCommand extends Command {
     write('.codex/skills/svelar-specialist/SKILL.md', T.codexSvelarSkill());
     write('.claude/skills/svelar-specialist/SKILL.md', T.claudeSvelarSkill());
     write('svelar.database.json', T.svelarDatabaseJson());
+    write('svelar.validation.json', T.validationConfig(validationProvider));
     write('components.json', T.componentsJson());
     write('src/lib/utils.ts', T.utilsCn());
 
@@ -162,7 +197,7 @@ export class NewCommand extends Command {
     write('src/lib/modules/auth/OtpVerifyRequest.ts', T.otpVerifyRequest());
     write('src/lib/modules/auth/UserResource.ts', T.userResource());
     write('src/lib/modules/auth/gates.ts', T.gates());
-    write('src/lib/modules/auth/schemas.ts', T.authSchema());
+    write('src/lib/modules/auth/schemas.ts', T.authSchema(validationProvider));
     write('src/lib/modules/auth/UserRegistered.ts', T.userRegisteredEvent());
     write('src/lib/modules/auth/SendWelcomeEmailListener.ts', T.sendWelcomeEmailListener());
     write('src/lib/modules/auth/WelcomeNotification.ts', T.welcomeNotification());
@@ -176,7 +211,7 @@ export class NewCommand extends Command {
     write('src/lib/modules/posts/CreatePostRequest.ts', T.createPostRequest());
     write('src/lib/modules/posts/UpdatePostRequest.ts', T.updatePostRequest());
     write('src/lib/modules/posts/PostResource.ts', T.postResource());
-    write('src/lib/modules/posts/schemas.ts', T.postSchema());
+    write('src/lib/modules/posts/schemas.ts', T.postSchema(validationProvider));
 
     // Admin module
     write('src/lib/modules/admin/AdminService.ts', T.adminService());
@@ -195,14 +230,14 @@ export class NewCommand extends Command {
     write('src/lib/modules/admin/ExportDataRequest.ts', T.exportDataRequest());
     write('src/lib/modules/admin/RoleResource.ts', T.roleResource());
     write('src/lib/modules/admin/PermissionResource.ts', T.permissionResource());
-    write('src/lib/modules/admin/schemas.ts', T.adminSchema());
+    write('src/lib/modules/admin/schemas.ts', T.adminSchema(validationProvider));
 
     // API key and team modules
-    write('src/lib/modules/api-keys/api-key.schema.ts', T.apiKeySchema());
+    write('src/lib/modules/api-keys/api-key.schema.ts', T.apiKeySchema(validationProvider));
     write('src/lib/modules/api-keys/ApiKeyDtos.ts', T.apiKeyDtos());
     write('src/lib/modules/api-keys/ApiKeyRequests.ts', T.apiKeyRequests());
     write('src/lib/modules/api-keys/ApiKeyActions.ts', T.apiKeyActions());
-    write('src/lib/modules/team/team.schema.ts', T.teamSchema());
+    write('src/lib/modules/team/team.schema.ts', T.teamSchema(validationProvider));
     write('src/lib/modules/team/TeamDtos.ts', T.teamDtos());
     write('src/lib/modules/team/TeamRequests.ts', T.teamRequests());
     write('src/lib/modules/team/TeamActions.ts', T.teamActions());

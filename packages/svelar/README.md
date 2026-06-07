@@ -64,7 +64,7 @@ See the [Getting Started guide](https://svelar.dev/docs/getting-started) for a c
 | **Auth** | `@beeblock/svelar/auth` | Session, JWT (with refresh tokens), API tokens, password reset, email verification, OTP login |
 | **Middleware** | `@beeblock/svelar/middleware` | CORS, CSRF, rate limiting, origin validation, request signatures |
 | **Routing** | `@beeblock/svelar/routing` | Controllers, form requests, API resources, response helpers |
-| **Validation** | `@beeblock/svelar/validation` | Zod-based validation with FormRequest DTOs |
+| **Validation** | `@beeblock/svelar/validation` | Zod helpers plus FormRequest support for Zod or Valibot schemas |
 | **Session** | `@beeblock/svelar/session` | Cookie, memory, Redis, and database session stores |
 | **Hashing** | `@beeblock/svelar/hashing` | scrypt (zero-dep), bcrypt, argon2 |
 | **Queue** | `@beeblock/svelar/queue` | Job dispatching with sync, memory, and Redis (BullMQ) drivers |
@@ -80,7 +80,7 @@ See the [Getting Started guide](https://svelar.dev/docs/getting-started) for a c
 | **HTTP Client** | `@beeblock/svelar/http` | Client-side CSRF fetch + server-side fluent HTTP client for third-party APIs |
 | **Permissions** | `@beeblock/svelar/permissions` | Role-based access control with permissions and gates |
 | **i18n** | `@beeblock/svelar/i18n` | Paraglide-js integration with language switcher |
-| **Forms** | `@beeblock/svelar/forms` | SvelteKit Superforms integration helpers |
+| **Forms** | `@beeblock/svelar/forms` | SvelteKit Superforms helpers for Zod or Valibot schemas |
 | **UI Components** | `@beeblock/svelar/ui` | Minimal built-in components + [shadcn-svelte](https://shadcn-svelte.com) pre-installed |
 | **SEO** | `@beeblock/svelar/ui` | `<Seo>` component for meta tags, Open Graph, Twitter Cards, JSON-LD structured data |
 | **Hooks** | `@beeblock/svelar/hooks` | One-line SvelteKit hooks setup with sensible defaults |

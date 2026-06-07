@@ -12,9 +12,9 @@ Svelar is a Laravel-inspired framework built on top of SvelteKit 2. It brings en
 - **Authentication**: Session-based auth, JWT support, and API tokens
 - **Middleware Pipeline**: Global and controller-level middleware with built-in CSRF, rate limiting, logging, and CORS
 - **i18n**: Paraglide-js 2.x integration with server middleware, reroute hooks, and LanguageSwitcher component
-- **Forms**: Superforms + Zod bridge with `createFormAction` and `loadForm` helpers
+- **Forms**: Superforms bridge for Zod or Valibot with `createFormAction` and `loadForm` helpers
 - **HTTP Utilities**: CSRF-aware fetch wrapper for client-side API calls
-- **Form Validation**: Zod-based validation with FormRequest classes and DTO payloads
+- **Form Validation**: Zod or Valibot validation with FormRequest classes and DTO payloads
 - **Service Layer & Actions**: Clean separation of concerns with services, repositories, and single-use actions
 - **Plugin System**: Extensible plugin architecture with lifecycle hooks
 - **Job Queue**: Background job processing with retry logic
@@ -33,7 +33,7 @@ Svelar is a Laravel-inspired framework built on top of SvelteKit 2. It brings en
 2. [Database](./02-database.md) - Migrations, seeders, and database configuration
 3. [Models & ORM](./03-models-orm.md) - Eloquent-like ORM with relationships
 4. [Controllers & Routing](./04-controllers-routing.md) - Request handling, resources, response objects
-5. [Validation & DTOs](./05-validation-dtos.md) - Form validation with Zod, contract schemas
+5. [Validation & DTOs](./05-validation-dtos.md) - Form validation with Zod or Valibot, contract schemas
 6. [Authentication](./06-authentication.md) - Session, JWT, refresh tokens, API tokens, request signatures
 7. [Middleware](./07-middleware.md) - CORS, CSRF, rate limiting, origin validation, signatures
 8. [Services, Actions & Repositories](./08-services-actions-repositories.md) - Business logic layers
@@ -52,7 +52,7 @@ Svelar is a Laravel-inspired framework built on top of SvelteKit 2. It brings en
 21. [UI Components](./13-ui-components.md) - Component library with theming and extension guide
 22. [HTTP & Integrations](./14-http.md) - Server-side HTTP client, third-party API patterns, custom drivers
 23. [Internationalization](./15-i18n.md) - Paraglide-js integration for multi-language apps
-24. [Forms](./16-forms.md) - Superforms + Zod bridge for validated form actions
+24. [Forms](./16-forms.md) - Superforms bridge for Zod or Valibot form actions
 25. [Dates](./18-dates.md) - Date utilities and formatting
 26. [Error Handling](./19-error-handling.md) - Error pages, localization, exception handling
 27. [Architecture & Module Communication](./20-architecture.md) - DDD boundaries, events as glue, anti-patterns
@@ -176,7 +176,7 @@ Model (ORM, database interaction)
 
 **Controllers**: Accept HTTP requests and delegate to services/actions. Handle response formatting (JSON, HTML, redirects).
 
-**FormRequests**: Validate incoming data with Zod schemas and authorize requests before processing.
+**FormRequests**: Validate incoming data with Zod or Valibot schemas and authorize requests before processing.
 
 **DTOs**: Carry validated data from FormRequests into services and actions.
 

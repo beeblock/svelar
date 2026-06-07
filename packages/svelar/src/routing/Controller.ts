@@ -50,6 +50,50 @@ export interface RequestEvent {
   platform: any;
 }
 
+type ValidationIssue = {
+  path: Array<string | number>;
+  message: string;
+};
+
+type ValidationResult =
+  | { success: true; data: any }
+  | { success: false; issues: ValidationIssue[] };
+
+async function parseValidationSchema(schema: unknown, data: unknown): Promise<ValidationResult> {
+  if (schema && typeof (schema as any).safeParse === 'function') {
+    const result = (schema as any).safeParse(data);
+    if (result.success) return { success: true, data: result.data };
+    return {
+      success: false,
+      issues: (result.error?.issues ?? []).map((issue: any) => ({
+        path: issue.path ?? [],
+        message: issue.message ?? 'The given data was invalid.',
+      })),
+    };
+  }
+
+  const values = schema && typeof schema === 'object' ? Object.values(schema as Record<string, unknown>) : [];
+  const looksLikeZodRawShape = values.length > 0 && values.every((value: any) => typeof value?.safeParse === 'function');
+
+  if (looksLikeZodRawShape) {
+    return parseValidationSchema(z.object(schema as ZodRawShape), data);
+  }
+
+  const valibot = await import('valibot');
+  const result = valibot.safeParse(schema as any, data);
+  if (result.success) return { success: true, data: result.output };
+
+  return {
+    success: false,
+    issues: (result.issues ?? []).map((issue: any) => ({
+      path: Array.isArray(issue.path)
+        ? issue.path.map((item: any) => item.key).filter((key: any) => key !== undefined)
+        : [],
+      message: issue.message ?? 'The given data was invalid.',
+    })),
+  };
+}
+
 // ── Controller Base Class ──────────────────────────────────
 
 export abstract class Controller {
@@ -170,12 +214,10 @@ export abstract class Controller {
 
   // ── Validation ───────────────────────────────────────────
 
-  protected async validate<T extends ZodRawShape>(
+  protected async validate<T = any>(
     event: RequestEvent,
-    schema: ZodObject<T> | T
-  ): Promise<z.infer<ZodObject<T>>> {
-    const zodSchema = schema instanceof z.ZodObject ? schema : z.object(schema);
-
+    schema: unknown
+  ): Promise<T> {
     let data: any;
     const contentType = event.request.headers.get('content-type') ?? '';
 
@@ -189,13 +231,13 @@ export abstract class Controller {
       data = Object.fromEntries(event.url.searchParams);
     }
 
-    const result = zodSchema.safeParse(data);
+    const result = await parseValidationSchema(schema, data);
 
     if (!result.success) {
-      throw new ValidationError(result.error);
+      throw new ValidationError(result.issues);
     }
 
-    return result.data;
+    return result.data as T;
   }
 
   /**
@@ -332,13 +374,14 @@ export function resource<T extends Controller>(
 export class ValidationError extends Error {
   public errors: Record<string, string[]>;
 
-  constructor(zodError: z.ZodError) {
+  constructor(error: z.ZodError | ValidationIssue[]) {
     super('Validation failed');
     this.name = 'ValidationError';
     this.errors = {};
 
-    for (const issue of zodError.issues) {
-      const path = issue.path.join('.');
+    const issues = Array.isArray(error) ? error : error.issues;
+    for (const issue of issues) {
+      const path = issue.path.length ? issue.path.join('.') : '_root';
       if (!this.errors[path]) this.errors[path] = [];
       this.errors[path].push(issue.message);
     }

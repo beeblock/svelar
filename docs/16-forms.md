@@ -1,10 +1,14 @@
 # Forms
 
-Svelar bridges [sveltekit-superforms](https://superforms.rocks) with Zod validation, providing helpers for creating validated form actions with minimal boilerplate.
+Svelar bridges [sveltekit-superforms](https://superforms.rocks) with Zod or Valibot validation, providing helpers for creating validated form actions with minimal boilerplate.
 
 ## Setup
 
-Both `sveltekit-superforms` and `zod` are included in scaffolded projects (`npx @beeblock/svelar new`) — no extra install needed.
+Scaffolded projects include `sveltekit-superforms` and the validation library selected during install. Zod is the non-interactive default; Valibot can be selected with:
+
+```bash
+npx svelar new my-app --validation=valibot
+```
 
 ## Quick Example
 
@@ -81,7 +85,7 @@ export const actions = {
 
 ### createFormAction
 
-Creates a server-side form action with Zod validation:
+Creates a server-side form action with Zod or Valibot validation:
 
 ```typescript
 import { createFormAction } from '@beeblock/svelar/forms';
@@ -89,10 +93,11 @@ import { createFormAction } from '@beeblock/svelar/forms';
 createFormAction(schema, handler, options?)
 ```
 
-- `schema` — Zod schema to validate against
+- `schema` — Zod or Valibot schema to validate against
 - `handler` — Async function receiving validated data and the SvelteKit event
 - `options.redirectTo` — URL to redirect on success
 - `options.errorMessage` — Custom error message on failure
+- `options.adapter` — `zod` by default, or `valibot` when using a Valibot schema
 
 ```typescript
 // With redirect
@@ -100,6 +105,26 @@ export const actions = {
   default: createFormAction(registerSchema, async (data, event) => {
     await User.create(data);
   }, { redirectTo: '/login' }),
+};
+```
+
+```typescript
+// Valibot
+import * as v from 'valibot';
+import { createFormAction, loadForm } from '@beeblock/svelar/forms';
+
+const schema = v.object({
+  email: v.pipe(v.string(), v.email('Please enter a valid email')),
+});
+
+export const load = async () => ({
+  form: await loadForm(schema, undefined, 'valibot'),
+});
+
+export const actions = {
+  default: createFormAction(schema, async (data) => {
+    // data is the Valibot output
+  }, { adapter: 'valibot' }),
 };
 ```
 
@@ -124,6 +149,12 @@ export const load = async ({ params }) => {
 };
 ```
 
+Pass `'valibot'` as the third argument when the schema is Valibot:
+
+```typescript
+form: await loadForm(schema, { email: user.email }, 'valibot')
+```
+
 ### validateForm
 
 Standalone validation for API routes or custom actions:
@@ -141,6 +172,12 @@ export async function POST(event) {
 ```
 
 Throws `FormValidationError` if validation fails, which Svelar's error handler catches and returns as a 422 response with field errors.
+
+For Valibot schemas, pass the adapter explicitly:
+
+```typescript
+const data = await validateForm(event, createPostSchema, 'valibot');
+```
 
 ## Multiple Actions
 

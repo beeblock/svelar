@@ -1,10 +1,21 @@
 # Validation & DTOs
 
-Learn how to validate incoming data with FormRequest classes, Zod schemas, and contract schemas that share types across your entire stack.
+Learn how to validate incoming data with FormRequest classes, Zod or Valibot schemas, and contract schemas that share types across your entire stack.
+
+## Choosing a Validation Library
+
+`npx svelar new` asks which validation library to scaffold with. In non-interactive environments it defaults to Zod. You can make the choice explicit:
+
+```bash
+npx svelar new my-app --validation=zod
+npx svelar new my-app --validation=valibot
+```
+
+The choice is stored in `svelar.validation.json`. Generators such as `make:schema`, `make:request`, `make:action --schema`, and `make:entity` read that file so new artifacts stay consistent with the app. FormRequest, controller body validation, and the forms helpers support both providers.
 
 ## Contract Schemas — Single Source of Truth
 
-Instead of defining Zod schemas inline in FormRequests and types separately on the frontend, define them once in a **contract schema** file. Every layer imports from it.
+Instead of defining validation schemas inline in FormRequests and types separately on the frontend, define them once in a **contract schema** file. Every layer imports from it.
 
 ```bash
 npx svelar make:schema Post --module=posts
@@ -571,7 +582,7 @@ The entire module's type contract lives in `post.schema.ts`. Change it once, Typ
 
 ## Zod Validation Schema
 
-Svelar uses Zod for schema validation. Here are common validation rules:
+Zod remains the default validation provider. Here are common validation rules:
 
 ### Strings
 
@@ -722,7 +733,42 @@ const passwordSchema = rules.confirmed('password');
 // Equivalent to z.object({ password, password_confirmation }).refine(match)
 ```
 
-The `rules` helper is entirely optional — you can always use Zod directly. It's provided for developers familiar with Laravel's named validation rules.
+The `rules` helper is entirely optional and Zod-only — you can always use Zod directly. It's provided for developers familiar with Laravel's named validation rules.
+
+## Valibot Validation Schema
+
+Valibot apps import Valibot directly and use `v.InferOutput` for DTO/resource types:
+
+```typescript
+import * as v from 'valibot';
+
+export const createPostSchema = v.object({
+  title: v.pipe(v.string(), v.minLength(3, 'Title must be at least 3 characters'), v.maxLength(255)),
+  slug: v.optional(v.pipe(v.string(), v.regex(/^[a-z0-9-]+$/, 'Slug must be lowercase alphanumeric with dashes'))),
+  body: v.pipe(v.string(), v.minLength(10, 'Body must be at least 10 characters')),
+  published: v.optional(v.boolean(), false),
+});
+
+export const updatePostSchema = v.partial(createPostSchema);
+
+export type CreatePostInput = v.InferOutput<typeof createPostSchema>;
+export type UpdatePostInput = v.InferOutput<typeof updatePostSchema>;
+```
+
+Cross-field validation uses `v.forward` so the error lands on the matching field:
+
+```typescript
+export const registerSchema = v.pipe(
+  v.object({
+    password: v.pipe(v.string(), v.minLength(8)),
+    password_confirmation: v.string(),
+  }),
+  v.forward(
+    v.check((data) => data.password === data.password_confirmation, 'Passwords do not match'),
+    ['password_confirmation']
+  )
+);
+```
 
 ## Validation Error Responses
 
@@ -948,7 +994,7 @@ const response = await apiFetch('/api/orders', {
 
 ## Best Practices
 
-1. **Use contract schemas** — Define Zod schemas + types once in `*.schema.ts`, import everywhere
+1. **Use contract schemas** — Define Zod or Valibot schemas + types once in `*.schema.ts`, import everywhere
 2. **Use FormRequest for API requests** — Encapsulates validation and authorization
 3. **Import schemas, don't inline them** — `rules() { return createPostSchema; }` not `rules() { return z.object({...}); }`
 4. **Provide helpful error messages** — Define them in the schema: `z.string().min(2, 'Too short')`

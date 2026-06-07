@@ -10,7 +10,7 @@ Each module in `src/lib/modules/` is a self-contained domain:
 src/lib/modules/
 ├── auth/
 │   ├── contracts/
-│   │   └── schemas/          # Shared Zod schemas and inferred types
+│   │   └── schemas/          # Shared Zod/Valibot schemas and inferred types
 │   ├── domain/
 │   │   ├── models/           # ORM models
 │   │   ├── events/           # Module events
