@@ -4,6 +4,51 @@ All notable changes to `@beeblock/svelar` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-06-07
+
+This patch captures the 0.7 production-hardening cycle plus the publishable CLI cleanup. `@beeblock/svelar` is now the single package to publish; it still installs the `svelar` binary for project-local `npx svelar ...` commands.
+
+### Added
+
+- **Production certification harness** — `npm run certify`, `certify:fast`, and `certify:inventory` now document and exercise the release gates for core, generated apps, browser smoke, and optional service integrations.
+- **Generated-app smoke coverage** — release smoke can scaffold real DDD/flat apps into `svelar-testing-area`, install dependencies and UI components, run migrations/seeders, execute generated tests, verify production builds, and drive browser checks.
+- **Service smoke coverage** — Redis/BullMQ/cache, Gotenberg PDF, Meilisearch, RustFS S3-compatible storage, PostgreSQL/PgBouncer with `DB_PREPARE=false`, and `pg_stat_statements` can be tested through the release smoke flow.
+- **Browser-visible realtime checks** — smoke coverage now exercises generated SSE public/private/presence channels with real `EventSource` behavior instead of only checking service health.
+- **Laravel-like module scaffolding** — generators now support the layered module structure: `domain`, `application`, `infrastructure`, `interface/http`, and `contracts/schemas`.
+- **`make:entity` full resource scaffold** — one command can generate a model, migration, schema, FormRequest, DTO, action, service/repository path, controller, resource, and CRUD route pieces for a module.
+- **Cross-module application contracts** — docs and generated conventions now guide modules to read from other modules through narrow application services/query facades and use events for side effects.
+- **Date helper support** — `@beeblock/svelar/support` and `@beeblock/svelar/support/date` expose date utilities built around `date-fns`.
+- **UUID/ULID and soft-delete primitives** — ORM/model support includes public identifiers and soft-delete behavior suitable for APIs that do not expose integer primary keys.
+- **Feature coverage tests** — added or expanded tests for feature flags, webhooks, Excel import/export and streaming, HTTP utilities, forms, i18n, UI/SEO, deployment CLI, audit, testing helpers, and pagination.
+- **Runtime process scripts in generated apps** — scaffolds include development worker/scheduler scripts and Docker runtime wiring for separate app, worker, and scheduler processes.
+
+### Changed
+
+- **Single publishable CLI surface** — removed the separate unscoped `svelar` workspace package. First-run scaffolding uses `npx @beeblock/svelar new`, while generated apps continue to use `npx svelar ...` from the installed package bin.
+- **Release script simplified** — `npm run release` and `npm run release:dry-run` now publish/pack only `@beeblock/svelar`.
+- **Docs and README command guidance** — current install docs now distinguish first-run package fetching from project-local CLI commands.
+- **Runtime persistence conventions** — session database stores no longer create tables implicitly; framework-owned tables are handled through migrations.
+- **Migration organization** — scaffolded schema changes now prefer one migration per table or focused schema change.
+- **ORM/query-builder consistency** — query builder SQL generation was hardened, portable upsert support was added, and raw SQL usage was reduced to explicit infrastructure-level cases.
+- **Generated app flow alignment** — scaffolds and docs now reinforce the route -> controller/page action -> FormRequest/shared schema -> DTO -> action/service -> repository -> model/resource -> response flow.
+- **Package/plugin conventions** — plugin guidance now keeps server-only plugin classes out of client-safe barrels and uses dedicated server entry points.
+- **Core dependency floor** — dependency constraints and generated externals were refreshed for current SvelteKit/Vite production builds.
+
+### Fixed
+
+- **npm publish blocker** — npm rejected the unscoped `svelar` package name as too similar to `svelte`; removing the shim workspace avoids maintaining an unpublishable second package.
+- **Generated scaffold package surfaces** — app package files, Vite externals, exports, and CLI paths now align with the published core package.
+- **CLI runtime teardown** — finite CLI commands now tear down runtime resources cleanly after completion.
+- **Command discovery and scheduler paths** — generated command/scheduler discovery was aligned with DDD and flat app layouts.
+- **Schema portability** — migration/schema builder behavior was hardened across SQLite, PostgreSQL, and MySQL.
+- **ORM model primitives** — model behavior around identifiers, timestamps, casts, soft deletes, and persistence was hardened.
+- **Auth and permissions flows** — session/API-token, refresh-token, policy, role, permission, and team-scoped authorization behavior was hardened.
+- **Middleware and rate limiting scaffolds** — generated middleware paths and registration now line up with the framework flow.
+- **Queue, cache, PDF, search, storage, notifications, scheduler, audit, and webhooks** — core service features received targeted hardening and test coverage.
+- **Generated OTP forms** — stabilized scaffolded OTP form behavior.
+- **Excel streaming imports** — hardened Excel streaming import paths for production builds.
+- **Agent guidance and docs sync** — generated `AGENTS.md`, `CLAUDE.md`, Codex/Claude Svelar skills, release certification docs, and docs search guidance were updated to prevent drift.
+
 ## [0.6.7] - 2026-04-03
 
 ### Fixed
