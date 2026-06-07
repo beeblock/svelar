@@ -1175,7 +1175,7 @@ Use this skill for Svelar app work. Svelar is Laravel-inspired on SvelteKit 2.
 
 - Keep the app flow consistent: route -> controller/page action -> FormRequest/shared schema validation -> DTO -> action/service -> repository -> model/resource -> response.
 - Use both FormRequest classes and DTOs for write paths.
-- Keep validation consistent with \`svelar.validation.json\`: Zod apps use \`z.infer\`; Valibot apps import \`valibot\` directly and use \`v.InferOutput\`.
+- Keep validation consistent with \`svelar.validation.json\`: Zod apps use \`z.infer\` from \`@beeblock/svelar/validation\`; Valibot apps use \`v.InferOutput\` and may import Laravel-like rules from \`@beeblock/svelar/validation/valibot\`.
 - Side effects belong in actions/services and events/listeners, not scattered through pages.
 - Cross-module reads should go through a narrow public application service/query/facade from the owning module and return plain DTO/contract data. Events are for side effects, not request/response queries.
 - Use Svelar ORM and migrations. Avoid raw SQL unless it is a low-level infrastructure exception.

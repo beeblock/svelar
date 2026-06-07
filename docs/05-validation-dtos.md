@@ -733,7 +733,7 @@ const passwordSchema = rules.confirmed('password');
 // Equivalent to z.object({ password, password_confirmation }).refine(match)
 ```
 
-The `rules` helper is entirely optional and Zod-only — you can always use Zod directly. It's provided for developers familiar with Laravel's named validation rules.
+The Zod `rules` helper is entirely optional — you can always use Zod directly. It's provided for developers familiar with Laravel's named validation rules.
 
 ## Valibot Validation Schema
 
@@ -768,6 +768,47 @@ export const registerSchema = v.pipe(
     ['password_confirmation']
   )
 );
+```
+
+## Valibot Laravel-like Validation Rules
+
+Valibot apps can use the same Svelar rule names from the Valibot validation subpath:
+
+```typescript
+import { rules, v } from '@beeblock/svelar/validation/valibot';
+
+const schema = v.object({
+  name:     rules.required(),                     // v.pipe(v.string(), v.minLength(1))
+  email:    rules.email(),                        // v.pipe(v.string(), v.email())
+  age:      rules.integer(),                      // v.pipe(v.number(), v.integer())
+  bio:      rules.string(10, 500),                // string with min/max length
+  score:    rules.number(0, 100),                 // number with min/max value
+  price:    rules.between(1, 999),                // number between values
+  active:   rules.boolean(),                      // v.boolean()
+  birthday: rules.date(),                         // coerces to Date, then validates
+  website:  rules.url(),                          // URL string
+  token:    rules.uuid(),                         // any UUID version
+  publicId: rules.uuidv7(),                       // UUID v7 public IDs
+  ulid:     rules.ulid(),                         // ULID public IDs
+  role:     rules.enum(['admin', 'user']),         // v.picklist(['admin', 'user'])
+  tags:     rules.array(rules.string()),          // array of strings
+  phone:    rules.nullable(rules.string()),        // nullable string
+  nickname: rules.optional(rules.string()),        // optional string
+  slug:     rules.regex(/^[a-z0-9-]+$/),          // regex string
+  ip:       rules.ip(),                           // IP validation
+  config:   rules.json(),                         // valid JSON string
+  min_age:  rules.min(18),                        // number >= 18
+  max_size: rules.max(1024),                      // number <= 1024
+});
+```
+
+Valibot also has a matching `validate` helper:
+
+```typescript
+import { rules, validate, v } from '@beeblock/svelar/validation/valibot';
+
+const result = validate(v.object({ email: rules.email() }), { email: 'bad' });
+// { success: false, errors: { email: [...] } }
 ```
 
 ## Validation Error Responses

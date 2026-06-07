@@ -72,7 +72,7 @@ import { Model, SoftDeletes } from '@beeblock/svelar/orm';
 import { Migration } from '@beeblock/svelar/database';
 import { Controller } from '@beeblock/svelar/routing';
 import { z } from '@beeblock/svelar/validation';
-import * as v from 'valibot'; // In Valibot apps, import Valibot directly.
+import { rules as valibotRules, v } from '@beeblock/svelar/validation/valibot';
 import { AuthManager } from '@beeblock/svelar/auth';
 import { Hash } from '@beeblock/svelar/hashing';
 import { Cache } from '@beeblock/svelar/cache';

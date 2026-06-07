@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { rules, validate, z } from '../src/validation/index';
+import { rules as valibotRules, validate as validateValibot, v } from '../src/validation/valibot';
 import { ulid, uuidv7 } from '../src/support/uuid';
 
 describe('Validation', () => {
@@ -433,5 +434,75 @@ describe('Validation', () => {
         expect(Object.keys(result.errors).length).toBe(2);
       }
     });
+  });
+});
+
+describe('Valibot validation rules', () => {
+  it('should validate common Laravel-like rules', () => {
+    const schema = v.object({
+      name: valibotRules.required(),
+      email: valibotRules.email(),
+      age: valibotRules.between(18, 120),
+      role: valibotRules.enum(['user', 'admin']),
+      tags: valibotRules.array(valibotRules.string()),
+      active: valibotRules.boolean(),
+      metadata: valibotRules.json(),
+    });
+
+    const result = validateValibot(schema, {
+      name: 'Jane',
+      email: 'jane@example.com',
+      age: 32,
+      role: 'admin',
+      tags: ['team', 'owner'],
+      active: true,
+      metadata: '{"ok":true}',
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it('should validate uuid v7 and ulid helpers', () => {
+    const schema = v.object({
+      publicId: valibotRules.uuidv7(),
+      ulid: valibotRules.ulid(),
+    });
+
+    expect(v.safeParse(schema, { publicId: uuidv7(), ulid: ulid() }).success).toBe(true);
+    expect(v.safeParse(schema, { publicId: '550e8400-e29b-41d4-a716-446655440000', ulid: ulid() }).success).toBe(false);
+    expect(v.safeParse(schema, { publicId: uuidv7(), ulid: 'not-a-ulid' }).success).toBe(false);
+  });
+
+  it('should put confirmation errors on the confirmation field', () => {
+    const schema = valibotRules.confirmed('password');
+    const result = validateValibot(schema, {
+      password: 'secret123',
+      password_confirmation: 'different',
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors.password_confirmation).toEqual(['Confirmation does not match']);
+    }
+  });
+
+  it('should normalize Valibot validation errors', () => {
+    const schema = v.object({
+      profile: v.object({
+        website: valibotRules.url(),
+      }),
+      count: valibotRules.integer(),
+    });
+
+    const result = validateValibot(schema, {
+      profile: { website: 'not-a-url' },
+      count: 1.5,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors.profile.website.length).toBeGreaterThan(0);
+      expect(result.errors.count.length).toBeGreaterThan(0);
+    }
   });
 });

@@ -55,6 +55,10 @@
 			"types": "./dist/validation/index.d.ts",
 			"import": "./dist/validation/index.js"
 		},
+		"./validation/valibot": {
+			"types": "./dist/validation/valibot.d.ts",
+			"import": "./dist/validation/valibot.js"
+		},
 		"./auth": {
 			"types": "./dist/auth/index.d.ts",
 			"import": "./dist/auth/index.js"
