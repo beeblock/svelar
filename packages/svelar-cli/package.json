@@ -1,6 +1,6 @@
 {
   "name": "svelar",
-  "version": "0.6.7",
+  "version": "0.7.0",
   "description": "Unscoped npm entrypoint for the Svelar CLI",
   "type": "module",
   "bin": {
@@ -12,7 +12,7 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@beeblock/svelar": "0.6.7"
+    "@beeblock/svelar": "0.7.0"
   },
   "keywords": [
     "svelte",
