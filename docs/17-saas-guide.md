@@ -4,10 +4,10 @@ A complete guide to building production SaaS applications with Svelar. Covers wh
 
 ## What You Get
 
-Running `npx svelar new my-saas` scaffolds a fully working SaaS application:
+Running `npx @beeblock/svelar new my-saas` scaffolds a fully working SaaS application:
 
 ```bash
-npx svelar new my-saas
+npx @beeblock/svelar new my-saas
 cd my-saas
 npm run dev
 ```

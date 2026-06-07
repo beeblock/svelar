@@ -3,7 +3,6 @@
   "private": true,
   "workspaces": [
     "packages/svelar",
-    "packages/svelar-cli",
     "packages/svelar-datatable",
     "packages/svelar-stripe",
     "packages/svelar-media",
@@ -26,7 +25,6 @@
     "lint": "npm run lint --workspaces --if-present",
     "release": "node scripts/publish-svelar.mjs",
     "release:dry-run": "node scripts/publish-svelar.mjs --dry-run --skip-validation",
-    "sync:svelar-cli": "node scripts/publish-svelar.mjs --sync-only",
     "smoke": "node scripts/release-smoke.mjs",
     "smoke:ddd": "node scripts/release-smoke.mjs --app ddd",
     "smoke:flat": "node scripts/release-smoke.mjs --app flat",

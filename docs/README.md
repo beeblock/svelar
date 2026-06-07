@@ -70,7 +70,7 @@ Svelar is a Laravel-inspired framework built on top of SvelteKit 2. It brings en
 ## Quick Start
 
 ```bash
-npx svelar new my-app
+npx @beeblock/svelar new my-app
 cd my-app
 npm run dev
 ```
@@ -333,7 +333,7 @@ STORAGE_DISK=local
 ## Getting Help
 
 - Review the documentation for detailed guides
-- Scaffold a new project with `npx svelar new my-app` to explore working examples
+- Scaffold a new project with `npx @beeblock/svelar new my-app` to explore working examples
 - Open an issue on GitHub for bugs or feature requests
 
 ---

@@ -10,7 +10,7 @@ Svelar projects come with two UI layers out of the box:
 
 ## shadcn-svelte (Recommended)
 
-When you scaffold a project with `npx svelar new`, all shadcn-svelte components are installed automatically at `$lib/components/ui/`. If you scaffold with `--no-install`, run `npm run ui:install` after `npm install`; that script keeps Shadcn runtime packages in production dependencies for adapter-node builds. Use components in your pages:
+When you scaffold a project with `npx @beeblock/svelar new`, all shadcn-svelte components are installed automatically at `$lib/components/ui/`. If you scaffold with `--no-install`, run `npm run ui:install` after `npm install`; that script keeps Shadcn runtime packages in production dependencies for adapter-node builds. Use components in your pages:
 
 ```svelte
 <script>

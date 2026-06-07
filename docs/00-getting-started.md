@@ -5,7 +5,7 @@ Everything you need to go from zero to a running SaaS app in under 5 minutes.
 ## Create Your App
 
 ```bash
-npx svelar new my-app
+npx @beeblock/svelar new my-app
 cd my-app
 npm run dev
 ```
@@ -15,12 +15,12 @@ That's it. The `new` command installs dependencies, generates `.env` with secure
 By default, projects use a **DDD modular structure** (`src/lib/modules/{domain}/...`) with domain, application, infrastructure, interface, and contract layers inside each module. If you prefer a traditional flat layout, use `--flat`:
 
 ```bash
-npx svelar new my-app --flat   # src/lib/models/, src/lib/services/, etc.
+npx @beeblock/svelar new my-app --flat   # src/lib/models/, src/lib/services/, etc.
 ```
 
 ## What You Get Out of the Box
 
-When you run `npx svelar new`, Svelar scaffolds a full-featured application. Here's everything that's included and working from day one:
+When you run `npx @beeblock/svelar new`, Svelar scaffolds a full-featured application. Here's everything that's included and working from day one:
 
 ### Authentication (Ready to Use)
 
@@ -145,7 +145,7 @@ SSE-based real-time events. The layout already subscribes to a notifications cha
 
 ### 1. Environment Variables
 
-`npx svelar new` automatically generates a `.env` file with secure random `APP_KEY` and `INTERNAL_SECRET`. No manual setup needed.
+`npx @beeblock/svelar new` automatically generates a `.env` file with secure random `APP_KEY` and `INTERNAL_SECRET`. No manual setup needed.
 
 To regenerate your app key at any time:
 
@@ -162,7 +162,7 @@ npx svelar key:generate
 
 ### 2. Run Migrations
 
-If you used `npx svelar new`, migrations and seeding already ran automatically. For manual setup:
+If you used `npx @beeblock/svelar new`, migrations and seeding already ran automatically. For manual setup:
 
 ```bash
 npx svelar migrate

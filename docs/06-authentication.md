@@ -979,7 +979,7 @@ await auth.sendPasswordReset('user@example.com');
 const success = await auth.resetPassword(token, email, newPassword);
 ```
 
-### Routes (scaffolded by `npx svelar new`)
+### Routes (scaffolded by `npx @beeblock/svelar new`)
 
 ```typescript
 // POST /api/auth/forgot-password
@@ -1037,7 +1037,7 @@ const user = await auth.register({
 await auth.sendVerificationEmail(user);
 ```
 
-### Routes (scaffolded by `npx svelar new`)
+### Routes (scaffolded by `npx @beeblock/svelar new`)
 
 ```typescript
 // GET /api/auth/verify-email?token=...&id=...
@@ -1103,7 +1103,7 @@ const user = await auth.verifyOtp(email, code);
 const user = await auth.attemptOtp(email, code, session);
 ```
 
-### Routes (scaffolded by `npx svelar new`)
+### Routes (scaffolded by `npx @beeblock/svelar new`)
 
 ```typescript
 // POST /api/auth/otp/send

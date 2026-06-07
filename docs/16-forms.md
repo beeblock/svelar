@@ -4,7 +4,7 @@ Svelar bridges [sveltekit-superforms](https://superforms.rocks) with Zod validat
 
 ## Setup
 
-Both `sveltekit-superforms` and `zod` are included in scaffolded projects (`npx svelar new`) — no extra install needed.
+Both `sveltekit-superforms` and `zod` are included in scaffolded projects (`npx @beeblock/svelar new`) — no extra install needed.
 
 ## Quick Example
 

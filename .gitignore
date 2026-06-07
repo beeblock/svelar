@@ -47,7 +47,7 @@ coverage/
 # TypeScript
 *.tsbuildinfo
 
-# Test/scaffolded apps (created by `npx svelar new` during development)
+# Test/scaffolded apps (created by `npx @beeblock/svelar new` during development)
 test-*/
 hook-test/
 my-app/
@@ -57,8 +57,6 @@ svelar-*/
 !packages/svelar-stripe/**
 !packages/svelar-social-auth/
 !packages/svelar-social-auth/**
-!packages/svelar-cli/
-!packages/svelar-cli/**
 !.codex/
 !.codex/skills/
 !.codex/skills/svelar-specialist/

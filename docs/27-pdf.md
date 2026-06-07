@@ -11,7 +11,7 @@ Svelar ships with two swappable PDF drivers. The API is the same — switch driv
 
 ### Setup — PDFKit (Default)
 
-PDFKit is included in scaffolded projects (`npx svelar new`). No Docker, no external services — it works out of the box:
+PDFKit is included in scaffolded projects (`npx @beeblock/svelar new`). No Docker, no external services — it works out of the box:
 
 ```typescript
 // src/app.ts

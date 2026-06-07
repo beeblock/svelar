@@ -1,6 +1,6 @@
 # Testing
 
-Svelar provides a Laravel-inspired testing module built on top of **Vitest** (unit/feature) and **Playwright** (end-to-end). New projects scaffolded with `npx svelar new` come with everything pre-configured.
+Svelar provides a Laravel-inspired testing module built on top of **Vitest** (unit/feature) and **Playwright** (end-to-end). New projects scaffolded with `npx @beeblock/svelar new` come with everything pre-configured.
 
 ```
 import { useSvelarTest, assertDatabaseHas, Factory, actingAs, createRequestEvent } from '@beeblock/svelar/testing';

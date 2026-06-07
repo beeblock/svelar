@@ -29,7 +29,7 @@ npm run certify:fast
 `npm run certify` runs:
 
 - the core package test suite
-- package publish dry-run checks for `@beeblock/svelar` and the `npx svelar` shim package
+- package publish dry-run checks for `@beeblock/svelar`, including its bundled `svelar` binary
 - Redis cache, Redis session, and BullMQ queue smoke checks with Docker-managed random ports
 - PDFKit, queued PDF job, and Gotenberg smoke checks with Docker-managed random ports
 - Meilisearch indexing and search smoke checks with Docker-managed random ports
