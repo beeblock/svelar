@@ -37,7 +37,7 @@ export class NewCommandTemplates {
 						"test:e2e": "playwright test",
 						"test:coverage": "svelte-kit sync && vitest run --coverage",
 						"ui:install":
-							"npm exec shadcn-svelte@latest -- add --all --yes && npm install --save-prod @internationalized/date@^3.12.2 bits-ui@^2.18.1 embla-carousel-svelte@^8.6.0 formsnap@^2.0.1 layerchart@^2.0.0-next.48 mode-watcher@^1.1.0 paneforge@^1.0.2 svelte-sonner@^1.1.1 sveltekit-superforms@^2.30.1 tailwind-variants@^3.2.2 typebox@^1.1.39 vaul-svelte@^1.0.0-next.7 zod-v3-to-json-schema@^4.0.0",
+							"npm exec --package shadcn-svelte@latest -- shadcn-svelte add --all --yes && npm install --save-prod @internationalized/date@^3.12.2 bits-ui@^2.18.1 embla-carousel-svelte@^8.6.0 formsnap@^2.0.1 layerchart@^2.0.0-next.48 mode-watcher@^1.1.0 paneforge@^1.0.2 svelte-sonner@^1.1.1 sveltekit-superforms@^2.30.1 tailwind-variants@^3.2.2 typebox@^1.1.39 vaul-svelte@^1.0.0-next.7 zod-v3-to-json-schema@^4.0.0",
 					},
 					devDependencies: {
 						"@sveltejs/adapter-node": "^5.5.4",

@@ -15,7 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
-- **Generated app first-run setup** — `npx svelar new` now prepares SvelteKit before running migrations/seeders and uses `npm exec` for shadcn-svelte installation, so fresh Zod and Valibot apps complete their post-install setup cleanly.
+- **Generated app first-run setup** — `npx svelar new` now prepares SvelteKit before running migrations/seeders and uses explicit `npm exec --package shadcn-svelte@latest -- shadcn-svelte ...` syntax, so fresh Zod and Valibot apps complete their post-install setup cleanly.
 
 ## [0.7.2] - 2026-06-07
 

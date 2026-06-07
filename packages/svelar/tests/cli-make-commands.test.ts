@@ -576,7 +576,7 @@ describe('New project templates', () => {
   it('uses npm exec for generated shadcn-svelte installation', () => {
     const pkg = JSON.parse(NewCommandTemplates.packageJson('example-app', '0.0.0'));
 
-    expect(pkg.scripts['ui:install']).toContain('npm exec shadcn-svelte@latest -- add --all --yes');
+    expect(pkg.scripts['ui:install']).toContain('npm exec --package shadcn-svelte@latest -- shadcn-svelte add --all --yes');
     expect(pkg.scripts['ui:install']).not.toContain('npx shadcn-svelte@latest');
   });
 
