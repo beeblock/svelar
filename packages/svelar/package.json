@@ -1,6 +1,6 @@
 {
 	"name": "@beeblock/svelar",
-	"version": "0.7.5",
+	"version": "0.7.6",
 	"description": "Laravel-inspired framework on top of SvelteKit 2",
 	"type": "module",
 	"main": "./dist/index.js",
