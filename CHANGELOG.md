@@ -13,6 +13,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Valibot Laravel-like rules helper** — `@beeblock/svelar/validation/valibot` now exports `v`, `rules`, and `validate`, mapping Svelar's common rule names to Valibot schemas.
 - **Valibot documentation and tests** — validation/forms docs, generated agent guidance, and core tests now cover Valibot scaffold templates, generator output, FormRequest validation, and controller validation.
 
+### Fixed
+
+- **Generated app first-run setup** — `npx svelar new` now prepares SvelteKit before running migrations/seeders and uses `npm exec` for shadcn-svelte installation, so fresh Zod and Valibot apps complete their post-install setup cleanly.
+
 ## [0.7.2] - 2026-06-07
 
 ### Fixed

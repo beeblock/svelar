@@ -372,7 +372,19 @@ export class NewCommand extends Command {
         this.warn('npm install failed — run it manually with: cd ' + projectName + ' && npm install');
       }
 
-      // ── 15. Install shadcn-svelte components ─────────────
+      // ── 15. Prepare SvelteKit generated files ───────────
+      this.info('Preparing SvelteKit...');
+      try {
+        execSync('npx svelte-kit sync', {
+          cwd: projectDir,
+          stdio: 'inherit',
+        });
+        this.success('SvelteKit prepared');
+      } catch {
+        this.warn('SvelteKit sync failed — run manually: cd ' + projectName + ' && npx svelte-kit sync');
+      }
+
+      // ── 16. Install shadcn-svelte components ─────────────
       this.info('Installing shadcn-svelte components...');
       try {
         execSync('npm run ui:install', {
@@ -384,7 +396,7 @@ export class NewCommand extends Command {
         this.warn('shadcn-svelte setup failed — run manually: cd ' + projectName + ' && npm run ui:install');
       }
 
-      // ── 16. Run migrations and seed ─────────────────────
+      // ── 17. Run migrations and seed ─────────────────────
       this.info('Running migrations...');
       try {
         execSync('npx svelar migrate', {

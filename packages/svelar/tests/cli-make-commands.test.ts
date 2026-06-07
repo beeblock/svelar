@@ -573,6 +573,20 @@ describe('New project templates', () => {
     expect(pkg.scripts['dev:scheduler']).toBe('node scripts/svelar-dev-runtime.mjs schedule:run');
   });
 
+  it('uses npm exec for generated shadcn-svelte installation', () => {
+    const pkg = JSON.parse(NewCommandTemplates.packageJson('example-app', '0.0.0'));
+
+    expect(pkg.scripts['ui:install']).toContain('npm exec shadcn-svelte@latest -- add --all --yes');
+    expect(pkg.scripts['ui:install']).not.toContain('npx shadcn-svelte@latest');
+  });
+
+  it('keeps Valibot installed in Zod apps for Superforms adapter compatibility', () => {
+    const pkg = JSON.parse(NewCommandTemplates.packageJson('example-app', '0.0.0', 'zod'));
+
+    expect(pkg.dependencies.zod).toBeDefined();
+    expect(pkg.dependencies.valibot).toBeDefined();
+  });
+
   it('selects Valibot dependencies and schema templates when requested', () => {
     const pkg = JSON.parse(NewCommandTemplates.packageJson('example-app', '0.0.0', 'valibot'));
     const authSchema = NewCommandTemplates.authSchema('valibot');
