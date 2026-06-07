@@ -53,12 +53,6 @@ hook-test/
 my-app/
 svelar-datatable/
 svelar-*/
-!packages/svelar-datatable/
-!packages/svelar-datatable/**
-!packages/svelar-stripe/
-!packages/svelar-stripe/**
-!packages/svelar-social-auth/
-!packages/svelar-social-auth/**
 !packages/svelar-cli/
 !packages/svelar-cli/**
 !.codex/
