@@ -195,7 +195,7 @@ child.on('exit', (code, signal) => {
 
 	static viteConfig(): string {
 		return `import { sveltekit } from '@sveltejs/kit/vite';
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
 import { createRequire } from 'module';
 import { dirname, resolve } from 'path';
@@ -204,7 +204,10 @@ import { dirname, resolve } from 'path';
 const require_ = createRequire(import.meta.url);
 const svelarRoot = dirname(require_.resolve('@beeblock/svelar/package.json'));
 
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  Object.assign(process.env, loadEnv(mode, process.cwd(), ''));
+
+  return {
   plugins: [sveltekit(), tailwindcss()],
   resolve: {
     alias: {
@@ -307,6 +310,7 @@ export default defineConfig({
       },
     },
   },
+  };
 });
 `;
 	}

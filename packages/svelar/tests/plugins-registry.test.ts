@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PluginRegistry } from '../src/plugins/PluginRegistry.js';
+import { normalizePluginPackageSpec } from '../src/plugins/PluginInstaller.js';
 
 let originalCwd: string;
 let root: string;
@@ -70,5 +72,45 @@ describe('PluginRegistry', () => {
         }),
       ])
     );
+  });
+
+  it('persists enabled plugins so separate CLI processes report the same status', async () => {
+    await writePackage('@beeblock/svelar-datatable', {
+      name: '@beeblock/svelar-datatable',
+      version: '0.2.0',
+      description: 'Datatable plugin',
+      keywords: ['svelar-plugin'],
+    });
+
+    await PluginRegistry.discover();
+    PluginRegistry.enable('@beeblock/svelar-datatable');
+
+    expect(JSON.parse(readFileSync(join(root, 'svelar.plugins.json'), 'utf-8'))).toEqual({
+      enabled: ['@beeblock/svelar-datatable'],
+    });
+
+    const discovered = await PluginRegistry.discover();
+
+    expect(discovered).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: '@beeblock/svelar-datatable',
+          enabled: true,
+        }),
+      ])
+    );
+  });
+});
+
+describe('PluginInstaller', () => {
+  it('normalizes versioned npm package specs before matching discovered plugins', () => {
+    expect(normalizePluginPackageSpec('@beeblock/svelar-datatable@0.2.0')).toBe(
+      '@beeblock/svelar-datatable'
+    );
+    expect(normalizePluginPackageSpec('@beeblock/svelar-datatable@latest')).toBe(
+      '@beeblock/svelar-datatable'
+    );
+    expect(normalizePluginPackageSpec('svelar-datatable@0.2.0')).toBe('svelar-datatable');
+    expect(normalizePluginPackageSpec('svelar-datatable')).toBe('svelar-datatable');
   });
 });

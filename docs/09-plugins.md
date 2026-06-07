@@ -464,13 +464,16 @@ npx svelar plugin:list
 
 Discovers installed plugins (packages matching `svelar-*` or `@scope/svelar-*`, or with `svelar-plugin` keyword in package.json) and shows their status.
 
+Plugin status is stored in `svelar.plugins.json` at the app root so separate CLI processes and app bootstrap share the same enabled-plugin list.
+
 ### Install a Plugin
 
 ```bash
 npx svelar plugin:install @beeblock/svelar-tags
+npx svelar plugin:install @beeblock/svelar-tags@latest
 ```
 
-Runs `npm install`, discovers the plugin, registers it, and publishes migrations/routes. Use `--no-publish` to skip asset publishing.
+Runs `npm install`, discovers the plugin, enables it in `svelar.plugins.json`, and publishes migrations/routes. Versioned npm specs such as `@scope/plugin@1.2.3` or `@scope/plugin@latest` are supported. Use `--no-publish` to skip asset publishing.
 
 ### Publish Plugin Assets
 

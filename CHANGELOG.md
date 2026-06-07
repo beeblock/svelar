@@ -4,6 +4,15 @@ All notable changes to `@beeblock/svelar` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-06-07
+
+### Fixed
+
+- **Versioned plugin installs** — `npx svelar plugin:install @scope/plugin@version` now normalizes the npm spec before plugin discovery, so version-pinned official plugins install and publish correctly.
+- **Plugin enabled status persistence** — installed plugins are written to `svelar.plugins.json`, allowing `plugin:list`, app bootstrap, and separate CLI processes to agree on enabled plugin state.
+- **Plugin install failures** — `plugin:install` now exits non-zero when discovery or publishing fails instead of only printing an error.
+- **Generated app env loading** — scaffolded Vite apps now load `.env` into `process.env` during dev/build so runtime code that reads `process.env.APP_KEY` works without shell-specific workarounds.
+
 ## [0.7.1] - 2026-06-07
 
 This patch captures the 0.7 production-hardening cycle plus the publishable CLI cleanup. `@beeblock/svelar` is now the single package to publish; it still installs the `svelar` binary for project-local `npx svelar ...` commands.

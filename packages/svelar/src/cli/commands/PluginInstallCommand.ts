@@ -60,11 +60,13 @@ export class PluginInstallCommand extends Command {
         );
       } else {
         this.error(`Failed to install plugin: ${result.error}`);
+        process.exitCode = 1;
       }
 
       this.newLine();
     } catch (error: any) {
       this.error(`Installation error: ${error?.message ?? String(error)}`);
+      process.exitCode = 1;
     }
   }
 }

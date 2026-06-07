@@ -17,6 +17,19 @@ export interface InstallResult {
   error?: string;
 }
 
+export function normalizePluginPackageSpec(packageSpec: string): string {
+  const trimmed = packageSpec.trim();
+
+  if (!trimmed) return trimmed;
+
+  if (trimmed.startsWith('@')) {
+    const scopedPackageMatch = trimmed.match(/^(@[^/]+\/[^@/]+)(?:@.+)?$/);
+    return scopedPackageMatch?.[1] ?? trimmed;
+  }
+
+  return trimmed.replace(/@[^@/]+$/, '');
+}
+
 class PluginInstallerService {
   /**
    * Install a plugin package and register it
@@ -25,6 +38,8 @@ class PluginInstallerService {
     packageName: string,
     options?: { publish?: boolean }
   ): Promise<InstallResult> {
+    const pluginPackageName = normalizePluginPackageSpec(packageName);
+
     try {
       // 1. Run npm install <packageName>
       await this.runNpmInstall(packageName);
@@ -37,7 +52,7 @@ class PluginInstallerService {
 
       // Find the installed plugin by package name or name
       for (const meta of discovered) {
-        if (meta.packageName === packageName || meta.name === packageName) {
+        if (meta.packageName === pluginPackageName || meta.name === pluginPackageName) {
           pluginMeta = meta;
           break;
         }
@@ -46,10 +61,10 @@ class PluginInstallerService {
       if (!pluginMeta) {
         return {
           success: false,
-          pluginName: packageName,
+          pluginName: pluginPackageName,
           version: '0.0.0',
           published: null,
-          error: `Plugin not found after installation. Make sure ${packageName} is a valid Svelar plugin.`,
+          error: `Plugin not found after installation. Make sure ${pluginPackageName} is a valid Svelar plugin.`,
         };
       }
 
@@ -75,7 +90,7 @@ class PluginInstallerService {
     } catch (error: any) {
       return {
         success: false,
-        pluginName: packageName,
+        pluginName: pluginPackageName,
         version: '0.0.0',
         published: null,
         error: error?.message ?? String(error),

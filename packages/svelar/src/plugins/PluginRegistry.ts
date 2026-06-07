@@ -5,6 +5,8 @@
  * for packages with the 'svelar-plugin' keyword or 'svelar-' prefix.
  */
 
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { singleton } from '../support/singleton.js';
 
 export interface PluginMeta {
@@ -21,6 +23,7 @@ export interface PluginMeta {
 class PluginRegistryService {
   private plugins = new Map<string, PluginMeta>();
   private enabledPlugins: Set<string> = new Set();
+  private persistedEnabledPath: string | null = null;
 
   /**
    * Scan node_modules for svelar plugins
@@ -30,6 +33,8 @@ class PluginRegistryService {
     const { join } = await import('node:path');
     const { existsSync, readdirSync } = await import('node:fs');
     const { readFile } = await import('node:fs/promises');
+
+    this.loadPersistedEnabledPlugins();
 
     const discovered: PluginMeta[] = [];
     const nodeModulesPath = join(process.cwd(), 'node_modules');
@@ -75,10 +80,16 @@ class PluginRegistryService {
               description: pkg.description || '',
               packageName: fullName,
               installed: true,
-              enabled: false,
+              enabled:
+                this.enabledPlugins.has(pkg.name || fullName) ||
+                this.enabledPlugins.has(fullName),
               hasConfig: !!pkg.svelar?.config,
               hasMigrations: !!pkg.svelar?.migrations,
             };
+
+            if (meta.enabled) {
+              this.enabledPlugins.add(meta.name);
+            }
 
             discovered.push(meta);
             this.plugins.set(meta.name, meta);
@@ -106,6 +117,7 @@ class PluginRegistryService {
     }
     this.enabledPlugins.add(name);
     plugin.enabled = true;
+    this.persistEnabledPlugins();
   }
 
   /**
@@ -117,6 +129,7 @@ class PluginRegistryService {
     if (plugin) {
       plugin.enabled = false;
     }
+    this.persistEnabledPlugins();
   }
 
   /**
@@ -151,7 +164,44 @@ class PluginRegistryService {
    * Register a plugin in the registry
    */
   register(meta: PluginMeta): void {
+    meta.enabled = meta.enabled || this.enabledPlugins.has(meta.name);
     this.plugins.set(meta.name, meta);
+  }
+
+  private pluginsConfigPath(): string {
+    return join(process.cwd(), 'svelar.plugins.json');
+  }
+
+  private loadPersistedEnabledPlugins(): void {
+    const configPath = this.pluginsConfigPath();
+    if (this.persistedEnabledPath === configPath) return;
+
+    this.persistedEnabledPath = configPath;
+
+    if (!existsSync(configPath)) return;
+
+    try {
+      const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
+      const enabled = Array.isArray(parsed?.enabled) ? parsed.enabled : [];
+
+      for (const name of enabled) {
+        if (typeof name === 'string' && name.trim()) {
+          this.enabledPlugins.add(name);
+        }
+      }
+    } catch {
+      // Invalid plugin state should not prevent discovery. The CLI can rewrite it.
+    }
+  }
+
+  private persistEnabledPlugins(): void {
+    const configPath = this.pluginsConfigPath();
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(
+      configPath,
+      `${JSON.stringify({ enabled: [...this.enabledPlugins].sort() }, null, 2)}\n`,
+      'utf-8'
+    );
   }
 }
 

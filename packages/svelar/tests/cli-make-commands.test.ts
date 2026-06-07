@@ -518,6 +518,14 @@ describe('New project templates', () => {
     expect(script).toContain("spawn('npx', ['svelar'");
   });
 
+  it('loads dotenv values into process.env for generated Vite dev and build runtime', () => {
+    const template = NewCommandTemplates.viteConfig();
+
+    expect(template).toContain("import { defineConfig, loadEnv } from 'vite'");
+    expect(template).toContain("export default defineConfig(({ mode }) => {");
+    expect(template).toContain("Object.assign(process.env, loadEnv(mode, process.cwd(), ''))");
+  });
+
   it('uses CSRF-aware fetches for generated admin API mutations', () => {
     const template = NewCommandTemplates.adminPageSvelte();
 
