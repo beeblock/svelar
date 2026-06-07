@@ -108,6 +108,7 @@ export const GET = dt.handle();
 | `data` | `T[]` | — | Client-side data array |
 | `serverUrl` | `string` | — | Server endpoint URL |
 | `serverMethod` | `'GET' \| 'POST'` | `'GET'` | Request method for server mode |
+| `serverParams` | `Record<string, any> \| (() => Record<string, any>)` | — | Extra server filters sent as `filters[name]` on GET or `customFilters` on POST |
 | `columns` | `ColumnDef<T>[]` | **required** | Column definitions |
 | `sortable` | `boolean` | `true` | Enable sorting |
 | `searchable` | `boolean` | `true` | Enable global search |
@@ -194,6 +195,7 @@ interface ColumnDef<T = any> {
 ```
 
 Modal and bubble use `editorFields` + `onEdit`/`onCreate`. Inline and excel use `onCellEdit`.
+For server-side Excel mode, `onCellEdit` must call a normal Svelar write route and throw on failure so the cell can be reverted.
 
 ## Editor Field Definition
 
@@ -393,6 +395,130 @@ const dt = new DataTableController(User);
 export const GET = dt.handle();
 ```
 
+Server search is case-insensitive on PostgreSQL (`ILIKE`) and uses each driver's normal `LIKE` behavior on SQLite/MySQL.
+
+### Server Filters
+
+Use `serverParams` on the component and matching `filters` on `DataTableController`.
+
+```svelte
+<script lang="ts">
+  let priority = $state('');
+  function serverParams() {
+    return priority ? { priority } : {};
+  }
+</script>
+
+<DataTable
+  serverUrl="/api/datatable/cards"
+  columns={columns}
+  serverParams={serverParams}
+  searchable
+  sortable
+/>
+```
+
+```typescript
+const dt = new DataTableController(Card, {
+  searchable: ['title', 'description', 'priority'],
+  orderable: ['title', 'priority', 'updated_at'],
+  filters: {
+    priority: (query, value) => query.where('priority', value),
+  },
+});
+```
+
+### Meilisearch Server Search
+
+If the model uses Svelar `Searchable`, global server search can use Meilisearch:
+
+```typescript
+const dt = new DataTableController(Card, {
+  searchDriver: 'auto',
+  filters: {
+    priority: (query, value) => query.where('priority', value),
+  },
+  meilisearchFilter: (filters) => {
+    if (!filters.priority) return undefined;
+    return `priority = "${String(filters.priority).replaceAll('"', '\\"')}"`;
+  },
+});
+```
+
+`searchDriver: 'auto'` is the default: use Meilisearch when the model exposes `search()` and fall back to database search if Meilisearch is unavailable. Use `'database'` to force SQL or `'meilisearch'` to fail instead of falling back. Meilisearch mode returns indexed document fields, so keep table columns in the searchable/displayed attributes and configure filterable/sortable index settings.
+
+### Extending and Customizing
+
+Do not fork the plugin for app-specific UI. Use these extension points:
+
+- `customCell` snippet for custom badges, links, row menus, previews, and action cells.
+- `buttons` for custom toolbar actions; actions receive selected rows and all rows.
+- `classNames` for Tailwind/shadcn styling.
+- `bind:storeRef` for external page controls, refresh buttons, selected-row panels, and programmatic column visibility.
+- `serverParams` plus server `filters` for app-specific server filters.
+- `baseQuery`, `scopes`, `computedColumns`, `searchDriver`, `meilisearchFilter`, and `meilisearchSort` for server behavior.
+
+```svelte
+{#snippet customCell({ row, column, value })}
+  {#if column.key === 'actions'}
+    <button type="button" onclick={() => openCard(row)}>Open</button>
+  {:else}
+    {value}
+  {/if}
+{/snippet}
+
+<DataTable
+  {columns}
+  data={cards}
+  selectable="multi"
+  buttons={[{
+    key: 'archive',
+    label: 'Archive selected',
+    disabled: (rows) => rows.length === 0,
+    action: (rows) => archiveCards(rows),
+  }]}
+  {customCell}
+/>
+```
+
+### Server-Side Excel Editing
+
+Dogfood server-side Excel editing through the same Svelar architecture used elsewhere: route -> FormRequest -> DTO -> action -> service -> policy/resource. Use action buttons in the same table to prove selection and bulk actions.
+
+```svelte
+<script lang="ts">
+  import { apiFetchJson } from '@beeblock/svelar/http';
+  import type { ButtonDef, ExportFormat } from '@beeblock/svelar-datatable';
+
+  async function saveCell(row, columnKey, newValue) {
+    const response = await apiFetchJson(`/api/datatable/cards/${row.public_id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ column: columnKey, value: newValue }),
+    });
+    if (!response.ok) throw new Error(response.error?.message ?? 'Failed to update row');
+  }
+
+  const buttons: (ButtonDef | ExportFormat)[] = [
+    'csv',
+    {
+      key: 'mark-urgent',
+      label: 'Mark urgent',
+      disabled: (rows) => rows.length === 0,
+      action: (rows) => Promise.all(rows.map((row) => saveCell(row, 'priority', 'urgent'))),
+    },
+  ];
+</script>
+
+<DataTable
+  serverUrl="/api/datatable/cards"
+  {columns}
+  selectable="multi"
+  editorMode="excel"
+  onCellEdit={saveCell}
+  {buttons}
+/>
+```
+
 ### Advanced: DataTableService
 
 ```typescript
@@ -402,11 +528,15 @@ import type { RequestEvent } from '@sveltejs/kit';
 import { json } from '@sveltejs/kit';
 
 export async function GET(event: RequestEvent) {
+  const request = DataTableRequest.fromEvent(event);
+
   const service = new DataTableService(User)
     .searchable(['name', 'email'])        // whitelist searchable columns
     .orderable(['name', 'email', 'created_at'])  // whitelist sortable columns
     .setBaseQuery((q) => q.where('active', 1))   // base WHERE
     .addComputedColumn('full_name', "first_name || ' ' || last_name")
+    .addFilter('role', (q, value) => q.where('role', value))
+    .applyFilters(request.customFilters)
     .addScope('admins', (q) => q.where('role', 'admin'));
 
   // Optionally apply scope
@@ -414,7 +544,6 @@ export async function GET(event: RequestEvent) {
     service.applyScope('admins');
   }
 
-  const request = DataTableRequest.fromEvent(event);
   const result = await service.process(request);
   return json(result);
 }
