@@ -276,7 +276,7 @@ class ScheduleMonitorService {
   private async persistResult(result: { task: string; success: boolean; duration: number; error?: string; timestamp: Date }): Promise<void> {
     await new QueryBuilder('scheduled_task_runs').insert({
       task: result.task,
-      success: result.success ? 1 : 0,
+      success: result.success,
       duration: result.duration,
       error: result.error || null,
       ran_at: result.timestamp.toISOString(),

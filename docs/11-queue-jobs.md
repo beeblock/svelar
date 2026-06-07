@@ -479,7 +479,7 @@ await Queue.work({
 });
 ```
 
-The worker blocks until `Queue.stop()` is called. In Docker, PM2 manages the lifecycle automatically (see `npx svelar make:docker`).
+The worker blocks until `Queue.stop()` is called. In Docker, the generated `worker` service manages the lifecycle automatically (see `npx svelar make:docker`).
 
 > **Docker Compose**: Redis is included by default when you run `npx svelar make:docker`. The app service gets `QUEUE_DRIVER=redis` and `REDIS_HOST=redis` automatically.
 
@@ -793,22 +793,19 @@ Queue.registerAll([
 
 ## Production Setup
 
-In production, use a process manager to keep the worker running. [PM2](https://pm2.keymetrics.io/) is a Node.js process manager that keeps your services alive, auto-restarts on crash, and handles log rotation:
+In production, run workers as long-lived services. The generated Docker topology includes a `worker` service for the `default` queue:
 
 ```bash
-# Install PM2 globally
-npm install -g pm2
-
-# Start the queue worker as a managed background process
-pm2 start "npx svelar queue:work" --name queue-worker
-
-# Run multiple workers for higher throughput
-pm2 start "npx svelar queue:work --queue=urgent" --name queue-urgent -i 2
-
-# Persist across server reboots
-pm2 startup
-pm2 save
+docker compose up -d worker
 ```
+
+For local development, keep Redis in Docker and run the worker from source:
+
+```bash
+npm run dev:worker
+```
+
+For additional queues, add another Compose service or script that passes `--queue=<name>`.
 
 ## Next Steps
 

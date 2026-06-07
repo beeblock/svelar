@@ -1,6 +1,6 @@
 # Deployment
 
-Svelar provides a complete Docker-based deployment pipeline. A single `npx svelar make:deploy` scaffolds everything: multi-stage Dockerfile, docker-compose with dev/prod overrides, GitHub Actions CI/CD, DigitalOcean droplet setup, health endpoint, PM2 config, and `.dockerignore`.
+Svelar provides a complete Docker-based deployment pipeline. A single `npx svelar make:deploy` scaffolds everything: multi-stage Dockerfile, docker-compose with dev/prod overrides, queue worker and scheduler services, GitHub Actions CI/CD, DigitalOcean droplet setup, health endpoint, and `.dockerignore`.
 
 CLI wrapper commands (`dev:up`, `prod:deploy`, etc.) let you manage containers without memorizing long compose flags.
 
@@ -19,7 +19,7 @@ CLI wrapper commands (`dev:up`, `prod:deploy`, etc.) let you manage containers w
 - [GitHub Actions CI/CD](#github-actions-cicd)
 - [Infrastructure Setup](#infrastructure-setup)
 - [Docker Compose Services](#docker-compose-services)
-- [PM2 Process Management](#pm2-process-management)
+- [Worker and Scheduler Containers](#worker-and-scheduler-containers)
 - [Environment Variables Reference](#environment-variables-reference)
 - [Reverse Proxy with Traefik](#reverse-proxy-with-traefik)
 - [SSL/TLS with Traefik](#ssltls-with-traefik)
@@ -72,7 +72,7 @@ npx svelar prod:deploy
 | Command | What it generates |
 |---------|-------------------|
 | `npx svelar make:deploy` | Runs all three commands below |
-| `npx svelar make:docker` | `Dockerfile`, `docker-compose.yml`, `docker-compose.dev.yml`, `docker-compose.prod.yml`, `.dockerignore`, `.svelar-local/.gitkeep`, `ecosystem.config.cjs`, `src/routes/api/health/+server.ts`, `docker/postgres/postgresql.conf`, `docker/postgres/init.sql`, `docker/pgbouncer/pgbouncer.ini` (PostgreSQL only) |
+| `npx svelar make:docker` | `Dockerfile`, `docker-compose.yml`, `docker-compose.dev.yml`, `docker-compose.prod.yml`, `.dockerignore`, `.svelar-local/.gitkeep`, `scripts/svelar-dev-runtime.mjs`, `src/routes/api/health/+server.ts`, `docker/postgres/postgresql.conf`, `docker/postgres/init.sql`, `docker/pgbouncer/pgbouncer.ini` (PostgreSQL only) |
 | `npx svelar make:ci` | `.github/workflows/deploy.yml` |
 | `npx svelar make:infra` | `infra/setup-droplet.sh`, `infra/droplet.env.example` |
 
@@ -156,7 +156,7 @@ your-project/
 ├── docker-compose.prod.yml             # Prod override — uses pre-built image from registry
 ├── .dockerignore                       # Excludes node_modules, .env, build artifacts
 ├── .svelar-local/.gitkeep              # Keeps optional local package archive directory available to Docker
-├── ecosystem.config.cjs                # PM2 config (web, worker, scheduler)
+├── scripts/svelar-dev-runtime.mjs      # Local worker/scheduler runtime with Docker service host ports
 ├── src/routes/api/health/+server.ts    # Health endpoint
 ├── docker/                             # Database & pooler config (PostgreSQL only)
 │   ├── postgres/
@@ -183,7 +183,7 @@ docker-compose.yml           Base config — app + infrastructure (postgres, pgb
   + docker-compose.dev.yml   Dev override — builds FROM Dockerfile target=development
   + docker-compose.prod.yml  Prod override — pulls pre-built image from registry
 
-Request flow:  App (PM2 cluster) → PgBouncer (:6432) → PostgreSQL (:5432)
+Request flow:  app container → PgBouncer (:6432) → PostgreSQL (:5432)
 ```
 
 PostgreSQL, PgBouncer, Redis, and all other services are defined in the base `docker-compose.yml` — they run identically in both dev and prod. Only the `app` service changes between overrides.
@@ -260,7 +260,6 @@ COPY --chown=sveltekit:sveltekit --from=deps /app/node_modules ./node_modules
 COPY --chown=sveltekit:sveltekit --from=builder /app/build ./build
 COPY --chown=sveltekit:sveltekit --from=builder /app/src ./src
 COPY --chown=sveltekit:sveltekit --from=builder /app/package.json ./
-COPY --chown=sveltekit:sveltekit --from=builder /app/ecosystem.config.cjs ./
 COPY --chown=sveltekit:sveltekit --from=builder /app/svelar.database.json ./
 RUN mkdir -p storage/logs storage/public && chown -R sveltekit:sveltekit storage
 USER sveltekit
@@ -605,7 +604,7 @@ Extensions and postgresql.conf are loaded automatically on both dev and prod —
 
 ### PgBouncer (connection pooling)
 
-PgBouncer is included automatically when using PostgreSQL. It sits between the app and the database, pooling connections to prevent exhaustion under load (PM2 cluster mode with multiple workers).
+PgBouncer is included automatically when using PostgreSQL. It sits between the app and the database, pooling connections to prevent exhaustion under load across web, worker, and scheduler containers.
 
 Credentials are read from the `DATABASE_URL` environment variable in `docker-compose.yml` — the PgBouncer image auto-generates its auth file at startup. No static password files are committed to git.
 
@@ -739,70 +738,41 @@ meilisearch:
 
 ---
 
-## PM2 Process Management
+## Worker and Scheduler Containers
 
-The `ecosystem.config.cjs` runs three processes inside the production container:
+Generated Docker apps run long-lived daemons as separate Compose services:
 
-| Process | Mode | Instances | Purpose |
-|---------|------|-----------|---------|
-| **web** | cluster | `max` (all CPUs) | SvelteKit production server |
-| **worker** | fork | 2 | Queue job processor |
-| **scheduler** | fork | 1 | Cron task runner |
+| Service | Command | Purpose |
+|---------|---------|---------|
+| `app` | `node build/index.js` | SvelteKit production server |
+| `worker` | `npx svelar queue:work --max-time=3600 --queue=default` | Queue job processor |
+| `scheduler` | `npx svelar schedule:run` | Cron task runner |
 
-```javascript
-module.exports = {
-  apps: [
-    {
-      name: 'web',
-      script: 'build/index.js',
-      instances: 'max',
-      exec_mode: 'cluster',
-      max_memory_restart: '512M',
-      kill_timeout: 5000,
-      listen_timeout: 10000,
-      wait_ready: true,
-    },
-    {
-      name: 'worker',
-      script: 'node_modules/.bin/svelar',
-      args: 'queue:work --max-time=3600',
-      instances: 2,
-      exec_mode: 'fork',
-      autorestart: true,
-    },
-    {
-      name: 'scheduler',
-      script: 'node_modules/.bin/svelar',
-      args: 'schedule:run',
-      instances: 1,     // Only ONE scheduler instance
-      exec_mode: 'fork',
-      autorestart: true,
-      cron_restart: '0 */6 * * *',  // Restart every 6h
-    },
-  ],
-};
+The scheduler should run as exactly one service per deployment. Svelar still uses `SchedulerLock` to prevent duplicate task execution if a second scheduler starts accidentally, but the generated topology keeps the intended process model explicit.
+
+For custom queues, add one worker service per queue:
+
+```yaml
+worker-emails:
+  build:
+    context: .
+    target: production
+  command: ["npx", "svelar", "queue:work", "--max-time=3600", "--queue=emails"]
+  env_file: .env
+  depends_on:
+    app:
+      condition: service_healthy
 ```
 
-**Important:** The scheduler must run as exactly **1 instance**. Svelar includes distributed locking (`SchedulerLock`) to prevent duplicate execution across multiple containers, but each container should still run only one scheduler process.
-
-### PM2 Commands Inside the Container
+For local development, run infrastructure in Docker and run daemons directly from source:
 
 ```bash
-# View process status
-docker compose exec app pm2 list
-
-# View real-time logs
-docker compose exec app pm2 logs
-
-# Monitor CPU/memory
-docker compose exec app pm2 monit
-
-# Restart web processes (zero-downtime reload)
-docker compose exec app pm2 reload web
-
-# Scale workers
-docker compose exec app pm2 scale worker 4
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d redis pgbouncer
+npm run dev:worker
+npm run dev:scheduler
 ```
+
+`scripts/svelar-dev-runtime.mjs` maps Docker service names to localhost and uses non-default host ports such as `PGBOUNCER_HOST_PORT=56432` and `REDIS_HOST_PORT=56379`, which avoids conflicts when several projects are running locally.
 
 ---
 
@@ -1060,7 +1030,7 @@ environment:
 docker compose -f docker-compose.yml -f docker-compose.traefik.yml up -d --scale app=3
 ```
 
-Traefik automatically detects new containers and distributes traffic across them. Each container runs its own PM2 cluster, so 3 containers on a 4-core machine = 12 web processes.
+Traefik automatically detects new app containers and distributes traffic across them.
 
 ### Sticky Sessions
 
@@ -1254,10 +1224,10 @@ npx svelar dev:logs                    # All dev services
 npx svelar dev:logs --service=app      # Just the app
 npx svelar prod:logs                   # All prod services
 
-# PM2 logs inside the container
-docker compose exec app pm2 logs web
-docker compose exec app pm2 logs worker
-docker compose exec app pm2 logs scheduler
+# Service logs
+docker compose logs -f app
+docker compose logs -f worker
+docker compose logs -f scheduler
 ```
 
 ### Container Health
@@ -1270,12 +1240,12 @@ docker compose ps
 docker inspect --format='{{json .State.Health}}' <container_id> | jq
 ```
 
-### PM2 Monitoring
+### Runtime Monitoring
 
 ```bash
-docker compose exec app pm2 monit      # Real-time metrics
-docker compose exec app pm2 list       # Process list with CPU/memory
-docker compose exec app pm2 jlist      # JSON metrics for external monitoring
+docker compose ps                      # Container status and health
+docker compose stats                   # CPU and memory
+npx svelar dev:logs --service=worker   # Worker logs in development
 ```
 
 ---
@@ -1420,8 +1390,8 @@ docker compose exec app wget -qO- http://localhost:3000/api/health
 # Check if the build exists (production)
 docker compose exec app ls -la build/
 
-# Check PM2 processes (production)
-docker compose exec app pm2 list
+# Check runtime services (production)
+docker compose ps app worker scheduler
 ```
 
 ### Database Connection Refused
@@ -1442,10 +1412,10 @@ docker compose exec app env | grep DB_
 
 ```bash
 # Check worker status
-docker compose exec app pm2 list
+docker compose ps worker
 
 # Check queue stats
-docker compose exec app pm2 logs worker
+docker compose logs -f worker
 ```
 
 ### Out of Disk Space
@@ -1459,8 +1429,8 @@ docker image prune -a
 ### Scheduler Running Duplicate Tasks
 
 ```bash
-# Verify only ONE scheduler per container
-docker compose exec app pm2 list | grep scheduler
+# Verify only ONE scheduler service is running
+docker compose ps scheduler
 
 # Check scheduler_locks table
 docker compose exec postgres psql -U svelar -c "SELECT * FROM scheduler_locks;"

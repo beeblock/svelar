@@ -481,7 +481,7 @@ const { plainTextKey, record } = await ApiKeys.create({
 });
 ```
 
-Keys are hashed and can be revoked at any time.
+Keys are hashed and can be revoked at any time. Permissions are deny-by-default: an empty permission list authenticates the key owner but does not pass permission checks. Use `'*'` only for deliberately unrestricted keys.
 
 ## Outgoing Webhooks
 

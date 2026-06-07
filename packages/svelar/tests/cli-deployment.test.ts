@@ -121,15 +121,25 @@ describe('CLI deployment and utility commands', () => {
 
     const dockerfile = readFileSync(join(tmpDir, 'Dockerfile'), 'utf8');
     const compose = readFileSync(join(tmpDir, 'docker-compose.yml'), 'utf8');
+    const composeDev = readFileSync(join(tmpDir, 'docker-compose.dev.yml'), 'utf8');
+    const devRuntime = readFileSync(join(tmpDir, 'scripts', 'svelar-dev-runtime.mjs'), 'utf8');
 
     expect(existsSync(join(tmpDir, '.svelar-local', '.gitkeep'))).toBe(true);
     expect(dockerfile).toContain('COPY .svelar-local ./.svelar-local');
     expect(dockerfile).toContain('COPY --chown=sveltekit:sveltekit --from=builder /app/src ./src');
     expect(dockerfile).toContain('COPY --chown=sveltekit:sveltekit --from=builder /app/svelar.database.json ./');
+    expect(dockerfile).not.toContain('ecosystem.config.cjs');
     expect(dockerfile).toContain('CMD ["node", "build/index.js"]');
     expect(dockerfile).toContain('http://127.0.0.1:3000/api/health');
 
     expect(compose).toContain('      target: production');
+    expect(compose).toContain('  worker:');
+    expect(compose).toContain('command: ["npx", "svelar", "queue:work", "--max-time=3600", "--queue=default"]');
+    expect(compose).toContain('  scheduler:');
+    expect(compose).toContain('command: ["npx", "svelar", "schedule:run"]');
+    expect(compose).toContain('memory: ${WORKER_MEMORY_LIMIT:-512M}');
+    expect(compose).toContain('memory: ${SCHEDULER_MEMORY_LIMIT:-256M}');
+    expect(compose).not.toContain('pm2');
     expect(compose).toContain('- ORIGIN=${APP_URL:-http://localhost:3000}');
     expect(compose).toContain('- INTERNAL_APP_URL=http://app:3000');
     expect(compose).toContain('AUTH_TYPE: scram-sha-256');
@@ -141,6 +151,13 @@ describe('CLI deployment and utility commands', () => {
     expect(compose).not.toContain('minio/minio');
     expect(compose).toContain('- "${MEILI_PORT:-5333}:7700"');
     expect(compose).toContain('http://127.0.0.1:7700/health');
+
+    expect(composeDev).toContain('- "${PGBOUNCER_HOST_PORT:-56432}:6432"');
+    expect(composeDev).toContain('- "${REDIS_HOST_PORT:-56379}:6379"');
+    expect(composeDev).toContain('- "${GOTENBERG_HOST_PORT:-53000}:3000"');
+    expect(composeDev).toContain('- "${RUSTFS_API_PORT:-5335}:9000"');
+    expect(devRuntime).toContain("spawn('npx', ['svelar'");
+    expect(devRuntime).toContain('PGBOUNCER_HOST_PORT');
   });
 
   it('builds docker compose commands for dev and prod runtime commands without shelling unsafe service names', async () => {

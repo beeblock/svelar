@@ -78,6 +78,19 @@ describe.sequential('ApiKeys', () => {
     await expect(ApiKeys.hasPermission(plainTextKey, 'posts:read')).resolves.toBe(true);
     await expect(ApiKeys.hasPermission(plainTextKey, 'posts:write')).resolves.toBe(false);
 
+    const noPermissions = await ApiKeys.create({
+      name: 'No permissions',
+      userId: user.getAttribute('id'),
+    });
+    await expect(ApiKeys.hasPermission(noPermissions.plainTextKey, 'posts:read')).resolves.toBe(false);
+
+    const wildcard = await ApiKeys.create({
+      name: 'Wildcard',
+      userId: user.getAttribute('id'),
+      permissions: ['*'],
+    });
+    await expect(ApiKeys.hasPermission(wildcard.plainTextKey, 'posts:write')).resolves.toBe(true);
+
     await expect(ApiKeys.revoke(record.id)).resolves.toBe(true);
     await expect(ApiKeys.validate(plainTextKey)).resolves.toBeNull();
     await expect(ApiKeys.revoke(record.id)).resolves.toBe(false);

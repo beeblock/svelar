@@ -23,10 +23,6 @@
  * ```
  */
 
-// SvelteKit recognizes HTTP errors by instanceof its internal HttpError class.
-// The runtime subpath is exported, but its declaration is not a normal module in every Kit version.
-// @ts-expect-error intentional runtime import from SvelteKit internals
-import { HttpError as SvelteKitHttpError } from '@sveltejs/kit/internal';
 import { Log } from '../logging/index.js';
 
 // ── Error Classes ──────────────────────────────────────────
@@ -44,19 +40,18 @@ type ErrorLike = {
 
 type HttpErrorLike = ErrorLike & ({ statusCode: number } | { status: number });
 
-export class HttpError extends SvelteKitHttpError implements ErrorLike {
+export class HttpError extends Error implements ErrorLike {
   public readonly statusCode: number;
+  public readonly status: number;
   public readonly details?: Record<string, any>;
-  declare public readonly body: Record<string, any>;
-  public name: string;
-  public readonly message: string;
-  public readonly stack?: string;
+  public readonly body: Record<string, any>;
 
   constructor(statusCode: number, message: string, details?: Record<string, any>) {
-    super(statusCode, { message, ...(details ?? {}) });
+    super(message);
     this.statusCode = statusCode;
+    this.status = statusCode;
     this.details = details;
-    this.message = message;
+    this.body = { message, ...(details ?? {}) };
     this.name = 'HttpError';
 
     if (typeof Error.captureStackTrace === 'function') {

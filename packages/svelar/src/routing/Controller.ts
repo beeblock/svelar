@@ -236,6 +236,10 @@ export abstract class Controller {
   // ── Error Handling ───────────────────────────────────────
 
   protected handleError(error: any, event: RequestEvent): Response {
+    if (error && typeof error.toResponse === 'function') {
+      return error.toResponse();
+    }
+
     if (error instanceof ValidationError) {
       return this.json(
         {

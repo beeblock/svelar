@@ -38,7 +38,7 @@ Full docs: https://svelar.dev/docs/getting-started
 | `make:channel <name>` | Create broadcast channel auth | `-p` (presence) |
 | `make:broadcasting` | Scaffold broadcasting routes | `--sse`, `--pusher`, `-f` (force) |
 | `make:plugin <name>` | Create plugin class | |
-| `make:docker` | Scaffold Docker/PM2/compose files, PgBouncer, postgresql.conf, health endpoint | `--db`, `--image`, `--soketi`, `--redis`, `--gotenberg`, `--rustfs`, `--meilisearch`, `-f` |
+| `make:docker` | Scaffold Docker/compose files, app/worker/scheduler services, local dev runtime script, PgBouncer, postgresql.conf, health endpoint | `--db`, `--image`, `--soketi`, `--redis`, `--gotenberg`, `--rustfs`, `--meilisearch`, `-f` |
 | `make:ci` | Scaffold GitHub Actions CI/CD workflow | `-f` |
 | `make:infra` | Scaffold droplet setup script + env template | `-f` |
 | `make:deploy` | Run make:docker + make:ci + make:infra | `--db`, `--image`, `--port`, `--dev-port`, `-f` |

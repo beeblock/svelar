@@ -237,9 +237,8 @@ class ApiKeyManager {
     const record = await this.validate(plainTextKey);
     if (!record) return false;
 
-    if (!record.permissions || record.permissions.length === 0) {
-      return true; // No permissions = all allowed
-    }
+    if (!record.permissions || record.permissions.length === 0) return false;
+    if (record.permissions.includes('*')) return true;
 
     return record.permissions.includes(permission);
   }

@@ -2,7 +2,7 @@
  * make:docker — Generate Docker deployment files
  *
  * Creates Dockerfile (multi-stage), docker-compose.yml, dev/prod overrides,
- * .dockerignore, PM2 ecosystem config, and health endpoint.
+ * .dockerignore, local runtime scripts, and health endpoint.
  */
 
 import { Command } from '../Command.js';
@@ -12,7 +12,7 @@ import { DeployTemplates } from './DeployTemplates.js';
 
 export class MakeDockerCommand extends Command {
   name = 'make:docker';
-  description = 'Scaffold Docker deployment files (Dockerfile, docker-compose, PM2, health endpoint)';
+  description = 'Scaffold Docker deployment files (Dockerfile, docker-compose, worker/scheduler, health endpoint)';
   arguments = [];
   flags = [
     { name: 'db', alias: 'd', description: 'Database driver: postgres, mysql, sqlite (default: postgres)', type: 'string' as const },
@@ -50,6 +50,7 @@ export class MakeDockerCommand extends Command {
     }
 
     mkdirSync(join(cwd, '.svelar-local'), { recursive: true });
+    mkdirSync(join(cwd, 'scripts'), { recursive: true });
 
     // Ensure health endpoint directory exists
     const healthDir = join(cwd, 'src', 'routes', 'api', 'health');
@@ -76,7 +77,7 @@ export class MakeDockerCommand extends Command {
       },
       {
         path: join(cwd, 'docker-compose.dev.yml'),
-        content: DeployTemplates.composeDevOverride(),
+        content: this.composeDevOverrideTemplate(db, includeRedis, includeGotenberg, includeRustFS),
         label: 'docker-compose.dev.yml',
       },
       {
@@ -95,9 +96,9 @@ export class MakeDockerCommand extends Command {
         label: '.svelar-local/.gitkeep',
       },
       {
-        path: join(cwd, 'ecosystem.config.cjs'),
-        content: this.pm2Template(),
-        label: 'ecosystem.config.cjs',
+        path: join(cwd, 'scripts', 'svelar-dev-runtime.mjs'),
+        content: this.devRuntimeScriptTemplate(),
+        label: 'scripts/svelar-dev-runtime.mjs',
       },
       {
         path: join(healthDir, '+server.ts'),
@@ -292,6 +293,32 @@ export class MakeDockerCommand extends Command {
     lines.push('      options:');
     lines.push('        max-size: "10m"');
     lines.push('        max-file: "3"');
+
+    this.appendRuntimeService(lines, {
+      name: 'worker',
+      command: '["npx", "svelar", "queue:work", "--max-time=3600", "--queue=default"]',
+      memoryLimit: '${WORKER_MEMORY_LIMIT:-512M}',
+      db,
+      redis,
+      soketi,
+      gotenberg,
+      rustfs,
+      meilisearch,
+      deps,
+    });
+
+    this.appendRuntimeService(lines, {
+      name: 'scheduler',
+      command: '["npx", "svelar", "schedule:run"]',
+      memoryLimit: '${SCHEDULER_MEMORY_LIMIT:-256M}',
+      db,
+      redis,
+      soketi,
+      gotenberg,
+      rustfs,
+      meilisearch,
+      deps,
+    });
 
     // ── PostgreSQL ──
     if (db === 'postgres') {
@@ -551,6 +578,234 @@ export class MakeDockerCommand extends Command {
     return lines.join('\n');
   }
 
+  private appendRuntimeService(lines: string[], options: {
+    name: string;
+    command: string;
+    memoryLimit: string;
+    db: string;
+    redis: boolean;
+    soketi: boolean;
+    gotenberg: boolean;
+    rustfs: boolean;
+    meilisearch: boolean;
+    deps: string[];
+  }): void {
+    lines.push('');
+    lines.push(`  ${options.name}:`);
+    lines.push('    build:');
+    lines.push('      context: .');
+    lines.push('      target: production');
+    lines.push('    restart: unless-stopped');
+    lines.push(`    command: ${options.command}`);
+    lines.push('    env_file: .env');
+    lines.push('    environment:');
+    lines.push('      - NODE_ENV=production');
+    lines.push('      - ORIGIN=${APP_URL:-http://localhost:3000}');
+    lines.push('      - INTERNAL_APP_URL=http://app:3000');
+
+    if (options.db === 'postgres') {
+      lines.push('      - DB_HOST=pgbouncer');
+      lines.push('      - DB_PORT=6432');
+    } else if (options.db === 'mysql') {
+      lines.push('      - DB_HOST=mysql');
+      lines.push('      - DB_PORT=3306');
+    }
+
+    if (options.redis) {
+      lines.push('      - REDIS_HOST=redis');
+      lines.push('      - REDIS_PORT=6379');
+      lines.push('      - REDIS_PASSWORD=${REDIS_PASSWORD:-svelarsecret}');
+      lines.push('      - QUEUE_DRIVER=redis');
+    }
+
+    if (options.soketi) {
+      lines.push('      - PUSHER_HOST=soketi');
+      lines.push('      - PUSHER_PORT=6001');
+    }
+
+    if (options.gotenberg) {
+      lines.push('      - GOTENBERG_URL=http://gotenberg:3000');
+    }
+
+    if (options.rustfs) {
+      lines.push('      - S3_ENDPOINT=http://rustfs:9000');
+      lines.push('      - S3_ACCESS_KEY=${RUSTFS_ACCESS_KEY:-svelar}');
+      lines.push('      - S3_SECRET_KEY=${RUSTFS_SECRET_KEY:-svelarsecret}');
+      lines.push('      - S3_BUCKET=${S3_BUCKET:-svelar}');
+      lines.push('      - S3_REGION=us-east-1');
+      lines.push('      - STORAGE_DISK=s3');
+    }
+
+    if (options.meilisearch) {
+      lines.push('      - MEILISEARCH_HOST=http://meilisearch:7700');
+      lines.push('      - MEILISEARCH_KEY=${MEILI_MASTER_KEY:-svelar-meili-master-key}');
+    }
+
+    lines.push('    depends_on:');
+    lines.push('      app:');
+    lines.push('        condition: service_healthy');
+    for (const dep of options.deps) {
+      lines.push(`      ${dep}:`);
+      lines.push('        condition: service_healthy');
+    }
+    lines.push('    volumes:');
+    lines.push('      - app_storage:/app/storage');
+    lines.push('    healthcheck:');
+    lines.push('      disable: true');
+    lines.push('    deploy:');
+    lines.push('      resources:');
+    lines.push('        limits:');
+    lines.push(`          memory: ${options.memoryLimit}`);
+    lines.push('          pids: 200');
+    lines.push('    logging:');
+    lines.push('      driver: json-file');
+    lines.push('      options:');
+    lines.push('        max-size: "10m"');
+    lines.push('        max-file: "3"');
+  }
+
+  private composeDevOverrideTemplate(db: string, redis: boolean, gotenberg: boolean, rustfs: boolean): string {
+    const lines: string[] = [
+      '# ── Svelar Docker Compose — Development Override ─────────',
+      '# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build',
+      '# Generated by: npx svelar make:docker',
+      '',
+      'services:',
+      '  app:',
+      '    build:',
+      '      context: .',
+      '      target: development',
+      '    ports:',
+      '      - "${DEV_PORT:-5173}:5173"',
+      '    volumes:',
+      '      - .:/app',
+      '      - /app/node_modules',
+      '    environment:',
+      '      - NODE_ENV=development',
+    ];
+
+    if (db === 'postgres') {
+      lines.push('');
+      lines.push('  pgbouncer:');
+      lines.push('    ports:');
+      lines.push('      - "${PGBOUNCER_HOST_PORT:-56432}:6432"');
+    } else if (db === 'mysql') {
+      lines.push('');
+      lines.push('  mysql:');
+      lines.push('    ports:');
+      lines.push('      - "${MYSQL_HOST_PORT:-53306}:3306"');
+    }
+
+    if (redis) {
+      lines.push('');
+      lines.push('  redis:');
+      lines.push('    ports:');
+      lines.push('      - "${REDIS_HOST_PORT:-56379}:6379"');
+    }
+
+    if (gotenberg) {
+      lines.push('');
+      lines.push('  gotenberg:');
+      lines.push('    ports:');
+      lines.push('      - "${GOTENBERG_HOST_PORT:-53000}:3000"');
+    }
+
+    if (rustfs) {
+      lines.push('');
+      lines.push('  rustfs:');
+      lines.push('    ports:');
+      lines.push('      - "${RUSTFS_API_PORT:-5335}:9000"');
+    }
+
+    lines.push('');
+    return lines.join('\n');
+  }
+
+  private devRuntimeScriptTemplate(): string {
+    return `import { existsSync, readFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+
+function loadEnvFile(path) {
+  if (!existsSync(path)) return {};
+
+  const env = {};
+  for (const rawLine of readFileSync(path, 'utf8').split(/\\r?\\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+
+    const index = line.indexOf('=');
+    if (index === -1) continue;
+
+    const key = line.slice(0, index).trim();
+    let value = line.slice(index + 1).trim();
+
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+
+    env[key] = value;
+  }
+
+  return env;
+}
+
+const fileEnv = {
+  ...loadEnvFile('.env'),
+  ...loadEnvFile('.env.local'),
+};
+
+const pgBouncerPort = process.env.PGBOUNCER_HOST_PORT ?? fileEnv.PGBOUNCER_HOST_PORT ?? '56432';
+const mysqlPort = process.env.MYSQL_HOST_PORT ?? fileEnv.MYSQL_HOST_PORT ?? '53306';
+const redisPort = process.env.REDIS_HOST_PORT ?? fileEnv.REDIS_HOST_PORT ?? '56379';
+const gotenbergPort = process.env.GOTENBERG_HOST_PORT ?? fileEnv.GOTENBERG_HOST_PORT ?? '53000';
+const rustfsApiPort = process.env.RUSTFS_API_PORT ?? fileEnv.RUSTFS_API_PORT ?? '5335';
+const meiliPort = process.env.MEILI_PORT ?? fileEnv.MEILI_PORT ?? '5333';
+const soketiPort = process.env.SOKETI_PORT ?? fileEnv.SOKETI_PORT ?? '5334';
+const dbDriver = process.env.DB_DRIVER ?? fileEnv.DB_DRIVER ?? 'postgres';
+
+const env = {
+  ...fileEnv,
+  ...process.env,
+  NODE_ENV: 'development',
+  APP_URL: process.env.APP_URL ?? fileEnv.APP_URL ?? 'http://127.0.0.1:5173',
+  DB_DRIVER: dbDriver,
+  DB_HOST: process.env.DB_HOST ?? '127.0.0.1',
+  DB_PORT: process.env.DB_PORT ?? (dbDriver === 'mysql' ? mysqlPort : pgBouncerPort),
+  DB_PREPARE: process.env.DB_PREPARE ?? 'false',
+  REDIS_HOST: process.env.REDIS_HOST ?? '127.0.0.1',
+  REDIS_PORT: process.env.REDIS_PORT ?? redisPort,
+  CACHE_DRIVER: process.env.CACHE_DRIVER ?? 'redis',
+  QUEUE_DRIVER: process.env.QUEUE_DRIVER ?? 'redis',
+  RATE_LIMIT_STORE: process.env.RATE_LIMIT_STORE ?? 'cache',
+  RATE_LIMIT_CACHE_STORE: process.env.RATE_LIMIT_CACHE_STORE ?? 'redis',
+  PUSHER_HOST: process.env.PUSHER_HOST ?? '127.0.0.1',
+  PUSHER_PORT: process.env.PUSHER_PORT ?? soketiPort,
+  PUSHER_CLIENT_HOST: process.env.PUSHER_CLIENT_HOST ?? 'localhost',
+  PUSHER_CLIENT_PORT: process.env.PUSHER_CLIENT_PORT ?? soketiPort,
+  MEILISEARCH_HOST: process.env.MEILISEARCH_HOST ?? \`http://127.0.0.1:\${meiliPort}\`,
+  GOTENBERG_URL: process.env.GOTENBERG_URL ?? \`http://127.0.0.1:\${gotenbergPort}\`,
+  S3_ENDPOINT: process.env.S3_ENDPOINT ?? \`http://127.0.0.1:\${rustfsApiPort}\`,
+};
+
+const child = spawn('npx', ['svelar', ...process.argv.slice(2)], {
+  env,
+  stdio: 'inherit',
+});
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => child.kill(signal));
+}
+
+child.on('exit', (code, signal) => {
+  if (signal) process.kill(process.pid, signal);
+  process.exit(code ?? 0);
+});
+`;
+  }
+
   private dockerignoreTemplate(): string {
     return `# Dependencies
 node_modules
@@ -601,83 +856,4 @@ __tests__
 `;
   }
 
-  private pm2Template(): string {
-    return `// ── PM2 Ecosystem Config ──────────────────────────────────
-// Manages multiple Svelar processes in production.
-//
-// Processes:
-//   1. web     — SvelteKit production server (port 3000)
-//   2. worker  — Queue job processor
-//   3. scheduler — Scheduled task runner
-//
-// Usage:
-//   pm2 start ecosystem.config.cjs
-//   pm2 logs
-//   pm2 monit
-
-module.exports = {
-  apps: [
-    {
-      name: 'web',
-      script: 'build/index.js',
-      instances: 'max',          // Use all available CPU cores
-      exec_mode: 'cluster',
-      env: {
-        NODE_ENV: 'production',
-        PORT: 3000,
-      },
-
-      // Graceful restart
-      kill_timeout: 5000,
-      listen_timeout: 10000,
-      wait_ready: true,
-
-      // Auto-restart on memory threshold
-      max_memory_restart: '512M',
-
-      // Logging
-      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
-      error_file: 'storage/logs/web-error.log',
-      out_file: 'storage/logs/web-out.log',
-      merge_logs: true,
-    },
-    {
-      name: 'worker',
-      script: 'node_modules/.bin/svelar',
-      args: 'queue:work --max-time=3600',
-      instances: 2,              // Parallel workers
-      exec_mode: 'fork',
-      autorestart: true,         // Restart when max-time reached
-      env: {
-        NODE_ENV: 'production',
-      },
-
-      // Logging
-      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
-      error_file: 'storage/logs/worker-error.log',
-      out_file: 'storage/logs/worker-out.log',
-      merge_logs: true,
-    },
-    {
-      name: 'scheduler',
-      script: 'node_modules/.bin/svelar',
-      args: 'schedule:run',
-      instances: 1,              // Only ONE scheduler instance!
-      exec_mode: 'fork',
-      autorestart: true,
-      cron_restart: '0 */6 * * *',  // Restart every 6h for safety
-      env: {
-        NODE_ENV: 'production',
-      },
-
-      // Logging
-      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
-      error_file: 'storage/logs/scheduler-error.log',
-      out_file: 'storage/logs/scheduler-out.log',
-      merge_logs: true,
-    },
-  ],
-};
-`;
-  }
 }

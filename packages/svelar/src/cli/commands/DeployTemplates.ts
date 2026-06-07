@@ -46,7 +46,6 @@ COPY --chown=sveltekit:sveltekit --from=deps /app/node_modules ./node_modules
 COPY --chown=sveltekit:sveltekit --from=builder /app/build ./build
 COPY --chown=sveltekit:sveltekit --from=builder /app/src ./src
 COPY --chown=sveltekit:sveltekit --from=builder /app/package.json ./
-COPY --chown=sveltekit:sveltekit --from=builder /app/ecosystem.config.cjs ./
 COPY --chown=sveltekit:sveltekit --from=builder /app/svelar.database.json ./
 
 RUN mkdir -p storage/logs storage/public && chown -R sveltekit:sveltekit storage

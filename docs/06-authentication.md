@@ -463,6 +463,8 @@ const { plainTextKey, record } = await ApiKeys.create({
 
 The plain text key is returned once. Svelar stores only a hash plus metadata, permissions, timestamps, and revocation state.
 
+Permissions are deny-by-default. A key with an empty permission list authenticates the user but does not pass `ApiKeys.hasPermission()`. Use explicit abilities such as `deployments:create`, or use `'*'` only for a deliberately unrestricted machine token.
+
 Clients send the token in the Authorization header:
 
 ```bash

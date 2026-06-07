@@ -354,10 +354,10 @@ describe('Make commands — DDD structure', () => {
   });
 
   describe('MakeModelCommand (DDD)', () => {
-    it('should create model in src/lib/modules/{module}/', async () => {
+    it('should create model in the module domain layer', async () => {
       const cmd = new MakeModelCommand();
       await cmd.handle(['Post'], { module: 'blog' });
-      const filePath = join(tmpDir, 'src', 'lib', 'modules', 'blog', 'Post.ts');
+      const filePath = join(tmpDir, 'src', 'lib', 'modules', 'blog', 'domain', 'models', 'Post.ts');
       expect(existsSync(filePath)).toBe(true);
       const content = readFileSync(filePath, 'utf-8');
       expect(content).toContain('class Post extends Model');
@@ -365,24 +365,24 @@ describe('Make commands — DDD structure', () => {
   });
 
   describe('MakeControllerCommand (DDD)', () => {
-    it('should create controller in src/lib/modules/{module}/', async () => {
+    it('should create controller in the module HTTP interface layer', async () => {
       const cmd = new MakeControllerCommand();
       await cmd.handle(['PostController'], { module: 'blog' });
-      const filePath = join(tmpDir, 'src', 'lib', 'modules', 'blog', 'PostController.ts');
+      const filePath = join(tmpDir, 'src', 'lib', 'modules', 'blog', 'interface', 'http', 'controllers', 'PostController.ts');
       expect(existsSync(filePath)).toBe(true);
     });
   });
 
   describe('MakeServiceCommand (DDD)', () => {
-    it('should create service in src/lib/modules/{module}/', async () => {
+    it('should create service in the module application layer', async () => {
       const cmd = new MakeServiceCommand();
       await cmd.handle(['PostService'], { module: 'blog' });
-      const filePath = join(tmpDir, 'src', 'lib', 'modules', 'blog', 'PostService.ts');
+      const filePath = join(tmpDir, 'src', 'lib', 'modules', 'blog', 'application', 'services', 'PostService.ts');
       expect(existsSync(filePath)).toBe(true);
     });
 
     it('should create a CRUD service using the module model when no --model is provided', async () => {
-      const modelDir = join(tmpDir, 'src', 'lib', 'modules', 'billing');
+      const modelDir = join(tmpDir, 'src', 'lib', 'modules', 'billing', 'domain', 'models');
       mkdirSync(modelDir, { recursive: true });
       writeFileSync(join(modelDir, 'Invoice.ts'), `import { Model } from '@beeblock/svelar/orm';
 
@@ -392,9 +392,9 @@ export class Invoice extends Model {}
       const cmd = new MakeServiceCommand();
       await cmd.handle(['Billing'], { module: 'billing', crud: true });
 
-      const filePath = join(tmpDir, 'src', 'lib', 'modules', 'billing', 'BillingService.ts');
+      const filePath = join(tmpDir, 'src', 'lib', 'modules', 'billing', 'application', 'services', 'BillingService.ts');
       const content = readFileSync(filePath, 'utf-8');
-      expect(content).toContain("import { Invoice } from './Invoice.js';");
+      expect(content).toContain("import { Invoice } from '$lib/modules/billing/domain/models/Invoice.js';");
       expect(content).toContain('extends CrudService<Invoice>');
       expect(content).toContain('protected repository(): Repository<Invoice>');
       expect(content).not.toContain('./Model.js');
@@ -402,10 +402,10 @@ export class Invoice extends Model {}
   });
 
   describe('MakeEventCommand (DDD)', () => {
-    it('should create event in src/lib/modules/{module}/', async () => {
+    it('should create event in the module domain layer', async () => {
       const cmd = new MakeEventCommand();
       await cmd.handle(['PostCreated'], { module: 'blog' });
-      const filePath = join(tmpDir, 'src', 'lib', 'modules', 'blog', 'PostCreated.ts');
+      const filePath = join(tmpDir, 'src', 'lib', 'modules', 'blog', 'domain', 'events', 'PostCreated.ts');
       expect(existsSync(filePath)).toBe(true);
     });
   });
@@ -503,6 +503,32 @@ describe('MakeDashboardCommand', () => {
 // ── New project template tests ────────────────────────────
 
 describe('New project templates', () => {
+  it('includes local worker and scheduler dev scripts', () => {
+    const pkg = JSON.parse(NewCommandTemplates.packageJson('example-app', '0.0.0'));
+
+    expect(pkg.scripts['dev:worker']).toBe('node scripts/svelar-dev-runtime.mjs queue:work --queue=default');
+    expect(pkg.scripts['dev:scheduler']).toBe('node scripts/svelar-dev-runtime.mjs schedule:run');
+  });
+
+  it('generates the local Svelar dev runtime helper', () => {
+    const script = NewCommandTemplates.svelarDevRuntimeScript();
+
+    expect(script).toContain('PGBOUNCER_HOST_PORT');
+    expect(script).toContain('REDIS_HOST_PORT');
+    expect(script).toContain("spawn('npx', ['svelar'");
+  });
+
+  it('uses CSRF-aware fetches for generated admin API mutations', () => {
+    const template = NewCommandTemplates.adminPageSvelte();
+
+    expect(template).toContain("getCookie('XSRF-TOKEN')");
+    expect(template).toContain("'X-CSRF-Token'");
+    expect(template).toContain('headers: csrfHeaders()');
+    expect(template).toContain("headers: csrfHeaders({ 'Content-Type': 'application/json' })");
+    expect(template).toContain('await refreshScheduler()');
+    expect(template).toContain("apiError(res, 'Failed to run task')");
+  });
+
   it('generates Node-testable SvelteKit hooks without virtual env imports', () => {
     const hooks = NewCommandTemplates.hooksServerTs();
 
@@ -567,7 +593,7 @@ describe('Make commands — Cross-type imports', () => {
       await cmd.handle(['PostController'], { resource: true, model: 'Post' });
       const filePath = join(tmpDir, 'src', 'lib', 'controllers', 'PostController.ts');
       const content = readFileSync(filePath, 'utf-8');
-      expect(content).toContain('../models/Post.js');
+      expect(content).toContain('$lib/models/Post.js');
     });
 
     it('MakeListenerCommand should use ../events/ path in flat mode', async () => {
@@ -575,7 +601,7 @@ describe('Make commands — Cross-type imports', () => {
       await cmd.handle(['SendNotification'], { event: 'PostCreated' });
       const filePath = join(tmpDir, 'src', 'lib', 'listeners', 'SendNotification.ts');
       const content = readFileSync(filePath, 'utf-8');
-      expect(content).toContain('../events/PostCreated.js');
+      expect(content).toContain('$lib/events/PostCreated.js');
     });
   });
 
@@ -587,21 +613,21 @@ describe('Make commands — Cross-type imports', () => {
     it('MakeControllerCommand should use ./ path in DDD mode', async () => {
       const cmd = new MakeControllerCommand();
       await cmd.handle(['PostController'], { resource: true, model: 'Post', module: 'blog' });
-      const filePath = join(tmpDir, 'src', 'lib', 'modules', 'blog', 'PostController.ts');
+      const filePath = join(tmpDir, 'src', 'lib', 'modules', 'blog', 'interface', 'http', 'controllers', 'PostController.ts');
       const content = readFileSync(filePath, 'utf-8');
-      expect(content).toContain('./Post.js');
+      expect(content).toContain('$lib/modules/blog/domain/models/Post.js');
     });
 
     it('MakeListenerCommand should use ./ path in DDD mode', async () => {
       const cmd = new MakeListenerCommand();
       await cmd.handle(['SendNotification'], { event: 'PostCreated', module: 'blog' });
-      const filePath = join(tmpDir, 'src', 'lib', 'modules', 'blog', 'SendNotification.ts');
+      const filePath = join(tmpDir, 'src', 'lib', 'modules', 'blog', 'application', 'listeners', 'SendNotification.ts');
       const content = readFileSync(filePath, 'utf-8');
-      expect(content).toContain('./PostCreated.js');
+      expect(content).toContain('$lib/modules/blog/domain/events/PostCreated.js');
     });
 
     it('MakeRouteCommand should import from the module that contains the controller', async () => {
-      const controllerDir = join(tmpDir, 'src', 'lib', 'modules', 'billing');
+      const controllerDir = join(tmpDir, 'src', 'lib', 'modules', 'billing', 'interface', 'http', 'controllers');
       mkdirSync(controllerDir, { recursive: true });
       writeFileSync(join(controllerDir, 'InvoiceController.ts'), 'export class InvoiceController {}');
 
@@ -610,7 +636,7 @@ describe('Make commands — Cross-type imports', () => {
 
       const filePath = join(tmpDir, 'src', 'routes', 'api', 'invoices', '+server.ts');
       const content = readFileSync(filePath, 'utf-8');
-      expect(content).toContain("$lib/modules/billing/InvoiceController.js");
+      expect(content).toContain("$lib/modules/billing/interface/http/controllers/InvoiceController.js");
     });
   });
 });

@@ -157,7 +157,10 @@ export function verifyJwt(token: string, secret: string, expectedAlgorithm: 'HS2
 
   // Verify signature
   const expected = createJwtSignature(header, payload, secret, headerObj.alg);
-  if (signature !== expected) return null;
+  const signatureBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (signatureBuffer.length !== expectedBuffer.length) return null;
+  if (!timingSafeEqual(signatureBuffer, expectedBuffer)) return null;
 
   // Decode and validate payload
   try {
@@ -189,6 +192,24 @@ export class AuthManager {
   }
 
   /**
+   * Create a request-local manager with the same configuration.
+   *
+   * AuthManager keeps the resolved user in memory for ergonomic `auth.user()`
+   * calls. Middleware must use a fresh instance per request so user state never
+   * leaks between concurrent requests.
+   */
+  fork(): AuthManager {
+    return new AuthManager(this.config);
+  }
+
+  /**
+   * Clear the in-memory resolved user.
+   */
+  clearUser(): void {
+    this.currentUser = null;
+  }
+
+  /**
    * Attempt session-based login.
    * Returns the user on success, null on failure.
    */
@@ -201,20 +222,29 @@ export class AuthManager {
     const identifier = credentials[this.config.identifierColumn];
     const password = credentials[this.config.passwordColumn];
 
-    if (!identifier || !password) return null;
+    if (!identifier || !password) {
+      this.currentUser = null;
+      return null;
+    }
 
     // Find user by identifier
     const user = await this.config.model
       .where(this.config.identifierColumn, identifier)
       .first();
 
-    if (!user) return null;
+    if (!user) {
+      this.currentUser = null;
+      return null;
+    }
 
     // Verify password
     const hashedPassword = user.getAttribute(this.config.passwordColumn);
     const valid = await Hash.verify(password, hashedPassword);
 
-    if (!valid) return null;
+    if (!valid) {
+      this.currentUser = null;
+      return null;
+    }
 
     this.currentUser = user;
 
@@ -243,18 +273,27 @@ export class AuthManager {
     const identifier = credentials[this.config.identifierColumn];
     const password = credentials[this.config.passwordColumn];
 
-    if (!identifier || !password) return null;
+    if (!identifier || !password) {
+      this.currentUser = null;
+      return null;
+    }
 
     const user = await this.config.model
       .where(this.config.identifierColumn, identifier)
       .first();
 
-    if (!user) return null;
+    if (!user) {
+      this.currentUser = null;
+      return null;
+    }
 
     const hashedPassword = user.getAttribute(this.config.passwordColumn);
     const valid = await Hash.verify(password, hashedPassword);
 
-    if (!valid) return null;
+    if (!valid) {
+      this.currentUser = null;
+      return null;
+    }
 
     this.currentUser = user;
 
@@ -332,7 +371,11 @@ export class AuthManager {
     if (new Date(row.expires_at) < new Date()) return null;
 
     // Revoke the old refresh token (rotation — each token is single-use)
-    await this.query(table).where('token', hashedRefresh).update({ revoked_at: new Date().toISOString() });
+    const revoked = await this.query(table)
+      .where('token', hashedRefresh)
+      .whereNull('revoked_at')
+      .update({ revoked_at: new Date().toISOString() });
+    if (revoked === 0) return null;
 
     // Resolve user and issue new pair
     const user = await this.config.model.find(row.user_id);
@@ -365,10 +408,19 @@ export class AuthManager {
     }
 
     const payload = verifyJwt(token, this.config.jwt.secret, this.config.jwt.algorithm ?? 'HS256');
-    if (!payload) return null;
+    if (!payload) {
+      this.currentUser = null;
+      return null;
+    }
+
+    if (this.config.jwt.issuer && payload.iss !== this.config.jwt.issuer) {
+      this.currentUser = null;
+      return null;
+    }
 
     const user = await this.config.model.find(payload.sub);
     if (user) this.currentUser = user;
+    else this.currentUser = null;
     return user;
   }
 
@@ -377,10 +429,14 @@ export class AuthManager {
    */
   async resolveFromSession(session: any): Promise<AuthUser | null> {
     const userId = session.get('auth_user_id');
-    if (!userId) return null;
+    if (!userId) {
+      this.currentUser = null;
+      return null;
+    }
 
     const user = await this.config.model.find(userId);
     if (user) this.currentUser = user;
+    else this.currentUser = null;
     return user;
   }
 
@@ -461,10 +517,14 @@ export class AuthManager {
    */
   async resolveFromApiToken(plainToken: string): Promise<AuthUser | null> {
     const record = await ApiKeys.validate(plainToken);
-    if (!record) return null;
+    if (!record) {
+      this.currentUser = null;
+      return null;
+    }
 
     const user = await this.config.model.find(record.userId);
     if (user) this.currentUser = user;
+    else this.currentUser = null;
     return user;
   }
 
@@ -826,11 +886,17 @@ export class AuthenticateMiddleware extends Middleware {
   }
 
   async handle(ctx: MiddlewareContext, next: NextFunction): Promise<Response | void> {
+    const authManager = typeof this.authManager.fork === 'function'
+      ? this.authManager.fork()
+      : this.authManager;
+    if (typeof authManager.clearUser === 'function') {
+      authManager.clearUser();
+    }
     let user: AuthUser | null = null;
 
     // Try session auth first
     if (ctx.event.locals.session) {
-      user = await this.authManager.resolveFromSession(ctx.event.locals.session);
+      user = await authManager.resolveFromSession(ctx.event.locals.session);
     }
 
     // Try JWT/Bearer token
@@ -842,14 +908,14 @@ export class AuthenticateMiddleware extends Middleware {
         // Try JWT first, then fall back to opaque API tokens. resolveFromToken()
         // returns null for malformed/non-JWT tokens, so fallback cannot live only in catch.
         try {
-          user = await this.authManager.resolveFromToken(token);
+          user = await authManager.resolveFromToken(token);
         } catch {
           // JWT is not configured or failed unexpectedly. Try API token below.
         }
 
         if (!user) {
           try {
-            user = await this.authManager.resolveFromApiToken(token);
+            user = await authManager.resolveFromApiToken(token);
           } catch {
             // Token table may not exist or token auth may not be configured.
           }
@@ -858,7 +924,9 @@ export class AuthenticateMiddleware extends Middleware {
     }
 
     ctx.event.locals.user = user;
-    ctx.event.locals.auth = this.authManager;
+    ctx.event.locals.auth = authManager;
+    ctx.locals.auth = authManager;
+    ctx.locals.user = user;
 
     return next();
   }

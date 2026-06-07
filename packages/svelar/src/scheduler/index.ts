@@ -574,7 +574,7 @@ export class Scheduler {
   private async persistResult(result: TaskResult): Promise<void> {
     await new QueryBuilder('scheduled_task_runs').insert({
       task: result.task,
-      success: result.success ? 1 : 0,
+      success: result.success,
       duration: result.duration,
       error: result.error || null,
       ran_at: result.timestamp.toISOString(),

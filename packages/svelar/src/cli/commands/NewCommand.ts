@@ -66,7 +66,7 @@ export class NewCommand extends Command {
       'src/lib/stores', 'src/lib/plugins',
       'src/lib/channels', 'src/lib/commands', 'src/lib/providers',
       'src/lib/database/migrations', 'src/lib/database/seeders',
-      'src/routes', 'src/routes/api',
+      'src/routes', 'src/routes/api', 'scripts',
       'static', 'storage/logs', 'storage/cache', 'storage/uploads', 'storage/sessions',
       'tests/unit', 'tests/feature', 'tests/e2e', 'src/lib/factories',
     ] : [
@@ -92,7 +92,7 @@ export class NewCommand extends Command {
       'src/lib/shared/stores', 'src/lib/shared/plugins',
       'src/lib/shared/channels', 'src/lib/shared/commands', 'src/lib/shared/providers',
       'src/lib/database/migrations', 'src/lib/database/seeders',
-      'src/routes', 'src/routes/api',
+      'src/routes', 'src/routes/api', 'scripts',
       'static', 'storage/logs', 'storage/cache', 'storage/uploads', 'storage/sessions',
       'tests/unit', 'tests/feature', 'tests/e2e', 'src/lib/factories',
     ];
@@ -120,6 +120,7 @@ export class NewCommand extends Command {
     write('src/app.ts', T.appTs());
     write('src/hooks.server.ts', T.hooksServerTs());
     write('.env.example', T.envExample());
+    write('scripts/svelar-dev-runtime.mjs', T.svelarDevRuntimeScript());
 
     // Generate .env with unique secrets so the app works immediately
     const { randomBytes } = await import('node:crypto');
@@ -131,6 +132,10 @@ export class NewCommand extends Command {
     write('.env', envContent);
 
     write('.gitignore', T.gitignore());
+    write('AGENTS.md', T.agentsMd());
+    write('CLAUDE.md', T.claudeMd());
+    write('.codex/skills/svelar-specialist/SKILL.md', T.codexSvelarSkill());
+    write('.claude/skills/svelar-specialist/SKILL.md', T.claudeSvelarSkill());
     write('svelar.database.json', T.svelarDatabaseJson());
     write('components.json', T.componentsJson());
     write('src/lib/utils.ts', T.utilsCn());

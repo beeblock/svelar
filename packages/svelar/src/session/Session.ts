@@ -74,6 +74,7 @@ export class Session {
   private dirty = false;
   private flashData: Record<string, any> = {};
   private previousFlashData: Record<string, any> = {};
+  private invalidatedIds: string[] = [];
 
   constructor(
     public readonly id: string,
@@ -182,6 +183,7 @@ export class Session {
     const newId = Session.generateId();
     (this as any).id = newId;
     this.dirty = true;
+    this.invalidatedIds.push(oldId);
 
     // Mark old session ID as invalid in any stores that wrote it
     const store = sessionIdToStore.get(oldId);
@@ -191,6 +193,16 @@ export class Session {
     sessionIdToStore.delete(oldId);
 
     return newId;
+  }
+
+  /**
+   * Return and clear IDs invalidated during this request.
+   * @internal
+   */
+  consumeInvalidatedIds(): string[] {
+    const ids = this.invalidatedIds;
+    this.invalidatedIds = [];
+    return ids;
   }
 
   static generateId(): string {
@@ -513,6 +525,10 @@ export class SessionMiddleware extends Middleware {
 
     // Execute next middleware / handler
     const response = await next();
+
+    for (const invalidatedId of session.consumeInvalidatedIds()) {
+      await this.config.store.destroy(invalidatedId);
+    }
 
     // Persist session if modified
     if (session.isDirty()) {

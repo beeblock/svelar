@@ -439,6 +439,9 @@ const { plainTextKey, record } = await ApiKeys.create({
   permissions: ['read', 'write'],
 });
 
+// Empty permission arrays are deny-by-default.
+// Use '*' only for deliberately unrestricted machine tokens.
+
 // List user's keys
 const keys = await ApiKeys.listForUser(user.id);
 
@@ -784,11 +787,11 @@ Uploads.configure({ driver: 'database', maxFileSize: 10 * 1024 * 1024 }); // 10M
 
 ### Queue & Scheduler
 - [ ] Switch queue driver from `sync` to `redis`: set `QUEUE_DRIVER=redis` in `.env`
-- [ ] Run scheduler as a daemon: `npx svelar schedule:run`
-- [ ] Use PM2 or systemd to keep processes running:
+- [ ] Run workers and scheduler as dedicated services:
   ```bash
-  pm2 start "npx svelar schedule:run" --name scheduler
+  docker compose up -d worker scheduler
   ```
+- [ ] In local development, use `npm run dev:worker` and `npm run dev:scheduler`
 - [ ] Run `npx svelar make:dashboard` and use `/admin` to monitor queue and scheduler
 
 ### Docker Deployment
@@ -801,7 +804,7 @@ docker compose exec app npx svelar seed:run
 ```
 
 ### Logging & Monitoring
-- [ ] Configure log rotation in PM2
+- [ ] Configure container log retention
 - [ ] Monitor queue depth and job failures via admin dashboard
 - [ ] Set up error tracking (Sentry, etc.)
 - [ ] Monitor the health endpoint: `GET /api/health`

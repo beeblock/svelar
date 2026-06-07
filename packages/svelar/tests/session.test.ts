@@ -1,8 +1,9 @@
+import { createHmac } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { Session, MemorySessionStore, DatabaseSessionStore, FileSessionStore, RedisSessionStore } from '../src/session/Session';
+import { Session, MemorySessionStore, DatabaseSessionStore, FileSessionStore, RedisSessionStore, SessionMiddleware } from '../src/session/Session';
 import { Connection } from '../src/database/Connection';
 import { svelarCoreMigrations } from '../src/database/CoreMigrations';
 import { Migrator } from '../src/database/Migration';
@@ -542,6 +543,40 @@ describe.sequential('DatabaseSessionStore', () => {
     await new Schema().dropTable('sessions');
 
     await expect(store.read('missing-table-session')).rejects.toThrow('sessions');
+  });
+
+  it('destroys regenerated session IDs for database-backed sessions', async () => {
+    const secret = 'database-session-regeneration-secret';
+    const store = new DatabaseSessionStore();
+    const oldId = Session.generateId();
+    const signedOldId = `${oldId}.${createHmac('sha256', secret).update(oldId).digest('base64url')}`;
+
+    await store.write(oldId, { auth_user_id: 123 }, 3600);
+
+    const middleware = new SessionMiddleware({ store, secret });
+    const request = new Request('http://localhost/dashboard', {
+      headers: {
+        Cookie: `svelar_session=${encodeURIComponent(signedOldId)}`,
+      },
+    });
+    const ctx: any = {
+      event: {
+        request,
+        locals: {},
+      },
+      locals: {},
+      params: {},
+    };
+
+    const response = await middleware.handle(ctx, async () => {
+      ctx.event.locals.session.forget('auth_user_id');
+      ctx.event.locals.session.regenerateId();
+      return new Response('ok');
+    });
+
+    expect(response).toBeInstanceOf(Response);
+    await expect(store.read(oldId)).resolves.toBeNull();
+    await expect(store.read(ctx.event.locals.session.id)).resolves.toEqual({});
   });
 });
 

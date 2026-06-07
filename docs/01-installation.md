@@ -29,6 +29,7 @@ That's it. The CLI scaffolds a complete SvelteKit + Svelar project, installs dep
 - **Vite Config** — All `@beeblock/svelar/*` aliases, SSR config, and `fs.allow` pre-wired
 - **EventServiceProvider** — Pre-wired for event listeners, subscribers, and model observers
 - **Application Bootstrap** — `app.ts` bootstraps the service provider lifecycle
+- **Agent Guidance** — `AGENTS.md`, `CLAUDE.md`, and local Codex/Claude Svelar skills are generated so AI agents follow the same framework conventions
 
 ### Project Structure (DDD Modular Monolith)
 
@@ -81,6 +82,10 @@ my-app/
 │   ├── uploads/                  # User uploads
 │   └── sessions/                 # File-based sessions
 ├── static/
+├── AGENTS.md
+├── CLAUDE.md
+├── .codex/skills/svelar-specialist/SKILL.md
+├── .claude/skills/svelar-specialist/SKILL.md
 ├── vite.config.ts
 ├── svelte.config.js
 ├── svelar.database.json
@@ -208,8 +213,8 @@ This generates:
 | File | Description |
 |------|-------------|
 | `Dockerfile` | Multi-stage Node 20 Alpine adapter-node build that runs `node build/index.js` and includes app source/config for CLI runtime tasks |
-| `docker-compose.yml` | App + PgBouncer/PostgreSQL + Redis + Soketi + Gotenberg + RustFS |
-| `ecosystem.config.cjs` | PM2 config: web (clustered), queue workers, scheduler |
+| `docker-compose.yml` | Web app + queue worker + scheduler + PgBouncer/PostgreSQL + Redis + Soketi + Gotenberg + RustFS |
+| `scripts/svelar-dev-runtime.mjs` | Runs local worker/scheduler commands against Docker services with safe host ports |
 | `.dockerignore` | Excludes node_modules, .env, build artifacts |
 | `.svelar-local/.gitkeep` | Keeps optional local package archive directory available for Docker builds |
 
@@ -247,13 +252,20 @@ docker compose logs -f app
 docker compose down
 ```
 
-### PM2 Processes
+### Runtime Processes
 
 | Process | Description | Instances |
 |---------|-------------|-----------|
-| web | SvelteKit production server | All CPU cores |
-| worker | Queue job processor | 2 |
-| scheduler | Scheduled task runner | 1 |
+| app | SvelteKit production server | 1 container by default |
+| worker | Queue job processor for the `default` queue | 1 container by default |
+| scheduler | Scheduled task runner | 1 container |
+
+For local development, keep infrastructure in Docker and run the daemons from source:
+
+```bash
+npm run dev:worker
+npm run dev:scheduler
+```
 
 ## Manual Setup
 

@@ -201,18 +201,16 @@ npx svelar schedule:run --once
 
 ### Production
 
-In production, run **one scheduler instance** per deployment. Use [PM2](https://pm2.keymetrics.io/) to keep it alive:
+In production, run **one scheduler instance** per deployment. The generated Docker topology includes a dedicated `scheduler` service:
 
 ```bash
-# Install PM2 globally
-npm install -g pm2
+docker compose up -d scheduler
+```
 
-# Start the scheduler as a managed background process
-pm2 start "npx svelar schedule:run" --name svelar-scheduler
+For local development, keep infrastructure in Docker and run the scheduler from source:
 
-# Persist across server reboots
-pm2 startup
-pm2 save
+```bash
+npm run dev:scheduler
 ```
 
 Or trigger it from a system cron job:

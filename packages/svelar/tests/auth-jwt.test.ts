@@ -213,6 +213,30 @@ describe.sequential('JWT refresh tokens', () => {
     await expect(auth.refreshJwt(first!.refreshToken!)).resolves.toBeNull();
     await expect(auth.refreshJwt(second!.refreshToken!)).resolves.toBeNull();
   });
+
+  it('rejects JWTs with a mismatched configured issuer', async () => {
+    const user = await RefreshUser.where('email', 'refresh@example.com').first();
+    const now = Math.floor(Date.now() / 1000);
+    const token = signJwt({
+      sub: user.getAttribute('id'),
+      iat: now,
+      exp: now + 60,
+      iss: 'wrong-issuer',
+    }, secret, 'HS384');
+
+    const issuerAuth = new AuthManager({
+      guard: 'jwt',
+      model: RefreshUser,
+      jwt: {
+        secret,
+        issuer: 'expected-issuer',
+        algorithm: 'HS384',
+      },
+    });
+
+    await expect(issuerAuth.resolveFromToken(token)).resolves.toBeNull();
+    expect(issuerAuth.user()).toBeNull();
+  });
 });
 
 describe('AuthManager', () => {
@@ -285,5 +309,45 @@ describe('AuthenticateMiddleware', () => {
     expect(apiToken).toBe('opaque-api-token');
     expect(ctx.event.locals.user).toBe(user);
     expect(nextCalled).toBe(true);
+  });
+
+  it('uses a request-local auth manager instance', async () => {
+    const user = { getAttribute: (key: string) => key === 'id' ? 321 : null };
+    const rootAuth = {
+      forkCalls: 0,
+      user: () => null,
+      fork() {
+        this.forkCalls++;
+        return {
+          clearUser() {},
+          user: () => user,
+          resolveFromSession: async () => user,
+          resolveFromToken: async () => null,
+          resolveFromApiToken: async () => null,
+        };
+      },
+    };
+
+    const middleware = new AuthenticateMiddleware(rootAuth as any);
+    const ctx = {
+      event: {
+        request: {
+          headers: { get: () => null },
+        },
+        locals: {
+          session: { get: () => 321 },
+        },
+      },
+      params: {},
+      locals: {},
+    } as MiddlewareContext;
+
+    await middleware.handle(ctx, async () => new Response('ok'));
+
+    expect(rootAuth.forkCalls).toBe(1);
+    expect(ctx.event.locals.user).toBe(user);
+    expect(ctx.event.locals.auth).not.toBe(rootAuth);
+    expect(ctx.event.locals.auth.user()).toBe(user);
+    expect(rootAuth.user()).toBeNull();
   });
 });

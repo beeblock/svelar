@@ -17,6 +17,7 @@ Svelar is a Laravel-inspired TypeScript framework on SvelteKit 2. Work from the 
 - Use both FormRequest classes and DTOs for write paths. FormRequest owns validation and authorization with shared schema rules; DTOs carry validated data into services/actions. Do not pass raw `z.infer` objects or unvalidated `FormData` directly into services.
 - In SvelteKit pages that submit forms, use the shared schema with Superforms when the feature contract says frontend and backend validation are shared. Do not leave dogfood apps on ad hoc form parsing if the goal is to prove Svelar flow.
 - Superforms must work end to end. Page actions using `use:enhance`/`superForm` must return a resource-like envelope that follows Svelar docs: `{ data: ... }` for the action payload and optional top-level `meta` for action name, message, form, validation errors, permissions, or other UI context. Do not invent top-level `status`/`ok`/`message` shapes per page. Include the posted Superform object in `meta.form` on success, validation failure, and service failure; otherwise the enhanced client cannot update field state. Render validation failures inline under every input, set `aria-invalid`, and do not also show duplicate validation toasts/alerts for ordinary field errors. Disable controls from the action pending/delayed state, show visible success or service-level error feedback such as an alert/toast, and update any response/result panel from the action result instead of waiting for cached `load` data or manual browser refresh.
+- Browser-side `fetch` calls that mutate state must include Svelar's CSRF token header, usually by reading the `XSRF-TOKEN` cookie and sending `X-CSRF-Token`. Regular enhanced forms can rely on the form flow, but admin dashboards and API buttons that POST/PUT/PATCH/DELETE directly must be CSRF-aware and surface API errors in the UI.
 - Use Svelar ORM and migrations. Avoid raw SQL unless it is an explicit low-level driver/infrastructure exception.
 - Keep one migration per table or focused schema change.
 - Use integer primary keys internally when useful, plus UUID v7 or ULID public identifiers for API exposure.
@@ -24,11 +25,13 @@ Svelar is a Laravel-inspired TypeScript framework on SvelteKit 2. Work from the 
 - For PostgreSQL production checks, use PgBouncer with prepared statements disabled and `pg_stat_statements` enabled.
 - Use RustFS for local S3-compatible object storage; do not add MinIO.
 - Keep production build externals for optional adapters: `bcrypt`, `argon2`, `bullmq`, `ioredis`, `meilisearch`, `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner`.
+- Runtime infrastructure must be baked into Svelar generators. `npx svelar new` should include `npm run dev:worker`, `npm run dev:scheduler`, and `scripts/svelar-dev-runtime.mjs`; `npx svelar make:docker` should generate separate `app`, `worker`, and `scheduler` Compose services. Do not reintroduce PM2/ecosystem configs as the default Docker process model.
 - When documentation changes, mirror it in `/Users/rzeradev/projects/beeblock/svelar-docs/` and update `/Users/rzeradev/projects/beeblock/svelar-docs/src/routes/api/search/+server.ts` if docs are added, renamed, removed, or retitled.
 - When building a dogfood app, keep a step-by-step timeline in the app docs and validate behavior in the browser.
 - PDF tests that claim Gotenberg coverage must set `PDF_DRIVER=gotenberg`; a healthy Gotenberg container alone is not enough.
 - Realtime tests should cover SSE and Soketi/Pusher separately. A Soketi health ping is not enough; prove visible cross-browser updates.
 - Storage tests should prove upload metadata, storage writes, browser-safe authorized reads, and image previews when applicable. Do not render internal Docker service URLs such as `http://rustfs:9000/...` to browser users.
+- When dogfooding `@beeblock/svelar-datatable`, prove both client and server tables. Server mode should cover case-insensitive search, custom `serverParams` filters, optional Meilisearch-backed Searchable models, Excel-mode cell editing through FormRequest -> DTO -> action -> service -> resource, and selectable action buttons.
 
 ## Feature Coverage
 
@@ -46,7 +49,7 @@ When hardening Svelar core or a dogfood app, explicitly account for these areas:
 - Storage/uploads: local and S3-compatible disks, RustFS Docker service, upload metadata, authorized app download/proxy routes, image previews, no leaked internal S3 endpoints.
 - PDF/mail/search: Gotenberg sync and webhook flows, PDF storage/download, Postmark/Resend/Mailtrap/log drivers, Meilisearch indexing/search/fallbacks.
 - Realtime: SSE rooms/streams and Soketi/Pusher websocket events tested separately, with visible cross-browser updates.
-- Production Docker: adapter-node, optional dependency externals, PgBouncer with `DB_PREPARE=false`, `pg_stat_statements`, non-default local ports, healthchecks, GitHub Actions-safe build behavior.
+- Production Docker: adapter-node, optional dependency externals, separate `app`/`worker`/`scheduler` services, generated local `dev:worker`/`dev:scheduler` scripts, PgBouncer with `DB_PREPARE=false`, `pg_stat_statements`, non-default local ports, healthchecks, GitHub Actions-safe build behavior.
 - Observability: logs, audit trail, runtime health checks, failed job visibility, exception rendering/reporting.
 
 ## Dogfood App Standard
