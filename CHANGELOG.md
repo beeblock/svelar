@@ -6,18 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+No changes yet.
+
+## [0.7.7] - 2026-06-07
+
+### Fixed
+
+- **shadcn-svelte scaffold install** — generated apps now use explicit `npm exec --package shadcn-svelte@latest -- shadcn-svelte ...` syntax so the shadcn installer resolves correctly inside npm scripts.
+
+## [0.7.6] - 2026-06-07
+
+### Fixed
+
+- **Generated app first-run setup** — `npx svelar new` now prepares SvelteKit before running migrations/seeders, so fresh apps can bootstrap immediately after dependency installation.
+- **Zod scaffold production build compatibility** — Zod apps include Valibot as a compatibility dependency for the `sveltekit-superforms/adapters` barrel while still generating Zod schemas and requests.
+
+## [0.7.5] - 2026-06-07
+
+### Added
+
+- **Valibot Laravel-like rules helper** — `@beeblock/svelar/validation/valibot` now exports `v`, `rules`, and `validate`, mapping Svelar's common rule names to Valibot schemas.
+
+## [0.7.4] - 2026-06-07
+
 ### Added
 
 - **Valibot validation provider support** — `npx svelar new` can scaffold Zod or Valibot apps via `--validation=zod|valibot`, stores the choice in `svelar.validation.json`, and keeps schema/request/entity generators aligned with the selected provider.
 - **Valibot runtime validation paths** — FormRequest, controller body validation, and forms helpers now accept Valibot schemas alongside Zod schemas.
-- **Valibot Laravel-like rules helper** — `@beeblock/svelar/validation/valibot` now exports `v`, `rules`, and `validate`, mapping Svelar's common rule names to Valibot schemas.
 - **Valibot documentation and tests** — validation/forms docs, generated agent guidance, and core tests now cover Valibot scaffold templates, generator output, FormRequest validation, and controller validation.
 
-### Fixed
-
-- **Generated app first-run setup** — `npx svelar new` now prepares SvelteKit before running migrations/seeders and uses explicit `npm exec --package shadcn-svelte@latest -- shadcn-svelte ...` syntax, so fresh Zod and Valibot apps complete their post-install setup cleanly.
-
-## [0.7.2] - 2026-06-07
+## [0.7.3] - 2026-06-07
 
 ### Fixed
 
