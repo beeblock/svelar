@@ -70,6 +70,7 @@ const featureGates = [
 	['SQLite/PostgreSQL/MySQL portability', 'npm run smoke:db'],
 	['Production adapter-node browser flow', 'npm run smoke:db:prod'],
 	['Package publish dry-run for @beeblock/svelar and npx svelar', 'npm run release:dry-run'],
+	['High/critical dependency vulnerabilities', 'npm run security:audit'],
 	['Route -> controller -> DTO/schema -> action -> service -> repository -> model -> resource', 'generated-app certification'],
 	['Complex ORM queries, soft deletes, and UUID/ULID model identifiers', 'packages/svelar/tests/query-builder.test.ts + generated-app certification'],
 	['Events/listeners/model observer lifecycle/provider wiring', 'packages/svelar/tests/events.test.ts + generated-app certification'],
@@ -118,6 +119,7 @@ if (inventoryOnly) {
 }
 
 run('npm', ['run', 'test', '-w', 'packages/svelar']);
+run('npm', ['run', 'security:audit']);
 run('npm', ['run', 'release:dry-run']);
 run('npm', ['run', 'smoke:redis']);
 run('npm', ['run', 'smoke:pdf']);

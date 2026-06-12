@@ -14,10 +14,12 @@ No changes yet.
 
 - **Meilisearch Docker default** — `npx svelar make:docker` now includes Meilisearch by default, matching the documented production stack. Use `--no-meilisearch` to opt out.
 - **Generated agent guardrails** — generated `AGENTS.md`, `CLAUDE.md`, Codex skills, and Claude skills now include explicit hard stops against implementing CRUD directly in SvelteKit route files, skipping controllers/FormRequests/DTOs/resources, hardcoding app data/config/secrets/IDs, creating tables at runtime instead of migrations, putting default/demo data outside seeders, or using raw SQL for normal CRUD.
+- **Dependency security gate** — added `npm run security:audit`, a scheduled/PR GitHub Actions audit workflow, Dependabot configuration, and an expiring allowlist for upstream audit findings that cannot be safely fixed yet.
 
 ### Fixed
 
 - **Docker documentation drift** — deployment, installation, search, security, and getting-started docs now describe Meilisearch as part of the default Docker scaffold instead of an opt-in service.
+- **Security audit process** — documented how to triage npm audit findings without blindly running `npm audit fix --force`.
 
 ## [0.7.8] - 2026-06-12
 

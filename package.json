@@ -41,7 +41,9 @@
     "smoke:s3": "node scripts/release-smoke.mjs --app ddd --db sqlite --s3 --skip-shadcn --skip-build",
     "certify": "node scripts/certify-release.mjs",
     "certify:fast": "node scripts/certify-release.mjs --fast",
-    "certify:inventory": "node scripts/certify-release.mjs --inventory"
+    "certify:inventory": "node scripts/certify-release.mjs --inventory",
+    "security:audit": "node scripts/security-audit.mjs --min-severity=high",
+    "security:audit:all": "npm audit --workspaces"
   },
   "devDependencies": {
     "typescript": "^5.7.0"

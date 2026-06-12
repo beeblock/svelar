@@ -253,6 +253,28 @@ Never interpolate user input into raw SQL strings.
 
 ---
 
+## Dependency Vulnerability Management
+
+Svelar keeps dependency security checks in the normal release loop:
+
+```bash
+npm run security:audit       # Fails on non-allowed high/critical findings
+npm run security:audit:all   # Prints the full npm audit report
+npm run certify              # Includes the high/critical security gate
+```
+
+The repository also ships:
+
+- `.github/dependabot.yml` for weekly dependency update PRs.
+- `.github/workflows/security.yml` for pull request, push, weekly, and manual audit runs.
+- `.security-audit-allowlist.json` for explicit temporary exceptions.
+
+Every allowlisted advisory must include a reason and an expiration date. Use it only when the upstream fix path is unsafe or unavailable, such as npm suggesting a downgrade or unrelated major break. New high or critical findings that are not allowlisted fail the security gate.
+
+Do not run `npm audit fix --force` blindly. Review the proposed dependency changes, run `npm run build`, `npm run test`, and the relevant smoke/certification checks before publishing.
+
+---
+
 ## Production Checklist
 
 Before deploying to production:

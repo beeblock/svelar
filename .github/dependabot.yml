@@ -1,0 +1,34 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/Sao_Paulo
+    open-pull-requests-limit: 10
+    versioning-strategy: increase-if-necessary
+    labels:
+      - dependencies
+      - security
+    groups:
+      sveltekit-tooling:
+        patterns:
+          - "@sveltejs/*"
+          - "svelte"
+          - "vite"
+          - "vitest"
+      build-tooling:
+        patterns:
+          - "tsup"
+          - "esbuild"
+          - "typescript"
+      runtime-adapters:
+        patterns:
+          - "bullmq"
+          - "ioredis"
+          - "meilisearch"
+          - "@aws-sdk/*"
+          - "pdfkit"
+          - "exceljs"

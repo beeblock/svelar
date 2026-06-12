@@ -1,0 +1,14 @@
+[
+  {
+    "package": "esbuild",
+    "url": "https://github.com/advisories/GHSA-gv7w-rqvm-qjhr",
+    "expires": "2026-07-12",
+    "reason": "Blocked by current tsup dependency range; npm audit suggests downgrading tsup, which is not an acceptable fix. Revisit when tsup releases a patched esbuild range."
+  },
+  {
+    "package": "tsup",
+    "via": "esbuild",
+    "expires": "2026-07-12",
+    "reason": "Transitive esbuild advisory through tsup. Kept explicit so new high/critical advisories still fail the audit."
+  }
+]
