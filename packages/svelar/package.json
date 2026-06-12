@@ -273,7 +273,7 @@
 		"drizzle-orm": "^0.45.2",
 		"jiti": "^2.7.0",
 		"pusher-js": "^8.5.0",
-		"zod": "^3.23.0"
+		"zod": "^4.4.3"
 	},
 	"devDependencies": {
 		"@types/node": "^22.0.0",
