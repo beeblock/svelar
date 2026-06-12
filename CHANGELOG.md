@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+No changes yet.
+
+## [0.7.9] - 2026-06-12
+
 ### Changed
 
 - **Meilisearch Docker default** — `npx svelar make:docker` now includes Meilisearch by default, matching the documented production stack. Use `--no-meilisearch` to opt out.
