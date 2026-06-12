@@ -268,7 +268,7 @@
 		"prepublishOnly": "npm run build"
 	},
 	"dependencies": {
-		"@tabler/icons-svelte": "^3.0.0",
+		"@tabler/icons-svelte": "^3.44.0",
 		"date-fns": "^4.1.0",
 		"drizzle-orm": "^0.45.2",
 		"jiti": "^2.7.0",
