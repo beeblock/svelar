@@ -10,13 +10,16 @@
 - Svelar is a Laravel-inspired TypeScript framework on SvelteKit 2.
 - Focus on `packages/svelar` core first. Do not touch plugin packages unless the user explicitly asks.
 - Treat the docs as the product contract, but verify code, generated templates, tests, and runtime behavior before assuming a feature is production-ready.
-- Project scaffolding is owned by core through `npx svelar new`; there is no separate create-svelar package to maintain.
+- Project scaffolding is owned by core through `npx @beeblock/svelar new`; generated apps then use the project-local `npx svelar ...` CLI. There is no separate create-svelar package to maintain.
 
 ## Working Rules
 
 - Use Svelar CLI commands to scaffold project artifacts whenever a generator exists. Prefer `npx svelar make:entity <Name> --module <module> --fields "<field:type,...>" --crud` for a full resource scaffold, and use focused generators when only one artifact is needed: `make:model`, `make:migration`, `make:controller`, `make:service`, `make:repository`, `make:schema`, `make:request`, `make:resource`, `make:action`, `make:job`, `make:task`, `make:command`, `make:route`, `make:docker`, `make:dashboard`, and `make:broadcasting`.
 - In DDD apps, module artifacts belong in layered folders: `domain/models`, `domain/events`, `domain/observers`, `domain/policies`, `application/actions`, `application/dto`, `application/listeners`, `application/notifications`, `application/services`, `infrastructure/repositories`, `interface/http/controllers`, `interface/http/requests`, `interface/http/resources`, and `contracts/schemas`.
-- Keep the Laravel-style flow consistent: route -> controller -> request/schema validation shared with frontend -> action/service -> repository -> model/resource -> response and side effects.
+- Keep the Laravel-style flow consistent: route -> controller/page action -> FormRequest/shared schema validation -> DTO -> action -> service -> repository -> model/resource -> response and side effects.
+- Use both FormRequest classes and DTOs for write paths. FormRequest validates and authorizes; DTO carries validated data into actions/services.
+- Use shared contract schemas for backend FormRequests and frontend Superforms. Keep validation consistent with `svelar.validation.json` (`@beeblock/svelar/validation` for Zod, `@beeblock/svelar/validation/valibot` for Valibot).
+- Use `$lib/...` aliases for app-owned imports instead of deep relative paths.
 - Use Svelar ORM, models, repositories, and migrations. Avoid raw SQL except explicit low-level driver behavior that the ORM cannot represent yet.
 - Create one migration per table or focused schema change.
 - Support SQLite, PostgreSQL, and MySQL out of the box. Cross-driver test database changes when feasible.

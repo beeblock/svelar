@@ -10,13 +10,17 @@
 - This is a TypeScript monorepo for Svelar, a Laravel-inspired framework on top of SvelteKit 2.
 - `packages/svelar` is the core framework package.
 - Focus `packages/svelar` core first. Do not touch plugin packages unless the user explicitly asks.
-- Project scaffolding is owned by `packages/svelar` through the published `svelar new` CLI command.
+- Project scaffolding is owned by `packages/svelar` through `npx @beeblock/svelar new`; generated apps then use the project-local `npx svelar ...` CLI.
 - `packages/svelar-*` packages are framework plugins/extensions and must stay consistent with core plugin conventions.
 
 ## Working Rules
 
 - Use Svelar CLI commands to scaffold project artifacts whenever a generator exists.
-- Keep the Laravel-like flow consistent: route -> controller -> shared schema/request validation -> service/action -> repository -> model/resource -> response and side effects.
+- Keep the Laravel-like flow consistent: route -> controller/page action -> FormRequest/shared schema validation -> DTO -> action -> service -> repository -> model/resource -> response and side effects.
+- Use both FormRequest classes and DTOs for write paths. FormRequest validates and authorizes; DTO carries validated data into actions/services.
+- Use shared contract schemas for backend FormRequests and frontend Superforms. Keep validation consistent with `svelar.validation.json` (`@beeblock/svelar/validation` for Zod, `@beeblock/svelar/validation/valibot` for Valibot).
+- In DDD apps, keep module artifacts in layered folders: `contracts/schemas`, `domain/models`, `domain/events`, `domain/observers`, `domain/policies`, `application/actions`, `application/dto`, `application/listeners`, `application/notifications`, `application/services`, `infrastructure/repositories`, `interface/http/controllers`, `interface/http/requests`, and `interface/http/resources`.
+- Use `$lib/...` aliases for app-owned imports instead of deep relative paths.
 - Use Svelar ORM and migrations. Avoid raw SQL unless it is an explicit low-level driver/infrastructure exception.
 - Keep one migration per table or focused schema change.
 - Prefer production-grade fixes that harden behavior instead of bypassing validation, auth, CSRF, typing, or security controls.

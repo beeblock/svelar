@@ -619,6 +619,21 @@ describe('New project templates', () => {
     expect(script).toContain("spawn('npx', ['svelar'");
   });
 
+  it('ships detailed Codex and Claude Svelar skills in generated apps', () => {
+    const skill = NewCommandTemplates.codexSvelarSkill();
+
+    expect(skill).toContain('Use Svelar CLI generators before hand-writing artifacts');
+    expect(skill).toContain('Use controllers for HTTP/API resources');
+    expect(skill).toContain('FormRequest validates and authorizes');
+    expect(skill).toContain('DTO carries validated data into actions/services');
+    expect(skill).toContain('npx svelar make:entity Invoice --module=billing');
+    expect(skill).toContain('application/dto/<Dto>.ts');
+    expect(skill).toContain('svelar.validation.json');
+    expect(skill).toContain('@beeblock/svelar/validation/valibot');
+    expect(skill).toContain('Use a narrow public application service/query/facade');
+    expect(NewCommandTemplates.claudeSvelarSkill()).toBe(skill);
+  });
+
   it('loads dotenv values into process.env for generated Vite dev and build runtime', () => {
     const template = NewCommandTemplates.viteConfig();
 

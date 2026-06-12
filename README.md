@@ -1,31 +1,201 @@
 # Svelar
 
-**Laravel-inspired framework on top of SvelteKit 2**
+Laravel-inspired framework and application scaffold for SvelteKit 2.
 
-Svelar brings the developer experience of Laravel to the modern TypeScript/Svelte ecosystem. It provides an Eloquent-like ORM over Drizzle, an Artisan-like CLI, middleware pipelines, IoC container, and all the conventions that make Laravel productive — all built for SvelteKit 2.
+Svelar brings Laravel-style conventions to TypeScript and SvelteKit: a DDD-friendly module structure, Eloquent-like models, migrations, FormRequests, DTOs, actions, services, repositories, policies, queues, scheduler tasks, events, listeners, observers, storage, mail, PDF generation, search, broadcasting, and a project-local Artisan-like CLI.
 
 ## Quick Start
 
 ```bash
-# Scaffold a new project
 npx @beeblock/svelar new my-app
 cd my-app
 npm run dev
 ```
 
-The short `npx @beeblock/svelar` runs the CLI from the published core package. Generated apps install `@beeblock/svelar`, so project-local commands can use `npx svelar ...`.
-
-Or add to an existing SvelteKit project:
+For a Valibot scaffold instead of the default Zod scaffold:
 
 ```bash
-npm install @beeblock/svelar drizzle-orm better-sqlite3
+npx @beeblock/svelar new my-app --validation=valibot
 ```
 
-## Publishing
-
-The CLI is published with `@beeblock/svelar`; use `npx @beeblock/svelar new` for first-run scaffolding and `npx svelar ...` inside generated apps:
+Use `npx @beeblock/svelar new` when npm needs to fetch the package for a new app. Generated apps install `@beeblock/svelar`, so project-local commands use the shorter binary:
 
 ```bash
+npx svelar make:entity Invoice --module=billing --fields "title:string,total:number,status:enum(draft,paid)" --crud
+npx svelar migrate
+npm run dev:worker
+npm run dev:scheduler
+```
+
+The scaffold installs dependencies, installs shadcn-svelte UI components, generates secure `.env` secrets, runs migrations, seeds users, and ships Codex/Claude Svelar guidance files.
+
+Default seeded accounts:
+
+```text
+Admin: admin@svelar.dev / admin123
+Demo:  demo@svelar.dev / password
+```
+
+## What You Get
+
+- **DDD modular structure** with `domain`, `application`, `infrastructure`, `interface/http`, and `contracts/schemas` layers.
+- **Route to resource flow**: route -> controller/page action -> FormRequest/shared schema -> DTO -> action/service -> repository -> model/resource -> response.
+- **Validation choice** with Zod or Valibot. One shared contract schema remains the source of truth for backend FormRequests/DTOs and frontend Superforms.
+- **ORM and migrations** over Drizzle, with SQLite, PostgreSQL, and MySQL support, focused migrations, relationships, casts, soft deletes, observers, UUID v7/ULID helpers, and public identifiers.
+- **Auth and security** with sessions, JWT, refresh tokens, API tokens, CSRF, rate limiting, request signatures, policies, roles, permissions, teams, OTP, password resets, and email verification.
+- **Queues and scheduler** with sync/database/Redis BullMQ workers, retry/failure handling, database-backed scheduler locks, local `dev:worker` and `dev:scheduler` scripts, and dashboard monitoring.
+- **Events and listeners** for side effects, plus observer registration through providers. Slow or retryable listeners can dispatch queue jobs.
+- **Realtime** through SSE channels and Pusher-compatible Soketi/WebSocket broadcasting.
+- **Storage and uploads** with local and S3-compatible disks, including RustFS for local Docker.
+- **PDF, mail, search, Excel, webhooks, audit, logs, notifications, feature flags, i18n, forms, HTTP helpers, testing helpers, and UI primitives**.
+- **Production Docker scaffolding** with app, worker, scheduler, PostgreSQL/PgBouncer, Redis, Soketi, Gotenberg, RustFS, Meilisearch, health checks, and non-default local service ports.
+
+## Project Structure
+
+Default scaffolds use a DDD modular monolith layout:
+
+```text
+my-app/
+├── src/
+│   ├── app.ts
+│   ├── hooks.server.ts
+│   ├── lib/
+│   │   ├── modules/
+│   │   │   └── posts/
+│   │   │       ├── contracts/schemas/
+│   │   │       ├── domain/
+│   │   │       │   ├── events/
+│   │   │       │   ├── models/
+│   │   │       │   ├── observers/
+│   │   │       │   └── policies/
+│   │   │       ├── application/
+│   │   │       │   ├── actions/
+│   │   │       │   ├── dto/
+│   │   │       │   ├── listeners/
+│   │   │       │   ├── notifications/
+│   │   │       │   └── services/
+│   │   │       ├── infrastructure/repositories/
+│   │   │       └── interface/http/
+│   │   │           ├── controllers/
+│   │   │           ├── requests/
+│   │   │           └── resources/
+│   │   ├── shared/
+│   │   │   ├── channels/
+│   │   │   ├── commands/
+│   │   │   ├── jobs/
+│   │   │   ├── middleware/
+│   │   │   ├── providers/
+│   │   │   └── scheduler/
+│   │   └── database/
+│   │       ├── migrations/
+│   │       └── seeders/
+│   └── routes/
+├── storage/
+├── svelar.database.json
+├── svelar.validation.json
+└── package.json
+```
+
+Prefer the DDD layout for production apps. Use `--flat` only for small experiments:
+
+```bash
+npx @beeblock/svelar new my-app --flat
+```
+
+## CLI
+
+First-run scaffolding:
+
+```bash
+npx @beeblock/svelar new my-app
+npx @beeblock/svelar new my-app --validation=zod
+npx @beeblock/svelar new my-app --validation=valibot
+npx @beeblock/svelar new my-app --flat
+```
+
+Common project-local commands:
+
+```bash
+npx svelar make:entity Post --module=posts --fields "title:string,body:text,published:boolean" --crud
+npx svelar make:model User
+npx svelar make:migration create_posts_table
+npx svelar make:controller PostController
+npx svelar make:request CreatePostRequest
+npx svelar make:resource PostResource
+npx svelar make:job SendWelcomeEmail
+npx svelar make:task PruneAuditLogs
+npx svelar make:event UserRegistered
+npx svelar make:listener SendWelcomeEmailListener
+npx svelar make:observer UserObserver
+npx svelar make:docker
+npx svelar make:dashboard
+npx svelar make:broadcasting
+npx svelar migrate
+npx svelar seed:run
+npx svelar routes:list
+npx svelar queue:work
+npx svelar schedule:run
+npx svelar tinker
+```
+
+`make:entity` is the main Laravel-style resource generator. It creates the model, focused migration, contract schema, DTOs, FormRequests, actions, resource, repository, service, controller, and route pieces.
+
+## Validation
+
+Svelar supports Zod and Valibot. The scaffold choice is stored in `svelar.validation.json`, and generators read that file so schemas, requests, and entity scaffolds stay consistent.
+
+```bash
+npx @beeblock/svelar new zod-app --validation=zod
+npx @beeblock/svelar new valibot-app --validation=valibot
+```
+
+Zod imports come from:
+
+```ts
+import { z, rules } from '@beeblock/svelar/validation';
+```
+
+Valibot imports come from:
+
+```ts
+import { v, rules } from '@beeblock/svelar/validation/valibot';
+```
+
+Both providers keep the same architecture: shared contract schema -> FormRequest validation/authorization -> DTO -> action/service.
+
+## Module Communication
+
+Use events for side effects:
+
+```ts
+await Event.dispatch(new UserRegistered(user));
+```
+
+Listeners can do immediate work or dispatch queue jobs for slow/retryable work.
+
+For request/response reads across modules, use a narrow public application service/query/facade from the owning module and return plain DTO/contract data. Do not import another module's models, repositories, controllers, or internal services as your cross-module API.
+
+## Database And Runtime Services
+
+Generated apps support SQLite by default and can use PostgreSQL or MySQL. Production Docker scaffolds can include:
+
+- PostgreSQL through PgBouncer with prepared statements disabled where needed
+- `pg_stat_statements` for slow-query visibility
+- Redis for cache, sessions, and BullMQ queues
+- Soketi for Pusher-compatible WebSockets
+- Gotenberg for PDF conversion
+- RustFS for local S3-compatible object storage
+- Meilisearch for full-text search
+
+The generated Docker files use separate app, worker, and scheduler services. Local development can use the generated `npm run dev:worker` and `npm run dev:scheduler` scripts without rebuilding containers on every code change.
+
+## Release Verification
+
+Core release checks live in the monorepo root:
+
+```bash
+npm run test
+npm run build
 npm run smoke:ddd
 npm run smoke:flat
 npm run smoke:browser
@@ -36,254 +206,27 @@ npm run smoke:db:prod
 npm run smoke:redis
 npm run smoke:pdf
 npm run smoke:search
+npm run smoke:s3
 npm run smoke:pgbouncer
 npm run certify:inventory
 npm run certify
 npm run release:dry-run
-npm run release
 ```
 
-Run `npm run certify` before publishing. It prints the release certification inventory, runs the core test suite, then runs Redis, PDF, Meilisearch, S3, and PgBouncer/`pg_stat_statements` service smoke plus the full generated-app database and production-browser smoke gate. The smoke checks build and pack the local core package, scaffold real apps into the sibling `svelar-testing-area`, install UI components, run migrations and seeders, execute generated tests, verify production builds, and exercise the generated app in a real browser, including real `EventSource` checks for SSE public/private/presence channels. DDD smoke apps also receive an injected certification test that covers the intended `route -> controller -> DTO/schema -> action -> service -> repository -> model -> resource` flow, complex ORM queries, events/listeners, model observers, queues, middleware/rate limiting, sessions, SSE public/private/presence broadcasting, and Postmark/Resend/Mailtrap mail transport payloads across the configured database driver, Redis cache/session/BullMQ behavior when `REDIS_URL` is present, PDFKit/Gotenberg behavior when `GOTENBERG_URL` is present, Meilisearch `Searchable` indexing when `MEILISEARCH_HOST` is present, S3-compatible storage when `S3_CERTIFICATION` is present, and PostgreSQL through PgBouncer with `pg_stat_statements` when `PGBOUNCER_CERTIFICATION` is present. Use `npm run smoke:browser:headed` when you want to watch Chromium open and step through the browser smoke flow locally. The database, Redis, Gotenberg, Meilisearch, RustFS, and PgBouncer smoke scripts start Docker containers with random localhost ports, so they do not require 5432, 3306, 6379, 3000, 6432, 7700, or 9000 to be free. If Playwright has not downloaded Chromium locally yet, run `cd ../svelar-testing-area/apps/svelar-smoke-ddd && npx playwright install chromium`. The release script publishes `@beeblock/svelar`, which includes the `svelar` binary. npm blocks the unscoped `svelar` package name, so there is no separate shim package.
+`npm run certify` builds and packs the local core package, scaffolds real apps into the sibling `svelar-testing-area`, runs migrations/seeders/tests/builds, and exercises browser-visible flows. Service smoke checks start Docker services on non-default/random host ports so they do not conflict with other local projects.
 
-## Features
+Publish only `@beeblock/svelar`. It includes the `svelar` binary. There is no separate unscoped `svelar` package because npm blocks that package name as too similar to `svelte`.
 
-**ORM** — Eloquent-like API over Drizzle ORM with models, relationships (HasOne, HasMany, BelongsTo, BelongsToMany), query builder, eager loading, attribute casting, and lifecycle hooks.
+## Documentation
 
-**Database** — Multi-database support (SQLite, PostgreSQL, MySQL), Laravel-like schema builder, migrations with batch tracking and rollback, and seeders.
+Start here:
 
-**Authentication** — Session-based and JWT auth, password hashing (scrypt/bcrypt/argon2), API tokens, auth middleware, and registration helpers.
-
-**Middleware** — Pipeline architecture integrated with SvelteKit hooks. Built-in CORS, rate limiting, CSRF, logging, and session middleware.
-
-**Controllers** — Base controller with JSON/redirect/HTML response helpers, Zod validation, Form Request classes, and resource routing.
-
-**IoC Container** — Service container with bind/singleton/instance, aliases, tags, and service providers with register/boot lifecycle.
-
-**CLI** — Artisan-like scaffolding: `make:model`, `make:migration`, `make:controller`, `make:middleware`, `make:provider`, `make:seeder`, `migrate`, and `tinker` REPL.
-
-**Events** — Typed event dispatcher with listeners, one-time listeners, wildcards, and subscriber classes.
-
-**Cache** — Memory, file, and Redis drivers with `remember`, `pull`, TTL, increment/decrement.
-
-**Queue** — Background job processing with sync and memory drivers, retry logic, and failure handling.
-
-**Mail** — Email abstraction with SMTP, Postmark, Resend, Mailtrap, log, and null drivers. Mailable classes for structured emails.
-
-**Notifications** — Multi-channel notifications (mail, database, custom) with Notification classes.
-
-**Broadcasting** — Server-Sent Events for real-time updates, no external dependencies.
-
-**Storage** — Filesystem abstraction with local driver (S3 ready), recursive file listing, copy, move.
-
-**Logging** — Structured logging with console, file, and stack channels. JSON and text formats.
-
-**Validation** — Zod-based with Laravel-like rule helpers and Form Request classes.
-
-## Usage Examples
-
-### Models & ORM
-
-```typescript
-import { Model } from '@beeblock/svelar/orm';
-
-class User extends Model {
-  static table = 'users';
-  static fillable = ['name', 'email', 'password'];
-  static hidden = ['password'];
-
-  declare id: number;
-  declare name: string;
-  declare email: string;
-
-  posts() {
-    return this.hasMany(Post, 'user_id');
-  }
-}
-
-// Query
-const users = await User.where('active', true).orderBy('name').get();
-const user = await User.find(1);
-const paginated = await User.query().paginate(1, 20);
-
-// Create
-const user = await User.create({ name: 'John', email: 'john@example.com' });
-
-// Update
-await user.update({ name: 'Jane' });
-
-// Eager loading
-const usersWithPosts = await User.with('posts').get();
-```
-
-### Controllers
-
-```typescript
-// src/lib/controllers/UserController.ts
-import { Controller, type RequestEvent } from '@beeblock/svelar/routing';
-import { z } from '@beeblock/svelar/validation';
-
-class UserController extends Controller {
-  async index(event: RequestEvent) {
-    return this.json(await User.all());
-  }
-
-  async store(event: RequestEvent) {
-    const data = await this.validate(event, z.object({
-      email: z.string().email(),
-      name: z.string().min(2),
-    }));
-    return this.created(await User.create(data));
-  }
-}
-
-// src/routes/api/users/+server.ts
-import { resource } from '@beeblock/svelar/routing';
-const { GET, POST } = resource(UserController);
-export { GET, POST };
-```
-
-### Hooks & Middleware
-
-```typescript
-// src/hooks.server.ts
-import { createSvelarHooks, LoggingMiddleware, CorsMiddleware } from '@beeblock/svelar';
-import { SessionMiddleware, MemorySessionStore } from '@beeblock/svelar/session';
-
-export const handle = createSvelarHooks({
-  middleware: [
-    LoggingMiddleware,
-    new CorsMiddleware({ origin: '*' }),
-    new SessionMiddleware({ store: new MemorySessionStore() }),
-  ],
-});
-```
-
-### Authentication
-
-```typescript
-import { AuthManager, Hash } from '@beeblock/svelar';
-
-const auth = new AuthManager({
-  guard: 'jwt',
-  model: User,
-  jwt: { secret: process.env.JWT_SECRET! },
-});
-
-// Register
-const user = await auth.register({
-  name: 'John',
-  email: 'john@example.com',
-  password: 'secret123',
-});
-
-// Login (JWT)
-const result = await auth.attemptJwt({
-  email: 'john@example.com',
-  password: 'secret123',
-});
-// result.token, result.user, result.expiresAt
-```
-
-### Events
-
-```typescript
-import { Event } from '@beeblock/svelar/events';
-
-class UserRegistered {
-  constructor(public readonly user: User) {}
-}
-
-Event.listen(UserRegistered, async (e) => {
-  await sendWelcomeEmail(e.user);
-});
-
-await Event.dispatch(new UserRegistered(user));
-```
-
-### Cache
-
-```typescript
-import { Cache } from '@beeblock/svelar/cache';
-
-await Cache.put('key', 'value', 3600);
-const value = await Cache.get('key', 'default');
-
-const users = await Cache.remember('all-users', 600, () => User.all());
-```
-
-### Queue
-
-```typescript
-import { Queue, Job } from '@beeblock/svelar/queue';
-
-class SendEmail extends Job {
-  constructor(private userId: number) { super(); }
-  async handle() {
-    const user = await User.findOrFail(this.userId);
-    await Mailer.send({ to: user.email, subject: 'Hi!', text: 'Hello!' });
-  }
-}
-
-await Queue.dispatch(new SendEmail(1));
-```
-
-## CLI Commands
-
-```bash
-npx svelar make:model User -a          # Model + migration + resource controller
-npx svelar make:migration create_posts_table
-npx svelar make:controller PostController --resource
-npx svelar make:middleware Auth
-npx svelar make:provider AppServiceProvider
-npx svelar make:seeder UsersSeeder
-npx svelar migrate                     # Run pending migrations
-npx svelar migrate --rollback          # Rollback last batch
-npx svelar migrate --status            # Show migration status
-npx svelar tinker                      # Interactive REPL
-```
-
-## Project Structure
-
-```
-my-app/
-├── src/
-│   ├── routes/              # SvelteKit file-based routes
-│   ├── lib/
-│   │   ├── controllers/     # Request controllers
-│   │   ├── models/          # Eloquent-like models
-│   │   ├── middleware/       # Custom middleware
-│   │   ├── providers/       # Service providers
-│   │   └── database/
-│   │       ├── migrations/  # Database migrations
-│   │       └── seeders/     # Database seeders
-│   ├── app.ts               # Application bootstrap
-│   └── hooks.server.ts      # SvelteKit hooks with middleware
-├── .env
-└── package.json
-```
-
-## Database Support
-
-Svelar supports SQLite, PostgreSQL, and MySQL out of the box through Drizzle ORM:
-
-```typescript
-import { Connection } from '@beeblock/svelar';
-
-Connection.configure({
-  default: 'sqlite',
-  connections: {
-    sqlite: { driver: 'sqlite', filename: 'database.db' },
-    postgres: { driver: 'postgres', host: 'localhost', database: 'myapp', user: 'postgres' },
-    mysql: { driver: 'mysql', host: 'localhost', database: 'myapp', user: 'root' },
-  },
-});
-```
-
-## Packages
-
-| Package | Description |
-|---------|-------------|
-| `@beeblock/svelar` | Core framework, CLI, project scaffolder, middleware, auth, ORM, and utilities |
+- [Getting Started](docs/00-getting-started.md)
+- [Installation](docs/01-installation.md)
+- [Validation & DTOs](docs/05-validation-dtos.md)
+- [Architecture & Module Communication](docs/20-architecture.md)
+- [Deployment](docs/29-deployment.md)
+- [Release Certification](docs/47-release-certification.md)
 
 ## License
 

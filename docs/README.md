@@ -94,6 +94,7 @@ npm run smoke:db:prod
 npm run smoke:redis
 npm run smoke:pdf
 npm run smoke:search
+npm run smoke:s3
 npm run smoke:pgbouncer
 npm run certify:inventory
 npm run certify
@@ -112,9 +113,18 @@ my-app/
 │   ├── hooks.server.ts           # Middleware pipeline (createSvelarApp)
 │   ├── lib/
 │   │   ├── modules/              # Domain modules (DDD)
-│   │   │   ├── auth/             # User.ts, UserObserver.ts, AuthController.ts, AuthService.ts
-│   │   │   ├── billing/          # Invoice.ts, BillingService.ts
-│   │   │   └── posts/            # Post.ts, PostController.ts, PostRepository.ts
+│   │   │   ├── auth/
+│   │   │   │   ├── contracts/schemas/
+│   │   │   │   ├── domain/models/
+│   │   │   │   ├── application/actions/
+│   │   │   │   ├── infrastructure/repositories/
+│   │   │   │   └── interface/http/
+│   │   │   └── posts/
+│   │   │       ├── contracts/schemas/
+│   │   │       ├── domain/models/
+│   │   │       ├── application/actions/
+│   │   │       ├── infrastructure/repositories/
+│   │   │       └── interface/http/
 │   │   ├── shared/               # Cross-cutting concerns
 │   │   │   ├── middleware/       # Custom middleware
 │   │   │   ├── components/       # Shared Svelte components
@@ -125,8 +135,6 @@ my-app/
 │   │   │   ├── commands/         # Custom CLI commands
 │   │   │   ├── providers/        # Service providers (EventServiceProvider, etc.)
 │   │   │   └── scheduler/        # Scheduled tasks
-│   │   ├── events/               # Event classes (npx svelar make:event)
-│   │   ├── listeners/            # Listener classes (npx svelar make:listener)
 │   │   └── database/
 │   │       ├── migrations/       # Database schema changes
 │   │       └── seeders/          # Seed data
@@ -148,7 +156,7 @@ my-app/
 └── vite.config.ts
 ```
 
-Each **module** under `modules/` is a self-contained domain with its own `domain/`, `application/`, `infrastructure/`, `interface/http/`, and `contracts/` layers. The `shared/` folder holds cross-cutting infrastructure that spans multiple domains.
+Each **module** under `modules/` is a self-contained domain with its own `domain/`, `application/`, `infrastructure/`, `interface/http/`, and `contracts/schemas` layers. The `shared/` folder holds cross-cutting infrastructure that spans multiple domains.
 
 ## Architecture
 
@@ -163,9 +171,9 @@ Controller (handle request, delegate)
    ↓
 FormRequest (validation & authorization) -> DTO
    ↓
-Service (orchestrate business logic)
-   ↓
 Action (single use-case execution)
+   ↓
+Service (orchestrate business logic)
    ↓
 Repository (data access abstraction)
    ↓
@@ -190,14 +198,16 @@ Model (ORM, database interaction)
 
 ### Module Communication
 
-Modules **never import each other directly**. Cross-module communication goes through the event system:
+Use events for side effects:
 
 ```
-Auth Module ──► Event: UserRegistered ──► Billing Module (CreateFreePlan)
-                                      ──► Notifications Module (SendWelcomeEmail)
+Auth Module ──► Event: UserRegistered ──► Billing Module listener (CreateFreePlan)
+                                      ──► Notifications listener (SendWelcomeEmail)
 ```
 
-All event-to-listener mappings and model observers are registered in the `EventServiceProvider`, giving you a single place to see how your modules interact.
+For request/response reads across module boundaries, use a narrow public application service/query/facade from the owning module and return plain DTO/contract data. Do not import another module's models, repositories, controllers, or internal services as your cross-module API.
+
+All event-to-listener mappings and model observers are registered in the `EventServiceProvider`, giving you a single place to see side-effect wiring.
 
 See [Architecture & Module Communication](./20-architecture.md) for the full guide, including patterns, anti-patterns, shared contracts, and testing strategies.
 
@@ -210,7 +220,7 @@ Svelar configuration happens in `src/app.ts`:
 import { Connection } from '@beeblock/svelar/database';
 import { Hash } from '@beeblock/svelar/hashing';
 import { AuthManager } from '@beeblock/svelar/auth';
-import { User } from './lib/models/User.js';
+import { User } from '$lib/modules/auth/domain/models/User.js';
 
 // Database
 Connection.configure({
