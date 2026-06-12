@@ -3,7 +3,16 @@
   "version": "0.1.0",
   "description": "OAuth social authentication plugin for Svelar — Google and GitHub",
   "type": "module",
-  "keywords": ["svelar-plugin", "social-auth", "oauth", "google", "github", "svelte", "sveltekit", "socialite"],
+  "keywords": [
+    "svelar-plugin",
+    "social-auth",
+    "oauth",
+    "google",
+    "github",
+    "svelte",
+    "sveltekit",
+    "socialite"
+  ],
   "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -37,7 +46,13 @@
       "import": "./src/ui/*"
     }
   },
-  "files": ["dist", "src/ui", "src/publishable", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "src/ui",
+    "src/publishable",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsup && tsc --emitDeclarationOnly",
     "dev": "tsup --watch",
@@ -50,13 +65,15 @@
     "svelte": "^5.0.0"
   },
   "peerDependenciesMeta": {
-    "@beeblock/svelar": { "optional": false }
+    "@beeblock/svelar": {
+      "optional": false
+    }
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "svelte": "^5.56.3",
     "tsup": "^8.5.0",
     "typescript": "^5.7.0",
-    "vitest": "^4.1.8",
-    "svelte": "^5.0.0"
+    "vitest": "^4.1.8"
   }
 }
