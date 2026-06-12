@@ -44,7 +44,7 @@
     "stripe": { "optional": false }
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "@types/node": "^25.9.3",
     "stripe": "^21.0.1",
     "tsup": "^8.5.0",
     "typescript": "^5.7.0",
