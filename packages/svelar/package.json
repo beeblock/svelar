@@ -269,7 +269,7 @@
 	},
 	"dependencies": {
 		"@tabler/icons-svelte": "^3.0.0",
-		"date-fns": "^4.1.0",
+		"date-fns": "^4.4.0",
 		"drizzle-orm": "^0.45.2",
 		"jiti": "^2.7.0",
 		"pusher-js": "^8.5.0",
