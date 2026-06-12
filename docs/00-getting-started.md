@@ -394,7 +394,7 @@ docker compose exec app npx svelar migrate
 docker compose exec app npx svelar seed:run
 ```
 
-This sets up: your adapter-node app, PostgreSQL through PgBouncer, Redis, and optional Soketi (WebSockets), Gotenberg (PDFs), RustFS (S3-compatible storage), and Meilisearch.
+This sets up: your adapter-node app, PostgreSQL through PgBouncer, Redis, Soketi (WebSockets), Gotenberg (PDFs), RustFS (S3-compatible storage), and Meilisearch.
 
 See the [Production Checklist](./17-saas-guide.md#production-checklist) for the full list.
 

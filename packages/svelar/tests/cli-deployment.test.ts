@@ -116,7 +116,6 @@ describe('CLI deployment and utility commands', () => {
 
     await new MakeDockerCommand().handle([], {
       force: true,
-      meilisearch: true,
     });
 
     const dockerfile = readFileSync(join(tmpDir, 'Dockerfile'), 'utf8');
@@ -158,6 +157,19 @@ describe('CLI deployment and utility commands', () => {
     expect(composeDev).toContain('- "${RUSTFS_API_PORT:-5335}:9000"');
     expect(devRuntime).toContain("spawn('npx', ['svelar'");
     expect(devRuntime).toContain('PGBOUNCER_HOST_PORT');
+  });
+
+  it('allows opting out of Meilisearch in generated Docker templates', async () => {
+    await new MakeDockerCommand().handle([], {
+      force: true,
+      meilisearch: false,
+    });
+
+    const compose = readFileSync(join(tmpDir, 'docker-compose.yml'), 'utf8');
+
+    expect(compose).not.toContain('  meilisearch:');
+    expect(compose).not.toContain('MEILISEARCH_HOST=http://meilisearch:7700');
+    expect(compose).not.toContain('meili_data:');
   });
 
   it('builds docker compose commands for dev and prod runtime commands without shelling unsafe service names', async () => {

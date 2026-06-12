@@ -10,10 +10,16 @@ Svelar provides a `Searchable` mixin that integrates your ORM models with [Meili
 npm install meilisearch
 ```
 
-You need a running Meilisearch instance. For Docker setups, use:
+You need a running Meilisearch instance. The default Docker setup includes Meilisearch:
 
 ```bash
-npx svelar make:docker --meilisearch
+npx svelar make:docker
+```
+
+Disable it only when unused:
+
+```bash
+npx svelar make:docker --no-meilisearch
 ```
 
 Or run Meilisearch standalone:

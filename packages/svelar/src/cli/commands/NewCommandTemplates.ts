@@ -1131,11 +1131,43 @@ coverage/
 
 - Follow the Svelar architecture: route -> controller/page action -> FormRequest/shared schema validation -> DTO -> action/service -> repository -> model/resource -> response.
 - Use Svelar CLI generators before hand-writing artifacts when a generator exists.
+- For CRUD/API features, start with \`npx svelar make:entity ... --crud\` or the focused \`make:controller\`, \`make:request\`, \`make:schema\`, \`make:action\`, \`make:resource\`, \`make:repository\`, and \`make:model\` commands. If you skip a generator, explain the reason before editing files.
 - Use Svelar ORM and migrations. Avoid raw SQL unless it is a low-level driver/infrastructure exception.
 - Keep one migration per table or focused schema change.
 - Use shared schemas for backend validation and frontend forms. Use Superforms where app forms need shared validation.
 - Keep validation consistent with \`svelar.validation.json\`. Use Zod schemas in Zod apps and Valibot schemas in Valibot apps.
 - Use policies, permissions, teams, middleware, rate limits, sessions, jobs, events, listeners, observers, cache, storage, search, PDF, and broadcasting through Svelar APIs instead of ad hoc implementations.
+
+## Hard Stops
+
+- Do not implement CRUD directly inside \`src/routes/**/+server.ts\`. Route files should bind or call controllers and stay thin.
+- Do not put validation, authorization, persistence, and response shaping all in a SvelteKit action or API route.
+- Do not create a write path without a shared schema, FormRequest, DTO, action/service, repository/model, and resource/consistent response envelope.
+- Do not create database tables from runtime code. Use migrations.
+- Do not use raw SQL for normal CRUD/query work. Use models, repositories, and the Svelar ORM/query builder.
+- If existing code violates these rules, stop adding more of the same pattern and first refactor the touched flow toward Svelar conventions.
+
+## Data, Config, And Seeders
+
+- Never hardcode app data in routes, controllers, actions, services, repositories, or Svelte components.
+- Schema changes go in migrations. Do not create or alter tables from runtime code, route handlers, services, stores, jobs, or app bootstrap.
+- Demo/default/reference data goes in seeders. Use \`npx svelar make:seeder\` or the existing seeder structure, then run \`npx svelar seed:run\`.
+- Test data goes in factories or test setup, not production seeders or route handlers.
+- Runtime settings go through \`.env\`, \`.env.example\`, \`src/app.ts\`, and Svelar config helpers. Do not hardcode secrets, URLs, ports, bucket names, provider keys, feature flags, user IDs, team IDs, role IDs, or permission IDs.
+- Permission and role names may be named constants/contracts, but assignment of initial roles/permissions belongs in seeders.
+- File paths, public URLs, mail provider names, queue names, disk names, and search index names should come from config or central constants, not scattered string literals.
+- If a feature needs initial admin/demo records, create or update a seeder and document the login/test data.
+
+## Feature Checklist
+
+- HTTP/API: route file -> controller -> FormRequest -> DTO -> action/service -> repository/model -> resource/response.
+- Page form: shared schema -> Superforms -> page action -> FormRequest/DTO/action -> resource-like \`{ data, meta }\` result.
+- Database: migration per table/focused change, model, repository, seeder/factory where needed.
+- Authorization: FormRequest \`authorize\`, policies for model decisions, roles/permissions/teams where feature access is user-configurable.
+- Side effects: events/listeners/observers; queue jobs for slow or retryable work.
+- Runtime services: use Svelar cache, queue, scheduler, storage/uploads, PDF, mail, search, broadcasting, audit/logging, and webhooks APIs instead of one-off integrations.
+- UI: loading states, inline validation, no duplicate validation toasts, success/error feedback, empty states, and realtime updates where expected.
+- Tests: add focused unit/feature/browser tests for the behavior touched, including permissions and failure cases.
 
 ## Imports
 
@@ -1174,6 +1206,7 @@ Use this skill for Svelar app work. Svelar is Laravel-inspired on SvelteKit 2. F
 ## Non-Negotiable Rules
 
 - Use Svelar CLI generators before hand-writing artifacts whenever a generator exists.
+- For CRUD/API features, start with \`npx svelar make:entity ... --crud\` or the focused \`make:controller\`, \`make:request\`, \`make:schema\`, \`make:action\`, \`make:resource\`, \`make:repository\`, and \`make:model\` commands. If you skip a generator, explain the reason before editing files.
 - Use controllers for HTTP/API resources. SvelteKit page server actions may orchestrate page forms, but business workflows still go through FormRequest -> DTO -> action/service.
 - Default flow: route -> controller/page action -> FormRequest/shared schema validation -> DTO -> action -> service -> repository -> model/resource -> response.
 - Use both FormRequest classes and DTOs for write paths. FormRequest validates and authorizes; DTO carries validated data into actions/services.
@@ -1188,6 +1221,37 @@ Use this skill for Svelar app work. Svelar is Laravel-inspired on SvelteKit 2. F
 - Use generated shadcn-svelte components for app UI. Reserve Svelar UI components for framework surfaces.
 - Use Svelte 5 runes in \`.svelte\` files only: \`$props\`, \`$state\`, \`$derived\`, \`$effect\`, and \`{@render children()}\`.
 - Do not use Svelte runes in plain \`.ts\` files.
+
+## Hard Stops
+
+- Do not implement CRUD directly inside \`src/routes/**/+server.ts\`. Route files should bind or call controllers and stay thin.
+- Do not put validation, authorization, persistence, and response shaping all in a SvelteKit action or API route.
+- Do not create a write path without a shared schema, FormRequest, DTO, action/service, repository/model, and resource/consistent response envelope.
+- Do not create database tables from runtime code. Use migrations.
+- Do not use raw SQL for normal CRUD/query work. Use models, repositories, and the Svelar ORM/query builder.
+- If existing code violates these rules, stop adding more of the same pattern and first refactor the touched flow toward Svelar conventions.
+
+## Data, Config, And Seeders
+
+- Never hardcode app data in routes, controllers, actions, services, repositories, or Svelte components.
+- Schema changes go in migrations. Do not create or alter tables from runtime code, route handlers, services, stores, jobs, or app bootstrap.
+- Demo/default/reference data goes in seeders. Use \`npx svelar make:seeder\` or the existing seeder structure, then run \`npx svelar seed:run\`.
+- Test data goes in factories or test setup, not production seeders or route handlers.
+- Runtime settings go through \`.env\`, \`.env.example\`, \`src/app.ts\`, and Svelar config helpers. Do not hardcode secrets, URLs, ports, bucket names, provider keys, feature flags, user IDs, team IDs, role IDs, or permission IDs.
+- Permission and role names may be named constants/contracts, but assignment of initial roles/permissions belongs in seeders.
+- File paths, public URLs, mail provider names, queue names, disk names, and search index names should come from config or central constants, not scattered string literals.
+- If a feature needs initial admin/demo records, create or update a seeder and document the login/test data.
+
+## Feature Checklist
+
+- HTTP/API: route file -> controller -> FormRequest -> DTO -> action/service -> repository/model -> resource/response.
+- Page form: shared schema -> Superforms -> page action -> FormRequest/DTO/action -> resource-like \`{ data, meta }\` result.
+- Database: migration per table/focused change, model, repository, seeder/factory where needed.
+- Authorization: FormRequest \`authorize\`, policies for model decisions, roles/permissions/teams where feature access is user-configurable.
+- Side effects: events/listeners/observers; queue jobs for slow or retryable work.
+- Runtime services: use Svelar cache, queue, scheduler, storage/uploads, PDF, mail, search, broadcasting, audit/logging, and webhooks APIs instead of one-off integrations.
+- UI: loading states, inline validation, no duplicate validation toasts, success/error feedback, empty states, and realtime updates where expected.
+- Tests: add focused unit/feature/browser tests for the behavior touched, including permissions and failure cases.
 
 ## CLI-First Workflow
 

@@ -24,7 +24,7 @@ export class MakeDockerCommand extends Command {
     { name: 'redis', alias: 'r', description: 'Include Redis service (default: true; use --no-redis to disable)', type: 'boolean' as const },
     { name: 'gotenberg', alias: 'g', description: 'Include Gotenberg PDF service (default: true; use --no-gotenberg to disable)', type: 'boolean' as const },
     { name: 'rustfs', description: 'Include RustFS S3-compatible object storage (default: true; use --no-rustfs to disable)', type: 'boolean' as const },
-    { name: 'meilisearch', alias: 'm', description: 'Include Meilisearch full-text search engine', type: 'boolean' as const },
+    { name: 'meilisearch', alias: 'm', description: 'Include Meilisearch full-text search engine (default: true; use --no-meilisearch to disable)', type: 'boolean' as const },
     { name: 'force', alias: 'f', description: 'Overwrite existing files', type: 'boolean' as const },
   ];
 
@@ -35,7 +35,7 @@ export class MakeDockerCommand extends Command {
     const includeRedis = flags.redis ?? true;
     const includeGotenberg = flags.gotenberg ?? true;
     const includeRustFS = flags.rustfs ?? true;
-    const includeMeilisearch = flags.meilisearch ?? false;
+    const includeMeilisearch = flags.meilisearch ?? true;
     const force = flags.force ?? false;
 
     const appName = this.resolveAppName(cwd);
@@ -191,7 +191,7 @@ export class MakeDockerCommand extends Command {
 
   // ── Templates ──────────────────────────────────────────────
 
-  private composeTemplate(db: string, soketi: boolean, redis: boolean, gotenberg: boolean, rustfs: boolean = true, meilisearch: boolean = false): string {
+  private composeTemplate(db: string, soketi: boolean, redis: boolean, gotenberg: boolean, rustfs: boolean = true, meilisearch: boolean = true): string {
     const lines: string[] = [];
 
     lines.push('# ── Svelar Docker Compose ─────────────────────────────────');

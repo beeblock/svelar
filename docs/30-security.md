@@ -188,7 +188,7 @@ Only the application port should be public. Backing service APIs (database, Redi
 | **gotenberg** | No | Internal only |
 | **rustfs S3 API** | No | Internal only (app connects via Docker network) |
 | **rustfs console** | Yes (port 9001) | Admin dashboard — protect with firewall |
-| **meilisearch** | Yes (port 5333 by default, opt-in) | Protect the dashboard/API with firewall rules and a strong `MEILI_MASTER_KEY` |
+| **meilisearch** | Yes (port 5333 by default) | Protect the dashboard/API with firewall rules and a strong `MEILI_MASTER_KEY`; disable with `--no-meilisearch` if unused |
 
 ### Redis Authentication
 

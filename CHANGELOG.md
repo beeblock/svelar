@@ -6,7 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-No changes yet.
+### Changed
+
+- **Meilisearch Docker default** — `npx svelar make:docker` now includes Meilisearch by default, matching the documented production stack. Use `--no-meilisearch` to opt out.
+- **Generated agent guardrails** — generated `AGENTS.md`, `CLAUDE.md`, Codex skills, and Claude skills now include explicit hard stops against implementing CRUD directly in SvelteKit route files, skipping controllers/FormRequests/DTOs/resources, hardcoding app data/config/secrets/IDs, creating tables at runtime instead of migrations, putting default/demo data outside seeders, or using raw SQL for normal CRUD.
+
+### Fixed
+
+- **Docker documentation drift** — deployment, installation, search, security, and getting-started docs now describe Meilisearch as part of the default Docker scaffold instead of an opt-in service.
 
 ## [0.7.8] - 2026-06-12
 

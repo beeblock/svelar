@@ -623,15 +623,40 @@ describe('New project templates', () => {
     const skill = NewCommandTemplates.codexSvelarSkill();
 
     expect(skill).toContain('Use Svelar CLI generators before hand-writing artifacts');
+    expect(skill).toContain('For CRUD/API features, start with `npx svelar make:entity');
     expect(skill).toContain('Use controllers for HTTP/API resources');
     expect(skill).toContain('FormRequest validates and authorizes');
     expect(skill).toContain('DTO carries validated data into actions/services');
+    expect(skill).toContain('## Hard Stops');
+    expect(skill).toContain('Do not implement CRUD directly inside `src/routes/**/+server.ts`');
+    expect(skill).toContain('Do not put validation, authorization, persistence, and response shaping all in a SvelteKit action or API route');
+    expect(skill).toContain('## Data, Config, And Seeders');
+    expect(skill).toContain('Never hardcode app data in routes, controllers, actions, services, repositories, or Svelte components');
+    expect(skill).toContain('Schema changes go in migrations');
+    expect(skill).toContain('Demo/default/reference data goes in seeders');
+    expect(skill).toContain('Do not hardcode secrets, URLs, ports, bucket names, provider keys, feature flags, user IDs, team IDs, role IDs, or permission IDs');
+    expect(skill).toContain('## Feature Checklist');
     expect(skill).toContain('npx svelar make:entity Invoice --module=billing');
     expect(skill).toContain('application/dto/<Dto>.ts');
     expect(skill).toContain('svelar.validation.json');
     expect(skill).toContain('@beeblock/svelar/validation/valibot');
     expect(skill).toContain('Use a narrow public application service/query/facade');
     expect(NewCommandTemplates.claudeSvelarSkill()).toBe(skill);
+  });
+
+  it('ships hard-stop Svelar conventions in generated root agent files', () => {
+    const agents = NewCommandTemplates.agentsMd();
+
+    expect(agents).toContain('For CRUD/API features, start with `npx svelar make:entity');
+    expect(agents).toContain('## Hard Stops');
+    expect(agents).toContain('Do not implement CRUD directly inside `src/routes/**/+server.ts`');
+    expect(agents).toContain('Do not create a write path without a shared schema, FormRequest, DTO');
+    expect(agents).toContain('Do not use raw SQL for normal CRUD/query work');
+    expect(agents).toContain('## Data, Config, And Seeders');
+    expect(agents).toContain('Demo/default/reference data goes in seeders');
+    expect(agents).toContain('Runtime settings go through `.env`, `.env.example`, `src/app.ts`, and Svelar config helpers');
+    expect(agents).toContain('## Feature Checklist');
+    expect(NewCommandTemplates.claudeMd()).toBe(agents);
   });
 
   it('loads dotenv values into process.env for generated Vite dev and build runtime', () => {

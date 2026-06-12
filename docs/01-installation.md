@@ -227,6 +227,7 @@ npx svelar make:docker --no-redis       # Skip Redis
 npx svelar make:docker --no-soketi      # Skip WebSocket server
 npx svelar make:docker --no-gotenberg   # Skip PDF service
 npx svelar make:docker --no-rustfs      # Skip object storage
+npx svelar make:docker --no-meilisearch # Skip full-text search
 npx svelar make:docker --force          # Overwrite existing files
 ```
 
