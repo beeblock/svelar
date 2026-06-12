@@ -46,7 +46,7 @@
     "security:audit:all": "npm audit --workspaces"
   },
   "devDependencies": {
-    "typescript": "^5.7.0"
+    "typescript": "^6.0.3"
   },
   "engines": {
     "node": ">=20.0.0"
