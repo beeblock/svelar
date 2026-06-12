@@ -8,6 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 No changes yet.
 
+## [0.7.8] - 2026-06-12
+
+### Changed
+
+- **Generated app agent guidance** — new apps now ship much stronger Codex and Claude Svelar skills that require CLI-first scaffolding, controllers for HTTP/API resources, FormRequests plus DTOs, shared Zod/Valibot schemas, Superforms feedback rules, DDD module folders, public cross-module query/facade boundaries, and Svelar-native auth, queue, storage, PDF, search, realtime, and production runtime conventions.
+- **Project guidance and README** — refreshed the root README, `AGENTS.md`, `CLAUDE.md`, and docs architecture overview to match the current Laravel-inspired Svelar flow and the published `npx @beeblock/svelar new` / project-local `npx svelar ...` CLI split.
+
+### Fixed
+
+- **Generated skill drift guard** — added CLI template test coverage so generated Codex and Claude skills cannot regress to vague instructions that skip controllers, FormRequests, DTOs, validation provider rules, or module boundaries.
+
 ## [0.7.7] - 2026-06-07
 
 ### Fixed
