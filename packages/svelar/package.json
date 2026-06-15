@@ -278,7 +278,7 @@
 	"devDependencies": {
 		"@types/node": "^22.0.0",
 		"@types/pdfkit": "^0.17.5",
-		"@vitest/coverage-v8": "^4.1.8",
+		"@vitest/coverage-v8": "^4.1.9",
 		"better-sqlite3": "^11.0.0",
 		"exceljs": "^4.4.0",
 		"sveltekit-superforms": "^2.30.1",
