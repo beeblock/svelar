@@ -11,6 +11,7 @@ import { Mailer, Mailable, type MailMessage, type SendResult } from '../src/mail
 import { Notification, Notifier, type Notifiable } from '../src/notifications/index.js';
 import { QueryBuilder } from '../src/orm/QueryBuilder.js';
 import { Job, Queue } from '../src/queue/index.js';
+import { ApplicationContext } from '../src/support/Context.js';
 import {
   FakeEvents,
   FakeHttp,
@@ -59,6 +60,16 @@ function deferred() {
 }
 
 describe('scoped testing fakes', () => {
+  it('captures the dispatch-time tenant and actor snapshot without later mutations', async () => {
+    await fakeQueue(async (fake) => {
+      await ApplicationContext.run({ teamId: 'team-a', actorId: 7 }, async () => {
+        await Queue.dispatch(new TestJob('context'));
+        ApplicationContext.set('teamId', 'team-b');
+      });
+      expect(fake.pushed()[0].context).toMatchObject({ teamId: 'team-a', actorId: 7 });
+    });
+  });
+
   beforeEach(() => {
     handles.mockClear();
     Queue.configure({ default: 'sync', connections: { sync: { driver: 'sync' } } });

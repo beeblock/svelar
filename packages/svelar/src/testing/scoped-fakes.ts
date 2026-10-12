@@ -4,6 +4,7 @@ import { interceptHttpForTesting, type HttpTestingRuntime } from '../http/index.
 import { Mailer, type MailMessage, type SendResult } from '../mail/index.js';
 import { Notifier, type Notifiable, type Notification, type NotificationChannel } from '../notifications/index.js';
 import { Queue, type Job } from '../queue/index.js';
+import type { ApplicationContextSnapshot } from '../support/Context.js';
 import { cloneMailMessage } from './mail-message.js';
 
 export interface FakeOptions {
@@ -148,6 +149,7 @@ export interface FakeQueueRecord {
   priority?: number;
   deduplicate?: boolean;
   metadata?: Record<string, unknown>;
+  context?: ApplicationContextSnapshot;
   availableAt: number;
   createdAt: number;
 }
@@ -167,6 +169,7 @@ export class FakeQueue extends FakeRecords<FakeQueueRecord> {
         priority: job.priority,
         deduplicate: job.deduplicate,
         metadata: job.metadata === undefined ? undefined : structuredClone(job.metadata),
+        context: job.context === undefined ? undefined : structuredClone(job.context),
         availableAt: job.availableAt,
         createdAt: job.createdAt,
       });
