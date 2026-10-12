@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { cliExecutionGates } from './cli-certification.mjs';
 
 const args = new Set(process.argv.slice(2));
 const fast = args.has('--fast');
@@ -11,13 +12,22 @@ const inventoryOnly = args.has('--inventory') || args.has('--list');
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..');
 const cliCommands = readBuiltinCommandNames();
+const commandGates = cliExecutionGates();
+for (const name of cliCommands) {
+	if (!commandGates[name]) throw new Error(`CLI command ${name} has no execution certification gate.`);
+}
+for (const name of Object.keys(commandGates)) {
+	if (!cliCommands.includes(name)) throw new Error(`CLI execution gate ${name} is stale.`);
+}
 
 const featureGates = [
 	['CLI command parser/help', 'packages/svelar/tests/cli-command.test.ts'],
 	['Every built-in CLI command is registered and has help output', 'packages/svelar/tests/cli-command.test.ts + npm run certify:inventory'],
 	['CLI generators', 'packages/svelar/tests/cli-make-commands.test.ts + generated-app certification'],
+	['Installed CLI execution, custom commands, tinker and artifact type checks (DDD/flat, Zod/Valibot)', 'npm run smoke:cli'],
 	['Fresh app creation from packed package', 'npm run smoke:ddd + npm run smoke:flat'],
 	['Existing app scaffold upgrade safety', 'npm run smoke:ddd + npx svelar update --dry-run/--force certification'],
+	['Published-version upgrade preserving source, secrets and seeded data (DDD/flat, Zod/Valibot)', 'npm run smoke:upgrade'],
 	['Migrations/seeders/schema builder', 'packages/svelar/tests/database.test.ts + npm run smoke:db'],
 	['SQLite/PostgreSQL/MySQL portability', 'npm run smoke:db'],
 	['Production adapter-node browser flow', 'npm run smoke:db:prod'],
@@ -73,6 +83,8 @@ if (inventoryOnly) {
 run('npm', ['run', 'test', '-w', 'packages/svelar']);
 run('npm', ['run', 'security:audit']);
 run('npm', ['run', 'release:dry-run']);
+run('npm', ['run', 'smoke:cli']);
+run('npm', ['run', 'smoke:upgrade']);
 run('npm', ['run', 'smoke:redis']);
 run('npm', ['run', 'smoke:pdf']);
 run('npm', ['run', 'smoke:search']);
@@ -86,7 +98,7 @@ function printInventory() {
 	console.log('\nSvelar release certification inventory');
 	console.log('\nCLI commands:');
 	for (const command of cliCommands) {
-		console.log(`  - ${command}`);
+		console.log(`  - ${command}: ${commandGates[command]}`);
 	}
 
 	console.log('\nFeature gates:');

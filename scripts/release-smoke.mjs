@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { certifyGenerators, certifyRuntimeCommands, recordVerificationStep } from './cli-certification.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..');
@@ -15,6 +17,9 @@ const dockerConfigRoot = join(testingRoot, '.docker-config');
 const args = new Set(process.argv.slice(2));
 const appArg = valueFor('--app') ?? 'all';
 const dbArg = valueFor('--db') ?? 'sqlite';
+const validationArg = valueFor('--validation') ?? 'zod';
+const runCliExecution = args.has('--cli-execution');
+const upgradeFrom = valueFor('--upgrade-from');
 const useServices = args.has('--services') || args.has('--docker-services');
 const skipInstall = args.has('--skip-install');
 const skipShadcn = args.has('--skip-shadcn');
@@ -28,6 +33,7 @@ const productionServer = args.has('--prod') || args.has('--production');
 const headed = args.has('--headed');
 const slowMo = valueFor('--slow-mo');
 const keepExisting = args.has('--keep-existing');
+const reuseDependencies = args.has('--reuse-dependencies');
 const useRedis = args.has('--redis');
 const useGotenberg = args.has('--gotenberg');
 const useMeilisearch = args.has('--meilisearch') || args.has('--meili');
@@ -41,6 +47,11 @@ Options:
   --app all|ddd|flat      Which scaffold shape to test. Default: all.
   --db sqlite|postgres|mysql|all
                          Which database driver to test. Default: sqlite.
+  --validation zod|valibot|all
+                         Validation providers to test. Default: zod.
+  --cli-execution        Generate artifacts, execute runtime commands and type-check the app.
+  --upgrade-from <version>
+                         Create/seed an app with a published version before installing the tarball.
   --services             Start Docker services with random host ports for postgres/mysql.
 	  --redis                Start Redis on a random host port and run Redis certification checks.
 	  --gotenberg            Start Gotenberg on a random host port and run PDF service checks.
@@ -48,6 +59,7 @@ Options:
 	  --pgbouncer            Start PostgreSQL with pg_stat_statements behind PgBouncer.
 	  --s3                   Start RustFS on a random host port and run S3 storage checks.
   --keep-existing        Do not delete existing generated app folders.
+  --reuse-dependencies   Recreate app source, retaining only node_modules and the install lock as a cache.
   --skip-install         Scaffold only; skip npm install and later checks.
   --skip-shadcn          Skip shadcn-svelte component generation.
   --skip-migrate         Skip migrations and seeders.
@@ -68,6 +80,15 @@ if (!['all', 'ddd', 'flat'].includes(appArg)) {
 }
 if (!['all', 'sqlite', 'postgres', 'mysql'].includes(dbArg)) {
 	fail(`Invalid --db value "${dbArg}". Use all, sqlite, postgres, or mysql.`);
+}
+if (!['all', 'zod', 'valibot'].includes(validationArg)) {
+	fail(`Invalid --validation value "${validationArg}". Use all, zod, or valibot.`);
+}
+if (runCliExecution && (skipMigrate || skipInstall)) {
+	fail('--cli-execution requires installation and migrations.');
+}
+if (upgradeFrom && (!/^\d+\.\d+\.\d+$/.test(upgradeFrom) || skipInstall || skipMigrate || keepExisting)) {
+	fail('--upgrade-from requires an exact release version, fresh installation and migrations.');
 }
 if (productionServer && skipBuild) {
 	fail('--prod requires a production build. Remove --skip-build.');
@@ -450,7 +471,7 @@ try {
 	const tarballPath = packLocalCore();
 	console.log(`Packed ${tarballPath}`);
 
-		const targets = buildTargets(appArg, dbArg);
+		const targets = buildTargets(appArg, dbArg, validationArg);
 			const redisEnv = useRedis ? await services.redisEnv() : {};
 			const gotenbergEnv = useGotenberg ? await services.gotenbergEnv() : {};
 			const meilisearchEnv = useMeilisearch ? await services.meilisearchEnv() : {};
@@ -477,29 +498,47 @@ try {
 function smokeApp(target, tarballPath) {
 	const appDir = join(appsRoot, target.name);
 	const env = target.env ?? {};
+	let dependencyCache;
+	let installLock;
 
 	section(`Scaffolding ${target.name}`);
 	if (existsSync(appDir) && !keepExisting) {
+		if (reuseDependencies && existsSync(join(appDir, 'node_modules'))) {
+			dependencyCache = mkdtempSync(join(appsRoot, '.dependency-cache-'));
+			renameSync(join(appDir, 'node_modules'), join(dependencyCache, 'node_modules'));
+			if (existsSync(join(appDir, 'package-lock.json'))) installLock = readFileSync(join(appDir, 'package-lock.json'), 'utf8');
+		}
 		rmSync(appDir, { recursive: true, force: true });
 	}
 	if (existsSync(appDir)) {
 		console.log(`Reusing existing app directory: ${appDir}`);
 	} else {
 		const cliPath = join(corePackageRoot, 'dist/cli/bin.js');
-		const scaffoldArgs = [cliPath, 'new', target.name, '--no-install'];
+		const scaffoldArgs = [cliPath, 'new', target.name, '--no-install', `--validation=${target.validation}`];
 		if (target.flat) scaffoldArgs.push('--flat');
-		run(process.execPath, scaffoldArgs, { cwd: appsRoot });
+		if (upgradeFrom) {
+			run('npx', ['--yes', `--package=@beeblock/svelar@${upgradeFrom}`, 'svelar', ...scaffoldArgs.slice(1)], { cwd: appsRoot });
+		} else {
+			run(process.execPath, scaffoldArgs, { cwd: appsRoot });
+		}
 	}
+	if (dependencyCache) {
+		renameSync(join(dependencyCache, 'node_modules'), join(appDir, 'node_modules'));
+		if (installLock) writeFileSync(join(appDir, 'package-lock.json'), installLock);
+		rmSync(dependencyCache, { recursive: true });
+	}
+	const originalSource = upgradeFrom ? prepareHistoricalApp(appDir, env) : null;
 
 	patchAppPackage(appDir, tarballPath, target.port);
-	if (!target.flat && !skipCertification) {
+	if (!skipCertification) {
 		writeCertificationTest(appDir);
 	}
 
 	if (skipInstall) return;
 
 	section(`Installing ${target.name}`);
-	run('npm', ['install', '--no-audit', '--fund=false'], { cwd: appDir });
+	run('npm', ['install', '--prefer-online', '--no-audit', '--fund=false'], { cwd: appDir });
+	run('npx', ['svelte-kit', 'sync'], { cwd: appDir, env });
 
 	if (!skipShadcn) {
 		section(`Installing UI components for ${target.name}`);
@@ -513,11 +552,33 @@ function smokeApp(target, tarballPath) {
 
 	section(`Checking scaffold update workflow for ${target.name}`);
 	certifyScaffoldUpdate(appDir);
+	if (upgradeFrom) {
+		certifyHistoricalUpgrade(appDir, target, env, originalSource);
+	}
+	if (runCliExecution) {
+		section(`Executing CLI generators for ${target.name}`);
+		certifyGenerators(appDir, env);
+	}
 
 	if (!skipMigrate) {
 		section(`Migrating ${target.name}`);
 		run('npx', ['svelar', 'migrate'], { cwd: appDir, env });
-		run('npx', ['svelar', 'seed:run'], { cwd: appDir, env });
+		if (upgradeFrom) {
+			assertUpgradeData(appDir, env, originalSource.users);
+			section(`Type-checking historical upgrade ${target.name}`);
+			run('npx', ['svelte-kit', 'sync'], { cwd: appDir, env });
+			run('npx', ['svelte-check', '--tsconfig', './tsconfig.json'], { cwd: appDir, env });
+			certifyHistoricalLogin(appDir, target, env);
+			assertUpgradeData(appDir, env, originalSource.users);
+		}
+		else run('npx', ['svelar', 'seed:run'], { cwd: appDir, env });
+	}
+	if (runCliExecution) {
+		section(`Executing runtime CLI commands for ${target.name}`);
+		certifyRuntimeCommands(appDir, env);
+		section(`Type-checking generated CLI artifacts for ${target.name}`);
+		run('npx', ['svelte-kit', 'sync'], { cwd: appDir, env });
+		run('npx', ['svelte-check', '--tsconfig', './tsconfig.json'], { cwd: appDir, env });
 	}
 
 	if (!skipTests) {
@@ -559,20 +620,36 @@ function certifyCliCommandHelp(appDir) {
 }
 
 function certifyScaffoldUpdate(appDir) {
+	const userFiles = ['src/app.ts', 'src/hooks.server.ts', 'src/routes/+layout.svelte'];
+	const originals = new Map(userFiles.map((path) => [path, readFileSync(join(appDir, path), 'utf8')]));
+	const validation = readFileSync(join(appDir, 'svelar.validation.json'), 'utf8');
 	run('npx', ['svelar', 'update', '--list'], { cwd: appDir });
 	run('npx', ['svelar', 'update', '--dry-run'], { cwd: appDir });
 
 	const envExamplePath = join(appDir, '.env.example');
 	const original = readFileSync(envExamplePath, 'utf8');
 	writeFileSync(envExamplePath, `${original}\n# stale smoke marker\n`);
+	run('npx', ['svelar', 'update', '--dry-run', '--category=config'], { cwd: appDir });
+	if (readFileSync(envExamplePath, 'utf8') !== `${original}\n# stale smoke marker\n`) {
+		fail('svelar update --dry-run modified a framework file.');
+	}
 	run('npx', ['svelar', 'update', '--force', '--category=config'], { cwd: appDir });
 	const updated = readFileSync(envExamplePath, 'utf8');
 	if (updated.includes('stale smoke marker')) {
 		fail('svelar update --force did not refresh framework-owned config files.');
 	}
+	if (readFileSync(`${envExamplePath}.bak`, 'utf8') !== `${original}\n# stale smoke marker\n`) {
+		fail('svelar update did not preserve the original config backup.');
+	}
+	for (const [path, content] of originals) {
+		if (readFileSync(join(appDir, path), 'utf8') !== content) fail(`svelar update changed user-owned ${path}.`);
+	}
+	if (readFileSync(join(appDir, 'svelar.validation.json'), 'utf8') !== validation) {
+		fail('svelar update changed the selected validation provider.');
+	}
 }
 
-function buildTargets(app, db) {
+function buildTargets(app, db, validation) {
 	const appTargets =
 		app === 'all'
 			? [
@@ -582,17 +659,21 @@ function buildTargets(app, db) {
 			: [{ key: app, flat: app === 'flat', port: app === 'flat' ? 5180 : 5179 }];
 	const dbTargets = db === 'all' ? ['sqlite', 'postgres', 'mysql'] : [db];
 	const targets = [];
+	const providers = validation === 'all' ? ['zod', 'valibot'] : [validation];
 
 	for (const dbName of dbTargets) {
 		for (const appTarget of appTargets) {
+			for (const provider of providers) {
 			const nameSuffix = dbName === 'sqlite' ? appTarget.key : `${appTarget.key}-${dbName}`;
 			const dbOffset = dbName === 'postgres' ? 10 : dbName === 'mysql' ? 20 : 0;
 			targets.push({
-				name: `svelar-smoke-${nameSuffix}`,
+				name: `svelar-smoke-${nameSuffix}${provider === 'valibot' ? '-valibot' : ''}${upgradeFrom ? `-upgrade-${upgradeFrom}` : ''}`,
 				flat: appTarget.flat,
 				db: dbName,
-				port: appTarget.port + dbOffset,
+				port: appTarget.port + dbOffset + (provider === 'valibot' ? 30 : 0),
+				validation: provider,
 			});
+			}
 		}
 	}
 
@@ -619,7 +700,6 @@ function databaseEnv(driver) {
 }
 
 function packLocalCore() {
-	rmSync(artifactsRoot, { recursive: true, force: true });
 	mkdirSync(artifactsRoot, { recursive: true });
 
 	const result = spawnSync('npm', ['pack', '--pack-destination', artifactsRoot], {
@@ -648,6 +728,245 @@ function packLocalCore() {
 	);
 	renameSync(tarballPath, uniqueTarballPath);
 	return uniqueTarballPath;
+}
+
+function prepareHistoricalApp(appDir, env) {
+	section(`Installing published baseline ${upgradeFrom}`);
+	const packagePath = join(appDir, 'package.json');
+	const pkg = JSON.parse(readFileSync(packagePath, 'utf8'));
+	pkg.dependencies['@beeblock/svelar'] = upgradeFrom;
+	writeFileSync(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
+	run('npm', ['install', '--prefer-online', '--no-audit', '--fund=false'], { cwd: appDir });
+	run('npx', ['svelte-kit', 'sync'], { cwd: appDir, env });
+	run('npx', ['svelar', 'migrate'], { cwd: appDir, env });
+	run('npx', ['svelar', 'seed:run'], { cwd: appDir, env });
+	for (const path of ['src/app.ts', 'src/hooks.server.ts', 'src/routes/+layout.svelte']) {
+		const content = `${readFileSync(join(appDir, path), 'utf8')}\n${path.endsWith('.svelte') ? '<!-- upgrade customization -->' : '// upgrade customization'}\n`;
+		writeFileSync(join(appDir, path), content);
+	}
+	return { files: snapshotHistoricalSource(appDir), users: readUpgradeUsers(appDir, env) };
+}
+
+function snapshotHistoricalSource(appDir) {
+	const files = new Map();
+	const walk = (directory) => {
+		for (const entry of readdirSync(directory, { withFileTypes: true })) {
+			const path = join(directory, entry.name);
+			if (entry.isDirectory()) walk(path);
+			else if (entry.isFile()) files.set(relative(appDir, path), readFileSync(path));
+			else fail(`Historical source is not a regular file: ${path}`);
+		}
+	};
+	walk(join(appDir, 'src'));
+	for (const path of ['.env', 'svelar.validation.json']) files.set(path, readFileSync(join(appDir, path)));
+	return files;
+}
+
+function expectedHistoricalAdapterSource(appDir, path, original) {
+	if (!/\.(?:[cm]?[jt]sx?|svelte)$/.test(path)) return original;
+	const require = createRequire(join(appDir, 'package.json'));
+	const ts = require('typescript');
+	const content = original.toString('utf8');
+	const edits = [];
+	const script = (text, offset) => {
+		const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
+		for (const node of source.statements) {
+			if (!ts.isImportDeclaration(node) || !ts.isStringLiteral(node.moduleSpecifier)
+				|| node.moduleSpecifier.text !== 'sveltekit-superforms/adapters') continue;
+			const bindings = node.importClause?.namedBindings;
+			if (!bindings || !ts.isNamedImports(bindings)) continue;
+			for (const specifier of bindings.elements) {
+				const imported = specifier.propertyName ?? specifier.name;
+				const replacement = { zod: 'zod4', zodClient: 'zod4Client' }[imported.text];
+				if (!replacement) continue;
+				let updated = specifier.propertyName ? replacement : `${replacement} as ${specifier.name.text}`;
+				if (ts.isStringLiteral(imported)) updated = `${text[imported.getStart(source)]}${replacement}${text[imported.getStart(source)]}`;
+				edits.push({ start: offset + imported.getStart(source), end: offset + imported.end, updated });
+			}
+		}
+	};
+	if (path.endsWith('.svelte')) {
+		const ast = require('svelte/compiler').parse(content, { filename: path, modern: true });
+		for (const block of [ast.instance, ast.module]) {
+			if (block) script(content.slice(block.content.start, block.content.end), block.content.start);
+		}
+	} else script(content, 0);
+	let updated = content;
+	for (const edit of edits.sort((a, b) => b.start - a.start)) {
+		updated = updated.slice(0, edit.start) + edit.updated + updated.slice(edit.end);
+	}
+	return Buffer.from(updated, 'utf8');
+}
+
+function assertHistoricalSource(appDir, originals, expected = originals, backups = false) {
+	for (const [path, original] of originals) {
+		const updated = expected.get(path);
+		if (!readFileSync(join(appDir, path)).equals(updated)) fail(`Upgrade changed historical ${path} beyond approved adapter import tokens.`);
+		if (backups && !updated.equals(original)) {
+			const backup = join(appDir, `${path}.zod4.bak`);
+			if (!existsSync(backup) || !readFileSync(backup).equals(original)) fail(`Missing or inexact original Zod migration backup: ${path}.`);
+		}
+	}
+}
+
+function expectedHistoricalCorePlan(appDir, snapshot) {
+	const require = createRequire(join(corePackageRoot, 'package.json'));
+	const { createJiti } = require('jiti');
+	const reference = createJiti(join(corePackageRoot, 'package.json'), { fsCache: false, moduleCache: false })(
+		join(corePackageRoot, 'src/cli/CoreScaffoldMigration.ts')
+	);
+	const compiler = createRequire(join(appDir, 'package.json'))('typescript');
+	// The reference planner consumes the preserved phase snapshot, never the CLI's edited source.
+	return reference.planCoreScaffoldMigrationFromSource(appDir, compiler, snapshot);
+}
+
+function certifyHistoricalCoreMigration(appDir, cliPath, options, original, expected) {
+	const before = new Map(expected);
+	const plan = expectedHistoricalCorePlan(appDir, before);
+	if (plan.errors.length) fail(`Historical core migration requires manual review:\n${plan.errors.join('\n')}`);
+	for (const edit of plan.edits) {
+		console.log(`Approved historical core tokens: ${edit.path}: ${[...new Set(edit.tokens.map((token) => token.rule))].join(', ')}`);
+	}
+	run(process.execPath, [cliPath, 'update', '--migrate-core', '--dry-run'], options);
+	assertHistoricalSource(appDir, original.files, before);
+	if (plan.edits.some((edit) => existsSync(join(appDir, `${edit.path}.core.bak`)))) fail('Core migration dry-run wrote backups.');
+	run(process.execPath, [cliPath, 'update', '--migrate-core', '--force'], options);
+	for (const edit of plan.edits) {
+		expected.set(edit.path, edit.updated);
+		const backup = join(appDir, `${edit.path}.core.bak`);
+		if (!existsSync(backup) || !readFileSync(backup).equals(edit.original)) fail(`Missing or inexact core phase backup: ${edit.path}`);
+	}
+	// No exclusions: every original source file must equal the explicit AST-composed expectation.
+	assertHistoricalSource(appDir, original.files, expected);
+}
+
+function certifyHistoricalUpgrade(appDir, target, env, original) {
+	const cliPath = join(appDir, 'node_modules/@beeblock/svelar/dist/cli/bin.js');
+	const options = { cwd: appDir, env };
+	assertHistoricalSource(appDir, original.files);
+	const expected = new Map(original.files);
+	if (target.validation === 'zod') {
+		for (const [path, content] of original.files) {
+			expected.set(path, expectedHistoricalAdapterSource(appDir, path, content));
+		}
+		const packagePath = join(appDir, 'package.json');
+		const manifest = readFileSync(packagePath);
+		run(process.execPath, [cliPath, 'update', '--migrate-zod4', '--dry-run'], options);
+		assertHistoricalSource(appDir, original.files);
+		if (!readFileSync(packagePath).equals(manifest)) fail('Zod migration dry-run modified package.json.');
+		if (existsSync(`${packagePath}.zod4.bak`)
+			|| [...original.files.keys()].some((path) => existsSync(join(appDir, `${path}.zod4.bak`)))) {
+			fail('Zod migration dry-run created a backup.');
+		}
+		run(process.execPath, [cliPath, 'update', '--migrate-zod4', '--force'], options);
+		assertHistoricalSource(appDir, original.files, expected, true);
+		if (!readFileSync(packagePath).equals(manifest)) {
+			if (!readFileSync(`${packagePath}.zod4.bak`).equals(manifest)) fail('Zod migration package backup is not the exact original.');
+			run('npm', ['install', '--prefer-online', '--no-audit', '--fund=false'], options);
+		}
+	}
+	const afterZod = new Map(expected);
+	certifyHistoricalCoreMigration(appDir, cliPath, options, original, expected);
+	if (target.validation === 'zod') {
+		for (const [path, content] of original.files) {
+			if (!afterZod.get(path).equals(content) && !readFileSync(join(appDir, `${path}.zod4.bak`)).equals(content)) {
+				fail(`Core migration altered the exact historical Zod backup: ${path}`);
+			}
+		}
+	}
+	// Missing-only mode is distinct from reviewing/replacing existing user files.
+	run(process.execPath, [cliPath, 'update', '--add-missing-user-files', '--category=config', '--dry-run'], options);
+	assertHistoricalSource(appDir, original.files, expected);
+	run(process.execPath, [cliPath, 'update', '--add-missing-user-files', '--category=config', '--force'], options);
+	if (!existsSync(join(appDir, 'src/svelar.d.ts'))) fail('Historical upgrade did not add ambient types through the installed CLI manifest.');
+	run(process.execPath, [cliPath, 'update', '--force', '--category=migration'], options);
+	assertHistoricalSource(appDir, original.files, expected);
+}
+
+function readUpgradeUsers(appDir, env) {
+	const cliPath = join(appDir, 'node_modules/@beeblock/svelar/dist/cli/bin.js');
+	const result = spawnSync(process.execPath, [cliPath, 'tinker'], {
+		cwd: appDir, env: { ...process.env, ...env }, encoding: 'utf8', timeout: 60_000,
+		input: 'await (async () => { const { createHash: upgradeHash } = await import("node:crypto"); console.log("UPGRADE_USERS_JSON", JSON.stringify((await User.query().orderBy("id").get()).map(user => ({ id: user.id, fingerprint: upgradeHash("sha256").update(JSON.stringify(user.getAttributes())).digest("hex") })))); })();\n.exit\n',
+	});
+	const match = result.stdout?.match(/UPGRADE_USERS_JSON (\[[^\r\n]*\])/);
+	if (result.status !== 0 || !match) {
+		fail(`Upgrade failed to preserve/query seeded users: ${result.stdout}\n${result.stderr}`);
+	}
+	const users = JSON.parse(match[1]);
+	if (!Array.isArray(users) || !users.length) fail('Historical upgrade seed records are missing.');
+	return users;
+}
+
+function assertUpgradeData(appDir, env, expected) {
+	const users = readUpgradeUsers(appDir, env);
+	if (JSON.stringify(users) !== JSON.stringify(expected)) fail('Historical upgrade changed existing seeded user records.');
+}
+
+function certifyHistoricalLogin(appDir, target, env) {
+	section(`Browser login with preserved historical source: ${target.name}`);
+	const source = `import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { join } from 'node:path';
+const require = createRequire(join(process.cwd(), 'package.json'));
+const { chromium } = require('@playwright/test');
+const baseUrl = ${JSON.stringify(`http://127.0.0.1:${target.port}`)};
+const server = spawn('npm', ['run', 'smoke:serve'], { detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+let output = '';
+for (const stream of [server.stdout, server.stderr]) stream.on('data', chunk => { output = (output + chunk.toString()).slice(-6000); });
+const exited = new Promise(resolve => server.once('close', resolve));
+let browser;
+try {
+  const deadline = Date.now() + 60000;
+  let ready = false;
+  while (Date.now() < deadline) {
+    if (server.exitCode !== null) throw new Error('Historical app server exited: ' + output);
+    try {
+      const response = await fetch(baseUrl + '/login', { signal: AbortSignal.timeout(2000) });
+      if (response.ok) { ready = true; break; }
+    } catch {}
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+  if (!ready) throw new Error('Historical app server never became ready: ' + output);
+  browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+  const failures = [];
+  page.on('pageerror', error => { if (failures.length < 20) failures.push(error.message); });
+  page.on('response', response => { if (response.url().startsWith(baseUrl) && response.status() >= 500 && failures.length < 20) failures.push(response.status() + ' ' + response.url()); });
+  await page.goto(baseUrl + '/login', { waitUntil: 'domcontentloaded' });
+  await page.locator('input[name="email"]').fill('admin@svelar.dev');
+  await page.locator('input[name="password"]').fill('admin123');
+  await Promise.all([
+    page.waitForURL('**/dashboard', { timeout: 15000 }),
+    page.getByRole('button', { name: 'Sign In', exact: true }).click(),
+  ]);
+  await page.getByRole('heading', { name: /^Dashboard$/ }).waitFor({ state: 'visible', timeout: 15000 });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.getByRole('heading', { name: /^Dashboard$/ }).waitFor({ state: 'visible', timeout: 15000 });
+  if (failures.length) throw new Error('Historical browser errors: ' + failures.join('\\n'));
+  console.log('Historical seeded login and authenticated reload passed');
+} catch (error) {
+  throw new Error(String(error) + '\\nHistorical server output:\\n' + output);
+} finally {
+  try { if (browser) await browser.close(); }
+  finally {
+    const stop = signal => {
+      try {
+        if (process.platform === 'win32') server.kill(signal);
+        else process.kill(-server.pid, signal);
+      } catch (error) { if (error.code !== 'ESRCH') throw error; }
+    };
+    stop('SIGTERM');
+    await Promise.race([exited, new Promise(resolve => setTimeout(resolve, 3000))]);
+    stop('SIGKILL');
+  }
+}
+`;
+	const result = spawnSync(process.execPath, ['--input-type=module'], {
+		cwd: appDir, env: { ...process.env, ...env }, input: source, stdio: ['pipe', 'inherit', 'inherit'],
+	});
+	recordVerificationStep(appDir, 'Historical seeded browser login and authenticated reload', result.status === 0);
+	if (result.status !== 0) fail(`Historical browser login failed with exit code ${result.status ?? 'unknown'}.`);
 }
 
 function readBuiltinCommandNames() {
@@ -680,7 +999,7 @@ function patchAppPackage(appDir, tarballPath, port) {
 	pkg.dependencies.bullmq ??= '^5.0.0';
 	pkg.dependencies.ioredis ??= '^5.0.0';
 	pkg.dependencies.meilisearch ??= '^0.44.0';
-	pkg.scripts['smoke:serve'] = `vite dev --host 127.0.0.1 --port ${port}`;
+	pkg.scripts['smoke:serve'] = `vite dev --host 127.0.0.1 --port ${port} --strictPort`;
 	pkg.scripts['smoke:serve:prod'] = 'node build';
 
 	writeFileSync(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
@@ -689,10 +1008,10 @@ function patchAppPackage(appDir, tarballPath, port) {
 
 function writeCertificationTest(appDir) {
 	const testPath = join(appDir, 'tests', 'feature', 'svelar-certification.test.ts');
-	writeFileSync(testPath, `${certificationTestSource()}\n`);
+	writeFileSync(testPath, `${certificationTestSource(!existsSync(join(appDir, 'src/lib/modules')))}\n`);
 }
 
-function certificationTestSource() {
+function certificationTestSource(flat) {
 		return `import { existsSync, readFileSync, rmSync } from 'node:fs';
 		import { createHmac } from 'node:crypto';
 		import { createServer } from 'node:http';
@@ -703,29 +1022,32 @@ function certificationTestSource() {
 	import { Cache } from '@beeblock/svelar/cache';
 	import { Connection, Schema } from '@beeblock/svelar/database';
 	import { ApiKeys } from '@beeblock/svelar/api-keys';
+	import { WebhookInbox } from '@beeblock/svelar/webhooks';
 	import { AuthenticateMiddleware } from '@beeblock/svelar/auth';
 	import { Event, EventServiceProvider } from '@beeblock/svelar/events';
+	import { container } from '@beeblock/svelar/container';
 	import { ErrorHandler, HttpError, ValidationError } from '@beeblock/svelar/errors';
 		import { Log } from '@beeblock/svelar/logging';
 		import { LogViewer } from '@beeblock/svelar/logging/LogViewer';
 		import { Mailer, Mailable } from '@beeblock/svelar/mail';
 		import { Notification, Notifier } from '@beeblock/svelar/notifications';
-		import { HasUlids, HasUuids, Model, ModelObserver, QueryBuilder, SoftDeletes } from '@beeblock/svelar/orm';
+		import { HasUlids, HasUuids, Model, ModelObserver, QueryBuilder, SoftDeletes, TenantModel } from '@beeblock/svelar/orm';
 	import { PDF, GeneratePdfJob } from '@beeblock/svelar/pdf';
 	import { Search, Searchable } from '@beeblock/svelar/search';
 	import { Storage } from '@beeblock/svelar/storage';
 	import { Teams } from '@beeblock/svelar/teams';
-	import { createRequestEvent, useSvelarTest } from '@beeblock/svelar/testing';
+	import { createRequestEvent, fakeQueue, useSvelarTest } from '@beeblock/svelar/testing';
+	import { ApplicationContext } from '@beeblock/svelar/support';
 	import { Job, Queue } from '@beeblock/svelar/queue';
 import { MiddlewareStack, RateLimitMiddleware, ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { MemorySessionStore, RedisSessionStore, Session } from '@beeblock/svelar/session';
 import { rules, z } from '@beeblock/svelar/validation';
-import { User } from '../../src/lib/modules/auth/User.js';
-import { Post } from '../../src/lib/modules/posts/Post.js';
-import { PostController } from '../../src/lib/modules/posts/PostController.js';
-import { PostRepository } from '../../src/lib/modules/posts/PostRepository.js';
-import { PostResource } from '../../src/lib/modules/posts/PostResource.js';
-import { PostService } from '../../src/lib/modules/posts/PostService.js';
+import { User } from '$lib/${flat ? 'models' : 'modules/auth/domain/models'}/User.js';
+import { Post } from '$lib/${flat ? 'models' : 'modules/posts/domain/models'}/Post.js';
+import { PostController } from '$lib/${flat ? 'controllers' : 'modules/posts/interface/http/controllers'}/PostController.js';
+import { PostRepository } from '$lib/${flat ? 'repositories' : 'modules/posts/infrastructure/repositories'}/PostRepository.js';
+import { PostResource } from '$lib/${flat ? 'resources' : 'modules/posts/interface/http/resources'}/PostResource.js';
+import { PostService } from '$lib/${flat ? 'services' : 'modules/posts/application/services'}/PostService.js';
 
 beforeAll(async () => {
   process.env.APP_KEY ??= 'svelar-certification-app-key';
@@ -742,6 +1064,25 @@ afterAll(async () => {
 
 describe('Svelar release certification', () => {
   useSvelarTest({ refreshDatabase: true });
+
+  it('isolates tenant and actor context across installed framework subpaths', async () => {
+    class ScopedRecord extends TenantModel { static table = 'certification_scoped_records'; }
+    class ScopedJob extends Job { async handle() {} }
+    await fakeQueue(async (fake) => {
+      await Promise.all(['team-a', 'team-b'].map((teamId) =>
+        ApplicationContext.run({ actorId: teamId }, () => Teams.runWithTeam(teamId, async () => {
+          await Promise.resolve();
+          expect(ScopedRecord.query().toSQL().bindings).toContain(teamId);
+          await Queue.dispatch(new ScopedJob());
+        }))));
+      expect(fake.pushed()).toHaveLength(2);
+      expect(fake.pushed().map((record) => record.context)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ teamId: 'team-a', actorId: 'team-a' }),
+        expect.objectContaining({ teamId: 'team-b', actorId: 'team-b' }),
+      ]));
+    });
+    expect(() => ScopedRecord.query().toSQL()).toThrow();
+  });
 
   it('runs the route/controller/request/action/service/repository/model/resource flow', async () => {
     const user = await User.create({
@@ -833,16 +1174,22 @@ describe('Svelar release certification', () => {
 	      static fillable = ['title'];
 	    }
 	    class CertificationUuidPrimary extends HasUuids(Model) {
+	      declare id: string;
+	      declare title: string;
 	      static table = 'certification_uuid_primaries';
 	      static timestamps = false;
 	      static fillable = ['title'];
 	    }
 	    class CertificationUlidPrimary extends HasUlids(Model) {
+	      declare id: string;
+	      declare title: string;
 	      static table = 'certification_ulid_primaries';
 	      static timestamps = false;
 	      static fillable = ['title'];
 	    }
 	    class CertificationPublicUuid extends Model {
+	      declare id: number;
+	      declare uuid: string;
 	      static table = 'certification_public_uuids';
 	      static timestamps = false;
 	      static fillable = ['title'];
@@ -850,6 +1197,8 @@ describe('Svelar release certification', () => {
 	      static uniqueIdType = 'uuid' as const;
 	    }
 	    class CertificationPublicUlid extends Model {
+	      declare id: number;
+	      declare ulid: string;
 	      static table = 'certification_public_ulids';
 	      static timestamps = false;
 	      static fillable = ['title'];
@@ -953,6 +1302,57 @@ describe('Svelar release certification', () => {
 	    expect(nextCalled).toBe(true);
 	    expect(ctx.event.locals.user?.id).toBe(user.id);
 	  });
+
+  it('preserves service-account restrictions during atomic API key rotation', async () => {
+    await ApplicationContext.run({}, async () => {
+    ApiKeys.configure({ driver: 'database' });
+    const original = await ApiKeys.createServiceAccount({
+      name: 'Rotation certification', teamId: 'certification-team',
+      actorId: 'certification-actor', expiresIn: 300,
+      permissions: ['certification:read'], allowedIps: ['203.0.113.4'],
+    });
+    const rotations = await Promise.all([ApiKeys.rotate(original.record.id), ApiKeys.rotate(original.record.id)]);
+    const winners = rotations.filter((result) => result !== null);
+    expect(winners).toHaveLength(1);
+    const rotated = winners[0];
+    if (!rotated) throw new Error('API key rotation did not produce a replacement');
+    expect(rotated.record).toMatchObject({
+      expiresAt: original.record.expiresAt, teamId: original.record.teamId,
+      actorId: original.record.actorId, serviceAccountId: original.record.serviceAccountId,
+      permissions: original.record.permissions, allowedIps: original.record.allowedIps,
+    });
+    expect(await ApiKeys.validate(original.plainTextKey, { consumeRateLimit: false })).toBeNull();
+    expect(await ApiKeys.validate(rotated.plainTextKey, { ip: '203.0.113.4', consumeRateLimit: false })).not.toBeNull();
+    await ApiKeys.disable(rotated.record.id);
+    const disabled = await new QueryBuilder('api_keys').where('id', rotated.record.id).first();
+    const disabledRotation = await ApiKeys.rotate(rotated.record.id);
+    expect(disabledRotation).not.toBeNull();
+    if (!disabledRotation) throw new Error('Disabled API key rotation did not produce a replacement');
+    expect(disabledRotation.record.disabledAt).toBe(Number(disabled?.disabled_at));
+    expect(await ApiKeys.validate(disabledRotation.plainTextKey, { ip: '203.0.113.4', consumeRateLimit: false })).toBeNull();
+    });
+  });
+
+  it('captures signed incoming webhooks once per tenant under concurrency', async () => {
+    WebhookInbox.configure({ driver: 'database' });
+    const source = 'certification-incoming';
+    const rawBody = JSON.stringify({ event: 'updated' });
+    const secret = 'certification-webhook-secret';
+    const input = {
+      source, rawBody, tenantId: 'certification-team-a', idempotencyKey: 'provider-event-123',
+      headers: { 'x-webhook-signature': createHmac('sha256', secret).update(rawBody).digest('hex') },
+      verifier: WebhookInbox.hmacVerifier(secret),
+    };
+    const captured = await Promise.all(Array.from({ length: 8 }, () => WebhookInbox.receive(input)));
+    expect(new Set(captured.map((result) => result.entry.id)).size).toBe(1);
+    expect(captured.filter((result) => !result.duplicate)).toHaveLength(1);
+    const other = await WebhookInbox.receive({ ...input, tenantId: 'certification-team-b' });
+    const global = await WebhookInbox.receive({ ...input, tenantId: undefined });
+    expect(new Set([captured[0].entry.id, other.entry.id, global.entry.id]).size).toBe(3);
+    expect(other.entry.tenantId).toBe('certification-team-b');
+    await expect(WebhookInbox.receive({ ...input, headers: { 'x-webhook-signature': 'invalid' } })).rejects.toThrow('Invalid webhook signature');
+    expect(await new QueryBuilder('webhook_inbox_entries').where('source', source).count()).toBe(3);
+  });
 
 	  it('runs generated hook CSRF protections for API routes', async () => {
 	    const { handle } = await import('../../src/hooks.server.js');
@@ -1159,7 +1559,7 @@ describe('Svelar release certification', () => {
 	    }
 
 	    EventServiceProvider.registerModel(Post);
-	    await new CertificationEventServiceProvider().boot();
+	    await new CertificationEventServiceProvider(container).boot();
 
 	    const providerPost = await Post.create({
 	      title: 'Provider Observed Certification Post',
@@ -1246,9 +1646,12 @@ describe('Svelar release certification', () => {
 	    const event = createRequestEvent({ url: 'http://localhost/api/certification-errors' });
 	    const response = await handler.handle(new Error('database exploded'), event);
 	    expect(response.status).toBe(500);
-	    expect(await response.json()).toEqual({ message: 'Internal server error' });
+	    const responseBody = await response.json();
+	    expect(responseBody).toEqual({ message: 'Internal server error', incidentId: expect.stringMatching(/^inc_[0-9a-f-]+$/) });
+	    expect(JSON.stringify(responseBody)).not.toContain('database exploded');
 	    expect(reported).toEqual(['database exploded:http://localhost/api/certification-errors']);
 	    expect(LogViewer.query({ level: 'error', search: 'database exploded' })).toHaveLength(1);
+	    expect(LogViewer.query({ level: 'error', search: 'database exploded' })[0].context.incidentId).toBe(responseBody.incidentId);
 
 	    const validation = await handler.handle(new ValidationError({ email: ['Required'] }), event);
 	    expect(validation.status).toBe(422);
@@ -1273,7 +1676,9 @@ describe('Svelar release certification', () => {
 	      throw new HttpError(418, 'Short and stout');
 	    });
 	    expect(middlewareResponse?.status).toBe(418);
-		    expect(await middlewareResponse?.json()).toEqual({ message: 'Short and stout' });
+		    const middlewareBody = await middlewareResponse?.json();
+		    expect(middlewareBody).toEqual({ message: 'Short and stout', incidentId: expect.stringMatching(/^inc_[0-9a-f-]+$/) });
+		    expect(middlewareBody.incidentId).not.toBe(responseBody.incidentId);
 		  });
 
 		  it('runs Postmark, Resend, and Mailtrap mail transports', async () => {
@@ -2279,6 +2684,10 @@ function run(command, commandArgs, options = {}) {
 		env: { ...process.env, ...(options.env ?? {}) },
 		stdio: 'inherit',
 	});
+	const cwd = options.cwd ?? testingRoot;
+	if (cwd.startsWith(`${appsRoot}/`)) {
+		recordVerificationStep(cwd, `${command} ${commandArgs.join(' ')}`, result.status === 0);
+	}
 
 	if (result.status !== 0) {
 		fail(`${command} ${commandArgs.join(' ')} failed with exit code ${result.status ?? 'unknown'}`);
