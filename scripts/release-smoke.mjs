@@ -1020,7 +1020,7 @@ function certificationTestSource(flat) {
 	import Redis from 'ioredis';
 	import { Broadcast } from '@beeblock/svelar/broadcasting';
 	import { Cache } from '@beeblock/svelar/cache';
-	import { Connection, Schema } from '@beeblock/svelar/database';
+	import { Connection, Migration, Schema } from '@beeblock/svelar/database';
 	import { ApiKeys } from '@beeblock/svelar/api-keys';
 	import { WebhookInbox } from '@beeblock/svelar/webhooks';
 	import { AuthenticateMiddleware } from '@beeblock/svelar/auth';
@@ -1036,6 +1036,7 @@ function certificationTestSource(flat) {
 	import { Search, Searchable } from '@beeblock/svelar/search';
 	import { Storage } from '@beeblock/svelar/storage';
 	import { Teams } from '@beeblock/svelar/teams';
+	import { Permissions } from '@beeblock/svelar/permissions';
 	import { createRequestEvent, fakeQueue, useSvelarTest } from '@beeblock/svelar/testing';
 	import { ApplicationContext } from '@beeblock/svelar/support';
 	import { Job, Queue } from '@beeblock/svelar/queue';
@@ -1354,6 +1355,158 @@ describe('Svelar release certification', () => {
     expect(await new QueryBuilder('webhook_inbox_entries').where('source', source).count()).toBe(3);
   });
 
+  it('persists find-or-create models with tenant scopes, casts, IDs and observer diffs', async () => {
+    class CreateHelperRecords extends Migration {
+      async up() {
+        await this.schema.createTable('certification_helper_records', (table) => {
+          table.uuid('record_key').primary();
+          table.string('team_id');
+          table.string('slug');
+          table.string('title');
+          table.json('payload').nullable();
+          table.boolean('is_admin').default(false);
+          table.timestamps();
+          table.softDeletes();
+          table.uniqueIndex(['team_id', 'slug']);
+        });
+      }
+      async down() { await this.schema.dropTableIfExists('certification_helper_records'); }
+    }
+    class HelperRecord extends HasUuids(TenantModel) {
+      static table = 'certification_helper_records';
+      static primaryKey = 'record_key';
+      static uniqueIds = ['record_key'];
+      static softDeletes = true;
+      static fillable = ['slug', 'title', 'payload'];
+      static casts = { payload: 'json' as const };
+    }
+    await new CreateHelperRecords().up();
+    await Teams.runWithTeam('helper-team-a', () => HelperRecord.create({ slug: 'decoy', title: 'Untouched' }));
+    const foreign = await Teams.runWithTeam('helper-team-b', () => HelperRecord.create({ slug: 'lifecycle', title: 'Foreign' }));
+    const calls: string[] = [];
+    let changes: Record<string, any> = {};
+    HelperRecord.observe({
+      creating() { calls.push('creating'); },
+      created() { calls.push('created'); },
+      updating() { calls.push('updating'); },
+      updated(model) { calls.push('updated'); changes = model.getChanges(); },
+      saving() { calls.push('saving'); },
+      saved() { calls.push('saved'); },
+    });
+    try {
+      await Teams.runWithTeam('helper-team-a', async () => {
+        const query = HelperRecord.forTenant('helper-team-a').where('slug', 'decoy').orWhere('slug', 'lifecycle');
+        const original = query.toSQL();
+        const record = await query.firstOrCreate({ slug: 'lifecycle' }, {
+          title: 'Created', payload: { step: 1 }, is_admin: true,
+        });
+        expect(record.getAttribute('record_key')).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+        expect(record.getAttribute('team_id')).toBe('helper-team-a');
+        expect(record.getAttribute('payload')).toEqual({ step: 1 });
+        expect(record.getAttribute('is_admin')).toBeUndefined();
+        expect(record.getAttribute('created_at')).toBeTruthy();
+        expect(calls).toEqual(['creating', 'saving', 'created', 'saved']);
+        calls.length = 0;
+        const unchanged = await query.firstOrCreate({ slug: 'lifecycle' }, { title: 'Ignored' });
+        expect(unchanged.getAttribute('title')).toBe('Created');
+        expect(calls).toEqual([]);
+        const updated = await query.select('title').updateOrCreate({ slug: 'lifecycle' }, {
+          title: 'Updated', payload: { step: 2 }, is_admin: true,
+        });
+        expect(updated.getAttribute('record_key')).toBe(record.getAttribute('record_key'));
+        expect(updated.getAttribute('payload')).toEqual({ step: 2 });
+        expect(changes.title).toBe('Updated');
+        expect(changes).not.toHaveProperty('is_admin');
+        expect(calls).toEqual(['updating', 'saving', 'updated', 'saved']);
+        expect((await HelperRecord.where('slug', 'decoy').first())?.getAttribute('title')).toBe('Untouched');
+        query.select('*');
+        expect(query.toSQL()).toEqual(original);
+        await expect(query.updateOrCreate({ slug: 'lifecycle' }, { team_id: 'helper-team-b' })).rejects.toThrow('different tenant');
+        await expect(HelperRecord.withTrashed().upsert({
+          record_key: record.getAttribute('record_key'), slug: 'lifecycle', title: 'Invalid conflict',
+        }, ['slug'], ['title'])).rejects.toThrow('conflict columns');
+        await HelperRecord.withTrashed().upsert({
+          record_key: record.getAttribute('record_key'), slug: 'lifecycle', title: 'Own bulk update',
+        }, ['team_id', 'slug'], ['title']);
+        expect((await HelperRecord.find(record.getAttribute('record_key')))?.getAttribute('title')).toBe('Own bulk update');
+        expect(calls).toEqual(['updating', 'saving', 'updated', 'saved']);
+        const attack = HelperRecord.withTrashed().upsert({
+          record_key: foreign.getAttribute('record_key'), slug: 'foreign-key-collision', title: 'Attack',
+        }, ['team_id', 'slug'], ['title']);
+        if (Connection.getDriver() === 'mysql') await attack;
+        else await expect(attack).rejects.toThrow();
+        await updated.delete();
+      });
+      const trashed = await HelperRecord.forTenant('helper-team-a').withTrashed().updateOrCreate(
+        { slug: 'lifecycle' }, { title: 'Updated while trashed' },
+      );
+      expect(trashed.getAttribute('deleted_at')).toBeTruthy();
+      expect((await HelperRecord.withoutTenantScope().withTrashed().where('team_id', 'helper-team-a').where('slug', 'lifecycle').first())?.getAttribute('title')).toBe('Updated while trashed');
+      await Teams.runWithTeam('helper-team-b', async () => {
+        expect(await HelperRecord.count()).toBe(1);
+        expect((await HelperRecord.first())?.getAttribute('title')).toBe('Foreign');
+      });
+    } finally { HelperRecord.removeObservers(); }
+  });
+
+  it('arbitrates concurrent helper creation and recovers inside an outer transaction', async () => {
+    class CreateHelperRaces extends Migration {
+      async up() {
+        await this.schema.createTable('certification_helper_races', (table) => {
+          table.increments('id');
+          table.string('slug').unique();
+          table.string('title');
+        });
+      }
+      async down() { await this.schema.dropTableIfExists('certification_helper_races'); }
+    }
+    class HelperRace extends Model {
+      static table = 'certification_helper_races';
+      static timestamps = false;
+      static fillable = ['slug', 'title'];
+    }
+    await new CreateHelperRaces().up();
+    let arrived = 0;
+    let release!: () => void;
+    const bothReady = new Promise<void>((resolve) => { release = resolve; });
+    let created = 0;
+    HelperRace.observe({
+      async creating() { if (++arrived === 2) release(); await bothReady; },
+      created() { created++; },
+    });
+    try {
+      const records = await Promise.all([
+        HelperRace.query().firstOrCreate({ slug: 'race' }, { title: 'First' }),
+        HelperRace.query().firstOrCreate({ slug: 'race' }, { title: 'Second' }),
+      ]);
+      expect(records[0].getAttribute('id')).toBe(records[1].getAttribute('id'));
+      expect(await HelperRace.count()).toBe(1);
+      expect(created).toBe(1);
+      HelperRace.removeObservers();
+      HelperRace.observe({
+        async creating(model) {
+          if (model.getAttribute('slug') === 'outer-race') {
+            await new QueryBuilder(HelperRace.table).insert({ slug: 'outer-race', title: 'Winner' });
+          }
+        },
+        created() { created++; },
+      });
+      await Connection.transaction(async () => {
+        const winner = await HelperRace.query().firstOrCreate({ slug: 'outer-race' }, { title: 'Loser' });
+        expect(winner.getAttribute('title')).toBe('Winner');
+        expect(created).toBe(1);
+        await HelperRace.create({ slug: 'after-conflict', title: 'Transaction still usable' });
+      });
+      expect(await HelperRace.count()).toBe(3);
+      const distinct = await Promise.all(['identity-a', 'identity-b'].map((slug) =>
+        HelperRace.query().firstOrCreate({ slug }, { title: slug })));
+      expect(new Set(distinct.map((record) => record.getAttribute('id'))).size).toBe(2);
+      for (const record of distinct) {
+        expect((await HelperRace.find(record.getAttribute('id')))?.getAttribute('title')).toBe(record.getAttribute('title'));
+      }
+    } finally { HelperRace.removeObservers(); }
+  });
+
 	  it('runs generated hook CSRF protections for API routes', async () => {
 	    const { handle } = await import('../../src/hooks.server.js');
 
@@ -1464,6 +1617,19 @@ describe('Svelar release certification', () => {
 	    expect(await Teams.acceptInvitation(invitation.token, member.id)).toBe(false);
 	    expect(await Teams.hasRole(team.id, invitee.id, 'viewer')).toBe(true);
 	    expect(await Teams.getPendingInvitations(team.id)).toHaveLength(0);
+
+        const role = await Permissions.createRole({ name: 'certification-editor' });
+        const permission = await Permissions.createPermission({ name: 'certification.cards.write' });
+        const grants = Permissions.forTeam(team.id);
+        for (let attempt = 0; attempt < 2; attempt++) {
+          await grants.giveRolePermission(role.id, permission.id);
+          await grants.assignRole('User', member.id, role.id);
+          await grants.giveModelPermission('User', invitee.id, permission.id);
+        }
+        expect(await grants.modelHasPermission('User', member.id, permission.name)).toBe(true);
+        expect(await grants.modelHasPermission('User', invitee.id, permission.name)).toBe(true);
+        expect(await Permissions.forTeam(duplicate.id).modelHasPermission('User', member.id, permission.name)).toBe(false);
+        expect(await grants.getModelRoles('User', member.id)).toHaveLength(1);
 	  });
 
 	  it('runs PostgreSQL through PgBouncer and records pg_stat_statements when configured', async () => {
