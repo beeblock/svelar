@@ -8,8 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **Strict release builds** — declaration emission errors now fail the package build instead of being hidden behind a warning.
+- **Schema index alterations** — `Schema.table()` now applies ordinary/unique indexes and named `dropIndex()`/`dropUnique()` changes with driver-specific SQL and identifier preflight, instead of silently ignoring index declarations.
+
 - **Logs and error correlation** — `createSvelarApp()` now creates request/correlation IDs for the request lifecycle, `Log` enriches entries with request/job/tenant/actor context, sensitive log context keys are redacted before reaching channels or `LogViewer`, and `ErrorHandler` logs unexpected failures with safe incident IDs for production responses.
-- **CLI certification coverage** — built-in CLI commands now have a single registry shared by the binary and tests; release smoke checks validate every generated app `npx svelar <command> --help` path and the existing-app `svelar update` workflow.
+- **CLI certification coverage** — built-in commands have a shared registry and execution gates; packed-app checks execute artifact generators, custom commands, tinker and finite workers/schedulers across DDD/flat and Zod/Valibot, then type-check, test and build the apps. Historical upgrade checks preserve source, secrets and seeded records and require explicit backed-up validator migration.
 - **Incoming webhook inbox** — `@beeblock/svelar/webhooks` now includes `WebhookInbox` for durable incoming webhook capture, HMAC verification, idempotent deduplication, status transitions, replay, and database-backed operational queries.
 - **Activity-based sliding sessions** — session middleware can now renew store TTL only on real navigation/mutation activity, ignore SSE/polling, throttle touches, and enforce an absolute lifetime cap.
 - **Resilient HTTP integrations** — the server-side `Http` client now supports configurable retry policies by status/method/error, `Retry-After`, exponential backoff, full jitter, idempotency keys, process-local circuit breakers, request/response/error hooks, and redaction helpers for telemetry.
@@ -19,15 +22,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Distributed SSE backplanes** — the SSE broadcaster can now publish through a pluggable backplane, including optional Redis pub/sub, so workers/schedulers/other web processes can fan out events to connected SSE clients.
 - **Production deploy safety** — `prod:deploy` now pulls images, runs migrations in a one-off app container, starts containers with `--remove-orphans --wait`, and `prod:restart` recreates only runtime containers instead of doing a full `down`.
 - **RBAC capability registry** — `Permissions` can now register code-defined capabilities, expose them to admin UIs, and sync/prune them against database permission records so UI-created permissions do not drift from application gates.
-- **Testing fakes** — `@beeblock/svelar/testing` now includes `fakeMailer()` and `FakeMailTransport` for asserting mail delivery without SMTP/Postmark/Resend/Mailtrap credentials.
+- **Testing fakes** — callback-scoped `fakeQueue`, `fakeEvents`, `fakeNotifications`, `fakeHttp`, and `fakeMail` isolate side effects and restore interception after completion or failure; queue fakes retain dispatch-time tenant/actor context. `fakeMailer()` and `FakeMailTransport` remain available for explicit transport configuration.
 - **Queue progress tracking** — jobs can now call `this.progress(...)`, Redis/BullMQ persists progress for `JobMonitor`, and queued job context exposes `jobId`, `jobClass`, and `queue` while handlers run.
+- **Team-scoped RBAC** — immutable `Permissions.forTeam(teamId)` scopes isolate team role grants, direct permissions and role-permission links from other teams and platform permissions; additive migrations and transactional sync preserve existing global grants.
+- **Native validation/tooling baseline** — shared Zod schemas and forms helpers use native Zod 4 and Superforms `zod4`/`zod4Client`; Valibot remains selectable. The tested TypeScript baseline is 6.0.3 with explicit Node 22 ambient types. Existing Zod apps can opt into AST-based adapter/dependency migration with preview, preserved aliases and exact-original backups.
+- **Operational dashboard** — generated consoles use public monitor contracts for queue inspection/pagination, job timelines, task history and persisted controls, with per-operation authorization, CSRF, redaction, confirmation, loading and auditing. Distributed Redis worker heartbeats report observed concurrency/drain state without pretending partial observations are complete pool totals.
+
+### Fixed
+
+- **CLI failure reporting and flags** — commands that report errors now exit with failure, explicit boolean values are parsed correctly (including `--force=false`), and invalid or incomplete options fail before command execution.
+- **DDD factory imports** — `make:factory` resolves models under `domain/models`, emits `.js` imports, and requires an explicit module when model names are ambiguous.
+- **Infrastructure command shell safety** — `infra:setup` passes script and config paths as literal process arguments instead of interpolating them into a shell command.
+- **Scaffold upgrade safety** — updates now use the same layered DDD/flat path transformations as new apps, preserve customized source and app migrations by default, include agent guidance for reviewed updates, and fail promptly when a noninteractive update would require a prompt.
+- **Generated contracts** — resource controller/model generators delegate to the complete entity flow; field casts, DTO/resource types, optional columns, partial updates and numeric/boolean coercion stay consistent. Repeated generation does not duplicate create-table migrations, and collection resources return their asynchronous response type.
+- **Application declarations and aliases** — globals now live in `src/svelar.d.ts` so the bootstrap cannot shadow them; nullable auth is narrowed before protected access. Vite/test aliases resolve Valibot's specific subpath before the broader validation alias.
+- **API-key ownership** — `revokeForUser()` atomically restricts revocation to the authenticated owner; generated actions deny forged foreign-key requests with inline 403 feedback and consistent `{ data, meta }` form results.
+- **Scheduler outcomes** — manual execution returns actual success/failure/skipped results, missing history is unknown instead of failed, persistent controls fail closed, and frequently running tasks cannot hide other tasks' history.
+- **Package runtime identity** — class names survive minification across subpaths, and tenant/actor context uses a shared async-local manager across independently bundled ORM, Teams and Queue entries.
+- **Forms and mobile console** — shared-schema client validators, quiet initial form errors, loading/feedback and correct HTML label associations harden generated forms; constrained table scroll regions prevent mobile page overflow.
+- **Streaming Excel import** — shared/reference/rich-text headers and physical row positions are decoded correctly; callback/parser failures after delivery reject without replaying previously processed rows.
+- **Cron calendars** — invalid steps/bounds reject without hanging; maintained calendar iteration supports named weekdays/months, day-of-month/day-of-week OR semantics, per-task timezones and leap-year previews. Unavailable next-run dates are explicitly null. Private calendar dependencies avoid BullMQ's older cron major being selected in production SSR.
+- **Generator input boundaries** — 23 artifact generators normalize valid names and reject malformed identifiers, unsafe module paths and symlink escapes before writing companion files. `new ../sibling-app` remains an intentional project-path workflow.
+- **Reviewed historical upgrades** — opt-in `update --migrate-core` changes recognized 0.7.9 AST tokens with exact-original backups and rollback, preserving app-owned source outside the reviewed edits. Published flat provider imports are supported without rewriting their spelling.
+- **Welcome email jobs** — generated jobs pass nested user data to the real template renderer, preserving personalized subject, HTML and text through serialization.
+- **Browser certification isolation** — test servers honor the requested port, reject occupied ports, bound readiness requests and clean up on errors. Browser checks cover labels, inline errors and both mobile admin views, including keyboard scrolling.
+
+### Security
+
+- **Compatible transitive patches** — narrow cookie, ExcelJS UUID and affected esbuild overrides patch the installed dependency graph without forcing SvelteKit 3 or downgrading ExcelJS. Root lock and standalone packed-consumer audits are verified separately.
+- **API key rotation** — replacement and revocation are atomic; failures retain the old key, competing rotations have one winner, and exact expiry/disabled state and service-account restrictions survive rotation. Database timestamps normalize safely across drivers; zero-valued controls do not fail open.
+- **Incoming webhook identity** — database uniqueness and memory arbitration scope deliveries by source, tenant and provider key. An additive, backfilled migration preserves retained entries; signature verification precedes duplicate recovery and unrelated storage failures propagate.
+- **Server-directed retry waits** — HTTP retries never shorten a valid `Retry-After` to fit the delay cap. A wait exceeding the configured budget ends retries with the original status/headers/body.
 
 ## [0.8.0] - 2026-10-12
 
 ### Changed
 
 - **Node.js baseline** — Svelar now requires Node.js 22 or higher, and generated Dockerfiles use `node:22-alpine`.
-- **Dependency refresh** — refreshed core runtime/test dependencies and plugin test dependencies to current compatible releases while keeping SvelteKit 2, Zod 3, Superforms 2, Vitest 4, and TypeScript 5.
+- **Dependency refresh** — refreshed compatible runtime/test dependencies. The final core candidate uses SvelteKit 2, native Zod 4, Superforms 2, Vitest 4 and TypeScript 6; plugin validation migrations remain a separate scope.
 - **Typed FormRequests and DTO generation** — `FormRequest<TSchema, TOutput>` now preserves validated output types, `CreateRequest.validate(event)` returns the DTO type when declared, and the CLI includes a focused `make:dto` generator.
 - **Queue worker lifecycle** — `queue:work` now starts one long-lived worker by default, supports Redis/BullMQ concurrency and lock tuning flags, and stops gracefully on `SIGINT`, `SIGTERM`, or `--max-time`.
 - **Cache-backed rate limiting** — shared rate limits and throttles now use `Cache.incrementWithTtl()` for atomic Redis counters and explicit TTL windows.

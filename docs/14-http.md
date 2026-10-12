@@ -163,9 +163,9 @@ const response = await Http
   .get('/reports');
 ```
 
-For mutating third-party requests that may be retried, send an idempotency key supported by the provider:
-
 With `respectRetryAfter: true`, a valid seconds/date header is a minimum wait, not a backoff value to shorten. If it exceeds `maxDelay` (30 seconds by default), the client stops retrying and throws the original `HttpRequestError` with its status, headers and body. Increase the wait budget to permit a longer server-directed pause; explicitly disabling `respectRetryAfter` opts out of that policy. This follows the wait semantics of [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html#section-10.2.3).
+
+For mutating third-party requests that may be retried, send an idempotency key supported by the provider:
 
 ```typescript
 await Http
