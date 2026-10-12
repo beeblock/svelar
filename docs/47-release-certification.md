@@ -74,12 +74,15 @@ The existing external-service gates are wired into the certification suite. Prov
 
 ### Verification Snapshot (2026-10-12)
 
-- Core: 1,753 tests in 94 files passed with no skips; strict package build and publish dry-run passed.
-- Packed CLI: DDD/flat with Zod/Valibot executed the registered generator/runtime gates, type-checked with zero errors, ran 30 app tests per target (120 total), built, and passed production browser flows.
-- Published upgrade: all four 0.7.9 layout/provider targets passed type-checks with zero errors/warnings, preserved source outside reviewed migration tokens, retained exact backups and `.env`, compared SHA-256 fingerprints of complete stored user records without exposing password/token values, logged in/reloaded in a real browser, ran 28 tests each (112 total), and built.
-- Drivers: SQLite, PostgreSQL and MySQL passed 28 packed-app tests each (84 total), including competing API-key rotation and signed, concurrent, tenant-isolated inbox capture.
+- Core: 1,823 tests in 100 files passed with no skips; strict package build and publish dry-run passed. The complete dry-run inventory contains 294 files.
+- Packed CLI: DDD/flat with Zod/Valibot executed the registered generator/runtime gates, type-checked with zero errors/warnings, ran 32 app tests per target (128 total), built, and passed all four production browser flows.
+- Published upgrade: all four 0.7.9 layout/provider targets passed type-checks with zero errors/warnings, preserved source outside reviewed migration tokens, retained exact backups and `.env`, compared SHA-256 fingerprints of complete stored user records without exposing password/token values, logged in/reloaded in a real browser, ran 30 tests each (120 total), and built.
+- Drivers: the latest SQLite CLI target passed 32 tests; separate PostgreSQL and MySQL targets passed 30 tests each. Installed regressions cover model-aware find/create/update lifecycles, UUID/custom-key identity, OR predicate isolation, explicit tenant scopes, tenant-safe bulk upserts including foreign primary-key collisions, competing creation and PostgreSQL savepoint recovery inside an outer transaction. Repeated team RBAC grants, competing API-key rotation and signed tenant-isolated inbox capture also passed.
+- ORM source regressions cover fillable guards, JSON casts, null searches, UUID v7/ULID IDs, timestamps, hooks/observers, audit diffs, Searchable persistence-option forwarding, model/raw result contracts, and rejection of missing or out-of-scope writes before success events.
 - Browser regressions check accessible field labels, inline validation without duplicate alerts, all seven default admin tabs at mobile width, and keyboard scrolling in default/operational table regions. The final production browser proof and its screenshots passed; the two legitimate focus-region compiler warnings from the first CLI matrix were addressed with narrowly explained annotations and compiler regressions.
 - Dependency audit: zero findings at every severity. Docs search: five route regressions and site production build passed. Local Docker test services and owned browser servers were cleaned up.
+
+Builds still report upstream optional validation-adapter, circular-dependency and annotation warnings; the docs build externalizes optional bcrypt/argon2. These are separate from the zero-error/zero-warning Svelte type checks. Meilisearch/Redis/PDF/storage/PgBouncer service phases were not rerun in this ORM slice.
 
 These results certify the stated scenarios, not every proposed feature or 100% statement/branch coverage. Full `npm run certify` must still be repeated on the final release artifact, including its external-service phases, before publishing.
 
