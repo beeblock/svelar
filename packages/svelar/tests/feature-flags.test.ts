@@ -164,6 +164,8 @@ describe('Feature flags', () => {
     await Features.disable(name);
     expect(await Features.enabled(name)).toBe(false);
 
+    // Isolate override assertions from the flag name's percentage bucket.
+    await Features.updateFlag(name, { percentage: 0 });
     expect(await Features.enabledFor(name, 123)).toBe(true);
     expect(await Features.enabledForTeam(name, 'enabled-team')).toBe(false);
     await Features.enableForTeam(name, 'enabled-team');
