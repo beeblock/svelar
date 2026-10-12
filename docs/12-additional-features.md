@@ -424,6 +424,8 @@ configureDashboard({ enabled: true, prefix: '/admin' });
 
 When the dashboard plugin is booted with background health collection enabled, it records the latest health snapshot plus last run/success/error metadata. Health collection failures are exposed through dashboard data instead of being logged and forgotten.
 
+Queue health includes the public queue registry from `Queue.registerQueue()`/`Queue.registerQueues()` and the registered job class list from `Queue.registeredJobs()`, so operational screens can show expected queues, labels, concurrency hints, and job classes without importing BullMQ internals.
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/admin/health` | System health |

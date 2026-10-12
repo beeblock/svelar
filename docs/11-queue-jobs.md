@@ -267,8 +267,36 @@ await Queue.dispatch(new SendWelcomeEmail(user.id, user.email), {
   queue: 'emails',      // Send to a specific named queue
   delay: 60,            // Wait 60 seconds before processing
   maxAttempts: 5,       // Override job's maxAttempts
+  jobId: `welcome:${user.id}`, // Stable idempotency key
+  deduplicate: true,    // Skip enqueueing when jobId is already waiting
+  priority: 1,          // Lower numbers run first in BullMQ and memory queues
+  metadata: { userId: user.id, teamId }, // Dashboard/search context
 });
 ```
+
+`Queue.dispatch()` returns the queued job id. Use `jobId` when an external event or webhook needs idempotency. Redis/BullMQ also receives `priority`; the memory driver uses priority for local tests.
+
+### Queue Registry
+
+Register queue names and operational defaults during app boot so dashboards and workers can discover them without importing BullMQ directly:
+
+```typescript
+import { Queue } from '@beeblock/svelar/queue';
+
+Queue.registerQueue({
+  name: 'emails',
+  label: 'Email delivery',
+  concurrency: 5,
+  metadata: { flow: 'notifications' },
+});
+
+Queue.registerQueues([
+  { name: 'pdf', label: 'PDF generation', concurrency: 2 },
+  { name: 'webhooks', label: 'Webhook processing', concurrency: 10 },
+]);
+```
+
+`Queue.queues()` returns the registered queue definitions and `Queue.registeredJobs()` returns the registered job class names. `JobMonitor.getHealth()` includes both lists for admin dashboards.
 
 ## Synchronous Dispatch
 

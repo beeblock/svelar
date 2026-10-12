@@ -309,6 +309,42 @@ describe('Queue and Job Processing', () => {
       }
     });
 
+    it('should return stable job ids and deduplicate memory jobs by jobId', async () => {
+      class UniqueJob extends Job {
+        async handle(): Promise<void> {}
+      }
+
+      const firstId = await Queue.dispatch(new UniqueJob(), { jobId: 'unique-job-1', deduplicate: true });
+      const secondId = await Queue.dispatch(new UniqueJob(), { jobId: 'unique-job-1', deduplicate: true });
+
+      expect(firstId).toBe('unique-job-1');
+      expect(secondId).toBe('unique-job-1');
+
+      const driver = Queue['drivers']?.get('memory');
+      expect(await driver.size('default')).toBe(1);
+    });
+
+    it('should process lower priority memory jobs first', async () => {
+      const handled: string[] = [];
+
+      class PriorityQueueJob extends Job {
+        constructor(private label: string) {
+          super();
+        }
+
+        async handle(): Promise<void> {
+          handled.push(this.label);
+        }
+      }
+
+      await Queue.dispatch(new PriorityQueueJob('normal'), { priority: 10 });
+      await Queue.dispatch(new PriorityQueueJob('high'), { priority: 1 });
+
+      await Queue.work({ maxJobs: 2 });
+
+      expect(handled).toEqual(['high', 'normal']);
+    });
+
     it('should clear queue', async () => {
       class Job1 extends Job {
         async handle(): Promise<void> {}
@@ -380,6 +416,28 @@ describe('Queue and Job Processing', () => {
       await Queue.dispatch(new DispatchJob());
 
       expect(executed).toBe(true);
+    });
+
+    it('should expose queue and job registries for monitors', () => {
+      class RegisteredRegistryJob extends Job {
+        async handle(): Promise<void> {}
+      }
+
+      Queue.register(RegisteredRegistryJob);
+      Queue.registerQueue({
+        name: 'emails',
+        label: 'Email delivery',
+        concurrency: 5,
+        metadata: { flow: 'notifications' },
+      });
+
+      expect(Queue.registeredJobs()).toContain('RegisteredRegistryJob');
+      expect(Queue.queues()).toContainEqual({
+        name: 'emails',
+        label: 'Email delivery',
+        concurrency: 5,
+        metadata: { flow: 'notifications' },
+      });
     });
 
     it('should accept dispatch options', async () => {

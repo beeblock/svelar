@@ -14,6 +14,8 @@ describe('Dashboard health collection', () => {
   it('records successful background health collection state', async () => {
     vi.spyOn(JobMonitor, 'getHealth').mockResolvedValue({
       driver: 'memory',
+      registry: [],
+      registeredJobs: [],
       queues: {},
       failureRate: 0,
       throughput: 0,

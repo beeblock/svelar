@@ -8,7 +8,7 @@
 import { assertSqlIdentifier } from '../database/Connection.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
 import { singleton } from '../support/singleton.js';
-import { Queue } from './index.js';
+import { Queue, type QueueDefinition } from './index.js';
 
 // Types
 export interface JobInfo {
@@ -18,6 +18,8 @@ export interface JobInfo {
   status: 'waiting' | 'active' | 'completed' | 'failed' | 'delayed';
   attempts: number;
   maxAttempts: number;
+  priority?: number;
+  metadata?: Record<string, any>;
   payload: string;
   error?: string;
   createdAt: number;
@@ -45,13 +47,18 @@ export interface JobFilter {
 
 export interface QueueHealth {
   driver: string;
+  registry: QueueDefinition[];
+  registeredJobs: string[];
   queues: Record<string, JobCounts>;
   oldestWaitingJob?: number; // timestamp
   failureRate: number; // percentage in last hour
   throughput: number; // jobs processed in last hour
 }
 
-function parseDatabaseJobPayload(row: { id: string; payload: string }, table: string): { jobClass?: string } {
+function parseDatabaseJobPayload(
+  row: { id: string; payload: string },
+  table: string,
+): { jobClass?: string; priority?: number; metadata?: Record<string, any> } {
   try {
     const data = JSON.parse(row.payload ?? '{}');
     if (!data || typeof data !== 'object') {
@@ -211,6 +218,8 @@ class JobMonitorService {
 
     return {
       driver,
+      registry: Queue.queues(),
+      registeredJobs: Queue.registeredJobs(),
       queues: { default: counts },
       failureRate: total > 0 ? (recentFailed / total) * 100 : 0,
       throughput: recentProcessed,
@@ -471,6 +480,8 @@ class JobMonitorService {
       status: state as JobInfo['status'],
       attempts: job.attemptsMade ?? 0,
       maxAttempts: job.opts?.attempts ?? 3,
+      priority: job.opts?.priority,
+      metadata: job.data?.metadata,
       payload: JSON.stringify(job.data ?? {}),
       error: job.failedReason ?? undefined,
       createdAt: job.timestamp ?? Date.now(),
@@ -550,6 +561,8 @@ class JobMonitorService {
         status: isActive ? 'active' : (isDelayed ? 'delayed' : 'waiting'),
         attempts: row.attempts ?? 0,
         maxAttempts: row.max_attempts ?? 3,
+        priority: data.priority,
+        metadata: data.metadata,
         payload: row.payload,
         createdAt: (row.created_at ?? 0) * 1000,
         delayedUntil: isDelayed ? row.available_at * 1000 : undefined,
@@ -580,6 +593,8 @@ class JobMonitorService {
       status: row.reserved_at ? 'active' : (row.available_at > nowSec ? 'delayed' : 'waiting'),
       attempts: row.attempts ?? 0,
       maxAttempts: row.max_attempts ?? 3,
+      priority: data.priority,
+      metadata: data.metadata,
       payload: row.payload,
       createdAt: (row.created_at ?? 0) * 1000,
     };

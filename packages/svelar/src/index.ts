@@ -84,7 +84,7 @@ export type { CacheConfig, CacheStoreConfig, CacheDriver } from './cache/index.j
 
 // Queue
 export { Queue, Job } from './queue/index.js';
-export type { QueueConfig, DispatchOptions } from './queue/index.js';
+export type { QueueConfig, DispatchOptions, QueueDefinition } from './queue/index.js';
 export { JobMonitor } from './queue/JobMonitor.js';
 export type { JobInfo, JobCounts, JobFilter, QueueHealth } from './queue/JobMonitor.js';
 

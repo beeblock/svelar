@@ -95,6 +95,23 @@ export interface DispatchOptions {
   delay?: number;
   /** Max retry attempts */
   maxAttempts?: number;
+  /** Stable queue job id for idempotency/deduplication */
+  jobId?: string;
+  /** Driver-supported priority. Lower numbers run first in BullMQ. */
+  priority?: number;
+  /** Skip enqueueing when a job with the same jobId already exists. */
+  deduplicate?: boolean;
+  /** Searchable metadata for dashboards and audit trails */
+  metadata?: Record<string, any>;
+}
+
+export interface QueueDefinition {
+  name: string;
+  label?: string;
+  description?: string;
+  connection?: string;
+  concurrency?: number;
+  metadata?: Record<string, any>;
 }
 
 interface QueuedJob {
@@ -104,13 +121,25 @@ interface QueuedJob {
   queue: string;
   attempts: number;
   maxAttempts: number;
+  priority?: number;
+  deduplicate?: boolean;
+  metadata?: Record<string, any>;
   availableAt: number;
   createdAt: number;
   job: Job;
   context?: ApplicationContextSnapshot;
 }
 
-function parseDatabaseJobPayload(row: { id: string; payload: string }, table: string): { jobClass: string; payload: string; context?: ApplicationContextSnapshot } {
+function parseDatabaseJobPayload(
+  row: { id: string; payload: string },
+  table: string,
+): {
+  jobClass: string;
+  payload: string;
+  context?: ApplicationContextSnapshot;
+  priority?: number;
+  metadata?: Record<string, any>;
+} {
   try {
     const data = JSON.parse(row.payload);
     if (!data || typeof data.jobClass !== 'string' || typeof data.payload !== 'string') {
@@ -245,7 +274,12 @@ class MemoryDriver implements QueueDriverInterface {
     if (!this.queues.has(queueName)) {
       this.queues.set(queueName, []);
     }
-    this.queues.get(queueName)!.push(job);
+    const jobs = this.queues.get(queueName)!;
+    if (job.deduplicate && jobs.some((queued) => queued.id === job.id)) {
+      return;
+    }
+    jobs.push(job);
+    jobs.sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0) || a.createdAt - b.createdAt);
   }
 
   async pop(queue: string = 'default'): Promise<QueuedJob | null> {
@@ -286,6 +320,11 @@ class DatabaseDriver implements QueueDriverInterface {
   }
 
   async push(job: QueuedJob): Promise<void> {
+    if (job.deduplicate) {
+      const existing = await this.query().where('id', job.id).first();
+      if (existing) return;
+    }
+
     await this.query().insert({
       id: job.id,
       queue: job.queue,
@@ -293,6 +332,8 @@ class DatabaseDriver implements QueueDriverInterface {
         jobClass: job.jobClass,
         payload: job.payload,
         context: job.context,
+        priority: job.priority,
+        metadata: job.metadata,
       }),
       attempts: job.attempts,
       max_attempts: job.maxAttempts,
@@ -334,6 +375,8 @@ class DatabaseDriver implements QueueDriverInterface {
       createdAt: row.created_at * 1000,
       job: jobInstance,
       context: data.context,
+        priority: (data as any).priority,
+        metadata: (data as any).metadata,
     };
   }
 
@@ -450,6 +493,7 @@ class RedisDriver implements QueueDriverInterface {
         jobId: job.id,
         delay: delaySec > 0 ? delaySec : undefined,
         attempts: job.maxAttempts,
+        priority: job.priority,
         backoff: {
           type: 'fixed',
           delay: (job.job.retryDelay ?? 60) * 1000,
@@ -746,6 +790,10 @@ class JobRegistry {
   has(className: string): boolean {
     return this.jobs.has(className);
   }
+
+  all(): string[] {
+    return [...this.jobs.keys()].sort();
+  }
 }
 
 // ── Queue Manager ──────────────────────────────────────────
@@ -760,10 +808,34 @@ class QueueManager {
   private jobRegistry = new JobRegistry();
   private failedStore = new FailedJobStore();
   private _activeWorker: any = null;
+  private queueRegistry = new Map<string, QueueDefinition>();
 
   configure(config: QueueConfig): void {
     this.config = config;
     this.drivers.clear();
+    const defaultQueue = config.connections[config.default]?.queue ?? 'default';
+    this.registerQueue({ name: defaultQueue, connection: config.default });
+  }
+
+  registerQueue(definition: QueueDefinition): void {
+    this.queueRegistry.set(definition.name, {
+      ...this.queueRegistry.get(definition.name),
+      ...definition,
+    });
+  }
+
+  registerQueues(definitions: QueueDefinition[]): void {
+    for (const definition of definitions) {
+      this.registerQueue(definition);
+    }
+  }
+
+  queues(): QueueDefinition[] {
+    return [...this.queueRegistry.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  registeredJobs(): string[] {
+    return this.jobRegistry.all();
   }
 
   /**
@@ -802,7 +874,7 @@ class QueueManager {
    *   maxAttempts: 5,
    * });
    */
-  async dispatch(job: Job, options?: DispatchOptions): Promise<void> {
+  async dispatch(job: Job, options?: DispatchOptions): Promise<string> {
     const connName = this.config.default;
     const connConfig = this.config.connections[connName];
     const driver = this.resolveDriver(connName);
@@ -816,12 +888,15 @@ class QueueManager {
     }
 
     const queuedJob: QueuedJob = {
-      id: crypto.randomUUID(),
+      id: options?.jobId ?? crypto.randomUUID(),
       jobClass: job.constructor.name,
       payload: job.serialize(),
       queue: job.queue ?? connConfig?.queue ?? 'default',
       attempts: 0,
       maxAttempts: job.maxAttempts,
+      priority: options?.priority,
+      deduplicate: options?.deduplicate,
+      metadata: options?.metadata,
       availableAt: Date.now() + (options?.delay ?? 0) * 1000,
       createdAt: Date.now(),
       job,
@@ -829,6 +904,7 @@ class QueueManager {
     };
 
     await driver.push(queuedJob);
+    return queuedJob.id;
   }
 
   /**
