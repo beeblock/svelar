@@ -30,6 +30,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- **Model find-or-create lifecycle** — `firstOrCreate()` and `updateOrCreate()` now preserve caller state, filters, connection and scope overrides while running fillable guards, generated identifiers, timestamps, casts, observers, audit and configured search synchronization through Model persistence. Failed or disappeared scoped writes do not emit success events.
+- **Insert identity isolation** — SQLite/MySQL return IDs from the mutation result rather than a separate connection-local query; supplied custom primary keys and default-only inserts work across the supported drivers.
 - **CLI failure reporting and flags** — commands that report errors now exit with failure, explicit boolean values are parsed correctly (including `--force=false`), and invalid or incomplete options fail before command execution.
 - **DDD factory imports** — `make:factory` resolves models under `domain/models`, emits `.js` imports, and requires an explicit module when model names are ambiguous.
 - **Infrastructure command shell safety** — `infra:setup` passes script and config paths as literal process arguments instead of interpolating them into a shell command.
@@ -49,6 +51,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Security
 
+- **ORM predicate boundaries** — automatic tenant and soft-delete scopes enclose user predicates, including OR expressions; helper search/primary-key constraints cannot be bypassed by caller OR filters. Scoped model writes reject conflicting tenant attributes. Unique-insert recovery keeps the same visible scopes and uses a savepoint inside active PostgreSQL transactions, without swallowing unrelated storage or lifecycle failures.
 - **Compatible transitive patches** — narrow cookie, ExcelJS UUID and affected esbuild overrides patch the installed dependency graph without forcing SvelteKit 3 or downgrading ExcelJS. Root lock and standalone packed-consumer audits are verified separately.
 - **API key rotation** — replacement and revocation are atomic; failures retain the old key, competing rotations have one winner, and exact expiry/disabled state and service-account restrictions survive rotation. Database timestamps normalize safely across drivers; zero-valued controls do not fail open.
 - **Incoming webhook identity** — database uniqueness and memory arbitration scope deliveries by source, tenant and provider key. An additive, backfilled migration preserves retained entries; signature verification precedes duplicate recovery and unrelated storage failures propagate.

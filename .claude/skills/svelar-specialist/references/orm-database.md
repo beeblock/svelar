@@ -47,7 +47,7 @@ Post.orderBy('created_at', 'desc')
 Post.latest()                               // orderBy created_at desc
 Post.oldest()                               // orderBy created_at asc
 Post.with('author', 'comments')             // eager load
-Post.query()                                // raw QueryBuilder
+Post.query()                                // model-aware QueryBuilder
 ```
 
 ### Instance Methods
@@ -178,6 +178,18 @@ await Post.query().where('id', 1).delete()
 await Post.query().increment('views', 1)
 await Post.query().decrement('stock', 5)
 ```
+
+### Find-Or-Create Contracts
+
+- Model-aware `firstOrCreate` and `updateOrCreate` return full Model instances, even after `select(...)`. Clone builders to preserve caller filters, connection, tenant scope, and soft-delete scope; do not append lookup criteria to the caller.
+- Keep automatic tenant and soft-delete guards outside grouped user predicates, including OR/raw OR. Helpers also group caller predicates before adding search criteria and the row primary key, so OR cannot widen a lookup or single-record update beyond those guards.
+- Delegate model writes to the full `Model.create` / `fill` / `save` lifecycle: respect `fillable`, generated IDs, timestamps, JSON casts, observers, audit, and configured Searchable synchronization. An existing `firstOrCreate` match is read-only.
+- Seed new records only from the passed search plus create/update attributes, not inferred `where` defaults. Use SQL `IS NULL` for null search attributes and reject undefined search attributes.
+- Authorize unscoped access first. Creating a tenant model through `withoutTenantScope()` requires an explicit configured tenant-column attribute, such as `team_id`; a `where` / `forTenant` filter is not a creation default.
+- Require matching database unique constraints in migrations. Recover only a recognized unique violation from the INSERT, then re-read the winner using the same visible, filtered, scoped search. In an active PostgreSQL transaction, isolate the INSERT with a savepoint before recovery.
+- Propagate unrelated storage and observer errors; do not treat lifecycle failures as duplicate-insert success or retry the whole lifecycle. If a scoped update target is missing, throw before updated/saved post-hooks, including no-dirty updates.
+- These helpers are not atomic; concurrent updates to an existing record are last-writer-wins. Use database `upsert` or transaction/locking when atomicity is needed; `upsert` is eventless and does not run the full Model lifecycle.
+- A raw `QueryBuilder` without a model class is eventless and returns plain rows. Its helpers require stable unique row identity through an `id` column, not a custom model primary key. Both model and raw helpers require a single-table write target and reject joined, grouped/HAVING, CTE, and union queries.
 
 ### CONDITIONAL & UTILITY
 ```typescript

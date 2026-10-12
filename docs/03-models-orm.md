@@ -1717,21 +1717,52 @@ await Connection.transaction(async () => {
 
 ### firstOrCreate / updateOrCreate
 
-Find-or-insert patterns without race conditions:
+These helpers look up a record using the passed search attributes together with the caller's filters. On a model-aware builder, they return a full Model instance rather than a projection-only result:
 
 ```typescript
-// Find user by email, or create with defaults
-const user = await User.query().firstOrCreate(
-  { email: 'john@example.com' },           // search criteria
-  { name: 'John Doe', role: 'user' }       // extra data if creating
+// Return the match unchanged, or create through User.create()
+const foundOrCreated = await User.query().firstOrCreate(
+  { email: 'john@example.com' },
+  { name: 'John Doe', role: 'user' }
 );
 
-// Find by email and update, or create new
-const user = await User.query().updateOrCreate(
-  { email: 'john@example.com' },           // search criteria
-  { name: 'John Updated', last_login: new Date().toISOString() } // data to set
+// Fill and save the match, or create through User.create()
+const updatedOrCreated = await User.query().updateOrCreate(
+  { email: 'john@example.com' },
+  { name: 'John Updated', last_login: new Date().toISOString() }
 );
+
+// Lookup projections do not restrict the returned Model's attributes
+const query = User.query().where('role', 'user').select('email');
+const user = await query.firstOrCreate(
+  { email: 'jane@example.com' },
+  { name: 'Jane', role: 'user' }
+);
+user instanceof User; // true
+// query keeps its filters and its original select('email') projection
 ```
+
+**Model lifecycle.** Creation delegates to `Model.create()`; updating an existing match delegates to `fill()` and `save()`. The model's mass-assignment policy (`fillable`), generated IDs, timestamps, JSON casts, hooks, observers, audit, and configured Searchable synchronization apply. An existing `firstOrCreate` match is read-only: it does not fire write hooks or change timestamps.
+
+**Builder state.** Lookups run on cloned builders and do not append search criteria to the caller. The helper retains the caller's connection, filters, tenant scope, and soft-delete visibility for lookup and scoped updates. Its lookup selects complete records even if the caller used `select(...)`. A soft-deleted or other filtered-out record is not a visible conflict winner. If a scoped update target is missing at persistence time, the helper throws before updated/saved post-hooks, including an update with no dirty attributes.
+
+- **OR predicates remain scoped.** Automatic tenant and soft-delete guards apply outside grouped user predicates, including OR/raw OR. Helpers group the caller's predicates before adding search criteria and the target primary key, so an OR branch cannot widen lookup or single-record update beyond those guards.
+
+**Creation attributes.** Only the passed search attributes plus create/update attributes seed a new record; the create/update payload wins when both contain the same key. Arbitrary `where` conditions are not inferred as creation defaults. In the example, `role: 'user'` is explicitly supplied rather than copied from the filter. Normal model-generated IDs, timestamps, and active tenant-context attributes still apply. Ensure the needed application columns are assignable under the model's `fillable` policy.
+
+Authorize unscoped tenant access before calling `withoutTenantScope()`. Creating an unscoped tenant model requires its configured tenant-column attribute in the passed search or create/update data, such as `team_id`. A `where('team_id', teamId)` or `forTenant(teamId)` filter alone does not seed that attribute.
+
+**Null lookups.** A search attribute such as `{ deleted_at: null }` becomes SQL `IS NULL`, not `= NULL`; undefined search attributes are rejected. JSON-cast search values use the model's storage representation.
+
+**Insert races.** Define database unique constraints in migrations that enforce the intended record identity, including the database's null semantics. Without such constraints, concurrent callers can insert duplicates. Recovery is limited to a recognized unique-constraint violation from the INSERT itself: the helper re-reads with the same search attributes, filters, connection, and scopes, and only accepts a winner visible to that query. If no visible winner exists, the original error propagates. In an active PostgreSQL transaction, the attempted INSERT is isolated by a savepoint so a unique violation does not leave the transaction unusable for the recovery read.
+
+Unrelated storage errors and exceptions from creating/saving/created/saved hooks, observers, or configured synchronization are not duplicate-insert recovery cases and propagate. The helper does not retry the whole model lifecycle or promise to undo a write when a later observer fails.
+
+**Atomicity.** Neither helper is an atomic read-modify-write operation. Concurrent `updateOrCreate` calls updating an existing record are last-writer-wins. Use database `upsert` or an appropriate transaction and locking strategy when atomic updates are required. `upsert` is a direct, eventless database operation, not a substitute for the full Model lifecycle; arrange required side effects explicitly.
+
+**Raw-table builders.** A `QueryBuilder` constructed without a model class returns full plain rows and remains eventless: it does not apply model fillable rules, generated model IDs, timestamps, casts, observers, audit, or Searchable hooks. Its find-or-create helpers require stable unique row identity through an `id` column; custom model primary-key configuration does not change that raw-table identity contract. Do not use these helpers for no-id or custom-key-only tables. Both model-aware and raw find-or-create helpers require a single-table write target and reject joined, grouped/HAVING, CTE, and union queries.
+
+**Insert identity.** The underlying `insertGetId()` obtains identity from the same INSERT: SQLite uses that statement's `lastInsertRowid`, MySQL uses its `insertId`, and PostgreSQL uses `RETURNING` for the requested primary-key column. Explicit primary-key values are preserved; do not use a later connection-wide last-insert-ID query or `MAX(id)` to guess identity. Empty attribute payloads use the driver's default-only INSERT syntax, subject to table constraints and defaults. Calling `insertGetId()` directly remains eventless.
 
 ### Compare Columns (whereColumn)
 
