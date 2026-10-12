@@ -45,6 +45,7 @@
 import { singleton } from '../support/singleton.js';
 
 import { createRequire } from 'node:module';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 const requireOptionalPeer = createRequire(import.meta.url);
 
@@ -77,7 +78,24 @@ export interface SearchConfig {
   host: string;
   apiKey?: string;
   indexPrefix?: string;
+  syncMode?: SearchSyncMode;
+  syncHandler?: SearchSyncHandler;
 }
+
+export type SearchSyncMode = 'strict' | 'fail-open';
+
+export interface SearchSyncOperation {
+  type: 'upsert' | 'delete';
+  index: string;
+  primaryKey: string;
+  id: string | number;
+  document?: Record<string, any>;
+}
+
+export type SearchSyncHandler = (
+  operation: SearchSyncOperation,
+  next: () => Promise<void>
+) => Promise<void>;
 
 export interface SearchHit {
   [key: string]: any;
@@ -117,7 +135,7 @@ type Constructor = new (...args: any[]) => any;
 class SearchManager {
   private config: SearchConfig | null = null;
   private client: any = null;
-  private syncingDisabled = false;
+  private syncingContext = new AsyncLocalStorage<{ disabled: boolean }>();
 
   configure(config: SearchConfig): void {
     this.config = config;
@@ -152,12 +170,30 @@ class SearchManager {
   }
 
   getIndexName(baseName: string): string {
-    const prefix = this.config?.indexPrefix ?? '';
-    return prefix ? `${prefix}_${baseName}` : baseName;
+    const prefix = (this.config?.indexPrefix ?? '').replace(/_+$/g, '');
+    const normalizedBase = baseName.replace(/^_+/g, '');
+    return prefix ? `${prefix}_${normalizedBase}` : normalizedBase;
   }
 
   isSyncingDisabled(): boolean {
-    return this.syncingDisabled;
+    return this.syncingContext.getStore()?.disabled === true;
+  }
+
+  getSyncMode(): SearchSyncMode {
+    return this.config?.syncMode ?? 'strict';
+  }
+
+  async sync(operation: SearchSyncOperation, next: () => Promise<void>): Promise<void> {
+    const run = this.config?.syncHandler
+      ? () => this.config!.syncHandler!(operation, next)
+      : next;
+
+    try {
+      await run();
+    } catch (error) {
+      if (this.getSyncMode() === 'strict') throw error;
+      this.reportSyncFailure(operation, error);
+    }
   }
 
   /**
@@ -178,12 +214,15 @@ class SearchManager {
    * ```
    */
   async withoutSyncing<T>(callback: () => T | Promise<T>): Promise<T> {
-    this.syncingDisabled = true;
-    try {
-      return await callback();
-    } finally {
-      this.syncingDisabled = false;
-    }
+    if (this.isSyncingDisabled()) return callback();
+    return this.syncingContext.run({ disabled: true }, callback);
+  }
+
+  private reportSyncFailure(operation: SearchSyncOperation, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[svelar:search] ${operation.type} sync failed for ${operation.index}:${operation.id}: ${message}`
+    );
   }
 
   /**
@@ -276,26 +315,36 @@ export function Searchable<TBase extends Constructor>(
         return;
       }
 
-      const client = Search.getClient();
-      const index = client.index(this.getSearchableIndex());
+      const indexName = this.getSearchableIndex();
+      const primaryKey = this.searchableAs();
       const doc = this.toSearchableObject();
-      doc[this.searchableAs()] = this.getSearchableId();
+      const id = this.getSearchableId();
+      doc[primaryKey] = id;
 
-      await index.addDocuments([doc], { primaryKey: this.searchableAs() });
+      await Search.sync({ type: 'upsert', index: indexName, primaryKey, id, document: doc }, async () => {
+        const client = Search.getClient();
+        const index = client.index(indexName);
+        await index.addDocuments([doc], { primaryKey });
+      });
     }
 
     /**
      * Remove this model instance from the search index.
      */
     async unsearchable(): Promise<void> {
-      const client = Search.getClient();
-      const index = client.index(this.getSearchableIndex());
+      const indexName = this.getSearchableIndex();
+      const primaryKey = this.searchableAs();
+      const id = this.getSearchableId();
 
-      try {
-        await index.deleteDocument(this.getSearchableId());
-      } catch (error) {
-        if (!isSearchDocumentMissingError(error)) throw error;
-      }
+      await Search.sync({ type: 'delete', index: indexName, primaryKey, id }, async () => {
+        const client = Search.getClient();
+        const index = client.index(indexName);
+        try {
+          await index.deleteDocument(id);
+        } catch (error) {
+          if (!isSearchDocumentMissingError(error)) throw error;
+        }
+      });
     }
 
     // ── Static Methods ──
@@ -345,10 +394,34 @@ export function Searchable<TBase extends Constructor>(
       const client = Search.getClient();
       const index = client.index(instance.getSearchableIndex());
 
-      // Get all records
-      const records: any[] = await (this as any).query().get();
-      const docs: Record<string, any>[] = [];
+      let indexed = 0;
+      const flush = async (docs: Record<string, any>[]) => {
+        if (docs.length === 0) return;
+        await index.addDocuments(docs, { primaryKey: instance.searchableAs() });
+        indexed += docs.length;
+      };
+      const collect = async (records: any[]) => {
+        const docs: Record<string, any>[] = [];
+        for (const record of records) {
+          if (record.shouldBeSearchable()) {
+            const doc = record.toSearchableObject();
+            doc[record.searchableAs()] = record.getSearchableId();
+            docs.push(doc);
+          }
+        }
+        await flush(docs);
+      };
 
+      const query = (this as any).query();
+      if (typeof query.chunk === 'function') {
+        await query.chunk(batchSize, async (records: any[]) => {
+          await collect(records);
+        });
+        return { indexed };
+      }
+
+      const records: any[] = await query.get();
+      const docs: Record<string, any>[] = [];
       for (const record of records) {
         if (record.shouldBeSearchable()) {
           const doc = record.toSearchableObject();
@@ -357,13 +430,11 @@ export function Searchable<TBase extends Constructor>(
         }
       }
 
-      // Send in batches
       for (let i = 0; i < docs.length; i += batchSize) {
-        const batch = docs.slice(i, i + batchSize);
-        await index.addDocuments(batch, { primaryKey: instance.searchableAs() });
+        await flush(docs.slice(i, i + batchSize));
       }
 
-      return { indexed: docs.length };
+      return { indexed };
     }
 
     /**
@@ -448,13 +519,15 @@ export function Searchable<TBase extends Constructor>(
       const indexName = this.getSearchableIndex();
       const result = await origDelete.apply(this, args);
       if (!Search.isSyncingDisabled()) {
-        try {
+        await Search.sync({ type: 'delete', index: indexName, primaryKey: this.searchableAs(), id }, async () => {
           const client = Search.getClient();
           const index = client.index(indexName);
-          await index.deleteDocument(id);
-        } catch (error) {
-          if (!isSearchDocumentMissingError(error)) throw error;
-        }
+          try {
+            await index.deleteDocument(id);
+          } catch (error) {
+            if (!isSearchDocumentMissingError(error)) throw error;
+          }
+        });
       }
       return result;
     };

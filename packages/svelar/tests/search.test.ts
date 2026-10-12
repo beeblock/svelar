@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Search, Searchable } from '../src/search/index.js';
 
 class SearchTestModel {
@@ -43,6 +43,7 @@ describe('Searchable', () => {
   afterEach(() => {
     Search.configure({ host: 'http://meilisearch.test' });
     (Search as any).client = null;
+    vi.restoreAllMocks();
   });
 
   it('propagates search indexing failures during create', async () => {
@@ -112,5 +113,93 @@ describe('Searchable', () => {
     });
 
     expect(indexed).toEqual([]);
+  });
+
+  it('keeps Search.withoutSyncing isolated between concurrent async flows', async () => {
+    const indexed: any[] = [];
+    configureSearchClient({
+      async addDocuments(docs: any[]) {
+        indexed.push(...docs);
+      },
+    });
+
+    await Promise.all([
+      Search.withoutSyncing(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        await SearchableSearchTestModel.create({ id: 6, title: 'Bulk import' });
+      }),
+      SearchableSearchTestModel.create({ id: 7, title: 'Visible write' }),
+    ]);
+
+    expect(indexed).toEqual([{ id: 7, title: 'Visible write' }]);
+  });
+
+  it('can fail open for automatic indexing errors', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    Search.configure({ host: 'http://meilisearch.test', syncMode: 'fail-open' });
+    (Search as any).client = {
+      index() {
+        return {
+          async addDocuments() {
+            throw new Error('meilisearch unavailable');
+          },
+        };
+      },
+    };
+
+    await expect(SearchableSearchTestModel.create({ id: 8, title: 'Saved anyway' })).resolves.toBeInstanceOf(
+      SearchableSearchTestModel
+    );
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('meilisearch unavailable'));
+  });
+
+  it('normalizes index prefixes without duplicate separators', () => {
+    Search.configure({ host: 'http://meilisearch.test', indexPrefix: 'tenant_' });
+    const model = new SearchableSearchTestModel();
+
+    expect(model.getSearchableIndex()).toBe('tenant_search_test_models');
+  });
+
+  it('streams makeAllSearchable through chunk-capable queries', async () => {
+    const batches: any[][] = [];
+
+    class ChunkedModel {
+      static table = 'chunked_models';
+      attributes: Record<string, any>;
+
+      constructor(attributes: Record<string, any> = {}) {
+        this.attributes = attributes;
+      }
+
+      getAttribute(key: string): any {
+        return this.attributes[key];
+      }
+
+      static query() {
+        const ModelClass = this as any;
+        return {
+          async chunk(_size: number, callback: (records: any[]) => Promise<void>) {
+            await callback([new ModelClass({ id: 1, title: 'One' }), new ModelClass({ id: 2, title: 'Two' })]);
+            await callback([new ModelClass({ id: 3, title: 'Three' })]);
+          },
+        };
+      }
+    }
+
+    const SearchableChunkedModel = Searchable(ChunkedModel);
+    configureSearchClient({
+      async addDocuments(docs: any[]) {
+        batches.push(docs);
+      },
+    });
+
+    await expect(SearchableChunkedModel.makeAllSearchable(2)).resolves.toEqual({ indexed: 3 });
+    expect(batches).toEqual([
+      [
+        { id: 1, title: 'One' },
+        { id: 2, title: 'Two' },
+      ],
+      [{ id: 3, title: 'Three' }],
+    ]);
   });
 });

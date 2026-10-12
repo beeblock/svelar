@@ -1842,6 +1842,8 @@ await Search.withoutSyncing(async () => { /* bulk inserts */ });
 await Post.makeAllSearchable(); // re-index after
 ```
 
+Search sync is strict by default. Configure `syncMode: 'fail-open'` when a database write should succeed even if Meilisearch is temporarily unavailable, then reconcile with a scheduled reindex. `Search.withoutSyncing()` is isolated per async execution so concurrent requests keep their own sync state.
+
 See [Full-Text Search](./31-search.md) for the complete guide.
 
 ### HasRoles (Permissions)

@@ -43,6 +43,7 @@ Search.configure({
   host: process.env.MEILISEARCH_HOST ?? 'http://localhost:7700',
   apiKey: process.env.MEILISEARCH_KEY,
   indexPrefix: 'myapp', // optional — prefixes all index names
+  syncMode: 'strict', // strict (default) or fail-open
 });
 ```
 
@@ -70,7 +71,30 @@ class Post extends Searchable(Model) {
 
 That's it. Every time a `Post` is created, updated, or deleted, the search index updates automatically.
 
-Search auto-sync is part of the model write path. If Meilisearch is misconfigured, unavailable, or rejects an indexing request, the create/update/delete operation fails instead of silently drifting out of sync. Removing a document that is already missing from the index is treated as a successful no-op.
+Search auto-sync is part of the model write path. In the default `strict` mode, if Meilisearch is misconfigured, unavailable, or rejects an indexing request, the create/update/delete operation fails instead of silently drifting out of sync. Removing a document that is already missing from the index is treated as a successful no-op.
+
+For production writes where database persistence must not fail because search is temporarily down, configure `fail-open` and reconcile with `search:setup --reindex` or your own scheduled reindex job:
+
+```typescript
+Search.configure({
+  host: process.env.MEILISEARCH_HOST ?? 'http://localhost:7700',
+  apiKey: process.env.MEILISEARCH_KEY,
+  syncMode: 'fail-open',
+});
+```
+
+For an outbox or queue-backed workflow, provide a `syncHandler`. Svelar passes the operation and a `next()` callback that performs the default Meilisearch write:
+
+```typescript
+Search.configure({
+  host: process.env.MEILISEARCH_HOST ?? 'http://localhost:7700',
+  syncMode: 'fail-open',
+  async syncHandler(operation, next) {
+    // Persist/enqueue the operation here if your app uses a search outbox.
+    await next();
+  },
+});
+```
 
 ### With HasRoles
 
@@ -237,6 +261,8 @@ console.log(`Indexed ${result.indexed} posts`);
 await Post.makeAllSearchable(1000);
 ```
 
+When the model query supports chunking, `makeAllSearchable()` streams records through `query().chunk(batchSize, ...)` instead of loading the full table before indexing. This keeps memory bounded during large reindexes.
+
 ### Remove All from Index
 
 ```typescript
@@ -273,6 +299,8 @@ await Search.withoutSyncing(async () => {
 // Re-index everything in one batch after the import
 await Post.makeAllSearchable();
 ```
+
+`withoutSyncing()` is isolated with `AsyncLocalStorage`, so disabling sync for one import/request does not disable it for unrelated concurrent work in the same Node process.
 
 ### Common Scenarios for Skipping Sync
 
