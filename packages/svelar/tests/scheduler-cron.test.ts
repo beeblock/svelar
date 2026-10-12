@@ -1,4 +1,7 @@
 import { spawnSync } from 'node:child_process';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CronExpression } from 'cron-parser';
@@ -25,6 +28,45 @@ const invalidExpressions = [
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('Scheduler Cron Contract', () => {
+  it('privately bundles the calendar engine for native Node ESM despite an incompatible app dependency', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'svelar-cron-bundle-'));
+    const source = fileURLToPath(new URL('../src/scheduler/cron.ts', import.meta.url));
+    const configPath = fileURLToPath(new URL('../tsup.config.ts', import.meta.url));
+    const tsconfig = fileURLToPath(new URL('../tsconfig.json', import.meta.url));
+    try {
+      const bundled = spawnSync(process.execPath, ['--input-type=module', '-e', `
+        import { build } from 'tsup';
+        import { createJiti } from 'jiti';
+        const config = await createJiti(import.meta.url).import(${JSON.stringify(configPath)}, { default: true });
+        await build({ ...config, config: false, entry: { cron: ${JSON.stringify(source)} }, outDir: ${JSON.stringify(root)}, tsconfig: ${JSON.stringify(tsconfig)}, silent: true });
+      `], { timeout: 10_000, encoding: 'utf8', cwd: fileURLToPath(new URL('..', import.meta.url)) });
+      expect(bundled.error).toBeUndefined();
+      expect(bundled.status, bundled.stderr).toBe(0);
+      await writeFile(join(root, 'package.json'), JSON.stringify({ type: 'module' }));
+      for (const [name, version] of [['cron-parser', '4.9.0'], ['luxon', '0.0.0']]) {
+        const directory = join(root, 'node_modules', name);
+        await mkdir(directory, { recursive: true });
+        await writeFile(join(directory, 'package.json'), JSON.stringify({ name, version, main: 'index.cjs' }));
+        await writeFile(join(directory, 'index.cjs'), `throw new Error(${JSON.stringify(`App ${name} must not supply the private calendar engine`)});`);
+      }
+      const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
+        import assert from 'node:assert/strict';
+        import { pathToFileURL } from 'node:url';
+        const { parseCron, cronMatches, nextCronDate } = await import(pathToFileURL(process.argv[1]).href);
+        assert.deepEqual(parseCron('0 9 * JAN MON').month, [1]);
+        assert.equal(cronMatches('0 9 * * *', new Date('2026-10-12T12:00:59Z'), 'America/Sao_Paulo'), true);
+        assert.equal(cronMatches('0 9 1 * MON', new Date('2026-10-05T09:00:20Z'), 'UTC'), true);
+        assert.equal(nextCronDate('0 0 29 FEB *', new Date('2096-03-01T00:00:00Z'), 'UTC').toISOString(), '2104-02-29T00:00:00.000Z');
+        console.log('private calendar engine: PASS');
+      `, join(root, 'cron.js')], { timeout: 5000, encoding: 'utf8', cwd: root });
+      expect(child.error).toBeUndefined();
+      expect(child.status, child.stderr).toBe(0);
+      expect(child.stdout).toContain('private calendar engine: PASS');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('preserves wildcard nulls and sorted numeric fields', () => {
     expect(parseCron('* * * * *')).toEqual({ minute: null, hour: null, dayOfMonth: null, month: null, dayOfWeek: null });
     expect(parseCron('10,0,5 3-5 1,15 JAN,MAR MON-FRI')).toEqual({

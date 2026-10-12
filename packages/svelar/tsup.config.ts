@@ -68,8 +68,8 @@ export default defineConfig({
   keepNames: true,
   target: 'node22',
   splitting: false,
+  noExternal: ['cron-parser', 'luxon'],
   external: [
-    'cron-parser',
     'zod',
     '@sveltejs/kit',
     'date-fns',

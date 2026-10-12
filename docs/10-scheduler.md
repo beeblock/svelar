@@ -69,6 +69,8 @@ export default class MyTask extends ScheduledTask {
 
 Svelar uses [cron-parser 5](https://github.com/harrisiirak/cron-parser) for validation, calendar iteration, and timezone handling. The public contract remains five fields: minute, hour, day of month, month, and day of week. Numeric lists, ranges, positive steps, three-letter month/weekday names, and Sunday `0` or `7` are supported. Seconds fields, macros, randomized `H`, and Quartz-style `L`, `#`, or `?` extensions are not enabled.
 
+The calendar engine and its timezone dependency are bundled privately into Svelar's server builds. Applications do not need to add or override `cron-parser`; BullMQ can retain its own required major version without production SSR resolving Svelar's calendar calls against that older version.
+
 `parseCron(expression)` returns sorted numeric arrays, with `null` for literal `*` fields and Sunday normalized to `0`. Invalid zero steps, out-of-range values, reversed ranges, trailing characters, and impossible explicit calendar dates reject before iteration. Fluent methods validate their inputs too; time strings must use `HH:MM` (a single-digit hour is also accepted).
 
 When both day of month and day of week are restricted, either may match: `0 9 1 * MON` runs on the first of the month **or** on Mondays. The minute, hour, and month still must match. `cronMatches` checks the specified minute and ignores seconds/milliseconds without modifying the caller's date.
