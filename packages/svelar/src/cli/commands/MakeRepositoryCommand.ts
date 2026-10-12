@@ -4,7 +4,6 @@
 
 import { Command } from '../Command.js';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 
 export class MakeRepositoryCommand extends Command {
   name = 'make:repository';
@@ -16,7 +15,7 @@ export class MakeRepositoryCommand extends Command {
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
-    const name = args[0];
+    const name = this.generatorName(args[0], flags);
     if (!name) {
       this.error('Please provide a repository name.');
       return;
@@ -30,16 +29,16 @@ export class MakeRepositoryCommand extends Command {
     }
 
     const moduleDir = this.moduleDir(moduleName, 'repositories', 'repository');
+    const filePath = this.artifactPath(moduleDir, `${repoName}.ts`);
+    const modelName = flags.model || this.inferModelName(repoName);
+    this.validateIdentifier(modelName, 'Model name', [repoName, 'Repository']);
+    const modelImportPath = this.moduleImportPath(moduleName, 'repository', 'model', modelName);
     mkdirSync(moduleDir, { recursive: true });
-
-    const filePath = join(moduleDir, `${repoName}.ts`);
     if (existsSync(filePath)) {
       this.warn(`Repository ${repoName} already exists.`);
       return;
     }
 
-    const modelName = flags.model || this.inferModelName(repoName);
-    const modelImportPath = this.moduleImportPath(moduleName, 'repository', 'model', modelName);
     const content = `import { Repository } from '@beeblock/svelar/repositories';
 import { ${modelName} } from '${modelImportPath}';
 

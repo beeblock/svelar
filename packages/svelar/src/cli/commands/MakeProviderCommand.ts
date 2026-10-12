@@ -4,7 +4,6 @@
 
 import { Command } from '../Command.js';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 
 export class MakeProviderCommand extends Command {
   name = 'make:provider';
@@ -12,8 +11,8 @@ export class MakeProviderCommand extends Command {
   arguments = ['name'];
   flags = [];
 
-  async handle(args: string[]): Promise<void> {
-    const name = args[0];
+  async handle(args: string[], flags: Record<string, unknown> = {}): Promise<void> {
+    const name = this.generatorName(args[0], flags);
     if (!name) {
       this.error('Please provide a provider name.');
       return;
@@ -21,9 +20,8 @@ export class MakeProviderCommand extends Command {
 
     const providerName = name.endsWith('ServiceProvider') ? name : `${name}ServiceProvider`;
     const providersDir = this.sharedDir('providers');
+    const filePath = this.artifactPath(providersDir, `${providerName}.ts`);
     mkdirSync(providersDir, { recursive: true });
-
-    const filePath = join(providersDir, `${providerName}.ts`);
     if (existsSync(filePath)) {
       this.warn(`Provider ${providerName} already exists.`);
       return;

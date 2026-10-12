@@ -4,7 +4,6 @@
 
 import { Command } from '../Command.js';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 
 export class MakeEventCommand extends Command {
   name = 'make:event';
@@ -15,7 +14,7 @@ export class MakeEventCommand extends Command {
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
-    const name = args[0];
+    const name = this.generatorName(args[0], flags);
     if (!name) {
       this.error('Please provide an event name (e.g. UserRegistered).');
       return;
@@ -27,9 +26,8 @@ export class MakeEventCommand extends Command {
     }
 
     const moduleDir = this.moduleDir(moduleName, 'events', 'event');
+    const filePath = this.artifactPath(moduleDir, `${name}.ts`);
     mkdirSync(moduleDir, { recursive: true });
-
-    const filePath = join(moduleDir, `${name}.ts`);
     if (existsSync(filePath)) {
       this.warn(`Event ${name} already exists at ${filePath}`);
       return;

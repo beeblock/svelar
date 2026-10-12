@@ -4,7 +4,6 @@
 
 import { Command } from '../Command.js';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 
 export class MakeChannelCommand extends Command {
   name = 'make:channel';
@@ -15,7 +14,7 @@ export class MakeChannelCommand extends Command {
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
-    const name = args[0];
+    const name = this.generatorName(args[0], flags);
     if (!name) {
       this.error('Please provide a channel name. Example: npx svelar make:channel OrderChannel');
       return;
@@ -23,9 +22,8 @@ export class MakeChannelCommand extends Command {
 
     const className = name.endsWith('Channel') ? name : `${name}Channel`;
     const channelsDir = this.sharedDir('channels');
+    const filePath = this.artifactPath(channelsDir, `${className}.ts`);
     mkdirSync(channelsDir, { recursive: true });
-
-    const filePath = join(channelsDir, `${className}.ts`);
     if (existsSync(filePath)) {
       this.warn(`Channel ${className} already exists.`);
       return;

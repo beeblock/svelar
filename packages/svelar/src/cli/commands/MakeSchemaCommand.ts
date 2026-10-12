@@ -7,7 +7,6 @@
 
 import { Command } from '../Command.js';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 
 export class MakeSchemaCommand extends Command {
   name = 'make:schema';
@@ -18,7 +17,7 @@ export class MakeSchemaCommand extends Command {
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
-    const rawName = args[0];
+    const rawName = this.generatorName(args[0], flags);
     if (!rawName) {
       this.error('Please provide a schema name (e.g. User, Post, Invoice).');
       return;
@@ -30,9 +29,8 @@ export class MakeSchemaCommand extends Command {
     const moduleName = flags.module || this.toKebab(entityName);
 
     const moduleDir = this.moduleDir(moduleName, 'schemas', 'schema');
+    const filePath = this.artifactPath(moduleDir, `${fileName}.ts`);
     mkdirSync(moduleDir, { recursive: true });
-
-    const filePath = join(moduleDir, `${fileName}.ts`);
     if (existsSync(filePath)) {
       const relDir = this.moduleRelDir(moduleName, 'schemas', 'schema');
       this.warn(`Schema already exists: ${relDir}/${fileName}.ts`);
@@ -95,7 +93,7 @@ export type Update${name}Input = v.InferOutput<typeof update${name}Schema>;
 `;
     }
 
-    return `import { z } from 'zod';
+    return `import { z } from '@beeblock/svelar/validation';
 
 // ── ${name} Contract Schema ──────────────────────────────────
 //

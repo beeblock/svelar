@@ -26,7 +26,7 @@ export class MakeEntityCommand extends Command {
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
-    const rawName = args[0];
+    const rawName = this.generatorName(args[0], flags);
     if (!rawName) {
       this.error('Please provide an entity name. Example: npx svelar make:entity Invoice --module billing');
       return;
@@ -35,6 +35,19 @@ export class MakeEntityCommand extends Command {
     const name = this.toPascalCase(rawName);
     const moduleName = flags.module || this.toKebabCase(this.pluralize(name));
     const fields = this.parseFields(String(flags.fields ?? ''));
+    for (const field of fields) this.validateIdentifier(field.name, 'Field name');
+    this.preflightModuleFiles(moduleName, {
+      model: `${name}.ts`, schema: `${this.toKebabCase(name)}.schema.ts`, dto: `${name}Dtos.ts`,
+      repository: `${name}Repository.ts`, service: `${name}Service.ts`, action: `${name}Actions.ts`,
+      request: `${name}Requests.ts`, resource: `${name}Resource.ts`,
+      controller: `${flags.controller ? this.toPascalCase(flags.controller).replace(/Controller$/, '') : name}Controller.ts`,
+    });
+    const migrationFileName = flags['no-migration'] ? undefined
+      : `${new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14)}_create_${this.toSnakeCase(this.pluralize(name))}_table.ts`;
+    if (migrationFileName) {
+      this.artifactPath(this.containedPath(join(process.cwd(), 'src', 'lib'), 'database', 'migrations'),
+        migrationFileName);
+    }
 
     if (!flags.module && this.isDDD()) {
       this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
@@ -50,8 +63,8 @@ export class MakeEntityCommand extends Command {
     this.writeResource(moduleName, name, fields);
     this.writeController(moduleName, name, Boolean(flags.crud), flags.controller);
 
-    if (!flags['no-migration']) {
-      this.writeMigration(name, fields);
+    if (migrationFileName) {
+      this.writeMigration(name, fields, migrationFileName);
     }
   }
 
@@ -487,14 +500,12 @@ export class ${controllerName} extends Controller {
     this.writeModuleFile(moduleName, 'controllers', 'controller', `${controllerName}.ts`, content);
   }
 
-  private writeMigration(name: string, fields: Field[]): void {
+  private writeMigration(name: string, fields: Field[], fileName: string): void {
     const tableName = this.toSnakeCase(this.pluralize(name));
-    const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
     const className = `Create${this.pluralize(name)}Table`;
-    const migrationsDir = join(process.cwd(), 'src', 'lib', 'database', 'migrations');
+    const migrationsDir = this.containedPath(join(process.cwd(), 'src', 'lib'), 'database', 'migrations');
+    const filePath = this.artifactPath(migrationsDir, fileName);
     mkdirSync(migrationsDir, { recursive: true });
-    const fileName = `${timestamp}_create_${tableName}_table.ts`;
-    const filePath = join(migrationsDir, fileName);
     if (readdirSync(migrationsDir).some((file) => file.endsWith(`_create_${tableName}_table.ts`) || file.endsWith(`_create_${tableName}_table.js`))) return;
     writeFileSync(filePath, `import { Migration } from '@beeblock/svelar/database';
 
@@ -517,8 +528,8 @@ ${fields.map((field) => `      ${this.migrationColumn(field)};`).join('\n')}
 
   private writeModuleFile(moduleName: string, flatType: string, kind: ModuleArtifactKind, fileName: string, content: string): void {
     const dir = this.moduleDir(moduleName, flatType, kind);
+    const filePath = this.artifactPath(dir, fileName);
     mkdirSync(dir, { recursive: true });
-    const filePath = join(dir, fileName);
     if (existsSync(filePath)) {
       this.warn(`Skipped existing file: ${this.moduleRelDir(moduleName, flatType, kind)}/${fileName}`);
       return;
@@ -540,7 +551,7 @@ ${fields.map((field) => `      ${this.migrationColumn(field)};`).join('\n')}
         optional,
         enumValues: enumMatch ? enumMatch[1].split('|').flatMap((v) => v.split(',')).map((v) => v.trim()).filter(Boolean) : [],
       };
-    }).filter((field) => field.name);
+    });
   }
 
   private splitFieldList(input: string): string[] {

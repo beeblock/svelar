@@ -4,7 +4,6 @@
 
 import { Command } from '../Command.js';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 
 export class MakeJobCommand extends Command {
   name = 'make:job';
@@ -12,8 +11,8 @@ export class MakeJobCommand extends Command {
   arguments = ['name'];
   flags = [];
 
-  async handle(args: string[]): Promise<void> {
-    const name = args[0];
+  async handle(args: string[], flags: Record<string, unknown> = {}): Promise<void> {
+    const name = this.generatorName(args[0], flags);
     if (!name) {
       this.error('Please provide a job name.');
       return;
@@ -21,9 +20,8 @@ export class MakeJobCommand extends Command {
 
     const jobName = name.endsWith('Job') ? name : name;
     const jobsDir = this.sharedDir('jobs');
+    const filePath = this.artifactPath(jobsDir, `${jobName}.ts`);
     mkdirSync(jobsDir, { recursive: true });
-
-    const filePath = join(jobsDir, `${jobName}.ts`);
     if (existsSync(filePath)) {
       this.warn(`Job ${jobName} already exists.`);
       return;

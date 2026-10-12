@@ -4,7 +4,6 @@
 
 import { Command } from '../Command.js';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 
 export class MakePluginCommand extends Command {
   name = 'make:plugin';
@@ -12,8 +11,8 @@ export class MakePluginCommand extends Command {
   arguments = ['name'];
   flags = [];
 
-  async handle(args: string[]): Promise<void> {
-    const name = args[0];
+  async handle(args: string[], flags: Record<string, unknown> = {}): Promise<void> {
+    const name = this.generatorName(args[0], flags);
     if (!name) {
       this.error('Please provide a plugin name.');
       return;
@@ -21,9 +20,8 @@ export class MakePluginCommand extends Command {
 
     const pluginName = name.endsWith('Plugin') ? name : `${name}Plugin`;
     const pluginsDir = this.sharedDir('plugins');
+    const filePath = this.artifactPath(pluginsDir, `${pluginName}.ts`);
     mkdirSync(pluginsDir, { recursive: true });
-
-    const filePath = join(pluginsDir, `${pluginName}.ts`);
     if (existsSync(filePath)) {
       this.warn(`Plugin ${pluginName} already exists.`);
       return;

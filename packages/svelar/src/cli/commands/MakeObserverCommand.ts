@@ -4,7 +4,6 @@
 
 import { Command } from '../Command.js';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 
 export class MakeObserverCommand extends Command {
   name = 'make:observer';
@@ -16,19 +15,20 @@ export class MakeObserverCommand extends Command {
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
-    const name = args[0];
+    const name = this.generatorName(args[0], flags);
     if (!name) {
       this.error('Please provide an observer name (e.g. UserObserver).');
       return;
     }
 
     const modelName = flags.model || name.replace(/Observer$/, '');
+    this.validateIdentifier(name, 'Observer class name', ['ModelObserver']);
+    this.validateIdentifier(modelName, 'Model name', [name, 'ModelObserver']);
     const moduleName = flags.module || this.toSnakeCase(this.pluralize(modelName));
 
     const observersDir = this.moduleDir(moduleName, 'observers', 'observer');
+    const filePath = this.artifactPath(observersDir, `${name}.ts`);
     mkdirSync(observersDir, { recursive: true });
-
-    const filePath = join(observersDir, `${name}.ts`);
     if (existsSync(filePath)) {
       this.warn(`Observer ${name} already exists at ${filePath}`);
       return;

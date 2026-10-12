@@ -17,7 +17,7 @@ export class MakeServiceCommand extends Command {
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
-    const name = args[0];
+    const name = this.generatorName(args[0], flags);
     if (!name) {
       this.error('Please provide a service name.');
       return;
@@ -31,18 +31,18 @@ export class MakeServiceCommand extends Command {
     }
 
     const moduleDir = this.moduleDir(moduleName, 'services', 'service');
+    const filePath = this.artifactPath(moduleDir, `${serviceName}.ts`);
+    const modelName = flags.crud ? this.resolveCrudModel(baseName, moduleName, flags.model) : undefined;
+    if (modelName) this.validateIdentifier(modelName, 'Model name', [serviceName, 'CrudService', 'Repository']);
+    const modelImportPath = modelName
+      ? this.moduleImportPath(moduleName, 'service', 'model', modelName)
+      : undefined;
     mkdirSync(moduleDir, { recursive: true });
-
-    const filePath = join(moduleDir, `${serviceName}.ts`);
     if (existsSync(filePath)) {
       this.warn(`Service ${serviceName} already exists.`);
       return;
     }
 
-    const modelName = flags.crud ? this.resolveCrudModel(baseName, moduleName, flags.model) : undefined;
-    const modelImportPath = modelName
-      ? this.moduleImportPath(moduleName, 'service', 'model', modelName)
-      : undefined;
     const content = flags.crud
       ? this.generateCrudService(serviceName, modelName!, modelImportPath!)
       : this.generateBasicService(serviceName);

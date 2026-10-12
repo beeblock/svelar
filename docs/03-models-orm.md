@@ -10,6 +10,8 @@ npx svelar make:model Post
 
 `make:model Post --all` generates a complete CRUD workflow and a focused table migration. `--controller` generates the supporting create/read workflow; `--resource` includes update/delete. Add `--migration` when those focused options should also generate the table migration. For field-driven scaffolding, use `make:entity Post --fields "title:string,body:text" --crud`.
 
+Artifact generators normalize names to PascalCase: `make:model api-key` creates `ApiKey.ts` and the `ApiKey` class. Names must normalize to nonreserved TypeScript identifiers; numeric starts, punctuation-only names, paths, quotes, and control characters are rejected before any artifact is written. Referenced class/type options such as `--model`, `--event`, and DTO `--input` must already be valid identifiers. DTO `--schema` accepts a single basename (optionally ending in `.schema`, `.ts`, or `.js`) and requires `--input`.
+
 This generates `src/lib/models/Post.ts`:
 
 ```typescript

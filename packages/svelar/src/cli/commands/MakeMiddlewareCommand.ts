@@ -4,7 +4,6 @@
 
 import { Command } from '../Command.js';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 
 export class MakeMiddlewareCommand extends Command {
   name = 'make:middleware';
@@ -12,8 +11,8 @@ export class MakeMiddlewareCommand extends Command {
   arguments = ['name'];
   flags = [];
 
-  async handle(args: string[]): Promise<void> {
-    const name = args[0];
+  async handle(args: string[], flags: Record<string, unknown> = {}): Promise<void> {
+    const name = this.generatorName(args[0], flags);
     if (!name) {
       this.error('Please provide a middleware name.');
       return;
@@ -21,9 +20,8 @@ export class MakeMiddlewareCommand extends Command {
 
     const middlewareName = name.endsWith('Middleware') ? name : `${name}Middleware`;
     const middlewareDir = this.sharedDir('middleware');
+    const filePath = this.artifactPath(middlewareDir, `${middlewareName}.ts`);
     mkdirSync(middlewareDir, { recursive: true });
-
-    const filePath = join(middlewareDir, `${middlewareName}.ts`);
     if (existsSync(filePath)) {
       this.warn(`Middleware ${middlewareName} already exists.`);
       return;

@@ -2,8 +2,8 @@
  * Svelar CLI Command Base
  */
 
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export interface CommandFlag {
@@ -65,6 +65,16 @@ const FLAT_DIRS: Record<ModuleArtifactKind, string> = {
   schema: 'schemas',
   service: 'services',
 };
+
+const RESERVED_IDENTIFIERS = new Set([
+  'await', 'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger',
+  'default', 'delete', 'do', 'else', 'enum', 'export', 'extends', 'false',
+  'finally', 'for', 'function', 'if', 'implements', 'import', 'in', 'instanceof',
+  'interface', 'let', 'new', 'null', 'package', 'private', 'protected', 'public',
+  'return', 'static', 'super', 'switch', 'this', 'throw', 'true', 'try', 'typeof',
+  'var', 'void', 'while', 'with', 'yield', 'any', 'unknown', 'never', 'number',
+  'string', 'boolean', 'bigint', 'symbol', 'object', 'undefined', 'eval', 'arguments',
+]);
 
 export abstract class Command {
   /** Command name (e.g. 'make:model') */
@@ -224,6 +234,114 @@ export abstract class Command {
 
   // ── Project Structure Helpers ──
 
+  /** Preflight generator names and references before creating any artifacts. */
+  protected generatorName(raw: string | undefined, flags: Record<string, unknown> = {}): string | undefined {
+    for (const flag of this.flags) {
+      const value = flags[flag.name];
+      if (value === undefined) continue;
+      if (flag.type === 'boolean') {
+        if (typeof value !== 'boolean') throw new Error(`--${flag.name} must be boolean.`);
+        continue;
+      }
+      if (typeof value !== 'string' || !value.trim()) throw new Error(`--${flag.name} requires a nonempty string.`);
+      if (flag.name === 'module') this.validateModuleName(value);
+      if (['model', 'event', 'input', 'controller'].includes(flag.name)) this.validateIdentifier(value, `--${flag.name}`);
+      if (flag.name === 'schema') {
+        const basename = value.replace(/\.(ts|js)$/, '').replace(/\.schema$/, '');
+        this.validateSlug(basename, '--schema');
+      }
+      if (['create', 'table'].includes(flag.name) && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
+        throw new Error(`--${flag.name} must be a table identifier.`);
+      }
+      if (flag.name === 'command' && !/^[A-Za-z][A-Za-z0-9_-]*(?::[A-Za-z][A-Za-z0-9_-]*)*$/.test(value)) {
+        throw new Error('--command must be a command identifier, such as app:sync-users.');
+      }
+    }
+    if (raw === undefined || raw === '') return undefined;
+    if (!/^[A-Za-z0-9_$ -]+$/.test(raw) || RESERVED_IDENTIFIERS.has(raw.trim())) {
+      throw new Error('Name must normalize to a nonreserved TypeScript identifier.');
+    }
+    const name = raw.trim().split(/[-_ ]+/).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join('');
+    this.validateIdentifier(name, 'Name');
+    this.validateSlug(name.replace(/\$/g, ''), 'Name');
+    const suffixes: Record<string, string> = {
+      'make:model': 'Model', 'make:controller': 'Controller', 'make:dto': 'Dto',
+      'make:action': 'Action', 'make:request': 'Request', 'make:service': 'Service',
+      'make:repository': 'Repository', 'make:resource': 'Resource', 'make:factory': 'Factory',
+      'make:observer': 'Observer', 'make:listener': 'Listener', 'make:job': 'Job',
+      'make:task': 'ScheduledTask', 'make:middleware': 'Middleware', 'make:provider': 'ServiceProvider',
+      'make:seeder': 'Seeder', 'make:command': 'Command', 'make:channel': 'Channel', 'make:plugin': 'Plugin',
+      'make:entity': 'Model',
+    };
+    if (name === suffixes[this.name] || (this.name === 'make:dto' && name === 'DTO')) {
+      throw new Error('Name must include an entity prefix, not just the framework artifact type.');
+    }
+    return name;
+  }
+
+  protected validateIdentifier(value: string, label: string, existingBindings: readonly string[] = []): void {
+    if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(value) || RESERVED_IDENTIFIERS.has(value) || existingBindings.includes(value)) {
+      throw new Error(`${label} must be a nonreserved TypeScript identifier.`);
+    }
+  }
+
+  private validateSlug(value: string, label: string): void {
+    if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(value)) {
+      throw new Error(`${label} must be a single identifier starting with a letter, without paths or punctuation.`);
+    }
+  }
+
+  private validateModuleName(value: string): void {
+    this.validateSlug(value, '--module');
+  }
+
+  /** Keep lexical paths and existing symlink ancestors inside the selected root. */
+  protected containedPath(root: string, ...parts: string[]): string {
+    const base = resolve(root);
+    const target = resolve(base, ...parts);
+    const within = (parent: string, child: string) => {
+      const suffix = relative(parent, child);
+      return suffix === '' || (suffix !== '..' && !suffix.startsWith(`..${sep}`) && !isAbsolute(suffix));
+    };
+    if (!within(base, target)) throw new Error(`Generator path escapes its output directory: ${target}`);
+
+    const physicalPath = (path: string): string => {
+      let ancestor = path;
+      while (true) {
+        try {
+          lstatSync(ancestor);
+        } catch (error) {
+          if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error;
+          const parent = dirname(ancestor);
+          if (parent === ancestor) throw error;
+          ancestor = parent;
+          continue;
+        }
+        return resolve(realpathSync(ancestor), relative(ancestor, path));
+      }
+    };
+    // An output root that is itself a symlink must not redefine the boundary.
+    const project = resolve(process.cwd());
+    const physicalProject = realpathSync(project);
+    const expectedRoot = resolve(physicalProject, relative(project, base));
+    if (!within(project, base) || !within(expectedRoot, physicalPath(target))) {
+      throw new Error(`Generator path escapes its output directory through a symlink: ${target}`);
+    }
+    return target;
+  }
+
+  protected artifactPath(directory: string, fileName: string): string {
+    if (!/^[A-Za-z0-9_$][A-Za-z0-9_$.-]*$/.test(fileName)) throw new Error('Invalid generator artifact filename.');
+    return this.containedPath(directory, fileName);
+  }
+
+  protected preflightModuleFiles(moduleName: string, files: Partial<Record<ModuleArtifactKind, string>>): void {
+    for (const kind of Object.keys(files) as ModuleArtifactKind[]) {
+      const fileName = files[kind];
+      if (fileName !== undefined) this.artifactPath(this.moduleDir(moduleName, FLAT_DIRS[kind], kind), fileName);
+    }
+  }
+
   /**
    * Detect whether the project uses DDD (src/lib/modules/) or flat structure.
    */
@@ -248,9 +366,9 @@ export abstract class Command {
    * DDD: src/lib/shared/{type}/  |  Flat: src/lib/{type}/
    */
   protected sharedDir(type: string): string {
-    return this.isDDD()
-      ? join(process.cwd(), 'src', 'lib', 'shared', type)
-      : join(process.cwd(), 'src', 'lib', type);
+    this.validateSlug(type, 'Directory');
+    const root = this.isDDD() ? join(process.cwd(), 'src', 'lib', 'shared') : join(process.cwd(), 'src', 'lib');
+    return this.containedPath(root, type);
   }
 
   /**
@@ -262,13 +380,17 @@ export abstract class Command {
    * Flat apps keep the Laravel-style src/lib/{type}/ folders.
    */
   protected moduleDir(moduleName: string, flatType: string, kind?: ModuleArtifactKind): string {
-    if (!this.isDDD()) return join(process.cwd(), 'src', 'lib', flatType);
+    this.validateModuleName(moduleName);
+    this.validateSlug(flatType, 'Directory');
+    if (!this.isDDD()) return this.containedPath(join(process.cwd(), 'src', 'lib'), flatType);
 
     const subdir = kind ? DDD_MODULE_DIRS[kind] : '';
-    return join(process.cwd(), 'src', 'lib', 'modules', moduleName, subdir);
+    return this.containedPath(join(process.cwd(), 'src', 'lib', 'modules', moduleName), subdir);
   }
 
   protected moduleRelDir(moduleName: string, flatType: string, kind?: ModuleArtifactKind): string {
+    this.validateModuleName(moduleName);
+    this.validateSlug(flatType, 'Directory');
     if (!this.isDDD()) return `src/lib/${flatType}`;
 
     const subdir = kind ? DDD_MODULE_DIRS[kind] : '';
@@ -282,11 +404,16 @@ export abstract class Command {
     fileName: string,
   ): string {
     void fromKind;
+    if (moduleName || this.isDDD()) this.validateModuleName(moduleName);
+    if (!/^[A-Za-z_$][A-Za-z0-9_$-]*(?:\.schema)?$/.test(fileName)) throw new Error('Invalid generator import filename.');
     if (!this.isDDD()) return `$lib/${FLAT_DIRS[toKind]}/${fileName}.js`;
     return `$lib/modules/${moduleName}/${DDD_MODULE_DIRS[toKind]}/${fileName}.js`;
   }
 
   protected moduleAliasPath(moduleName: string, flatType: string, fileName: string, kind?: ModuleArtifactKind): string {
+    if (moduleName || this.isDDD()) this.validateModuleName(moduleName);
+    this.validateSlug(flatType, 'Directory');
+    if (!/^[A-Za-z_$][A-Za-z0-9_$-]*(?:\.schema)?(?:\.(?:ts|js))?$/.test(fileName)) throw new Error('Invalid generator import filename.');
     if (!this.isDDD()) return `$lib/${flatType}/${fileName}`;
     const subdir = kind ? `/${DDD_MODULE_DIRS[kind]}` : '';
     return `$lib/modules/${moduleName}${subdir}/${fileName}`;

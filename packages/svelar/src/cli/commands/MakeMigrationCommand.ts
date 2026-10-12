@@ -16,23 +16,28 @@ export class MakeMigrationCommand extends Command {
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
-    const name = args[0];
+    const name = this.generatorName(args[0], flags);
     if (!name) {
       this.error('Please provide a migration name (e.g. create_users_table).');
       return;
     }
 
-    const migrationsDir = join(process.cwd(), 'src', 'lib', 'database', 'migrations');
-    mkdirSync(migrationsDir, { recursive: true });
+    const migrationsDir = this.containedPath(join(process.cwd(), 'src', 'lib'), 'database', 'migrations');
 
     const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
     const normalizedName = this.toSnakeCase(name);
     const fileName = `${timestamp}_${normalizedName}`;
     const className = this.toPascalCase(name);
+    this.validateIdentifier(className, 'Migration class name');
+    const filePath = this.artifactPath(migrationsDir, `${fileName}.ts`);
 
     // Detect if this is a create or alter migration
     const createTable = flags.create ?? this.detectCreateTableName(normalizedName);
     const alterTable = flags.table ?? this.detectAlterTableName(normalizedName);
+    for (const table of [createTable, alterTable]) {
+      if (table && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(table)) throw new Error('Invalid migration table identifier.');
+    }
+    mkdirSync(migrationsDir, { recursive: true });
 
     let content: string;
 
@@ -86,7 +91,7 @@ export default class ${className} extends Migration {
 `;
     }
 
-    writeFileSync(join(migrationsDir, `${fileName}.ts`), content);
+    writeFileSync(filePath, content);
     this.success(`Migration created: src/lib/database/migrations/${fileName}.ts`);
   }
 

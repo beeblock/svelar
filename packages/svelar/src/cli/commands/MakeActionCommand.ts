@@ -4,7 +4,6 @@
 
 import { Command } from '../Command.js';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 
 export class MakeActionCommand extends Command {
   name = 'make:action';
@@ -18,7 +17,7 @@ export class MakeActionCommand extends Command {
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
-    const rawName = args[0];
+    const rawName = this.generatorName(args[0], flags);
     if (!rawName) {
       this.error('Please provide an action name.');
       return;
@@ -28,14 +27,19 @@ export class MakeActionCommand extends Command {
     const actionName = name.endsWith('Action') ? name : `${name}Action`;
     const baseName = actionName.replace(/Action$/, '');
     const moduleName = flags.module || this.toKebabCase(baseName);
+    this.preflightModuleFiles(moduleName, {
+      action: `${actionName}.ts`,
+      ...(flags.dto ? { dto: `${baseName}Dto.ts` } : {}),
+      ...(flags.request ? { request: `${baseName}Request.ts` } : {}),
+      ...(flags.schema ? { schema: `${this.toKebabCase(baseName)}.schema.ts` } : {}),
+    });
     if (!flags.module && this.isDDD()) {
       this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
     }
 
     const moduleDir = this.moduleDir(moduleName, 'actions', 'action');
+    const filePath = this.artifactPath(moduleDir, `${actionName}.ts`);
     mkdirSync(moduleDir, { recursive: true });
-
-    const filePath = join(moduleDir, `${actionName}.ts`);
     if (existsSync(filePath)) {
       this.warn(`Action ${actionName} already exists.`);
       return;
@@ -79,8 +83,8 @@ export class ${actionName} extends Action<${actionName}Input, ${actionName}Outpu
   private createDto(moduleName: string, baseName: string): void {
     const dtoName = `${baseName}Dto`;
     const dir = this.moduleDir(moduleName, 'dtos', 'dto');
+    const filePath = this.artifactPath(dir, `${dtoName}.ts`);
     mkdirSync(dir, { recursive: true });
-    const filePath = join(dir, `${dtoName}.ts`);
     if (existsSync(filePath)) {
       this.warn(`DTO ${dtoName} already exists.`);
       return;
@@ -106,8 +110,8 @@ export class ${actionName} extends Action<${actionName}Input, ${actionName}Outpu
     const schemaName = `${this.toCamelCase(baseName)}Schema`;
     const schemaFile = `${this.toKebabCase(baseName)}.schema`;
     const dir = this.moduleDir(moduleName, 'dtos', 'request');
+    const filePath = this.artifactPath(dir, `${requestName}.ts`);
     mkdirSync(dir, { recursive: true });
-    const filePath = join(dir, `${requestName}.ts`);
     if (existsSync(filePath)) {
       this.warn(`Request ${requestName} already exists.`);
       return;
@@ -138,9 +142,9 @@ export class ${requestName} extends FormRequest {
   private createSchema(moduleName: string, baseName: string): void {
     const schemaName = `${this.toCamelCase(baseName)}Schema`;
     const dir = this.moduleDir(moduleName, 'schemas', 'schema');
-    mkdirSync(dir, { recursive: true });
     const fileName = `${this.toKebabCase(baseName)}.schema`;
-    const filePath = join(dir, `${fileName}.ts`);
+    const filePath = this.artifactPath(dir, `${fileName}.ts`);
+    mkdirSync(dir, { recursive: true });
     if (existsSync(filePath)) {
       this.warn(`Schema ${fileName}.ts already exists.`);
       return;

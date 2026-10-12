@@ -4,7 +4,6 @@
 
 import { Command } from '../Command.js';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 
 export class MakeListenerCommand extends Command {
   name = 'make:listener';
@@ -16,11 +15,12 @@ export class MakeListenerCommand extends Command {
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
-    const name = args[0];
+    const name = this.generatorName(args[0], flags);
     if (!name) {
       this.error('Please provide a listener name (e.g. SendWelcomeEmail).');
       return;
     }
+    if (flags.event) this.validateIdentifier(flags.event, 'Event name', [name, 'Listener']);
 
     const moduleName = flags.module || name.replace(/([A-Z])/g, ' $1').trim().split(' ')[0].toLowerCase();
     if (!flags.module && this.isDDD()) {
@@ -28,9 +28,8 @@ export class MakeListenerCommand extends Command {
     }
 
     const moduleDir = this.moduleDir(moduleName, 'listeners', 'listener');
+    const filePath = this.artifactPath(moduleDir, `${name}.ts`);
     mkdirSync(moduleDir, { recursive: true });
-
-    const filePath = join(moduleDir, `${name}.ts`);
     if (existsSync(filePath)) {
       this.warn(`Listener ${name} already exists at ${filePath}`);
       return;

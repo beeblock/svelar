@@ -5,7 +5,6 @@
 import { Command } from '../Command.js';
 import { MakeEntityCommand } from './MakeEntityCommand.js';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 
 export class MakeControllerCommand extends Command {
   name = 'make:controller';
@@ -18,7 +17,7 @@ export class MakeControllerCommand extends Command {
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
-    const name = args[0];
+    const name = this.generatorName(args[0], flags);
     if (!name) {
       this.error('Please provide a controller name.');
       return;
@@ -41,9 +40,8 @@ export class MakeControllerCommand extends Command {
     }
 
     const moduleDir = this.moduleDir(moduleName, 'controllers', 'controller');
+    const filePath = this.artifactPath(moduleDir, `${controllerName}.ts`);
     mkdirSync(moduleDir, { recursive: true });
-
-    const filePath = join(moduleDir, `${controllerName}.ts`);
     if (existsSync(filePath)) {
       this.warn(`Controller ${controllerName} already exists.`);
       return;

@@ -4,7 +4,6 @@
 
 import { Command } from '../Command.js';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 
 export class MakeTaskCommand extends Command {
   name = 'make:task';
@@ -12,8 +11,8 @@ export class MakeTaskCommand extends Command {
   arguments = ['name'];
   flags = [];
 
-  async handle(args: string[]): Promise<void> {
-    const name = args[0];
+  async handle(args: string[], flags: Record<string, unknown> = {}): Promise<void> {
+    const name = this.generatorName(args[0], flags);
     if (!name) {
       this.error('Please provide a task name.');
       return;
@@ -21,9 +20,8 @@ export class MakeTaskCommand extends Command {
 
     const taskName = name.endsWith('Task') ? name : name;
     const schedulerDir = this.sharedDir('scheduler');
+    const filePath = this.artifactPath(schedulerDir, `${taskName}.ts`);
     mkdirSync(schedulerDir, { recursive: true });
-
-    const filePath = join(schedulerDir, `${taskName}.ts`);
     if (existsSync(filePath)) {
       this.warn(`Task ${taskName} already exists.`);
       return;

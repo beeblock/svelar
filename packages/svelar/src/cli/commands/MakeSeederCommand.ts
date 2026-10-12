@@ -12,18 +12,17 @@ export class MakeSeederCommand extends Command {
   arguments = ['name'];
   flags = [];
 
-  async handle(args: string[]): Promise<void> {
-    const name = args[0];
+  async handle(args: string[], flags: Record<string, unknown> = {}): Promise<void> {
+    const name = this.generatorName(args[0], flags);
     if (!name) {
       this.error('Please provide a seeder name.');
       return;
     }
 
     const seederName = name.endsWith('Seeder') ? name : `${name}Seeder`;
-    const seedersDir = join(process.cwd(), 'src', 'lib', 'database', 'seeders');
+    const seedersDir = this.containedPath(join(process.cwd(), 'src', 'lib'), 'database', 'seeders');
+    const filePath = this.artifactPath(seedersDir, `${seederName}.ts`);
     mkdirSync(seedersDir, { recursive: true });
-
-    const filePath = join(seedersDir, `${seederName}.ts`);
     if (existsSync(filePath)) {
       this.warn(`Seeder ${seederName} already exists.`);
       return;

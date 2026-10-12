@@ -4,7 +4,6 @@
 
 import { Command } from '../Command.js';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 
 export class MakeRequestCommand extends Command {
   name = 'make:request';
@@ -15,7 +14,7 @@ export class MakeRequestCommand extends Command {
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
-    const rawName = args[0];
+    const rawName = this.generatorName(args[0], flags);
     if (!rawName) {
       this.error('Please provide a request name.');
       return;
@@ -30,9 +29,8 @@ export class MakeRequestCommand extends Command {
     }
 
     const moduleDir = this.moduleDir(moduleName, 'dtos', 'request');
+    const filePath = this.artifactPath(moduleDir, `${requestName}.ts`);
     mkdirSync(moduleDir, { recursive: true });
-
-    const filePath = join(moduleDir, `${requestName}.ts`);
     if (existsSync(filePath)) {
       this.warn(`Request ${requestName} already exists.`);
       return;

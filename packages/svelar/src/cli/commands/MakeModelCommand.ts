@@ -20,7 +20,7 @@ export class MakeModelCommand extends Command {
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
-    const name = args[0];
+    const name = this.generatorName(args[0], flags);
     if (!name) {
       this.error('Please provide a model name.');
       return;
@@ -43,9 +43,13 @@ export class MakeModelCommand extends Command {
     }
 
     const modelsDir = this.moduleDir(moduleName, 'models', 'model');
+    const filePath = this.artifactPath(modelsDir, `${name}.ts`);
+    const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
+    const migrationName = `${timestamp}_create_${tableName}_table`;
+    const migrationPath = flags.migration
+      ? this.artifactPath(this.containedPath(join(process.cwd(), 'src', 'lib'), 'database', 'migrations'), `${migrationName}.ts`)
+      : undefined;
     mkdirSync(modelsDir, { recursive: true });
-
-    const filePath = join(modelsDir, `${name}.ts`);
     if (existsSync(filePath)) {
       this.warn(`Model ${name} already exists at ${filePath}`);
       return;
@@ -75,10 +79,8 @@ export class ${name} extends Model {
     this.success(`Model created: ${relDir}/${name}.ts`);
 
     // Create migration if requested
-    if (flags.migration || flags.all) {
-      const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
-      const migrationName = `${timestamp}_create_${tableName}_table`;
-      const migrationsDir = join(process.cwd(), 'src', 'lib', 'database', 'migrations');
+    if (migrationPath) {
+      const migrationsDir = this.containedPath(join(process.cwd(), 'src', 'lib'), 'database', 'migrations');
       mkdirSync(migrationsDir, { recursive: true });
 
       const migrationContent = `import { Migration } from '@beeblock/svelar/database';
@@ -100,7 +102,7 @@ export default class Create${name}sTable extends Migration {
 }
 `;
 
-      writeFileSync(join(migrationsDir, `${migrationName}.ts`), migrationContent);
+      writeFileSync(migrationPath, migrationContent);
       this.success(`Migration created: src/lib/database/migrations/${migrationName}.ts`);
     }
 

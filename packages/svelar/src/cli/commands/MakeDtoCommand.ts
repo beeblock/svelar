@@ -3,7 +3,6 @@
  */
 
 import { mkdirSync, existsSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { Command } from '../Command.js';
 
 export class MakeDtoCommand extends Command {
@@ -17,13 +16,15 @@ export class MakeDtoCommand extends Command {
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
-    const rawName = args[0];
+    const rawName = this.generatorName(args[0], flags);
     if (!rawName) {
       this.error('Please provide a DTO name.');
       return;
     }
 
     const dtoName = this.normalizeDtoName(rawName);
+    if (flags.input) this.validateIdentifier(flags.input, 'Input type', [dtoName]);
+    if (flags.schema && !flags.input) throw new Error('--schema requires an --input type identifier.');
     const baseName = dtoName.replace(/Dto$/, '').replace(/DTO$/, '');
     const moduleName = flags.module || this.toKebabCase(baseName);
     if (!flags.module && this.isDDD()) {
@@ -31,9 +32,7 @@ export class MakeDtoCommand extends Command {
     }
 
     const dir = this.moduleDir(moduleName, 'dtos', 'dto');
-    mkdirSync(dir, { recursive: true });
-
-    const filePath = join(dir, `${dtoName}.ts`);
+    const filePath = this.artifactPath(dir, `${dtoName}.ts`);
     if (existsSync(filePath)) {
       this.warn(`DTO ${dtoName} already exists.`);
       return;
@@ -46,6 +45,7 @@ export class MakeDtoCommand extends Command {
     const importLine = schemaFile
       ? `import type { ${inputType} } from '${this.moduleImportPath(moduleName, 'dto', 'schema', `${this.toKebabCase(schemaFile)}.schema`)}';\n\n`
       : '';
+    mkdirSync(dir, { recursive: true });
 
     const content = `${importLine}export class ${dtoName} {
   constructor(

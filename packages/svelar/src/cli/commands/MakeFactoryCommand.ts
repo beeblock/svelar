@@ -16,7 +16,7 @@ export class MakeFactoryCommand extends Command {
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
-    const name = args[0];
+    const name = this.generatorName(args[0], flags);
     if (!name) {
       this.error('Please provide a factory name.');
       return;
@@ -24,18 +24,16 @@ export class MakeFactoryCommand extends Command {
 
     const factoryName = name.endsWith('Factory') ? name : `${name}Factory`;
     const modelName = flags.model || name.replace(/Factory$/, '');
+    this.validateIdentifier(modelName, 'Model name', [factoryName, 'Factory']);
+    const modelImport = this.resolveModelImport(modelName, flags.module);
 
-    const factoriesDir = join(process.cwd(), 'src', 'lib', 'factories');
+    const factoriesDir = this.containedPath(join(process.cwd(), 'src', 'lib'), 'factories');
+    const filePath = this.artifactPath(factoriesDir, `${factoryName}.ts`);
     mkdirSync(factoriesDir, { recursive: true });
-
-    const filePath = join(factoriesDir, `${factoryName}.ts`);
     if (existsSync(filePath)) {
       this.warn(`Factory ${factoryName} already exists.`);
       return;
     }
-
-    // Resolve the model import path based on project structure
-    const modelImport = this.resolveModelImport(modelName, flags.module);
 
     const content = `import { Factory } from '@beeblock/svelar/testing';
 import { ${modelName} } from '${modelImport}';

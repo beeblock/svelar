@@ -4,7 +4,6 @@
 
 import { Command } from '../Command.js';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 
 export class MakeCommandCommand extends Command {
   name = 'make:command';
@@ -15,7 +14,7 @@ export class MakeCommandCommand extends Command {
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
-    const name = args[0];
+    const name = this.generatorName(args[0], flags);
     if (!name) {
       this.error('Please provide a command class name. Example: npx svelar make:command SyncUsers');
       return;
@@ -23,9 +22,8 @@ export class MakeCommandCommand extends Command {
 
     const className = name.endsWith('Command') ? name : `${name}Command`;
     const commandsDir = this.sharedDir('commands');
+    const filePath = this.artifactPath(commandsDir, `${className}.ts`);
     mkdirSync(commandsDir, { recursive: true });
-
-    const filePath = join(commandsDir, `${className}.ts`);
     if (existsSync(filePath)) {
       this.warn(`Command ${className} already exists.`);
       return;

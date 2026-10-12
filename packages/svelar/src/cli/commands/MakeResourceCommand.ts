@@ -4,7 +4,6 @@
 
 import { Command } from '../Command.js';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 
 export class MakeResourceCommand extends Command {
   name = 'make:resource';
@@ -17,7 +16,7 @@ export class MakeResourceCommand extends Command {
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
-    const name = args[0];
+    const name = this.generatorName(args[0], flags);
     if (!name) {
       this.error('Please provide a resource name.');
       return;
@@ -31,16 +30,18 @@ export class MakeResourceCommand extends Command {
     }
 
     const moduleDir = this.moduleDir(moduleName, 'resources', 'resource');
+    const filePath = this.artifactPath(moduleDir, `${resourceName}.ts`);
+    const collectionName = resourceName.replace('Resource', 'CollectionResource');
+    const collectionPath = flags.collection ? this.artifactPath(moduleDir, `${collectionName}.ts`) : undefined;
+    const modelName = flags.model || this.inferModelName(resourceName);
+    this.validateIdentifier(modelName, 'Model name', [resourceName, 'Resource']);
+    const modelImportPath = this.moduleImportPath(moduleName, 'resource', 'model', modelName);
     mkdirSync(moduleDir, { recursive: true });
-
-    const filePath = join(moduleDir, `${resourceName}.ts`);
     if (existsSync(filePath)) {
       this.warn(`Resource ${resourceName} already exists.`);
       return;
     }
 
-    const modelName = flags.model || this.inferModelName(resourceName);
-    const modelImportPath = this.moduleImportPath(moduleName, 'resource', 'model', modelName);
     const content = this.generateResource(resourceName, modelName, modelImportPath);
 
     writeFileSync(filePath, content);
@@ -48,10 +49,7 @@ export class MakeResourceCommand extends Command {
     this.success(`Resource created: ${relDir}/${resourceName}.ts`);
 
     // Optionally create a collection resource
-    if (flags.collection) {
-      const collectionName = resourceName.replace('Resource', 'CollectionResource');
-      const collectionPath = join(moduleDir, `${collectionName}.ts`);
-
+    if (collectionPath) {
       if (!existsSync(collectionPath)) {
         const collModelPath = this.moduleImportPath(moduleName, 'resource', 'model', modelName);
         const collectionContent = this.generateCollectionResource(collectionName, resourceName, modelName, collModelPath);

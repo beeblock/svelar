@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 // Import all make commands
@@ -39,8 +39,7 @@ let errorSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   originalCwd = process.cwd();
-  tmpDir = join(originalCwd, '.test-make-cmds-' + Date.now());
-  mkdirSync(tmpDir, { recursive: true });
+  tmpDir = mkdtempSync(join(originalCwd, '.test-make-cmds-'));
   process.chdir(tmpDir);
   logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
   errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -344,7 +343,7 @@ describe('Make commands — Flat structure', () => {
       const filePath = join(tmpDir, 'src', 'lib', 'schemas', 'post.schema.ts');
       expect(existsSync(filePath)).toBe(true);
       const content = readFileSync(filePath, 'utf-8');
-      expect(content).toContain('zod');
+      expect(content).toContain("import { z } from '@beeblock/svelar/validation'");
     });
 
     it('should normalize kebab-case names to valid TypeScript identifiers', async () => {
@@ -375,6 +374,26 @@ describe('Make commands — Flat structure', () => {
   });
 
   describe('MakeEntityCommand', () => {
+    it('generates a valid create-only service without update DTO imports', async () => {
+      await new MakeEntityCommand().handle(['Draft'], { fields: 'title:string', 'no-migration': true });
+      const service = readFileSync(join(tmpDir, 'src/lib/services/DraftService.ts'), 'utf8');
+      expect(service).not.toContain('UpdateDraftDto');
+      expect(service).not.toContain('async update(');
+      expect(service).toContain('async create(');
+    });
+
+    it('does not add duplicate create-table migrations when generation is repeated', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        vi.setSystemTime(new Date('2026-10-12T10:00:00Z'));
+        await new MakeEntityCommand().handle(['Draft'], { fields: 'title:string' });
+        vi.setSystemTime(new Date('2026-10-12T10:01:00Z'));
+        await new MakeEntityCommand().handle(['Draft'], { fields: 'title:string' });
+        const files = readdirSync(join(tmpDir, 'src/lib/database/migrations'));
+        expect(files.filter((file) => file.endsWith('_create_drafts_table.ts'))).toHaveLength(1);
+      } finally { vi.useRealTimers(); }
+    });
+
     it('should create Valibot entity schemas when configured', async () => {
       writeFileSync(join(tmpDir, 'svelar.validation.json'), JSON.stringify({ validation: 'valibot' }));
 
@@ -385,14 +404,12 @@ describe('Make commands — Flat structure', () => {
       const content = readFileSync(filePath, 'utf-8');
       const requestPath = join(tmpDir, 'src', 'lib', 'dtos', 'TaskRequests.ts');
       const requestContent = readFileSync(requestPath, 'utf-8');
-      expect(content).toContain("import * as v from 'valibot'");
+      expect(content).toContain("import { v } from '@beeblock/svelar/validation/valibot'");
       expect(content).toContain('const booleanInput');
       expect(content).toContain("status: v.picklist(['todo', 'doing', 'done'])");
       expect(content).toContain('export const updateTaskSchema = v.partial(createTaskSchema)');
-      expect(content).not.toContain('@beeblock/svelar/validation');
-      expect(requestContent).toContain("import * as v from 'valibot'");
-      expect(requestContent).toContain('v.intersect([updateTaskSchema, v.object({ id: idSchema })])');
-      expect(requestContent).not.toContain('@beeblock/svelar/validation');
+      expect(requestContent).toContain("import { v } from '@beeblock/svelar/validation/valibot'");
+      expect(requestContent).toContain('taskIdSchema');
     });
   });
 
@@ -556,11 +573,11 @@ export class Invoice extends Model {}
 
       const filePath = join(tmpDir, 'src', 'lib', 'factories', 'InvoiceFactory.ts');
       const content = readFileSync(filePath, 'utf-8');
-      expect(content).toContain("import { Invoice } from '$lib/modules/billing/Invoice';");
+      expect(content).toContain("import { Invoice } from '$lib/modules/billing/domain/models/Invoice.js';");
     });
 
     it('should detect the module that contains the model', async () => {
-      const modelDir = join(tmpDir, 'src', 'lib', 'modules', 'billing');
+      const modelDir = join(tmpDir, 'src', 'lib', 'modules', 'billing', 'domain', 'models');
       mkdirSync(modelDir, { recursive: true });
       writeFileSync(join(modelDir, 'Invoice.ts'), 'export class Invoice {}');
 
@@ -569,7 +586,17 @@ export class Invoice extends Model {}
 
       const filePath = join(tmpDir, 'src', 'lib', 'factories', 'InvoiceFactory.ts');
       const content = readFileSync(filePath, 'utf-8');
-      expect(content).toContain("import { Invoice } from '$lib/modules/billing/Invoice';");
+      expect(content).toContain("import { Invoice } from '$lib/modules/billing/domain/models/Invoice.js';");
+    });
+
+    it('requires an explicit module when model names are ambiguous', async () => {
+      for (const moduleName of ['billing', 'sales']) {
+        const modelDir = join(tmpDir, 'src/lib/modules', moduleName, 'domain/models');
+        mkdirSync(modelDir, { recursive: true });
+        writeFileSync(join(modelDir, 'Invoice.ts'), 'export class Invoice {}');
+      }
+
+      await expect(new MakeFactoryCommand().handle(['Invoice'], {})).rejects.toThrow('Use --module');
     });
   });
 });
@@ -603,12 +630,20 @@ describe('MakeDashboardCommand', () => {
     expect(page).not.toContain('coming soon');
     expect(page).toContain('retryJob');
     expect(page).toContain('runTask');
-    expect(page).toContain('data.logs?.logs');
-    expect(page).toContain('data.stats.queue?.queues?.default?.total');
-    expect(server).toContain('/api/admin/queue?limit=10');
+    expect(page).toContain('panels.logs?.data?.logs');
+    expect(page).toContain('queue.runtime?.workers');
+    expect(page).toContain('totalJobs');
+    expect(page).toContain('apiFetch');
+    expect(page).toContain("from '@lucide/svelte/icons/refresh-cw'");
+    expect(page).not.toContain("from 'lucide-svelte/");
+    expect(page).toContain('confirmed: true');
+    expect(page).not.toContain('export let data');
+    expect(server).toContain('/api/admin/queue?');
     expect(server).toContain('/api/admin/scheduler');
-    expect(server).toContain('/api/admin/logs?limit=25');
-    expect(queueApi).toContain('JobMonitor.listJobs');
+    expect(server).toContain('/api/admin/logs?');
+    expect(server).toContain('authorizeDashboard(event)');
+    expect(queueApi).toContain("controller.handle('queue')");
+    expect(queueApi).not.toContain('JobMonitor.listJobs');
   });
 });
 
@@ -655,7 +690,7 @@ describe('New project templates', () => {
     expect(pkg.dependencies.valibot).toBeDefined();
     expect(pkg.dependencies.zod).toBeUndefined();
     expect(NewCommandTemplates.validationConfig('valibot')).toContain('"validation": "valibot"');
-    expect(authSchema).toContain("import * as v from 'valibot'");
+    expect(authSchema).toContain("import { v } from '@beeblock/svelar/validation/valibot'");
     expect(authSchema).toContain('v.forward(');
     expect(authSchema).toContain('v.InferOutput');
     expect(adminSchema).toContain('const positiveInteger');
@@ -727,6 +762,17 @@ describe('New project templates', () => {
     expect(template).toContain("import { defineConfig, loadEnv } from 'vite'");
     expect(template).toContain("export default defineConfig(({ mode }) => {");
     expect(template).toContain("Object.assign(process.env, loadEnv(mode, process.cwd(), ''))");
+    expect(template).toContain('esbuild: { keepNames: true }');
+  });
+
+  it('resolves Valibot before the broader validation alias in app and test builds', () => {
+    for (const template of [NewCommandTemplates.viteConfig(), NewCommandTemplates.vitestConfig()]) {
+      const specific = template.indexOf("'@beeblock/svelar/validation/valibot'");
+      const general = template.indexOf("'@beeblock/svelar/validation'");
+      expect(specific).toBeGreaterThanOrEqual(0);
+      expect(specific).toBeLessThan(general);
+      expect(template).toContain("'dist/validation/valibot.js'");
+    }
   });
 
   it('uses CSRF-aware fetches for generated admin API mutations', () => {
@@ -790,10 +836,10 @@ describe('New project templates', () => {
   it('uses stable ids for generated OTP superforms', () => {
     const template = NewCommandTemplates.otpLoginPageServer();
 
-    expect(template).toContain("superValidate(zod(otpRequestSchema), { id: 'otp-request' })");
-    expect(template).toContain("superValidate(zod(otpVerifySchema), { id: 'otp-verify' })");
-    expect(template).toContain("superValidate(request, zod(otpRequestSchema), { id: 'otp-request' })");
-    expect(template).toContain("superValidate(request, zod(otpVerifySchema), { id: 'otp-verify' })");
+    expect(template).toContain("superValidate(zod4(otpRequestSchema), { id: 'otp-request' })");
+    expect(template).toContain("superValidate(zod4(otpVerifySchema), { id: 'otp-verify' })");
+    expect(template).toContain("superValidate(request, zod4(otpRequestSchema), { id: 'otp-request' })");
+    expect(template).toContain("superValidate(request, zod4(otpVerifySchema), { id: 'otp-verify' })");
   });
 });
 
@@ -806,7 +852,8 @@ describe('Make commands — Cross-type imports', () => {
       await cmd.handle(['PostController'], { resource: true, model: 'Post' });
       const filePath = join(tmpDir, 'src', 'lib', 'controllers', 'PostController.ts');
       const content = readFileSync(filePath, 'utf-8');
-      expect(content).toContain('$lib/models/Post.js');
+      expect(content).toContain('$lib/services/PostService.js');
+      expect(content).toContain('CreatePostRequest.validate(event)');
     });
 
     it('MakeListenerCommand should use ../events/ path in flat mode', async () => {
@@ -828,7 +875,8 @@ describe('Make commands — Cross-type imports', () => {
       await cmd.handle(['PostController'], { resource: true, model: 'Post', module: 'blog' });
       const filePath = join(tmpDir, 'src', 'lib', 'modules', 'blog', 'interface', 'http', 'controllers', 'PostController.ts');
       const content = readFileSync(filePath, 'utf-8');
-      expect(content).toContain('$lib/modules/blog/domain/models/Post.js');
+      expect(content).toContain('$lib/modules/blog/application/services/PostService.js');
+      expect(content).toContain('CreatePostRequest.validate(event)');
     });
 
     it('MakeListenerCommand should use ./ path in DDD mode', async () => {
