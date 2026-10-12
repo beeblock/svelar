@@ -1647,6 +1647,24 @@ await User.query().upsert(
 
 Works across SQLite (`ON CONFLICT ... DO UPDATE`), PostgreSQL (`ON CONFLICT ... DO UPDATE SET ... = EXCLUDED`), and MySQL (`ON DUPLICATE KEY UPDATE`).
 
+Direct `upsert` is eventless and returns driver results, not a Model instance. It does not run model fillable/cast rules, generate model IDs or timestamps, or fire observers, audit, or Searchable synchronization; supply required values and arrange side effects explicitly. It rejects all row predicates, including `where` filters, and active soft-delete scopes instead of silently ignoring them. For a soft-delete model, consciously choose `withTrashed().upsert(...)` to target table identity across deleted and non-deleted rows, or use eventful helpers for scoped row writes. `withTrashed()` removes the soft-delete scope, not arbitrary row filters.
+
+For an actively scoped tenant model, include the configured tenant column in `conflictColumns` and define a matching composite unique constraint in a migration, such as `table.uniqueIndex(['team_id', 'number'])`. Ambient tenant context or an explicit `forTenant(teamId)` scope supplies the tenant attribute and collision guards, and conflicting tenant values are rejected. `forTenant()` is a real scope, not a manual `where` filter, so it is permitted for upsert and works without ambient context:
+
+```typescript
+// Authorized tenant selected explicitly; ambient context is not required
+// Include deleted rows intentionally; no other row filters may remain
+await Invoice.forTenant(teamId).withTrashed().upsert(
+  { number: dto.number, title: dto.title },
+  ['team_id', 'number'],
+  ['title']
+);
+```
+
+PostgreSQL/SQLite add a tenant equality guard to `ON CONFLICT ... DO UPDATE WHERE`, comparing the target row's tenant with the incoming `excluded` tenant. MySQL guards every assignment with `IF(existingTenant = VALUES(tenant), incoming, current)`: its duplicate-key branch can be triggered by **any** unique or primary-key collision, not only the requested conflict columns. A foreign-tenant collision on another key can throw on PostgreSQL/SQLite or become a guarded no-op on MySQL. Do not report MySQL driver metadata as successful model creation/update without verifying the intended row.
+
+When the update-column list is empty, MySQL uses `ON DUPLICATE KEY UPDATE` with a self-assignment, not `INSERT IGNORE`; unrelated validation and storage errors must still propagate. Calling `withoutTenantScope()` deliberately bypasses the automatic tenant assignment and collision guards for administration: authorize that bypass before use. It does not bypass row-predicate or soft-delete-scope rejection.
+
 ### Bulk Insert
 
 Insert multiple rows in a single query:
@@ -1750,7 +1768,7 @@ user instanceof User; // true
 
 **Creation attributes.** Only the passed search attributes plus create/update attributes seed a new record; the create/update payload wins when both contain the same key. Arbitrary `where` conditions are not inferred as creation defaults. In the example, `role: 'user'` is explicitly supplied rather than copied from the filter. Normal model-generated IDs, timestamps, and active tenant-context attributes still apply. Ensure the needed application columns are assignable under the model's `fillable` policy.
 
-Authorize unscoped tenant access before calling `withoutTenantScope()`. Creating an unscoped tenant model requires its configured tenant-column attribute in the passed search or create/update data, such as `team_id`. A `where('team_id', teamId)` or `forTenant(teamId)` filter alone does not seed that attribute.
+`Model.forTenant(teamId)` and a plain `QueryBuilder` instance's `.forTenant(teamId)` establish explicit tenant scopes that survive `clone()`, work without ambient context, and guard reads and writes. Helper creation automatically assigns the selected tenant, and conflicting tenant values are rejected; upsert retains the same tenant guard. An arbitrary `where('team_id', teamId)` remains only a filter and does not seed creation attributes. Authorize unscoped tenant access before calling `withoutTenantScope()`; creating an unscoped tenant model still requires its configured tenant-column attribute in the passed search or create/update data, such as `team_id`.
 
 **Null lookups.** A search attribute such as `{ deleted_at: null }` becomes SQL `IS NULL`, not `= NULL`; undefined search attributes are rejected. JSON-cast search values use the model's storage representation.
 

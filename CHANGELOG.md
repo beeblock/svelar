@@ -51,6 +51,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Security
 
+- **Scoped bulk upserts** — explicit `forTenant()` ownership survives cloning and applies to model/raw query builders. Tenant upserts require composite identity and guard conflict updates, including MySQL collisions on other unique keys; ignored row/soft-delete filters now reject instead of silently widening a write. MySQL duplicate-only inserts no longer use `INSERT IGNORE` to hide unrelated errors.
 - **ORM predicate boundaries** — automatic tenant and soft-delete scopes enclose user predicates, including OR expressions; helper search/primary-key constraints cannot be bypassed by caller OR filters. Scoped model writes reject conflicting tenant attributes. Unique-insert recovery keeps the same visible scopes and uses a savepoint inside active PostgreSQL transactions, without swallowing unrelated storage or lifecycle failures.
 - **Compatible transitive patches** — narrow cookie, ExcelJS UUID and affected esbuild overrides patch the installed dependency graph without forcing SvelteKit 3 or downgrading ExcelJS. Root lock and standalone packed-consumer audits are verified separately.
 - **API key rotation** — replacement and revocation are atomic; failures retain the old key, competing rotations have one winner, and exact expiry/disabled state and service-account restrictions survive rotation. Database timestamps normalize safely across drivers; zero-valued controls do not fail open.
