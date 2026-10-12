@@ -180,7 +180,11 @@ function coreTokens(
     if (!esp.initializer.arguments) fail('Expected explicit empty provider constructor parentheses');
     const providerPath = ddd ? 'src/lib/shared/providers/EventServiceProvider.ts' : 'src/lib/providers/EventServiceProvider.ts';
     const providerModule = ddd ? '$lib/shared/providers/EventServiceProvider.js' : '$lib/providers/EventServiceProvider.js';
-    if (imported(providerModule, 'EventServiceProvider') !== 'EventServiceProvider') fail('Provider import differs from the known scaffold');
+    const publishedFlatModule = './lib/providers/EventServiceProvider.js';
+    if (imported(providerModule, 'EventServiceProvider') !== 'EventServiceProvider'
+      && (ddd || imported(publishedFlatModule, 'EventServiceProvider') !== 'EventServiceProvider')) {
+      fail('Provider import differs from the known scaffold');
+    }
     const provider = read(providerPath);
     if (!provider) fail('Cannot verify the app provider implementation');
     const parsed = ts.createSourceFile(providerPath, provider.toString('utf8'), ts.ScriptTarget.Latest, true);

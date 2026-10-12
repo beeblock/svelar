@@ -33,7 +33,7 @@ function files(directory = root): string[] {
 export function legacyCoreFixture(flat: boolean): Map<string, string> {
   const shared = flat ? 'src/lib' : 'src/lib/shared';
   const module = flat ? 'src/lib' : 'src/lib/modules/auth/application';
-  const provider = flat ? '$lib/providers/EventServiceProvider.js' : '$lib/shared/providers/EventServiceProvider.js';
+  const provider = flat ? './lib/providers/EventServiceProvider.js' : '$lib/shared/providers/EventServiceProvider.js';
   return new Map([
     ['src/app.ts', `import { EventServiceProvider } from '${provider}';\nconst esp = new EventServiceProvider();\nesp.boot();\nexport const customMarker = 'original bootstrap';\n`],
     [`${shared}/providers/EventServiceProvider.ts`, "import { EventServiceProvider as BaseProvider } from '@beeblock/svelar/events';\nexport class EventServiceProvider extends BaseProvider { protected listen = {}; }\n"],
@@ -131,6 +131,36 @@ describe('Scoped core AST migration', () => {
     expect(read('src/routes/api/admin/scheduler/[name]/toggle/+server.ts')).toContain('const enabled = body.enabled ?? true;');
     expect(plan.warnings.join('\n')).toContain('not full BullMQ');
     expect(plan.warnings.join('\n')).toContain('JSON/schema APIs are not migrated');
+  });
+
+  it.each(['./lib/providers/EventServiceProvider.js', '$lib/providers/EventServiceProvider.js'])(
+    'verifies the actual flat provider and preserves its import spelling: %s', async (specifier) => {
+      fixture(true);
+      write('src/app.ts', read('src/app.ts').replace('./lib/providers/EventServiceProvider.js', specifier));
+      const original = read('src/app.ts');
+      const plan = await planCoreScaffoldMigration(root);
+      expect(plan.errors).toEqual([]);
+      expect(plan.edits).toHaveLength(8);
+      applyCoreScaffoldMigration(plan, { confirmed: true });
+      expect(read('src/app.ts')).toContain(`from '${specifier}'`);
+      expect(read('src/app.ts')).toContain('new EventServiceProvider(svelarCoreContainer)');
+      expect(read('src/app.ts')).toContain('await esp.boot();');
+      expect(read('src/app.ts.core.bak')).toBe(original);
+    },
+  );
+
+  it('does not treat an arbitrary relative provider or customized constructor as the published flat scaffold', async () => {
+    fixture(true);
+    write('src/app.ts', read('src/app.ts').replace('./lib/providers/EventServiceProvider.js', '../outside/providers/EventServiceProvider.js'));
+    const unsupported = await planCoreScaffoldMigration(root);
+    expect(unsupported.errors.join('\n')).toContain('Provider import differs');
+    expect(() => applyCoreScaffoldMigration(unsupported, { confirmed: true })).toThrow('preflight failed');
+    fixture(true);
+    write('src/lib/providers/EventServiceProvider.ts', read('src/lib/providers/EventServiceProvider.ts')
+      .replace('protected listen = {};', 'constructor() { super(customContainer); }'));
+    const custom = await planCoreScaffoldMigration(root);
+    expect(custom.errors.join('\n')).toContain('Custom provider inheritance/constructor');
+    expect(files().some((path) => path.includes('.core.bak'))).toBe(false);
   });
 
   it.each([
