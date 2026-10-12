@@ -314,6 +314,59 @@ Queue.registerQueues([
 
 `Queue.queues()` returns the registered queue definitions and `Queue.registeredJobs()` returns the registered job class names. `JobMonitor.getHealth()` includes both lists for admin dashboards.
 
+### Queue Monitoring
+
+Import the monitor from its dedicated server entry and configure it with the same default connection and connections object used by `Queue.configure()`:
+
+```typescript
+import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
+
+JobMonitor.configure({
+  ...queueConfig,
+  driver: queueConfig.connections[queueConfig.default].driver,
+});
+
+const jobs = await JobMonitor.listJobs({
+  queue: 'emails',
+  status: 'waiting',
+  jobClass: 'SendWelcomeEmail',
+  limit: 25,
+  offset: 0,
+});
+
+const job = await JobMonitor.getJob(jobId, 'emails');
+const retried = await JobMonitor.retryJob(jobId, 'emails');
+const deleted = await JobMonitor.deleteJob(jobId, 'emails');
+const health = await JobMonitor.getHealth();
+const runtime = health.runtime.emails;
+```
+
+Here `queueConfig` is the configuration object passed to `Queue.configure()`. All monitor operations observe that configured default connection, not a connection selected by the queue registry.
+
+The optional second argument of `getJob(id, queueName?)`, `retryJob(id, queueName?)`, and `deleteJob(id, queueName?)` restricts the operation to that queue, including persisted failed records. Always pass the listed job's `queue` in admin actions: BullMQ numeric IDs are unique only within a queue. A missing or wrong-queue ID returns `null` for reads and `false` for mutations; there is no fallback to another queue. Without an explicit queue, Redis uses the connection's configured queue (or `default`); other drivers can find persisted IDs across queues. If a live job and a persisted failure share an ID within the requested scope, operations fail closed instead of choosing one. Retry only accepts failed jobs, never active reservations or pending jobs.
+
+`listJobs()` orders by creation timestamp descending, then queue, ID, and status ascending for stable ties. Class and queue filters apply before pagination. Without a status filter, live jobs and persisted failures are merged into one sequence before applying the offset and limit. Stability assumes the underlying jobs have not changed between requests. Pagination requires non-negative safe integers; `limit: 0` returns an empty page. Database class filtering reads matching queue/status rows to inspect JSON payloads; these are not constant-cost indexed pages.
+
+Exact Redis creation-order pagination requires inspecting the relevant live states because BullMQ's native ranges use queue, priority, completion, or delay order instead of global creation order. `JobMonitor.configure()` accepts a positive safe integer `redisScanLimit`, defaulting to 1,000 live jobs per listing. The monitor checks public state counts before fetching jobs, then uses finite single-state ranges with a cumulative budget and at most one overflow job as a lookahead. Listings that exceed the budget throw `RedisJobScanLimitError` from `@beeblock/svelar/queue/JobMonitor`, with `queue`, `scanLimit`, and `observedJobs` fields. No partial or guessed page is returned. This applies to both combined and status-specific live listings, including class-filtered listings; the scan budget counts jobs before class filtering. Narrowing `status` may reduce the required scan. Persisted `status: 'failed'` listings do not scan Redis and are unaffected. Increase the budget explicitly through application configuration only when that bounded request cost is acceptable.
+
+Supported statuses are `waiting`, `active`, `completed`, `failed`, and `delayed`. Redis uses BullMQ's current state rather than inferring it from old timestamps; prioritized and paused pending jobs appear as `waiting`. Failed listings/counts come from `svelar_failed_jobs`, not an additional copy of BullMQ's retained failures. Database completed jobs are deleted, so `status: 'completed'` returns no jobs. Memory and sync expose persisted failures but not live job lists or retained completion history.
+
+`getHealth()` returns counts and `runtime` observations for the configured default queue and registered queues whose connection is omitted or matches the monitor's default connection. Definitions on other connections remain in `registry`, without observed counts or runtime entries. Missing observations must be treated as unknown.
+
+Each observed queue's `runtime` has:
+
+- `workers: number | null`: observed BullMQ worker connections, or unknown when unavailable or unsupported. This is not proof that each worker is running or unpaused.
+- `paused: boolean | null`: the BullMQ queue's global pause state, not individual workers' local pause state.
+- `globalConcurrency: number | null`: the configured BullMQ global concurrency cap, or `null` when unset or unavailable.
+- `effectiveConcurrency: number | null`: zero for an observed globally paused Redis queue or no observed workers; otherwise unknown because public Queue getters do not expose remote workers' combined concurrency. Registry concurrency is a configuration hint, not an observation.
+- `oldestWaitingJob: number | null`: absolute oldest ready waiting job's creation timestamp in milliseconds. Database observations exclude reserved and future-available jobs. Redis returns `null`: a bounded queue-head read cannot establish absolute creation age across retries, LIFO jobs, or priorities.
+- `lag: number | null`: the absolute oldest waiting job's age in milliseconds, zero for an observed empty waiting set, or unknown when not observable. Redis returns `null` for nonempty waiting sets, including prioritized-only backlogs.
+- `nextWaitingJob: number | null`: bounded ordinary waiting-list head's creation timestamp in milliseconds, including a paused waiting list, obtained through BullMQ's public `getWaiting(0, 0)`. It is not the absolute oldest job, the highest-priority job, or a prediction of the next job a worker will process. Database reports the first ready, unreserved row in creation order.
+- `nextWaitingLag: number | null`: that observed head's age in milliseconds; `null` if no valid, unambiguous ordinary waiting head is observable.
+
+Memory, sync, and database cannot report worker count, pause state, or effective concurrency, so those values are `null`. Database can report oldest waiting age; memory and sync cannot report waiting age or head observations. The top-level `oldestWaitingJob` is the oldest known absolute timestamp across queues, not a sampled Redis head. Redis health never enumerates a backlog: it reads only ordinary waiting index zero (with a finite generic-getter fallback when needed), regardless of backlog size, and leaves absolute oldest metrics unknown for nonempty sets. `throughput` and `failureRate` summarize outcomes recorded in the monitor's current process during the last hour, not cluster-wide BullMQ metrics. Redis and database observation failures surface as errors; unavailable worker-list commands remain unknown.
+
+
 ## Synchronous Dispatch
 
 Use `dispatchSync()` to run a job immediately in the current process, **bypassing the configured queue driver entirely**. The method returns a promise that resolves when the job completes.

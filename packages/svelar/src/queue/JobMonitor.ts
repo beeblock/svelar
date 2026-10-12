@@ -46,14 +46,61 @@ export interface JobFilter {
   offset?: number;
 }
 
+export interface JobMonitorConfig {
+  driver: string;
+  default: string;
+  connections: Record<string, any>;
+  /** Maximum live Redis jobs inspected for exact creation-order pagination. */
+  redisScanLimit?: number;
+}
+
+export class RedisJobScanLimitError extends Error {
+  constructor(
+    readonly queue: string,
+    readonly scanLimit: number,
+    readonly observedJobs: number,
+  ) {
+    super(`Redis job listing for queue "${queue}" exceeds the ${scanLimit}-job scan limit. Narrow the status filter or configure JobMonitor.redisScanLimit explicitly.`);
+    this.name = 'RedisJobScanLimitError';
+  }
+}
+
 export interface QueueHealth {
   driver: string;
   registry: QueueDefinition[];
   registeredJobs: string[];
   queues: Record<string, JobCounts>;
-  oldestWaitingJob?: number; // timestamp
-  failureRate: number; // percentage in last hour
-  throughput: number; // jobs processed in last hour
+  runtime: Record<string, QueueRuntime>;
+  oldestWaitingJob?: number; // timestamp in milliseconds
+  failureRate: number; // percentage of process-local recorded outcomes in the last hour
+  throughput: number; // process-local recorded completions in the last hour
+}
+
+export interface QueueRuntime {
+  workers: number | null;
+  paused: boolean | null;
+  globalConcurrency: number | null;
+  effectiveConcurrency: number | null;
+  oldestWaitingJob: number | null;
+  /** Age of the oldest ready waiting job, in milliseconds. */
+  lag: number | null;
+  /** First ordinary waiting-list job's timestamp, not a global oldest age. */
+  nextWaitingJob: number | null;
+  nextWaitingLag: number | null;
+}
+
+const supportedStatuses = new Set<JobInfo['status']>(['waiting', 'active', 'completed', 'failed', 'delayed']);
+const defaultRedisScanLimit = 1000;
+
+function compareText(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function compareJobs(a: JobInfo, b: JobInfo): number {
+  return b.createdAt - a.createdAt
+    || compareText(a.queue, b.queue)
+    || compareText(a.id, b.id)
+    || compareText(a.status, b.status);
 }
 
 function parseDatabaseJobPayload(
@@ -74,15 +121,22 @@ function parseDatabaseJobPayload(
 }
 
 class JobMonitorService {
-  private _config: { driver: string; default: string; connections: Record<string, any> } | null = null;
+  private _config: JobMonitorConfig | null = null;
   private _bullmq: any = null;
   private _metrics: {
     processed: number[];  // timestamps of completed jobs
     failed: number[];     // timestamps of failed jobs
   } = { processed: [], failed: [] };
 
-  configure(config: { driver: string; default: string; connections: Record<string, any> }): void {
-    this._config = config;
+  configure(config: JobMonitorConfig): void {
+    if (config.redisScanLimit !== undefined && (!Number.isSafeInteger(config.redisScanLimit) || config.redisScanLimit < 1)) {
+      throw new RangeError('redisScanLimit must be a positive safe integer.');
+    }
+    this._config = { ...config };
+  }
+
+  private getDefaultQueue(): string {
+    return this._config?.connections[this._config.default]?.queue ?? 'default';
   }
 
   /** Record a processed job (called internally by queue system) */
@@ -101,9 +155,9 @@ class JobMonitorService {
   }
 
   /**
-   * Get job counts for a queue (or all queues)
+   * Get job counts for a queue on the configured default connection.
    */
-  async getCounts(queueName: string = 'default'): Promise<JobCounts> {
+  async getCounts(queueName: string = this.getDefaultQueue()): Promise<JobCounts> {
     const driver = this._config?.connections[this._config.default]?.driver;
 
     if (driver === 'redis') {
@@ -130,56 +184,77 @@ class JobMonitorService {
    */
   async listJobs(filter: JobFilter = {}): Promise<JobInfo[]> {
     const driver = this._config?.connections[this._config.default]?.driver;
+    const limit = filter.limit ?? 50;
+    const offset = filter.offset ?? 0;
+    if (!Number.isSafeInteger(limit) || limit < 0 || !Number.isSafeInteger(offset) || offset < 0
+      || !Number.isSafeInteger(offset + limit)) {
+      throw new RangeError('Job pagination requires non-negative safe integer limit and offset.');
+    }
+    if (limit === 0 || (filter.status !== undefined && !supportedStatuses.has(filter.status))) return [];
+
+    // Each source contributes its prefix; offset is applied only after the merge.
+    const prefix = { ...filter, limit: offset + limit, offset: 0 };
+    if (driver === 'redis') prefix.queue ??= this.getDefaultQueue();
 
     if (filter.status === 'failed') {
-      return this.listFailedJobs(filter);
+      return this.listFailedJobs({ ...prefix, limit, offset });
     }
 
+    let jobs: JobInfo[] = [];
     if (driver === 'redis') {
-      return this._listRedisJobs(filter);
-    }
-    if (driver === 'database') {
-      return this._listDatabaseJobs(filter);
+      jobs = await this._listRedisJobs(prefix);
+    } else if (driver === 'database') {
+      jobs = await this._listDatabaseJobs(prefix);
     }
 
     if (!filter.status) {
-      return this.listFailedJobs(filter);
+      jobs.push(...await this.listFailedJobs(prefix));
     }
 
-    return [];
+    return jobs.sort(compareJobs).slice(offset, offset + limit);
   }
 
   /**
-   * Get details for a single job
+   * Get details for a single job. Pass the queue for queue-local Redis IDs.
+   * Ambiguous live/persisted IDs return null instead of selecting either job.
    */
-  async getJob(jobId: string): Promise<JobInfo | null> {
+  async getJob(jobId: string, queueName?: string): Promise<JobInfo | null> {
+    return (await this.resolveJob(jobId, queueName))?.info ?? null;
+  }
+
+  private async resolveJob(jobId: string, queueName?: string): Promise<{
+    info: JobInfo;
+    source: 'redis' | 'database' | 'failed';
+  } | null> {
     const driver = this._config?.connections[this._config.default]?.driver;
+    const scope = driver === 'redis' ? queueName ?? this.getDefaultQueue() : queueName;
+    let live: JobInfo | null = null;
 
     if (driver === 'redis') {
-      return this._getRedisJob(jobId);
-    }
-    if (driver === 'database') {
-      return this._getDatabaseJob(jobId);
+      live = await this._getRedisJob(jobId, scope!);
+    } else if (driver === 'database') {
+      live = await this._getDatabaseJob(jobId, scope);
     }
 
-    return this.findFailedJob(jobId);
+    const failed = await this.findFailedJob(jobId, scope);
+    // IDs can overlap between the live driver and the persisted failure store.
+    if (live && failed) return null;
+    if (live) return { info: live, source: driver as 'redis' | 'database' };
+    return failed ? { info: failed, source: 'failed' } : null;
   }
 
   /**
    * Retry a failed job
    */
-  async retryJob(jobId: string): Promise<boolean> {
-    if (await this.findFailedJob(jobId)) {
+  async retryJob(jobId: string, queueName?: string): Promise<boolean> {
+    const target = await this.resolveJob(jobId, queueName);
+    if (!target || target.info.status !== 'failed') return false;
+    if (target.source === 'failed') {
       return Queue.retry(jobId);
     }
 
-    const driver = this._config?.connections[this._config.default]?.driver;
-
-    if (driver === 'redis') {
-      return this._retryRedisJob(jobId);
-    }
-    if (driver === 'database') {
-      return this._retryDatabaseJob(jobId);
+    if (target.source === 'redis') {
+      return this._retryRedisJob(jobId, target.info.queue);
     }
 
     return false;
@@ -188,18 +263,18 @@ class JobMonitorService {
   /**
    * Delete a job from the queue
    */
-  async deleteJob(jobId: string): Promise<boolean> {
-    if (await this.deleteFailedJob(jobId)) {
-      return true;
+  async deleteJob(jobId: string, queueName?: string): Promise<boolean> {
+    const target = await this.resolveJob(jobId, queueName);
+    if (!target) return false;
+    if (target.source === 'failed') {
+      return this.deleteFailedJob(jobId, target.info.queue);
     }
 
-    const driver = this._config?.connections[this._config.default]?.driver;
-
-    if (driver === 'redis') {
-      return this._deleteRedisJob(jobId);
+    if (target.source === 'redis') {
+      return this._deleteRedisJob(jobId, target.info.queue);
     }
-    if (driver === 'database') {
-      return this._deleteDatabaseJob(jobId);
+    if (target.source === 'database') {
+      return this._deleteDatabaseJob(jobId, target.info.queue);
     }
 
     return false;
@@ -210,7 +285,17 @@ class JobMonitorService {
    */
   async getHealth(): Promise<QueueHealth> {
     const driver = this._config?.connections[this._config.default]?.driver ?? 'sync';
-    const counts = await this.getCounts('default');
+    const registry = Queue.queues();
+    const queues: Record<string, JobCounts> = {};
+    const runtime: Record<string, QueueRuntime> = {};
+    const observedQueues = registry.filter(queue => !queue.connection || queue.connection === this._config?.default);
+    for (const name of new Set([this.getDefaultQueue(), ...observedQueues.map(queue => queue.name)])) {
+      queues[name] = await this.getCounts(name);
+      runtime[name] = await this.getRuntime(name, driver, queues[name]);
+    }
+    const oldest = Object.values(runtime)
+      .map(state => state.oldestWaitingJob)
+      .filter((timestamp): timestamp is number => timestamp !== null);
 
     const hourAgo = Date.now() - 3600000;
     const recentProcessed = this._metrics.processed.filter(t => t > hourAgo).length;
@@ -219,9 +304,11 @@ class JobMonitorService {
 
     return {
       driver,
-      registry: Queue.queues(),
+      registry,
       registeredJobs: Queue.registeredJobs(),
-      queues: { default: counts },
+      queues,
+      runtime,
+      oldestWaitingJob: oldest.length ? Math.min(...oldest) : undefined,
       failureRate: total > 0 ? (recentFailed / total) * 100 : 0,
       throughput: recentProcessed,
     };
@@ -230,7 +317,7 @@ class JobMonitorService {
   /**
    * Flush all completed jobs (cleanup)
    */
-  async flushCompleted(queueName: string = 'default'): Promise<number> {
+  async flushCompleted(queueName: string = this.getDefaultQueue()): Promise<number> {
     const driver = this._config?.connections[this._config.default]?.driver;
 
     if (driver === 'redis') {
@@ -243,7 +330,7 @@ class JobMonitorService {
   /**
    * Flush all failed jobs
    */
-  async flushFailed(queueName: string = 'default'): Promise<number> {
+  async flushFailed(queueName: string = this.getDefaultQueue()): Promise<number> {
     return this.flushFailedJobs(queueName);
   }
 
@@ -263,7 +350,7 @@ class JobMonitorService {
 
   private failedRowToInfo(row: any): JobInfo {
     return {
-      id: row.id,
+      id: String(row.id),
       jobClass: row.job_class ?? 'Unknown',
       queue: row.queue,
       status: 'failed',
@@ -282,24 +369,35 @@ class JobMonitorService {
 
     const query = this.failedQuery();
 
-    if (filter.queue) {
+    if (filter.queue !== undefined) {
       query.where('queue', filter.queue);
     }
     if (filter.jobClass) {
       query.where('job_class', filter.jobClass);
     }
 
-    const rows = await query.orderBy('failed_at', 'desc').limit(limit).offset(offset).get();
-    return (rows ?? []).map((row: any) => this.failedRowToInfo(row));
+    const rows = await this.jobRowsPrefix(query, 'failed_at', offset + limit);
+    return rows.map((row: any) => this.failedRowToInfo(row)).sort(compareJobs).slice(offset, offset + limit);
   }
 
-  private async findFailedJob(jobId: string): Promise<JobInfo | null> {
-    const row = await this.failedQuery().where('id', jobId).first();
+  private async jobRowsPrefix(query: QueryBuilder<any>, timestampColumn: string, limit: number): Promise<any[]> {
+    const rows = await query.clone().orderBy(timestampColumn, 'desc').limit(limit).get();
+    if (!rows.length || rows.length < limit) return rows;
+    const boundary = rows[rows.length - 1][timestampColumn];
+    // Include the entire boundary tie so database collation cannot change pages.
+    const ties = await query.clone().where(timestampColumn, boundary).get();
+    return [...rows.filter(row => row[timestampColumn] > boundary), ...ties];
+  }
+
+  private async findFailedJob(jobId: string, queueName?: string): Promise<JobInfo | null> {
+    const query = this.failedQuery().where('id', jobId);
+    if (queueName !== undefined) query.where('queue', queueName);
+    const row = await query.first();
     return row ? this.failedRowToInfo(row) : null;
   }
 
-  private async deleteFailedJob(jobId: string): Promise<boolean> {
-    const deleted = await this.failedQuery().where('id', jobId).delete();
+  private async deleteFailedJob(jobId: string, queueName: string): Promise<boolean> {
+    const deleted = await this.failedQuery().where('id', jobId).where('queue', queueName).delete();
     return deleted > 0;
   }
 
@@ -354,15 +452,16 @@ class JobMonitorService {
   private async _getRedisJobCounts(queueName: string): Promise<JobCounts> {
     const queue = await this.getRedisQueue(queueName);
     try {
-      const counts = await queue.getJobCounts('waiting', 'active', 'completed', 'delayed');
+      const counts = await queue.getJobCounts('waiting', 'prioritized', 'active', 'completed', 'delayed');
       const failed = await this.countFailedJobs(queueName);
+      const waiting = (counts.waiting ?? 0) + (counts.paused ?? 0) + (counts.prioritized ?? 0);
       return {
-        waiting: counts.waiting ?? 0,
+        waiting,
         active: counts.active ?? 0,
         completed: counts.completed ?? 0,
         failed,
         delayed: counts.delayed ?? 0,
-        total: (counts.waiting ?? 0) + (counts.active ?? 0) + (counts.completed ?? 0) + failed + (counts.delayed ?? 0),
+        total: waiting + (counts.active ?? 0) + (counts.completed ?? 0) + failed + (counts.delayed ?? 0),
       };
     } finally {
       await queue.close();
@@ -370,52 +469,56 @@ class JobMonitorService {
   }
 
   private async _listRedisJobs(filter: JobFilter): Promise<JobInfo[]> {
-    const queue = await this.getRedisQueue(filter.queue ?? 'default');
-    const limit = filter.limit ?? 50;
-    const offset = filter.offset ?? 0;
+    const queueName = filter.queue ?? this.getDefaultQueue();
+    const queue = await this.getRedisQueue(queueName);
 
     try {
-      let jobs: any[];
-      if (filter.status) {
-        jobs = await queue.getJobs([filter.status], offset, offset + limit - 1);
-      } else {
-        jobs = await queue.getJobs(['waiting', 'active', 'completed', 'delayed'], offset, offset + limit - 1);
+      const statuses = filter.status === 'waiting'
+        ? ['wait', 'paused', 'prioritized']
+        : filter.status ? [filter.status] : ['wait', 'paused', 'prioritized', 'active', 'completed', 'delayed'];
+      const scanLimit = this._config?.redisScanLimit ?? defaultRedisScanLimit;
+      const counts = await queue.getJobCounts(...statuses);
+      const count = statuses.reduce((total, status) => total + (counts[status] ?? 0), 0);
+      if (count > scanLimit) throw new RedisJobScanLimitError(queueName, scanLimit, count);
+
+      // Native ranges are not creation-ordered. Bound exact scans and fail closed
+      // on growth beyond the budget rather than returning a misleading partial page.
+      const jobs: any[] = [];
+      for (const status of statuses) {
+        const remaining = scanLimit - jobs.length;
+        const batch = await queue.getJobs([status], 0, remaining);
+        if (batch.length > remaining) {
+          throw new RedisJobScanLimitError(queueName, scanLimit, jobs.length + batch.length);
+        }
+        jobs.push(...batch);
       }
-
-      const liveJobs = jobs
-        .filter((j: any) => j != null)
-        .filter((j: any) => !filter.jobClass || j.name === filter.jobClass)
-        .map((j: any) => this._bullmqJobToInfo(j));
-
-      if (filter.status) {
-        return liveJobs;
+      const result: JobInfo[] = [];
+      for (const job of jobs) {
+        if (!job || (filter.jobClass && (job.data?.jobClass ?? job.name) !== filter.jobClass)) continue;
+        const info = await this._bullmqJobToInfo(job, queueName);
+        if (info && (!filter.status || info.status === filter.status)) result.push(info);
       }
-
-      const failedJobs = await this.listFailedJobs(filter);
-      return [...liveJobs, ...failedJobs]
-        .sort((a, b) => b.createdAt - a.createdAt)
-        .slice(0, limit);
+      return result.sort(compareJobs).slice(0, filter.limit ?? 50);
     } finally {
       await queue.close();
     }
   }
 
-  private async _getRedisJob(jobId: string): Promise<JobInfo | null> {
-    const queue = await this.getRedisQueue('default');
+  private async _getRedisJob(jobId: string, queueName: string): Promise<JobInfo | null> {
+    const queue = await this.getRedisQueue(queueName);
     try {
       const job = await queue.getJob(jobId);
-      if (!job) return this.findFailedJob(jobId);
-      return this._bullmqJobToInfo(job);
+      return job ? await this._bullmqJobToInfo(job, queueName) : null;
     } finally {
       await queue.close();
     }
   }
 
-  private async _retryRedisJob(jobId: string): Promise<boolean> {
-    const queue = await this.getRedisQueue('default');
+  private async _retryRedisJob(jobId: string, queueName: string): Promise<boolean> {
+    const queue = await this.getRedisQueue(queueName);
     try {
       const job = await queue.getJob(jobId);
-      if (!job) return false;
+      if (!job || await job.getState() !== 'failed') return false;
       await job.retry();
       return true;
     } finally {
@@ -423,8 +526,8 @@ class JobMonitorService {
     }
   }
 
-  private async _deleteRedisJob(jobId: string): Promise<boolean> {
-    const queue = await this.getRedisQueue('default');
+  private async _deleteRedisJob(jobId: string, queueName: string): Promise<boolean> {
+    const queue = await this.getRedisQueue(queueName);
     try {
       const job = await queue.getJob(jobId);
       if (!job) return false;
@@ -452,32 +555,16 @@ class JobMonitorService {
     }
   }
 
-  private async _flushRedisFailed(queueName: string): Promise<number> {
-    const queue = await this.getRedisQueue(queueName);
-    try {
-      const jobs = await queue.getJobs(['failed']);
-      let count = 0;
-      for (const job of jobs) {
-        if (job) {
-          await job.remove();
-          count++;
-        }
-      }
-      return count;
-    } finally {
-      await queue.close();
-    }
-  }
-
-  private _bullmqJobToInfo(job: any): JobInfo {
-    const state = job.finishedOn
-      ? (job.failedReason ? 'failed' : 'completed')
-      : (job.delay && job.delay > 0 && !job.processedOn ? 'delayed' : (job.processedOn ? 'active' : 'waiting'));
+  private async _bullmqJobToInfo(job: any, queueName: string): Promise<JobInfo | null> {
+    const nativeState = await job.getState();
+    const state = nativeState === 'wait' || nativeState === 'paused' || nativeState === 'prioritized'
+      ? 'waiting' : nativeState;
+    if (!supportedStatuses.has(state)) return null;
 
     return {
-      id: job.id,
-      jobClass: job.name ?? job.data?.jobClass ?? 'Unknown',
-      queue: job.queueName ?? 'default',
+      id: String(job.id),
+      jobClass: job.data?.jobClass ?? job.name ?? 'Unknown',
+      queue: queueName,
       status: state as JobInfo['status'],
       attempts: job.attemptsMade ?? 0,
       maxAttempts: job.opts?.attempts ?? 3,
@@ -486,7 +573,7 @@ class JobMonitorService {
       progress: job.progress,
       payload: JSON.stringify(job.data ?? {}),
       error: job.failedReason ?? undefined,
-      createdAt: job.timestamp ?? Date.now(),
+      createdAt: job.timestamp ?? 0,
       processedAt: job.processedOn ?? undefined,
       failedAt: job.failedReason ? job.finishedOn : undefined,
       delayedUntil: job.delay ? job.timestamp + job.delay : undefined,
@@ -531,12 +618,12 @@ class JobMonitorService {
 
   private async _listDatabaseJobs(filter: JobFilter): Promise<JobInfo[]> {
     const limit = filter.limit ?? 50;
-    const offset = filter.offset ?? 0;
+    if (filter.status === 'completed') return [];
     const nowSec = Math.floor(Date.now() / 1000);
 
     const query = this.dbQuery();
 
-    if (filter.queue) {
+    if (filter.queue !== undefined) {
       query.where('queue', filter.queue);
     }
 
@@ -548,74 +635,105 @@ class JobMonitorService {
       query.whereNull('reserved_at').where('available_at', '>', nowSec);
     }
 
-    const rows = await query.orderBy('created_at', 'desc').limit(limit).offset(offset).get();
+    // The portable database schema stores jobClass inside JSON payloads.
+    const rows = filter.jobClass
+      ? await query.get()
+      : await this.jobRowsPrefix(query, 'created_at', limit);
 
-    const table = this.getDbTable();
-    const liveJobs = (rows ?? []).map((row: any) => {
-      const data = parseDatabaseJobPayload(row, table);
-      const isActive = row.reserved_at != null;
-      const isDelayed = !isActive && row.available_at > nowSec;
-
-      return {
-        id: row.id,
-        jobClass: data.jobClass ?? 'Unknown',
-        queue: row.queue,
-        status: isActive ? 'active' : (isDelayed ? 'delayed' : 'waiting'),
-        attempts: row.attempts ?? 0,
-        maxAttempts: row.max_attempts ?? 3,
-        priority: data.priority,
-        metadata: data.metadata,
-        payload: row.payload,
-        createdAt: (row.created_at ?? 0) * 1000,
-        delayedUntil: isDelayed ? row.available_at * 1000 : undefined,
-      } as JobInfo;
-    });
-
-    if (filter.status) {
-      return liveJobs;
-    }
-
-    const failedJobs = await this.listFailedJobs(filter);
-    return [...liveJobs, ...failedJobs]
-      .sort((a, b) => b.createdAt - a.createdAt)
+    return (rows ?? []).map((row: any) => this.databaseRowToInfo(row, nowSec))
+      .filter(info => !filter.jobClass || info.jobClass === filter.jobClass)
+      .sort(compareJobs)
       .slice(0, limit);
   }
 
-  private async _getDatabaseJob(jobId: string): Promise<JobInfo | null> {
-    const row = await this.dbQuery().where('id', jobId).first();
-    if (!row) return this.findFailedJob(jobId);
+  private async _getDatabaseJob(jobId: string, queueName?: string): Promise<JobInfo | null> {
+    const query = this.dbQuery().where('id', jobId);
+    if (queueName !== undefined) query.where('queue', queueName);
+    const row = await query.first();
+    return row ? this.databaseRowToInfo(row, Math.floor(Date.now() / 1000)) : null;
+  }
 
+  private databaseRowToInfo(row: any, nowSec: number): JobInfo {
     const data = parseDatabaseJobPayload(row, this.getDbTable());
-    const nowSec = Math.floor(Date.now() / 1000);
+    const isActive = row.reserved_at != null;
+    const isDelayed = !isActive && row.available_at > nowSec;
 
     return {
-      id: row.id,
+      id: String(row.id),
       jobClass: data.jobClass ?? 'Unknown',
       queue: row.queue,
-      status: row.reserved_at ? 'active' : (row.available_at > nowSec ? 'delayed' : 'waiting'),
+      status: isActive ? 'active' : (isDelayed ? 'delayed' : 'waiting'),
       attempts: row.attempts ?? 0,
       maxAttempts: row.max_attempts ?? 3,
       priority: data.priority,
       metadata: data.metadata,
       payload: row.payload,
       createdAt: (row.created_at ?? 0) * 1000,
+      processedAt: isActive ? row.reserved_at * 1000 : undefined,
+      delayedUntil: isDelayed ? row.available_at * 1000 : undefined,
     };
   }
 
-  private async _retryDatabaseJob(jobId: string): Promise<boolean> {
-    const nowSec = Math.floor(Date.now() / 1000);
-
-    const updated = await this.dbQuery().where('id', jobId).update({
-      reserved_at: null,
-      available_at: nowSec,
-      attempts: 0,
-    });
-    return updated > 0;
+  private async _deleteDatabaseJob(jobId: string, queueName: string): Promise<boolean> {
+    const deleted = await this.dbQuery().where('id', jobId).where('queue', queueName).delete();
+    return deleted > 0;
   }
 
-  private async _deleteDatabaseJob(jobId: string): Promise<boolean> {
-    const deleted = await this.dbQuery().where('id', jobId).delete();
-    return deleted > 0;
+  private async getRuntime(queueName: string, driver: string, counts: JobCounts): Promise<QueueRuntime> {
+    const state: QueueRuntime = {
+      workers: null,
+      paused: null,
+      globalConcurrency: null,
+      effectiveConcurrency: null,
+      oldestWaitingJob: null,
+      lag: null,
+      nextWaitingJob: null,
+      nextWaitingLag: null,
+    };
+    if (driver === 'database') {
+      const row = await this.dbQuery().select('created_at').where('queue', queueName)
+        .whereNull('reserved_at').where('available_at', '<=', Math.floor(Date.now() / 1000))
+        .orderBy('created_at').first();
+      state.oldestWaitingJob = row ? row.created_at * 1000 : null;
+      state.lag = row ? Math.max(0, Date.now() - state.oldestWaitingJob!) : 0;
+      state.nextWaitingJob = state.oldestWaitingJob;
+      state.nextWaitingLag = row ? state.lag : null;
+    } else if (driver === 'redis') {
+      const queue = await this.getRedisQueue(queueName);
+      try {
+        if (typeof queue.getWorkers === 'function') {
+          try {
+            const workers = await queue.getWorkers();
+            // Some Redis providers return an unsupported CLIENT LIST placeholder.
+            if (Array.isArray(workers) && workers.every((worker: any) => worker.id != null)) {
+              state.workers = workers.length;
+            }
+          } catch (error: any) {
+            if (!/NOPERM|unknown command|not supported/i.test(error.message ?? '')) throw error;
+          }
+        }
+        if (typeof queue.isPaused === 'function') state.paused = await queue.isPaused();
+        if (typeof queue.getGlobalConcurrency === 'function') {
+          state.globalConcurrency = await queue.getGlobalConcurrency() ?? null;
+        }
+        // Remote worker concurrency is not exposed by BullMQ's public Queue API.
+        if (state.paused === true || state.workers === 0) state.effectiveConcurrency = 0;
+        const jobs = typeof queue.getWaiting === 'function'
+          ? await queue.getWaiting(0, 0)
+          : await queue.getJobs(['waiting'], 0, 0, true);
+        const head = jobs.length === 1 ? jobs[0] : null;
+        if (head && Number.isFinite(head.timestamp)) {
+          state.nextWaitingJob = head.timestamp;
+          state.nextWaitingLag = Math.max(0, Date.now() - head.timestamp);
+        }
+        // Queue order (including retries/LIFO) and priority order are not creation
+        // order. A bounded head read cannot establish the absolute oldest job.
+        if (counts.waiting === 0 && !jobs.some((job: any) => job != null)) state.lag = 0;
+      } finally {
+        await queue.close();
+      }
+    }
+    return state;
   }
 
 }
