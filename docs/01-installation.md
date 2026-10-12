@@ -374,6 +374,7 @@ npx svelar make:route admin/settings --api -m GET,PUT             # Custom metho
 npx svelar routes:list                           # Show all routes
 npx svelar routes:list --api                     # API routes only
 npx svelar routes:list --method POST             # Filter by method
+npx svelar lint:architecture                     # Detect route, validation, persistence, DDL, and CSRF convention drift
 
 # Code Generation — Events
 npx svelar make:event UserRegistered --module=auth               # domain/events

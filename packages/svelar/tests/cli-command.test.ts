@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { Command, type CommandFlag } from '../src/cli/Command.js';
 import { Cli } from '../src/cli/Cli.js';
 import { BUILTIN_COMMANDS, builtinCommandNames } from '../src/cli/BuiltinCommands.js';
+import { LintArchitectureCommand } from '../src/cli/commands/LintArchitectureCommand.js';
 
 class TestCommand extends Command {
   name = 'test:cmd';
@@ -219,6 +220,7 @@ describe('Command Base Class', () => {
       expect(names).toContain('search:setup');
       expect(names).toContain('queue:work');
       expect(names).toContain('prod:deploy');
+      expect(names).toContain('lint:architecture');
     });
 
     it('prints help for every built-in command without executing side effects', async () => {
@@ -256,6 +258,46 @@ describe('Command Base Class', () => {
       } finally {
         delete (globalThis as any).__svelarTestAppBooted;
       }
+    });
+  });
+
+  describe('lint:architecture', () => {
+    it('passes a thin generated-style controller route', async () => {
+      mkdirSync(join(tmpDir, 'src', 'routes', 'api', 'posts'), { recursive: true });
+      mkdirSync(join(tmpDir, 'src', 'lib', 'modules', 'posts', 'interface', 'http', 'controllers'), { recursive: true });
+      writeFileSync(
+        join(tmpDir, 'src', 'routes', 'api', 'posts', '+server.ts'),
+        `import { resource } from '@beeblock/svelar/routing';\nimport { PostController } from '$lib/modules/posts/interface/http/controllers/PostController.js';\nconst { GET, POST } = resource(PostController);\nexport { GET, POST };\n`,
+      );
+
+      const command = new LintArchitectureCommand();
+      expect(command.scanProject(join(tmpDir, 'src'))).toEqual([]);
+    });
+
+    it('detects fat routes, runtime DDL, and mutating browser fetch without apiFetch', async () => {
+      mkdirSync(join(tmpDir, 'src', 'routes', 'api', 'posts'), { recursive: true });
+      mkdirSync(join(tmpDir, 'src', 'lib'), { recursive: true });
+      writeFileSync(
+        join(tmpDir, 'src', 'routes', 'api', 'posts', '+server.ts'),
+        `import { QueryBuilder } from '@beeblock/svelar/orm';\nexport async function POST() {\n  await new QueryBuilder('posts').insert({ title: 'Bad' });\n  return new Response('ok');\n}\n`,
+      );
+      writeFileSync(
+        join(tmpDir, 'src', 'lib', 'bad-runtime.ts'),
+        `export async function boot(schema: any) {\n  await schema.createTable('bad', () => {});\n}\n`,
+      );
+      writeFileSync(
+        join(tmpDir, 'src', 'lib', 'BadForm.svelte'),
+        `<script lang="ts">\n  async function save() {\n    await fetch('/api/posts', { method: 'POST', body: '{}' });\n  }\n</script>\n`,
+      );
+
+      const command = new LintArchitectureCommand();
+      const findings = command.scanProject(join(tmpDir, 'src'));
+      expect(findings.map((finding) => finding.rule)).toEqual(expect.arrayContaining([
+        'thin-routes',
+        'controller-flow',
+        'no-runtime-ddl',
+        'csrf-api-fetch',
+      ]));
     });
   });
 });

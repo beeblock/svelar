@@ -6,6 +6,7 @@ import { DevRestartCommand } from './commands/DevRestartCommand.js';
 import { DevUpCommand } from './commands/DevUpCommand.js';
 import { InfraSetupCommand } from './commands/InfraSetupCommand.js';
 import { KeyGenerateCommand } from './commands/KeyGenerateCommand.js';
+import { LintArchitectureCommand } from './commands/LintArchitectureCommand.js';
 import { MakeActionCommand } from './commands/MakeActionCommand.js';
 import { MakeBroadcastingCommand } from './commands/MakeBroadcastingCommand.js';
 import { MakeChannelCommand } from './commands/MakeChannelCommand.js';
@@ -64,6 +65,7 @@ export type BuiltinCommandConstructor = new () => Command;
 export const BUILTIN_COMMANDS: BuiltinCommandConstructor[] = [
   NewCommand,
   UpdateCommand,
+  LintArchitectureCommand,
   KeyGenerateCommand,
   MakeModelCommand,
   MakeEntityCommand,

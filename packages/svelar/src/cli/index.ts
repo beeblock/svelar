@@ -34,6 +34,7 @@ export { MakeEventCommand } from './commands/MakeEventCommand.js';
 export { MakeListenerCommand } from './commands/MakeListenerCommand.js';
 export { MakeRouteCommand } from './commands/MakeRouteCommand.js';
 export { RoutesListCommand } from './commands/RoutesListCommand.js';
+export { LintArchitectureCommand } from './commands/LintArchitectureCommand.js';
 export { MigrateCommand } from './commands/MigrateCommand.js';
 export { SeedCommand } from './commands/SeedCommand.js';
 export { ScheduleRunCommand } from './commands/ScheduleRunCommand.js';

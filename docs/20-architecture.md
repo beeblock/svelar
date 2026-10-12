@@ -716,6 +716,26 @@ await Event.dispatch(new OrderCompleted(order));
 // → analytics module tracks conversion
 ```
 
+## Architecture Lint
+
+Use the framework guard when reviewing an app or before release:
+
+```bash
+npx svelar lint:architecture
+npx svelar lint:architecture --json
+```
+
+The command scans `src/` for common Svelar convention drift:
+
+- route files that directly query or mutate persistence instead of delegating to controllers/actions/repositories;
+- mutating routes that do not visibly go through a controller boundary;
+- runtime DDL outside migrations;
+- raw SQL or `QueryBuilder` usage outside repositories, models, migrations, or framework infrastructure;
+- browser mutation `fetch()` calls that should use `apiFetch`;
+- write actions that appear to be missing shared schema, FormRequest, or DTO artifacts.
+
+Errors fail the command. Warnings are reported by default and can also fail CI with `--warnings`.
+
 ## Next Steps
 
 - [Events & Listeners](./23-events.md) — full event system reference
