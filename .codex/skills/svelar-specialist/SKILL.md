@@ -341,6 +341,7 @@ For request/response reads across modules, do not import another module's model/
 - Use Redis/BullMQ for async production queues where configured.
 - Use finite `--once` workers in tests.
 - Use `ScheduledTask` and register tasks explicitly.
+- Schedules use fixed five-field cron with standard day-of-month/day-of-week OR semantics. Use `.timezone('America/Sao_Paulo')` when host-local time is not intended; handle nullable `TaskInfo.nextRun` instead of fabricating a timestamp.
 - Use database-backed scheduler locks for no-overlap tasks.
 - Run `npm run dev:worker` and `npm run dev:scheduler` when testing local runtime behavior.
 - Expose queue/scheduler status through the Svelar dashboard when relevant.
@@ -428,6 +429,10 @@ A dogfood app must expose user workflows that prove Svelar features, not only se
 Generated apps keep ambient `App.Locals` types in `src/svelar.d.ts`. Do not name this file `src/app.d.ts`: the `src/app.ts` bootstrap shadows that declaration during TypeScript glob discovery. Preserve nullable anonymous users and narrow authentication before accessing their IDs.
 
 Run `npm run smoke:cli` for installed CLI execution and artifact type checks in DDD/flat apps with Zod/Valibot, and `npm run smoke:upgrade` for an exact published baseline. Help screens, source-only tests and a green build alone do not prove these contracts. Review `svelar update --dry-run` first; do not force-overwrite app-owned source or migrations. Native Zod 4 adapter migration is explicitly opt-in, uses exact-original backups, and still requires semantic schema review.
+
+For recognized 0.7.9 scaffolds, separately review `update --migrate-core --dry-run` before approving `--force`. This edits narrowly recognized AST tokens with exact-original `.core.bak` backups; customized patterns can require manual review. It is not a blanket template refresh or a compatibility guarantee. Test login, authorization, operator failure outcomes and the production adapter-node build after migration.
+
+Test both `/admin` and `/admin/dashboard` at desktop/mobile widths. Verify label associations, inline errors without duplicate toasts, document width and keyboard access to bounded table scroll regions. Browser test startup failures must unwind cleanup, not call `process.exit()` before their owning `finally` block.
 
 Before release-impacting work, prefer:
 

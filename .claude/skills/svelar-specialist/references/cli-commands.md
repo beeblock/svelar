@@ -2,13 +2,15 @@
 
 Full docs: https://svelar.dev/docs/getting-started
 
-## All Commands (54)
+## Commands
+
+Confirm the installed command inventory with `npx svelar --help`; release certification derives it from `BuiltinCommands.ts` so new commands cannot silently miss an execution gate.
 
 ### Project
 | Command | Description | Key Flags |
 |---------|-------------|-----------|
-| `new <name>` | Create new SvelteKit + Svelar project | `--flat`, `--no-install` |
-| `update` | Update scaffold files from latest templates | `--force`, `--dry-run`, `--category`, `--list` |
+| `new <name>` | Create new SvelteKit + Svelar project; use `npx @beeblock/svelar new` outside an installed app | `--validation=zod\|valibot`, `--flat`, `--no-install` |
+| `update` | Review scaffold additions; app-owned source is not overwritten by ordinary `--force` | `--force`, `--dry-run`, `--category`, `--list`, `--add-missing-user-files`, `--include-user-files`, `--migrate-zod4`, `--migrate-core` |
 | `key:generate` | Generate APP_KEY in .env | `--show`, `--force` |
 | `tinker` | Interactive REPL with Svelar preloaded | |
 
@@ -16,13 +18,15 @@ Full docs: https://svelar.dev/docs/getting-started
 | Command | Description | Key Flags |
 |---------|-------------|-----------|
 | `make:model <name>` | Create model class | `-m` (migration), `-c` (controller), `-r` (resource), `-a` (all), `--module` |
+| `make:entity <name>` | Generate the layered schema/request/DTO/action/model/repository/controller/resource flow | `--crud`, `--fields`, `--module` |
+| `make:dto <name>` | Generate a typed validated payload | `--module`, `--schema`, `--input` |
 | `make:migration <name>` | Create migration file | `--create <table>`, `--table <table>` |
 | `make:seeder <name>` | Create seeder class | |
 | `make:controller <name>` | Create controller class | `-r` (resource), `-m` (model), `--module` |
 | `make:route <path>` | Create route files with controller | `-c`, `-r` (resource), `--api`, `-m` (methods), `--module` |
 | `make:request <name>` | Create FormRequest validation class | `--module` |
 | `make:resource <name>` | Create API resource transformer | `--module`, `-m` (model), `-c` (collection) |
-| `make:schema <name>` | Create Zod schema contract | `--module` |
+| `make:schema <name>` | Create a shared Zod 4 or Valibot schema using `svelar.validation.json` | `--module` |
 | `make:service <name>` | Create service class | `--crud`, `-m` (model), `--module` |
 | `make:repository <name>` | Create repository class | `-m` (model), `--module` |
 | `make:action <name>` | Create action class | `--module` |
@@ -48,18 +52,20 @@ Full docs: https://svelar.dev/docs/getting-started
 | Command | Description | Key Flags |
 |---------|-------------|-----------|
 | `make:test <name>` | Create test file | `--unit` (default), `--feature`, `--e2e` |
-| `make:factory <name>` | Create model factory | `--model` |
+| `make:factory <name>` | Create model factory | `--model`, `--module` |
+| `lint:architecture` | Detect thin-route, write-flow, persistence and security convention drift | `--json` |
 
 ### Database
 | Command | Description | Key Flags |
 |---------|-------------|-----------|
 | `migrate` | Run pending migrations | `--rollback`, `--reset`, `--refresh`, `--fresh`, `--status`, `--seed`, `--force` |
 | `seed:run` | Run database seeders | `--class` |
+| `search:setup` | Configure model indexes with Meilisearch | `--help` for installed options |
 
 ### Queue
 | Command | Description | Key Flags |
 |---------|-------------|-----------|
-| `queue:work` | Process queued jobs | `--queue`, `--max-jobs`, `--max-time`, `--sleep`, `--once` |
+| `queue:work` | Keep a long-lived worker, or explicitly run finite work | `--queue`, `--concurrency`, `--lock-duration`, `--stalled-interval`, `--grace-period`, `--max-jobs`, `--max-time`, `--sleep`, `--once` |
 | `queue:failed` | List failed jobs | |
 | `queue:retry <id>` | Retry failed job | `--all` |
 | `queue:flush` | Delete all failed job records | |
@@ -91,8 +97,8 @@ Full docs: https://svelar.dev/docs/getting-started
 | `prod:up` | Start prod containers | `--service` |
 | `prod:down` | Stop prod containers | `--service` |
 | `prod:logs` | Follow prod container logs | `--service` |
-| `prod:restart` | Restart prod containers (down + up) | `--service` |
-| `prod:deploy` | Pull latest images + restart prod | `--service` |
+| `prod:restart` | Recreate runtime services without taking dependencies down | `--service` |
+| `prod:deploy` | Pull images, run migrations, then start and wait for health | `--service` |
 
 ### Routes
 | Command | Description | Key Flags |

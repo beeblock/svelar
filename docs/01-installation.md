@@ -31,6 +31,8 @@ That's it. The CLI scaffolds a complete SvelteKit + Svelar project, installs dep
 - **Application Bootstrap** — `app.ts` bootstraps the service provider lifecycle
 - **Agent Guidance** — `AGENTS.md`, `CLAUDE.md`, and local Codex/Claude Svelar skills are generated so AI agents follow the same framework conventions
 
+The skills include shared-schema FormRequest/DTO/Superforms flow, CLI-first generation, migrations/seeders, reviewed historical upgrade modes and desktop/mobile verification. Keep app-owned guidance customized; ordinary `svelar update --force` does not replace it. Refresh existing guidance only through an explicitly reviewed user-file update.
+
 ### Project Structure (DDD Modular Monolith)
 
 ```

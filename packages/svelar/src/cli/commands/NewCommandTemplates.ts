@@ -1472,6 +1472,7 @@ For request/response reads across modules, do not import another module's model/
 - Use Redis/BullMQ for async production queues where configured.
 - Use finite \`--once\` workers in tests.
 - Use \`ScheduledTask\` and register tasks explicitly.
+- Use fixed five-field cron and explicit \`.timezone(...)\` when host-local time is not intended. Day-of-month/day-of-week restrictions use OR; \`TaskInfo.nextRun\` can be null when unavailable.
 - Use database-backed scheduler locks for no-overlap tasks.
 - Run \`npm run dev:worker\` and \`npm run dev:scheduler\` when testing local runtime behavior.
 - Expose queue/scheduler status through the Svelar dashboard when relevant.
@@ -1532,6 +1533,8 @@ A dogfood app must expose user workflows that prove Svelar features, not only se
 ## Verification
 
 - Run focused tests after changes.
+- Review \`update --migrate-zod4 --dry-run\` and the separate \`update --migrate-core --dry-run\` for recognized historical scaffolds before approving edits. Exact-original backups do not replace schema review, authorization tests, browser login or a production build; never blanket-overwrite customized source to silence compiler errors.
+- Verify desktop/mobile labels, inline validation without duplicate toasts, bounded page width and keyboard scrolling in both admin views. Test browser startup cleanup on failure.
 - Keep ambient \`App.Locals\` declarations in \`src/svelar.d.ts\`, not a file shadowed by the \`src/app.ts\` bootstrap. Never hide missing auth checks with non-null assertions or an \`any\` index signature.
 - Run \`npm run build\` before release-impacting work.
 - For generated app or dogfood verification, use sibling apps under \`/Users/rzeradev/projects/beeblock/svelar-testing-area/\`.
@@ -4908,7 +4911,892 @@ export const load = guardAuth('/dashboard', { role: 'admin' });
 
 
 	static adminPageSvelte(): string {
-return "<script lang=\"ts\">\n  import { page } from '$app/stores';\n  import { superForm } from 'sveltekit-superforms';\n  import { Button, Badge, Card, CardHeader, CardTitle, CardDescription, CardContent, Alert, Input, Label } from '@beeblock/svelar/ui';\n\n  let { data, form: actionData }: { data: any; form?: any } = $props();\n  let users = $state<any[]>([]);\n  let message = $state('');\n  let messageType = $state<'success' | 'error'>('success');\n\n  // Real data from server\n  let queueCounts = $state({ waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0, total: 0 });\n  let scheduledTasks = $state<any[]>([]);\n  let recentLogs = $state<any[]>([]);\n  let logStats = $state<{\n    totalEntries: number;\n    byLevel: Record<string, number>;\n    byChannel: Record<string, number>;\n  }>({ totalEntries: 0, byLevel: {}, byChannel: {} });\n  let health = $state({ status: 'ok', uptime: 0, memoryUsedMB: 0, memoryTotalMB: 0, memoryPercent: 0 });\n\n  // Roles & Permissions\n  let roles = $state<any[]>([]);\n  let permissions = $state<any[]>([]);\n  let rolePermissionsMap = $state<Record<number, number[]>>({});\n  let userRolesMap = $state<Record<number, { id: number; name: string }[]>>({});\n  let userDirectPermsMap = $state<Record<number, { id: number; name: string }[]>>({});\n\n  let showRoleForm = $state(false);\n  let showPermForm = $state(false);\n\n  let logFilter = $state<'all' | 'info' | 'warn' | 'error'>('all');\n\n  const activeTab = $derived($page.url.searchParams.get('tab') ?? 'overview');\n\n  const filteredLogs = $derived(\n    logFilter === 'all' ? recentLogs : recentLogs.filter((log: any) => log.level === logFilter)\n  );\n\n  // svelte-ignore state_referenced_locally\n  const {\n    form: createRoleForm,\n    errors: createRoleErrors,\n    enhance: enhanceCreateRole,\n    delayed: creatingRole,\n  } = superForm(data.createRoleForm, {\n    resetForm: true,\n  });\n\n  // svelte-ignore state_referenced_locally\n  const {\n    form: createPermissionForm,\n    errors: createPermissionErrors,\n    enhance: enhanceCreatePermission,\n    delayed: creatingPermission,\n  } = superForm(data.createPermissionForm, {\n    resetForm: true,\n  });\n\n  $effect(() => {\n    users = data.users;\n    queueCounts = data.queueCounts;\n    scheduledTasks = data.scheduledTasks;\n    recentLogs = data.recentLogs;\n    logStats = data.logStats;\n    health = data.health;\n    roles = data.roles ?? [];\n    permissions = data.permissions ?? [];\n    rolePermissionsMap = data.rolePermissionsMap ?? {};\n    userRolesMap = data.userRolesMap ?? {};\n    userDirectPermsMap = data.userDirectPermsMap ?? {};\n  });\n\n  $effect(() => {\n    if (actionData?.message) {\n      flash(actionData.message);\n      showRoleForm = false;\n      showPermForm = false;\n    }\n    if (actionData?.error) {\n      flash(actionData.error, 'error');\n    }\n  });\n\n  function flash(msg: string, type: 'success' | 'error' = 'success') {\n    message = msg;\n    messageType = type;\n  }\n\n  function getCookie(name: string): string | null {\n    const escaped = name.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\n    const match = document.cookie.match(new RegExp(`(?:^|;\\\\s*)${escaped}=([^;]*)`));\n    return match ? decodeURIComponent(match[1]) : null;\n  }\n\n  function csrfHeaders(extra: Record<string, string> = {}): HeadersInit {\n    const token = getCookie('XSRF-TOKEN');\n    return token ? { ...extra, 'X-CSRF-Token': token } : extra;\n  }\n\n  async function apiError(res: Response, fallback: string): Promise<string> {\n    try {\n      const body = await res.json();\n      return body.meta?.message || body.error || body.message || fallback;\n    } catch {\n      return fallback;\n    }\n  }\n\n  function submitAdminAction(action: string, fields: Record<string, string | number>) {\n    const form = document.createElement('form');\n    form.method = 'POST';\n    form.action = action;\n    form.hidden = true;\n    for (const [name, value] of Object.entries(fields)) {\n      const input = document.createElement('input');\n      input.type = 'hidden';\n      input.name = name;\n      input.value = String(value);\n      form.append(input);\n    }\n    document.body.append(form);\n    form.requestSubmit();\n  }\n\n  async function refreshDashboard() {\n    try {\n      const res = await fetch('/api/admin/stats');\n      if (res.ok) {\n        const { data: stats } = await res.json();\n        if (stats.queue) {\n          queueCounts = stats.queue.queues?.default ?? queueCounts;\n        }\n      }\n    } catch { /* ignore refresh errors */ }\n  }\n\n  function updateUserRole(userId: number, newRole: string) {\n    submitAdminAction('?/updateUserRole', { userId, role: newRole });\n  }\n\n  function deleteUser(userId: number, userName: string) {\n    if (!confirm(`Are you sure you want to delete ${userName}? This cannot be undone.`)) {\n      return;\n    }\n    submitAdminAction('?/deleteUser', { userId });\n  }\n\n  async function retryJob(jobId: string) {\n    try {\n      const res = await fetch(`/api/admin/queue/${jobId}/retry`, {\n        method: 'POST',\n        headers: csrfHeaders(),\n      });\n      if (res.ok) {\n        flash('Job queued for retry');\n        await refreshQueue();\n      } else {\n        flash(await apiError(res, 'Failed to retry job'), 'error');\n      }\n    } catch {\n      flash('Failed to retry job', 'error');\n    }\n  }\n\n  async function refreshQueue() {\n    try {\n      const res = await fetch('/api/admin/queue');\n      if (res.ok) {\n        const data = await res.json();\n        queueCounts = data.data.counts;\n      }\n    } catch { /* ignore */ }\n  }\n\n  async function runTask(taskName: string) {\n    try {\n      const res = await fetch(`/api/admin/scheduler/${taskName}/run`, {\n        method: 'POST',\n        headers: csrfHeaders(),\n      });\n      if (res.ok) {\n        flash(`Task '${taskName}' completed`);\n        await refreshScheduler();\n      } else {\n        flash(await apiError(res, 'Failed to run task'), 'error');\n      }\n    } catch {\n      flash('Failed to run task', 'error');\n    }\n  }\n\n  async function refreshScheduler() {\n    try {\n      const res = await fetch('/api/admin/scheduler');\n      if (res.ok) {\n        const data = await res.json();\n        scheduledTasks = data.data.tasks ?? scheduledTasks;\n      }\n    } catch { /* ignore */ }\n  }\n\n  async function toggleTask(taskName: string, enabled: boolean) {\n    try {\n      const res = await fetch(`/api/admin/scheduler/${taskName}/toggle`, {\n        method: 'POST',\n        headers: csrfHeaders({ 'Content-Type': 'application/json' }),\n        body: JSON.stringify({ enabled }),\n      });\n      if (res.ok) {\n        scheduledTasks = scheduledTasks.map((t: any) =>\n          t.name === taskName ? { ...t, enabled } : t\n        );\n        flash(`Task '${taskName}' ${enabled ? 'enabled' : 'disabled'}`);\n      } else {\n        flash(await apiError(res, 'Failed to toggle task'), 'error');\n      }\n    } catch {\n      flash('Failed to toggle task', 'error');\n    }\n  }\n\n  // -- Roles CRUD --\n\n  function deleteRole(name: string) {\n    if (!confirm(`Delete role \"${name}\"? This will remove it from all users.`)) return;\n    submitAdminAction('?/deleteRole', { name });\n  }\n\n  // -- Permissions CRUD --\n\n  function deletePermission(name: string) {\n    if (!confirm(`Delete permission \"${name}\"? This will revoke it from all roles and users.`)) return;\n    submitAdminAction('?/deletePermission', { name });\n  }\n\n  // -- Role <-> Permission --\n\n  function toggleRolePermission(roleId: number, permissionId: number) {\n    const current = rolePermissionsMap[roleId] ?? [];\n    const has = current.includes(permissionId);\n    submitAdminAction(has ? '?/detachRolePermission' : '?/attachRolePermission', { roleId, permissionId });\n  }\n\n  // -- User <-> Role --\n\n  function assignRoleToUser(userId: number, roleId: number) {\n    submitAdminAction('?/assignUserRole', { userId, roleId });\n  }\n\n  function removeRoleFromUser(userId: number, roleId: number) {\n    submitAdminAction('?/removeUserRole', { userId, roleId });\n  }\n\n  // -- User <-> Direct Permission --\n\n  function grantPermToUser(userId: number, permissionId: number) {\n    submitAdminAction('?/grantUserPermission', { userId, permissionId });\n  }\n\n  function revokePermFromUser(userId: number, permissionId: number) {\n    submitAdminAction('?/revokeUserPermission', { userId, permissionId });\n  }\n\n  function formatDate(date: string | null): string {\n    if (!date) return 'Never';\n    try {\n      return new Date(date).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });\n    } catch {\n      return date;\n    }\n  }\n\n  function formatUptime(seconds: number): string {\n    const h = Math.floor(seconds / 3600);\n    const m = Math.floor((seconds % 3600) / 60);\n    return h > 0 ? `${h}h ${m}m` : `${m}m`;\n  }\n\n  function getLogBadgeVariant(level: string): 'default' | 'secondary' | 'destructive' {\n    return level === 'error' || level === 'fatal' ? 'destructive' : level === 'warn' ? 'secondary' : 'default';\n  }\n\n\n</script>\n\n<svelte:head>\n  <title>Admin Dashboard</title>\n</svelte:head>\n\n<div class=\"space-y-8\">\n  <div class=\"flex justify-between items-center\">\n    <div>\n      <h1 class=\"text-3xl font-bold text-foreground\">Admin Dashboard</h1>\n      <p class=\"text-muted-foreground mt-1\">System health, queue monitoring, and task management</p>\n    </div>\n    <Button variant=\"outline\" onclick={refreshDashboard}>Refresh</Button>\n  </div>\n\n  {#if message}\n    <Alert variant={messageType === 'error' ? 'destructive' : 'success'}>\n      <span class=\"text-sm\">{message}</span>\n    </Alert>\n  {/if}\n\n  <!-- Overview -->\n  {#if activeTab === 'overview'}\n    <div class=\"space-y-6\">\n      <div class=\"grid grid-cols-1 md:grid-cols-4 gap-4\">\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Total Users</p>\n              <p class=\"text-3xl font-bold text-[var(--color-brand)] mt-2\">{data.stats.userCount}</p>\n            </div>\n          </CardContent>\n        </Card>\n\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Total Posts</p>\n              <p class=\"text-3xl font-bold text-[var(--color-brand)] mt-2\">{data.stats.postCount}</p>\n            </div>\n          </CardContent>\n        </Card>\n\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Queue Pending</p>\n              <p class=\"text-3xl font-bold text-yellow-600 mt-2\">{queueCounts.waiting}</p>\n            </div>\n          </CardContent>\n        </Card>\n\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Failed Jobs</p>\n              <p class=\"text-3xl font-bold text-red-600 mt-2\">{queueCounts.failed}</p>\n            </div>\n          </CardContent>\n        </Card>\n      </div>\n\n      <Card>\n        <CardHeader>\n          <CardTitle>System Health</CardTitle>\n        </CardHeader>\n        <CardContent class=\"space-y-4\">\n          <div class=\"flex justify-between text-sm\">\n            <span>Status</span>\n            <Badge variant=\"default\">{health.status}</Badge>\n          </div>\n          <div class=\"flex justify-between text-sm\">\n            <span>Uptime</span>\n            <span class=\"font-medium\">{formatUptime(health.uptime)}</span>\n          </div>\n          <div class=\"space-y-2\">\n            <div class=\"flex justify-between text-sm\">\n              <span>Memory Usage</span>\n              <Badge variant={health.memoryPercent > 90 ? 'destructive' : health.memoryPercent > 70 ? 'secondary' : 'default'}>\n                {health.memoryUsedMB} MB / {health.memoryTotalMB} MB ({health.memoryPercent}%)\n              </Badge>\n            </div>\n            <div class=\"h-2 bg-muted rounded-full overflow-hidden\">\n              <div\n                class=\"h-full transition-all\"\n                class:bg-green-500={health.memoryPercent <= 70}\n                class:bg-yellow-500={health.memoryPercent > 70 && health.memoryPercent <= 90}\n                class:bg-red-500={health.memoryPercent > 90}\n                style=\"width: {health.memoryPercent}%\"\n              ></div>\n            </div>\n          </div>\n          <div class=\"flex justify-between text-sm\">\n            <span>Queue Throughput</span>\n            <span class=\"font-medium\">{queueCounts.total} total jobs</span>\n          </div>\n          <div class=\"flex justify-between text-sm\">\n            <span>Log Entries</span>\n            <span class=\"font-medium\">{logStats.totalEntries} entries ({logStats.byLevel?.error ?? 0} errors)</span>\n          </div>\n        </CardContent>\n      </Card>\n    </div>\n  {/if}\n\n  <!-- Users -->\n  {#if activeTab === 'users'}\n    <Card>\n      <CardHeader>\n        <CardTitle>User Management</CardTitle>\n        <CardDescription>Manage user roles and permissions ({data.stats.userCount} users)</CardDescription>\n      </CardHeader>\n      <CardContent>\n        <div class=\"overflow-x-auto\">\n          <table class=\"w-full text-sm\">\n            <thead>\n              <tr class=\"border-b border-border\">\n                <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Name</th>\n                <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Email</th>\n                <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Column Role</th>\n                <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Assigned Roles</th>\n                <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Direct Permissions</th>\n                <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Actions</th>\n              </tr>\n            </thead>\n            <tbody>\n              {#each users as user (user.id)}\n                <tr class=\"border-b border-border hover:bg-muted/50\">\n                  <td class=\"py-3 px-4 font-medium text-foreground\">{user.name}</td>\n                  <td class=\"py-3 px-4 text-muted-foreground\">{user.email}</td>\n                  <td class=\"py-3 px-4\">\n                    <Badge variant={user.role === 'admin' ? 'default' : 'secondary'}>\n                      {user.role}\n                    </Badge>\n                  </td>\n                  <td class=\"py-3 px-4\">\n                    <div class=\"flex flex-wrap gap-1\">\n                      {#each (userRolesMap[user.id] ?? []) as role (role.id)}\n                        <span class=\"inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-800\">\n                          {role.name}\n                          <button\n                            type=\"button\"\n                            class=\"hover:text-red-600 font-bold\"\n                            onclick={() => removeRoleFromUser(user.id, role.id)}\n                          >&times;</button>\n                        </span>\n                      {/each}\n                      {#if roles.length > 0}\n                        <select\n                          class=\"text-xs border border-border rounded px-1 py-0.5\"\n                          onchange={(e) => {\n                            const val = Number((e.target as HTMLSelectElement).value);\n                            if (val) { assignRoleToUser(user.id, val); (e.target as HTMLSelectElement).value = ''; }\n                          }}\n                        >\n                          <option value=\"\">+ role</option>\n                          {#each roles.filter((r) => !(userRolesMap[user.id] ?? []).some((ur) => ur.id === r.id)) as role (role.id)}\n                            <option value={role.id}>{role.name}</option>\n                          {/each}\n                        </select>\n                      {/if}\n                    </div>\n                  </td>\n                  <td class=\"py-3 px-4\">\n                    <div class=\"flex flex-wrap gap-1\">\n                      {#each (userDirectPermsMap[user.id] ?? []) as perm (perm.id)}\n                        <span class=\"inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-purple-100 text-purple-800\">\n                          {perm.name}\n                          <button\n                            type=\"button\"\n                            class=\"hover:text-red-600 font-bold\"\n                            onclick={() => revokePermFromUser(user.id, perm.id)}\n                          >&times;</button>\n                        </span>\n                      {/each}\n                      {#if permissions.length > 0}\n                        <select\n                          class=\"text-xs border border-border rounded px-1 py-0.5\"\n                          onchange={(e) => {\n                            const val = Number((e.target as HTMLSelectElement).value);\n                            if (val) { grantPermToUser(user.id, val); (e.target as HTMLSelectElement).value = ''; }\n                          }}\n                        >\n                          <option value=\"\">+ perm</option>\n                          {#each permissions.filter((p) => !(userDirectPermsMap[user.id] ?? []).some((up) => up.id === p.id)) as perm (perm.id)}\n                            <option value={perm.id}>{perm.name}</option>\n                          {/each}\n                        </select>\n                      {/if}\n                    </div>\n                  </td>\n                  <td class=\"py-3 px-4\">\n                    <div class=\"flex gap-2\">\n                      {#if user.role === 'user'}\n                        <Button size=\"sm\" variant=\"outline\" onclick={() => updateUserRole(user.id, 'admin')}>\n                          Make Admin\n                        </Button>\n                      {:else if data.stats.roleDistribution.admin > 1}\n                        <Button size=\"sm\" variant=\"outline\" onclick={() => updateUserRole(user.id, 'user')}>\n                          Demote\n                        </Button>\n                      {/if}\n                      {#if user.id !== data.user.id}\n                        <Button size=\"sm\" variant=\"destructive\" onclick={() => deleteUser(user.id, user.name)}>\n                          Delete\n                        </Button>\n                      {/if}\n                    </div>\n                  </td>\n                </tr>\n              {/each}\n            </tbody>\n          </table>\n        </div>\n      </CardContent>\n    </Card>\n  {/if}\n\n  <!-- Roles -->\n  {#if activeTab === 'roles'}\n    <div class=\"space-y-6\">\n      <Card>\n        <CardHeader>\n          <div class=\"flex justify-between items-start\">\n            <div>\n              <CardTitle>Roles</CardTitle>\n              <CardDescription>{roles.length} roles defined</CardDescription>\n            </div>\n            <Button size=\"sm\" onclick={() => (showRoleForm = !showRoleForm)}>\n              {showRoleForm ? 'Cancel' : 'Create Role'}\n            </Button>\n          </div>\n        </CardHeader>\n        {#if showRoleForm}\n          <CardContent>\n            <form\n              method=\"POST\"\n              action=\"?/createRole\"\n              use:enhanceCreateRole\n              novalidate\n              class=\"flex flex-wrap gap-3 items-end border-b border-border pb-4 mb-4\"\n            >\n              <div class=\"flex-1 min-w-[200px]\">\n                <Label for=\"role-name\">Name</Label>\n                <Input\n                  id=\"role-name\"\n                  name=\"name\"\n                  bind:value={$createRoleForm.name}\n                  placeholder=\"e.g. editor\"\n                  aria-invalid={$createRoleErrors.name ? 'true' : undefined}\n                  disabled={$creatingRole}\n                />\n                {#if $createRoleErrors.name}<p class=\"mt-1 text-xs text-red-600\">{$createRoleErrors.name[0]}</p>{/if}\n              </div>\n              <div class=\"flex-1 min-w-[140px]\">\n                <Label for=\"role-guard\">Guard</Label>\n                <Input\n                  id=\"role-guard\"\n                  name=\"guard\"\n                  bind:value={$createRoleForm.guard}\n                  placeholder=\"web\"\n                  disabled={$creatingRole}\n                />\n              </div>\n              <div class=\"flex-1 min-w-[200px]\">\n                <Label for=\"role-desc\">Description (optional)</Label>\n                <Input\n                  id=\"role-desc\"\n                  name=\"description\"\n                  bind:value={$createRoleForm.description}\n                  placeholder=\"Can edit content\"\n                  aria-invalid={$createRoleErrors.description ? 'true' : undefined}\n                  disabled={$creatingRole}\n                />\n                {#if $createRoleErrors.description}<p class=\"mt-1 text-xs text-red-600\">{$createRoleErrors.description[0]}</p>{/if}\n              </div>\n              <Button type=\"submit\" size=\"sm\" disabled={$creatingRole}>{$creatingRole ? 'Creating...' : 'Create'}</Button>\n            </form>\n          </CardContent>\n        {/if}\n        <CardContent>\n          {#if roles.length > 0}\n            <div class=\"space-y-4\">\n              {#each roles as role (role.id)}\n                <div class=\"border border-border rounded-lg p-4\">\n                  <div class=\"flex items-center justify-between mb-3\">\n                    <div>\n                      <span class=\"font-medium text-foreground\">{role.name}</span>\n                      <Badge variant=\"secondary\" class=\"ml-2\">{role.guard}</Badge>\n                      {#if role.description}\n                        <p class=\"text-xs text-muted-foreground mt-1\">{role.description}</p>\n                      {/if}\n                    </div>\n                    <Button size=\"sm\" variant=\"destructive\" onclick={() => deleteRole(role.name)}>Delete</Button>\n                  </div>\n                  <div>\n                    <p class=\"text-xs font-semibold text-muted-foreground uppercase mb-2\">Permissions</p>\n                    <div class=\"flex flex-wrap gap-2\">\n                      {#each permissions as perm (perm.id)}\n                        {@const has = (rolePermissionsMap[role.id] ?? []).includes(perm.id)}\n                        <button\n                          type=\"button\"\n                          class=\"px-2 py-1 rounded text-xs border transition-colors {has\n                            ? 'bg-[var(--color-brand)] text-white border-[var(--color-brand)]'\n                            : 'bg-background text-muted-foreground border-border hover:border-foreground/30'}\"\n                          onclick={() => toggleRolePermission(role.id, perm.id)}\n                        >\n                          {perm.name}\n                        </button>\n                      {/each}\n                      {#if permissions.length === 0}\n                        <span class=\"text-xs text-muted-foreground/70\">No permissions defined yet</span>\n                      {/if}\n                    </div>\n                  </div>\n                </div>\n              {/each}\n            </div>\n          {:else}\n            <p class=\"text-sm text-muted-foreground py-4 text-center\">\n              No roles defined. Create one to start assigning permissions.\n            </p>\n          {/if}\n        </CardContent>\n      </Card>\n    </div>\n  {/if}\n\n  <!-- Permissions -->\n  {#if activeTab === 'permissions'}\n    <div class=\"space-y-6\">\n      <Card>\n        <CardHeader>\n          <div class=\"flex justify-between items-start\">\n            <div>\n              <CardTitle>Permissions</CardTitle>\n              <CardDescription>{permissions.length} permissions defined</CardDescription>\n            </div>\n            <Button size=\"sm\" onclick={() => (showPermForm = !showPermForm)}>\n              {showPermForm ? 'Cancel' : 'Create Permission'}\n            </Button>\n          </div>\n        </CardHeader>\n        {#if showPermForm}\n          <CardContent>\n            <form\n              method=\"POST\"\n              action=\"?/createPermission\"\n              use:enhanceCreatePermission\n              novalidate\n              class=\"flex flex-wrap gap-3 items-end border-b border-border pb-4 mb-4\"\n            >\n              <div class=\"flex-1 min-w-[200px]\">\n                <Label for=\"perm-name\">Name</Label>\n                <Input\n                  id=\"perm-name\"\n                  name=\"name\"\n                  bind:value={$createPermissionForm.name}\n                  placeholder=\"e.g. manage-users\"\n                  aria-invalid={$createPermissionErrors.name ? 'true' : undefined}\n                  disabled={$creatingPermission}\n                />\n                {#if $createPermissionErrors.name}<p class=\"mt-1 text-xs text-red-600\">{$createPermissionErrors.name[0]}</p>{/if}\n              </div>\n              <div class=\"flex-1 min-w-[140px]\">\n                <Label for=\"perm-guard\">Guard</Label>\n                <Input\n                  id=\"perm-guard\"\n                  name=\"guard\"\n                  bind:value={$createPermissionForm.guard}\n                  placeholder=\"web\"\n                  disabled={$creatingPermission}\n                />\n              </div>\n              <div class=\"flex-1 min-w-[200px]\">\n                <Label for=\"perm-desc\">Description (optional)</Label>\n                <Input\n                  id=\"perm-desc\"\n                  name=\"description\"\n                  bind:value={$createPermissionForm.description}\n                  placeholder=\"Can manage user accounts\"\n                  aria-invalid={$createPermissionErrors.description ? 'true' : undefined}\n                  disabled={$creatingPermission}\n                />\n                {#if $createPermissionErrors.description}<p class=\"mt-1 text-xs text-red-600\">{$createPermissionErrors.description[0]}</p>{/if}\n              </div>\n              <Button type=\"submit\" size=\"sm\" disabled={$creatingPermission}>{$creatingPermission ? 'Creating...' : 'Create'}</Button>\n            </form>\n          </CardContent>\n        {/if}\n        <CardContent>\n          {#if permissions.length > 0}\n            <div class=\"overflow-x-auto\">\n              <table class=\"w-full text-sm\">\n                <thead>\n                  <tr class=\"border-b border-border\">\n                    <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Name</th>\n                    <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Guard</th>\n                    <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Description</th>\n                    <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Used by Roles</th>\n                    <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Actions</th>\n                  </tr>\n                </thead>\n                <tbody>\n                  {#each permissions as perm (perm.id)}\n                    {@const usedBy = roles.filter((r) => (rolePermissionsMap[r.id] ?? []).includes(perm.id))}\n                    <tr class=\"border-b border-border hover:bg-muted/50\">\n                      <td class=\"py-3 px-4 font-medium text-foreground\">{perm.name}</td>\n                      <td class=\"py-3 px-4\">\n                        <Badge variant=\"secondary\">{perm.guard}</Badge>\n                      </td>\n                      <td class=\"py-3 px-4 text-muted-foreground\">{perm.description || '---'}</td>\n                      <td class=\"py-3 px-4\">\n                        <div class=\"flex flex-wrap gap-1\">\n                          {#each usedBy as role (role.id)}\n                            <Badge variant=\"outline\">{role.name}</Badge>\n                          {/each}\n                          {#if usedBy.length === 0}\n                            <span class=\"text-xs text-muted-foreground/70\">None</span>\n                          {/if}\n                        </div>\n                      </td>\n                      <td class=\"py-3 px-4\">\n                        <Button size=\"sm\" variant=\"destructive\" onclick={() => deletePermission(perm.name)}>Delete</Button>\n                      </td>\n                    </tr>\n                  {/each}\n                </tbody>\n              </table>\n            </div>\n          {:else}\n            <p class=\"text-sm text-muted-foreground py-4 text-center\">\n              No permissions defined. Create one to start building your authorization system.\n            </p>\n          {/if}\n        </CardContent>\n      </Card>\n    </div>\n  {/if}\n\n  <!-- Queue -->\n  {#if activeTab === 'queue'}\n    <div class=\"space-y-6\">\n      <div class=\"grid grid-cols-1 md:grid-cols-5 gap-4\">\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Waiting</p>\n              <p class=\"text-3xl font-bold text-yellow-600 mt-2\">{queueCounts.waiting}</p>\n            </div>\n          </CardContent>\n        </Card>\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Active</p>\n              <p class=\"text-3xl font-bold text-blue-600 mt-2\">{queueCounts.active}</p>\n            </div>\n          </CardContent>\n        </Card>\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Failed</p>\n              <p class=\"text-3xl font-bold text-red-600 mt-2\">{queueCounts.failed}</p>\n            </div>\n          </CardContent>\n        </Card>\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Completed</p>\n              <p class=\"text-3xl font-bold text-green-600 mt-2\">{queueCounts.completed}</p>\n            </div>\n          </CardContent>\n        </Card>\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Delayed</p>\n              <p class=\"text-3xl font-bold text-muted-foreground mt-2\">{queueCounts.delayed}</p>\n            </div>\n          </CardContent>\n        </Card>\n      </div>\n      <Card>\n        <CardHeader>\n          <CardTitle>Queue Actions</CardTitle>\n          <CardDescription>Manage job queue</CardDescription>\n        </CardHeader>\n        <CardContent class=\"flex gap-3\">\n          <Button variant=\"outline\" onclick={refreshQueue}>Refresh Counts</Button>\n        </CardContent>\n      </Card>\n    </div>\n  {/if}\n\n  <!-- Scheduler -->\n  {#if activeTab === 'scheduler'}\n    <Card>\n      <CardHeader>\n        <CardTitle>Scheduled Tasks</CardTitle>\n        <CardDescription>\n          {scheduledTasks.length > 0\n            ? `${scheduledTasks.length} registered tasks`\n            : 'No tasks registered. Configure your scheduler to see tasks here.'}\n        </CardDescription>\n      </CardHeader>\n      <CardContent>\n        {#if scheduledTasks.length > 0}\n          <div class=\"space-y-3\">\n            {#each scheduledTasks as task (task.name)}\n              <div class=\"flex items-center justify-between p-4 border border-border rounded-lg hover:bg-muted/50\">\n                <div class=\"flex-1\">\n                  <p class=\"font-medium text-foreground\">{task.name}</p>\n                  <p class=\"text-sm text-muted-foreground\">Schedule: {task.humanReadable}</p>\n                  <p class=\"text-xs text-muted-foreground mt-1\">Last run: {formatDate(task.lastRun)}</p>\n                  <p class=\"text-xs text-muted-foreground\">Next run: {formatDate(task.nextRun)}</p>\n                </div>\n                <div class=\"flex items-center gap-3\">\n                  {#if task.lastStatus}\n                    <Badge variant={task.lastStatus === 'success' ? 'default' : 'destructive'}>\n                      {task.lastStatus}\n                    </Badge>\n                  {/if}\n                  <Badge variant={task.enabled ? 'default' : 'secondary'}>\n                    {task.enabled ? 'enabled' : 'disabled'}\n                  </Badge>\n                  <Button size=\"sm\" variant=\"outline\" onclick={() => runTask(task.name)}>Run Now</Button>\n                  <Button size=\"sm\" variant=\"outline\" onclick={() => toggleTask(task.name, !task.enabled)}>\n                    {task.enabled ? 'Disable' : 'Enable'}\n                  </Button>\n                </div>\n              </div>\n            {/each}\n          </div>\n        {:else}\n          <p class=\"text-sm text-muted-foreground py-4 text-center\">\n            No scheduled tasks found. Configure the Scheduler in your app.ts to register tasks.\n          </p>\n        {/if}\n      </CardContent>\n    </Card>\n  {/if}\n\n  <!-- Logs -->\n  {#if activeTab === 'logs'}\n    <Card>\n      <CardHeader>\n        <CardTitle>Application Logs</CardTitle>\n        <CardDescription>\n          {logStats.totalEntries} total entries\n          {#if logStats.byLevel?.error}\n            ({logStats.byLevel.error} errors)\n          {/if}\n        </CardDescription>\n      </CardHeader>\n      <CardContent>\n        <div class=\"flex gap-2 mb-4\">\n          <Button size=\"sm\" variant={logFilter === 'all' ? 'default' : 'outline'} onclick={() => (logFilter = 'all')}>\n            All ({logStats.totalEntries})\n          </Button>\n          <Button size=\"sm\" variant={logFilter === 'info' ? 'default' : 'outline'} onclick={() => (logFilter = 'info')}>\n            Info ({logStats.byLevel?.info ?? 0})\n          </Button>\n          <Button size=\"sm\" variant={logFilter === 'warn' ? 'default' : 'outline'} onclick={() => (logFilter = 'warn')}>\n            Warning ({logStats.byLevel?.warn ?? 0})\n          </Button>\n          <Button size=\"sm\" variant={logFilter === 'error' ? 'default' : 'outline'} onclick={() => (logFilter = 'error')}>\n            Error ({logStats.byLevel?.error ?? 0})\n          </Button>\n        </div>\n\n        {#if filteredLogs.length > 0}\n          <div class=\"space-y-2 max-h-96 overflow-y-auto\">\n            {#each filteredLogs as log, i (i)}\n              <div class=\"flex items-start gap-3 p-3 border border-border rounded bg-muted/50 text-sm\">\n                <Badge variant={getLogBadgeVariant(log.level)} class=\"mt-0.5\">\n                  {log.level.toUpperCase()}\n                </Badge>\n                <div class=\"flex-1\">\n                  <p class=\"text-foreground\">{log.message}</p>\n                  <p class=\"text-xs text-muted-foreground mt-1\">\n                    {formatDate(log.timestamp)}\n                    {#if log.channel && log.channel !== 'default'}\n                      <span class=\"ml-2 text-muted-foreground/70\">[{log.channel}]</span>\n                    {/if}\n                  </p>\n                </div>\n              </div>\n            {/each}\n          </div>\n        {:else}\n          <p class=\"text-sm text-muted-foreground py-4 text-center\">\n            No log entries found. Logs appear here as your application runs.\n          </p>\n        {/if}\n      </CardContent>\n    </Card>\n  {/if}\n</div>\n";
+		return `<script lang="ts">
+  import { page } from '$app/stores';
+  import { superForm } from 'sveltekit-superforms';
+  import { Button, Badge, Card, CardHeader, CardTitle, CardDescription, CardContent, Alert, Input, Label } from '@beeblock/svelar/ui';
+
+  let { data, form: actionData }: { data: any; form?: any } = $props();
+  let users = $state<any[]>([]);
+  let message = $state('');
+  let messageType = $state<'success' | 'error'>('success');
+
+  // Real data from server
+  let queueCounts = $state({ waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0, total: 0 });
+  let scheduledTasks = $state<any[]>([]);
+  let recentLogs = $state<any[]>([]);
+  let logStats = $state<{
+    totalEntries: number;
+    byLevel: Record<string, number>;
+    byChannel: Record<string, number>;
+  }>({ totalEntries: 0, byLevel: {}, byChannel: {} });
+  let health = $state({ status: 'ok', uptime: 0, memoryUsedMB: 0, memoryTotalMB: 0, memoryPercent: 0 });
+
+  // Roles & Permissions
+  let roles = $state<any[]>([]);
+  let permissions = $state<any[]>([]);
+  let rolePermissionsMap = $state<Record<number, number[]>>({});
+  let userRolesMap = $state<Record<number, { id: number; name: string }[]>>({});
+  let userDirectPermsMap = $state<Record<number, { id: number; name: string }[]>>({});
+
+  let showRoleForm = $state(false);
+  let showPermForm = $state(false);
+
+  let logFilter = $state<'all' | 'info' | 'warn' | 'error'>('all');
+
+  const activeTab = $derived($page.url.searchParams.get('tab') ?? 'overview');
+
+  const filteredLogs = $derived(
+    logFilter === 'all' ? recentLogs : recentLogs.filter((log: any) => log.level === logFilter)
+  );
+
+  // svelte-ignore state_referenced_locally
+  const {
+    form: createRoleForm,
+    errors: createRoleErrors,
+    enhance: enhanceCreateRole,
+    delayed: creatingRole,
+  } = superForm(data.createRoleForm, {
+    resetForm: true,
+  });
+
+  // svelte-ignore state_referenced_locally
+  const {
+    form: createPermissionForm,
+    errors: createPermissionErrors,
+    enhance: enhanceCreatePermission,
+    delayed: creatingPermission,
+  } = superForm(data.createPermissionForm, {
+    resetForm: true,
+  });
+
+  $effect(() => {
+    users = data.users;
+    queueCounts = data.queueCounts;
+    scheduledTasks = data.scheduledTasks;
+    recentLogs = data.recentLogs;
+    logStats = data.logStats;
+    health = data.health;
+    roles = data.roles ?? [];
+    permissions = data.permissions ?? [];
+    rolePermissionsMap = data.rolePermissionsMap ?? {};
+    userRolesMap = data.userRolesMap ?? {};
+    userDirectPermsMap = data.userDirectPermsMap ?? {};
+  });
+
+  $effect(() => {
+    if (actionData?.message) {
+      flash(actionData.message);
+      showRoleForm = false;
+      showPermForm = false;
+    }
+    if (actionData?.error) {
+      flash(actionData.error, 'error');
+    }
+  });
+
+  function flash(msg: string, type: 'success' | 'error' = 'success') {
+    message = msg;
+    messageType = type;
+  }
+
+  function getCookie(name: string): string | null {
+    const escaped = name.replace(/[.*+?^\${}()|[\\]\\\\]/g, '\\\\$&');
+    const match = document.cookie.match(new RegExp(\`(?:^|;\\\\s*)\${escaped}=([^;]*)\`));
+    return match ? decodeURIComponent(match[1]) : null;
+  }
+
+  function csrfHeaders(extra: Record<string, string> = {}): HeadersInit {
+    const token = getCookie('XSRF-TOKEN');
+    return token ? { ...extra, 'X-CSRF-Token': token } : extra;
+  }
+
+  async function apiError(res: Response, fallback: string): Promise<string> {
+    try {
+      const body = await res.json();
+      return body.meta?.message || body.error || body.message || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  function submitAdminAction(action: string, fields: Record<string, string | number>) {
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = action;
+    form.hidden = true;
+    for (const [name, value] of Object.entries(fields)) {
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = name;
+      input.value = String(value);
+      form.append(input);
+    }
+    document.body.append(form);
+    form.requestSubmit();
+  }
+
+  async function refreshDashboard() {
+    try {
+      const res = await fetch('/api/admin/stats');
+      if (res.ok) {
+        const { data: stats } = await res.json();
+        if (stats.queue) {
+          queueCounts = stats.queue.queues?.default ?? queueCounts;
+        }
+      }
+    } catch { /* ignore refresh errors */ }
+  }
+
+  function updateUserRole(userId: number, newRole: string) {
+    submitAdminAction('?/updateUserRole', { userId, role: newRole });
+  }
+
+  function deleteUser(userId: number, userName: string) {
+    if (!confirm(\`Are you sure you want to delete \${userName}? This cannot be undone.\`)) {
+      return;
+    }
+    submitAdminAction('?/deleteUser', { userId });
+  }
+
+  async function retryJob(jobId: string) {
+    try {
+      const res = await fetch(\`/api/admin/queue/\${jobId}/retry\`, {
+        method: 'POST',
+        headers: csrfHeaders(),
+      });
+      if (res.ok) {
+        flash('Job queued for retry');
+        await refreshQueue();
+      } else {
+        flash(await apiError(res, 'Failed to retry job'), 'error');
+      }
+    } catch {
+      flash('Failed to retry job', 'error');
+    }
+  }
+
+  async function refreshQueue() {
+    try {
+      const res = await fetch('/api/admin/queue');
+      if (res.ok) {
+        const data = await res.json();
+        queueCounts = data.data.counts;
+      }
+    } catch { /* ignore */ }
+  }
+
+  async function runTask(taskName: string) {
+    try {
+      const res = await fetch(\`/api/admin/scheduler/\${taskName}/run\`, {
+        method: 'POST',
+        headers: csrfHeaders(),
+      });
+      if (res.ok) {
+        flash(\`Task '\${taskName}' completed\`);
+        await refreshScheduler();
+      } else {
+        flash(await apiError(res, 'Failed to run task'), 'error');
+      }
+    } catch {
+      flash('Failed to run task', 'error');
+    }
+  }
+
+  async function refreshScheduler() {
+    try {
+      const res = await fetch('/api/admin/scheduler');
+      if (res.ok) {
+        const data = await res.json();
+        scheduledTasks = data.data.tasks ?? scheduledTasks;
+      }
+    } catch { /* ignore */ }
+  }
+
+  async function toggleTask(taskName: string, enabled: boolean) {
+    try {
+      const res = await fetch(\`/api/admin/scheduler/\${taskName}/toggle\`, {
+        method: 'POST',
+        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ enabled }),
+      });
+      if (res.ok) {
+        scheduledTasks = scheduledTasks.map((t: any) =>
+          t.name === taskName ? { ...t, enabled } : t
+        );
+        flash(\`Task '\${taskName}' \${enabled ? 'enabled' : 'disabled'}\`);
+      } else {
+        flash(await apiError(res, 'Failed to toggle task'), 'error');
+      }
+    } catch {
+      flash('Failed to toggle task', 'error');
+    }
+  }
+
+  // -- Roles CRUD --
+
+  function deleteRole(name: string) {
+    if (!confirm(\`Delete role "\${name}"? This will remove it from all users.\`)) return;
+    submitAdminAction('?/deleteRole', { name });
+  }
+
+  // -- Permissions CRUD --
+
+  function deletePermission(name: string) {
+    if (!confirm(\`Delete permission "\${name}"? This will revoke it from all roles and users.\`)) return;
+    submitAdminAction('?/deletePermission', { name });
+  }
+
+  // -- Role <-> Permission --
+
+  function toggleRolePermission(roleId: number, permissionId: number) {
+    const current = rolePermissionsMap[roleId] ?? [];
+    const has = current.includes(permissionId);
+    submitAdminAction(has ? '?/detachRolePermission' : '?/attachRolePermission', { roleId, permissionId });
+  }
+
+  // -- User <-> Role --
+
+  function assignRoleToUser(userId: number, roleId: number) {
+    submitAdminAction('?/assignUserRole', { userId, roleId });
+  }
+
+  function removeRoleFromUser(userId: number, roleId: number) {
+    submitAdminAction('?/removeUserRole', { userId, roleId });
+  }
+
+  // -- User <-> Direct Permission --
+
+  function grantPermToUser(userId: number, permissionId: number) {
+    submitAdminAction('?/grantUserPermission', { userId, permissionId });
+  }
+
+  function revokePermFromUser(userId: number, permissionId: number) {
+    submitAdminAction('?/revokeUserPermission', { userId, permissionId });
+  }
+
+  function formatDate(date: string | null): string {
+    if (!date) return 'Never';
+    try {
+      return new Date(date).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+    } catch {
+      return date;
+    }
+  }
+
+  function formatUptime(seconds: number): string {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    return h > 0 ? \`\${h}h \${m}m\` : \`\${m}m\`;
+  }
+
+  function getLogBadgeVariant(level: string): 'default' | 'secondary' | 'destructive' {
+    return level === 'error' || level === 'fatal' ? 'destructive' : level === 'warn' ? 'secondary' : 'default';
+  }
+
+
+</script>
+
+<svelte:head>
+  <title>Admin Dashboard</title>
+</svelte:head>
+
+<div class="min-w-0 max-w-full space-y-8 [overflow-wrap:anywhere]">
+  <div class="flex min-w-0 flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <div class="min-w-0 flex-1">
+      <h1 class="text-3xl font-bold text-foreground">Admin Dashboard</h1>
+      <p class="text-muted-foreground mt-1">System health, queue monitoring, and task management</p>
+    </div>
+    <Button variant="outline" onclick={refreshDashboard}>Refresh</Button>
+  </div>
+
+  {#if message}
+    <Alert variant={messageType === 'error' ? 'destructive' : 'success'}>
+      <span class="text-sm">{message}</span>
+    </Alert>
+  {/if}
+
+  <!-- Overview -->
+  {#if activeTab === 'overview'}
+    <div class="space-y-6">
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <Card>
+          <CardContent class="pt-6">
+            <div>
+              <p class="text-sm text-muted-foreground">Total Users</p>
+              <p class="text-3xl font-bold text-[var(--color-brand)] mt-2">{data.stats.userCount}</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent class="pt-6">
+            <div>
+              <p class="text-sm text-muted-foreground">Total Posts</p>
+              <p class="text-3xl font-bold text-[var(--color-brand)] mt-2">{data.stats.postCount}</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent class="pt-6">
+            <div>
+              <p class="text-sm text-muted-foreground">Queue Pending</p>
+              <p class="text-3xl font-bold text-yellow-600 mt-2">{queueCounts.waiting}</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent class="pt-6">
+            <div>
+              <p class="text-sm text-muted-foreground">Failed Jobs</p>
+              <p class="text-3xl font-bold text-red-600 mt-2">{queueCounts.failed}</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>System Health</CardTitle>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <div class="flex justify-between text-sm">
+            <span>Status</span>
+            <Badge variant="default">{health.status}</Badge>
+          </div>
+          <div class="flex justify-between text-sm">
+            <span>Uptime</span>
+            <span class="font-medium">{formatUptime(health.uptime)}</span>
+          </div>
+          <div class="space-y-2">
+            <div class="flex justify-between text-sm">
+              <span>Memory Usage</span>
+              <Badge variant={health.memoryPercent > 90 ? 'destructive' : health.memoryPercent > 70 ? 'secondary' : 'default'}>
+                {health.memoryUsedMB} MB / {health.memoryTotalMB} MB ({health.memoryPercent}%)
+              </Badge>
+            </div>
+            <div class="h-2 bg-muted rounded-full overflow-hidden">
+              <div
+                class="h-full transition-all"
+                class:bg-green-500={health.memoryPercent <= 70}
+                class:bg-yellow-500={health.memoryPercent > 70 && health.memoryPercent <= 90}
+                class:bg-red-500={health.memoryPercent > 90}
+                style="width: {health.memoryPercent}%"
+              ></div>
+            </div>
+          </div>
+          <div class="flex justify-between text-sm">
+            <span>Queue Throughput</span>
+            <span class="font-medium">{queueCounts.total} total jobs</span>
+          </div>
+          <div class="flex justify-between text-sm">
+            <span>Log Entries</span>
+            <span class="font-medium">{logStats.totalEntries} entries ({logStats.byLevel?.error ?? 0} errors)</span>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  {/if}
+
+  <!-- Users -->
+  {#if activeTab === 'users'}
+    <Card>
+      <CardHeader>
+        <CardTitle>User Management</CardTitle>
+        <CardDescription>Manage user roles and permissions ({data.stats.userCount} users)</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div class="min-w-0 w-full max-w-full overflow-x-auto" role="region" aria-label="User management table" tabindex="0">
+          <table class="w-full min-w-[760px] text-sm">
+            <thead>
+              <tr class="border-b border-border">
+                <th class="text-left py-3 px-4 font-semibold text-foreground">Name</th>
+                <th class="text-left py-3 px-4 font-semibold text-foreground">Email</th>
+                <th class="text-left py-3 px-4 font-semibold text-foreground">Column Role</th>
+                <th class="text-left py-3 px-4 font-semibold text-foreground">Assigned Roles</th>
+                <th class="text-left py-3 px-4 font-semibold text-foreground">Direct Permissions</th>
+                <th class="text-left py-3 px-4 font-semibold text-foreground">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each users as user (user.id)}
+                <tr class="border-b border-border hover:bg-muted/50">
+                  <td class="py-3 px-4 font-medium text-foreground">{user.name}</td>
+                  <td class="py-3 px-4 text-muted-foreground">{user.email}</td>
+                  <td class="py-3 px-4">
+                    <Badge variant={user.role === 'admin' ? 'default' : 'secondary'}>
+                      {user.role}
+                    </Badge>
+                  </td>
+                  <td class="py-3 px-4">
+                    <div class="flex flex-wrap gap-1">
+                      {#each (userRolesMap[user.id] ?? []) as role (role.id)}
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-800">
+                          {role.name}
+                          <button
+                            type="button"
+                            class="hover:text-red-600 font-bold"
+                            onclick={() => removeRoleFromUser(user.id, role.id)}
+                          >&times;</button>
+                        </span>
+                      {/each}
+                      {#if roles.length > 0}
+                        <select
+                          class="text-xs border border-border rounded px-1 py-0.5"
+                          onchange={(e) => {
+                            const val = Number((e.target as HTMLSelectElement).value);
+                            if (val) { assignRoleToUser(user.id, val); (e.target as HTMLSelectElement).value = ''; }
+                          }}
+                        >
+                          <option value="">+ role</option>
+                          {#each roles.filter((r) => !(userRolesMap[user.id] ?? []).some((ur) => ur.id === r.id)) as role (role.id)}
+                            <option value={role.id}>{role.name}</option>
+                          {/each}
+                        </select>
+                      {/if}
+                    </div>
+                  </td>
+                  <td class="py-3 px-4">
+                    <div class="flex flex-wrap gap-1">
+                      {#each (userDirectPermsMap[user.id] ?? []) as perm (perm.id)}
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-purple-100 text-purple-800">
+                          {perm.name}
+                          <button
+                            type="button"
+                            class="hover:text-red-600 font-bold"
+                            onclick={() => revokePermFromUser(user.id, perm.id)}
+                          >&times;</button>
+                        </span>
+                      {/each}
+                      {#if permissions.length > 0}
+                        <select
+                          class="text-xs border border-border rounded px-1 py-0.5"
+                          onchange={(e) => {
+                            const val = Number((e.target as HTMLSelectElement).value);
+                            if (val) { grantPermToUser(user.id, val); (e.target as HTMLSelectElement).value = ''; }
+                          }}
+                        >
+                          <option value="">+ perm</option>
+                          {#each permissions.filter((p) => !(userDirectPermsMap[user.id] ?? []).some((up) => up.id === p.id)) as perm (perm.id)}
+                            <option value={perm.id}>{perm.name}</option>
+                          {/each}
+                        </select>
+                      {/if}
+                    </div>
+                  </td>
+                  <td class="py-3 px-4">
+                    <div class="flex gap-2">
+                      {#if user.role === 'user'}
+                        <Button size="sm" variant="outline" onclick={() => updateUserRole(user.id, 'admin')}>
+                          Make Admin
+                        </Button>
+                      {:else if data.stats.roleDistribution.admin > 1}
+                        <Button size="sm" variant="outline" onclick={() => updateUserRole(user.id, 'user')}>
+                          Demote
+                        </Button>
+                      {/if}
+                      {#if user.id !== data.user.id}
+                        <Button size="sm" variant="destructive" onclick={() => deleteUser(user.id, user.name)}>
+                          Delete
+                        </Button>
+                      {/if}
+                    </div>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  {/if}
+
+  <!-- Roles -->
+  {#if activeTab === 'roles'}
+    <div class="space-y-6">
+      <Card>
+        <CardHeader>
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <CardTitle>Roles</CardTitle>
+              <CardDescription>{roles.length} roles defined</CardDescription>
+            </div>
+            <Button size="sm" onclick={() => (showRoleForm = !showRoleForm)}>
+              {showRoleForm ? 'Cancel' : 'Create Role'}
+            </Button>
+          </div>
+        </CardHeader>
+        {#if showRoleForm}
+          <CardContent>
+            <form
+              method="POST"
+              action="?/createRole"
+              use:enhanceCreateRole
+              novalidate
+              class="flex flex-wrap gap-3 items-end border-b border-border pb-4 mb-4"
+            >
+              <div class="min-w-0 flex-1 basis-full sm:basis-[200px]">
+                <Label for="role-name">Name</Label>
+                <Input
+                  id="role-name"
+                  name="name"
+                  bind:value={$createRoleForm.name}
+                  placeholder="e.g. editor"
+                  aria-invalid={$createRoleErrors.name ? 'true' : undefined}
+                  disabled={$creatingRole}
+                />
+                {#if $createRoleErrors.name}<p class="mt-1 text-xs text-red-600">{$createRoleErrors.name[0]}</p>{/if}
+              </div>
+              <div class="min-w-0 flex-1 basis-full sm:basis-[140px]">
+                <Label for="role-guard">Guard</Label>
+                <Input
+                  id="role-guard"
+                  name="guard"
+                  bind:value={$createRoleForm.guard}
+                  placeholder="web"
+                  disabled={$creatingRole}
+                />
+              </div>
+              <div class="min-w-0 flex-1 basis-full sm:basis-[200px]">
+                <Label for="role-desc">Description (optional)</Label>
+                <Input
+                  id="role-desc"
+                  name="description"
+                  bind:value={$createRoleForm.description}
+                  placeholder="Can edit content"
+                  aria-invalid={$createRoleErrors.description ? 'true' : undefined}
+                  disabled={$creatingRole}
+                />
+                {#if $createRoleErrors.description}<p class="mt-1 text-xs text-red-600">{$createRoleErrors.description[0]}</p>{/if}
+              </div>
+              <Button type="submit" size="sm" disabled={$creatingRole}>{$creatingRole ? 'Creating...' : 'Create'}</Button>
+            </form>
+          </CardContent>
+        {/if}
+        <CardContent>
+          {#if roles.length > 0}
+            <div class="space-y-4">
+              {#each roles as role (role.id)}
+                <div class="border border-border rounded-lg p-4">
+                  <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+                    <div class="min-w-0 flex-1">
+                      <span class="font-medium text-foreground">{role.name}</span>
+                      <Badge variant="secondary" class="ml-2">{role.guard}</Badge>
+                      {#if role.description}
+                        <p class="text-xs text-muted-foreground mt-1">{role.description}</p>
+                      {/if}
+                    </div>
+                    <Button size="sm" variant="destructive" onclick={() => deleteRole(role.name)}>Delete</Button>
+                  </div>
+                  <div>
+                    <p class="text-xs font-semibold text-muted-foreground uppercase mb-2">Permissions</p>
+                    <div class="flex flex-wrap gap-2">
+                      {#each permissions as perm (perm.id)}
+                        {@const has = (rolePermissionsMap[role.id] ?? []).includes(perm.id)}
+                        <button
+                          type="button"
+                          class="max-w-full whitespace-normal [overflow-wrap:anywhere] px-2 py-1 rounded text-xs border transition-colors {has
+                            ? 'bg-[var(--color-brand)] text-white border-[var(--color-brand)]'
+                            : 'bg-background text-muted-foreground border-border hover:border-foreground/30'}"
+                          onclick={() => toggleRolePermission(role.id, perm.id)}
+                        >
+                          {perm.name}
+                        </button>
+                      {/each}
+                      {#if permissions.length === 0}
+                        <span class="text-xs text-muted-foreground/70">No permissions defined yet</span>
+                      {/if}
+                    </div>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <p class="text-sm text-muted-foreground py-4 text-center">
+              No roles defined. Create one to start assigning permissions.
+            </p>
+          {/if}
+        </CardContent>
+      </Card>
+    </div>
+  {/if}
+
+  <!-- Permissions -->
+  {#if activeTab === 'permissions'}
+    <div class="space-y-6">
+      <Card>
+        <CardHeader>
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <CardTitle>Permissions</CardTitle>
+              <CardDescription>{permissions.length} permissions defined</CardDescription>
+            </div>
+            <Button size="sm" onclick={() => (showPermForm = !showPermForm)}>
+              {showPermForm ? 'Cancel' : 'Create Permission'}
+            </Button>
+          </div>
+        </CardHeader>
+        {#if showPermForm}
+          <CardContent>
+            <form
+              method="POST"
+              action="?/createPermission"
+              use:enhanceCreatePermission
+              novalidate
+              class="flex flex-wrap gap-3 items-end border-b border-border pb-4 mb-4"
+            >
+              <div class="min-w-0 flex-1 basis-full sm:basis-[200px]">
+                <Label for="perm-name">Name</Label>
+                <Input
+                  id="perm-name"
+                  name="name"
+                  bind:value={$createPermissionForm.name}
+                  placeholder="e.g. manage-users"
+                  aria-invalid={$createPermissionErrors.name ? 'true' : undefined}
+                  disabled={$creatingPermission}
+                />
+                {#if $createPermissionErrors.name}<p class="mt-1 text-xs text-red-600">{$createPermissionErrors.name[0]}</p>{/if}
+              </div>
+              <div class="min-w-0 flex-1 basis-full sm:basis-[140px]">
+                <Label for="perm-guard">Guard</Label>
+                <Input
+                  id="perm-guard"
+                  name="guard"
+                  bind:value={$createPermissionForm.guard}
+                  placeholder="web"
+                  disabled={$creatingPermission}
+                />
+              </div>
+              <div class="min-w-0 flex-1 basis-full sm:basis-[200px]">
+                <Label for="perm-desc">Description (optional)</Label>
+                <Input
+                  id="perm-desc"
+                  name="description"
+                  bind:value={$createPermissionForm.description}
+                  placeholder="Can manage user accounts"
+                  aria-invalid={$createPermissionErrors.description ? 'true' : undefined}
+                  disabled={$creatingPermission}
+                />
+                {#if $createPermissionErrors.description}<p class="mt-1 text-xs text-red-600">{$createPermissionErrors.description[0]}</p>{/if}
+              </div>
+              <Button type="submit" size="sm" disabled={$creatingPermission}>{$creatingPermission ? 'Creating...' : 'Create'}</Button>
+            </form>
+          </CardContent>
+        {/if}
+        <CardContent>
+          {#if permissions.length > 0}
+            <div class="min-w-0 w-full max-w-full overflow-x-auto" role="region" aria-label="Permissions table" tabindex="0">
+              <table class="w-full min-w-[640px] text-sm">
+                <thead>
+                  <tr class="border-b border-border">
+                    <th class="text-left py-3 px-4 font-semibold text-foreground">Name</th>
+                    <th class="text-left py-3 px-4 font-semibold text-foreground">Guard</th>
+                    <th class="text-left py-3 px-4 font-semibold text-foreground">Description</th>
+                    <th class="text-left py-3 px-4 font-semibold text-foreground">Used by Roles</th>
+                    <th class="text-left py-3 px-4 font-semibold text-foreground">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each permissions as perm (perm.id)}
+                    {@const usedBy = roles.filter((r) => (rolePermissionsMap[r.id] ?? []).includes(perm.id))}
+                    <tr class="border-b border-border hover:bg-muted/50">
+                      <td class="py-3 px-4 font-medium text-foreground">{perm.name}</td>
+                      <td class="py-3 px-4">
+                        <Badge variant="secondary">{perm.guard}</Badge>
+                      </td>
+                      <td class="py-3 px-4 text-muted-foreground">{perm.description || '---'}</td>
+                      <td class="py-3 px-4">
+                        <div class="flex flex-wrap gap-1">
+                          {#each usedBy as role (role.id)}
+                            <Badge variant="outline">{role.name}</Badge>
+                          {/each}
+                          {#if usedBy.length === 0}
+                            <span class="text-xs text-muted-foreground/70">None</span>
+                          {/if}
+                        </div>
+                      </td>
+                      <td class="py-3 px-4">
+                        <Button size="sm" variant="destructive" onclick={() => deletePermission(perm.name)}>Delete</Button>
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {:else}
+            <p class="text-sm text-muted-foreground py-4 text-center">
+              No permissions defined. Create one to start building your authorization system.
+            </p>
+          {/if}
+        </CardContent>
+      </Card>
+    </div>
+  {/if}
+
+  <!-- Queue -->
+  {#if activeTab === 'queue'}
+    <div class="space-y-6">
+      <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <Card>
+          <CardContent class="pt-6">
+            <div>
+              <p class="text-sm text-muted-foreground">Waiting</p>
+              <p class="text-3xl font-bold text-yellow-600 mt-2">{queueCounts.waiting}</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent class="pt-6">
+            <div>
+              <p class="text-sm text-muted-foreground">Active</p>
+              <p class="text-3xl font-bold text-blue-600 mt-2">{queueCounts.active}</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent class="pt-6">
+            <div>
+              <p class="text-sm text-muted-foreground">Failed</p>
+              <p class="text-3xl font-bold text-red-600 mt-2">{queueCounts.failed}</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent class="pt-6">
+            <div>
+              <p class="text-sm text-muted-foreground">Completed</p>
+              <p class="text-3xl font-bold text-green-600 mt-2">{queueCounts.completed}</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent class="pt-6">
+            <div>
+              <p class="text-sm text-muted-foreground">Delayed</p>
+              <p class="text-3xl font-bold text-muted-foreground mt-2">{queueCounts.delayed}</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>Queue Actions</CardTitle>
+          <CardDescription>Manage job queue</CardDescription>
+        </CardHeader>
+        <CardContent class="flex flex-wrap gap-3">
+          <Button variant="outline" onclick={refreshQueue}>Refresh Counts</Button>
+        </CardContent>
+      </Card>
+    </div>
+  {/if}
+
+  <!-- Scheduler -->
+  {#if activeTab === 'scheduler'}
+    <Card>
+      <CardHeader>
+        <CardTitle>Scheduled Tasks</CardTitle>
+        <CardDescription>
+          {scheduledTasks.length > 0
+            ? \`\${scheduledTasks.length} registered tasks\`
+            : 'No tasks registered. Configure your scheduler to see tasks here.'}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {#if scheduledTasks.length > 0}
+          <div class="space-y-3">
+            {#each scheduledTasks as task (task.name)}
+              <div class="flex min-w-0 flex-col gap-4 p-4 border border-border rounded-lg hover:bg-muted/50 sm:flex-row sm:items-center sm:justify-between">
+                <div class="min-w-0 flex-1">
+                  <p class="font-medium text-foreground">{task.name}</p>
+                  <p class="text-sm text-muted-foreground">Schedule: {task.humanReadable}</p>
+                  <p class="text-xs text-muted-foreground mt-1">Last run: {formatDate(task.lastRun)}</p>
+                  <p class="text-xs text-muted-foreground">Next run: {formatDate(task.nextRun)}</p>
+                </div>
+                <div class="flex min-w-0 flex-wrap items-center gap-3 sm:justify-end">
+                  {#if task.lastStatus}
+                    <Badge variant={task.lastStatus === 'success' ? 'default' : 'destructive'}>
+                      {task.lastStatus}
+                    </Badge>
+                  {/if}
+                  <Badge variant={task.enabled ? 'default' : 'secondary'}>
+                    {task.enabled ? 'enabled' : 'disabled'}
+                  </Badge>
+                  <Button size="sm" variant="outline" onclick={() => runTask(task.name)}>Run Now</Button>
+                  <Button size="sm" variant="outline" onclick={() => toggleTask(task.name, !task.enabled)}>
+                    {task.enabled ? 'Disable' : 'Enable'}
+                  </Button>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <p class="text-sm text-muted-foreground py-4 text-center">
+            No scheduled tasks found. Configure the Scheduler in your app.ts to register tasks.
+          </p>
+        {/if}
+      </CardContent>
+    </Card>
+  {/if}
+
+  <!-- Logs -->
+  {#if activeTab === 'logs'}
+    <Card>
+      <CardHeader>
+        <CardTitle>Application Logs</CardTitle>
+        <CardDescription>
+          {logStats.totalEntries} total entries
+          {#if logStats.byLevel?.error}
+            ({logStats.byLevel.error} errors)
+          {/if}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div class="flex flex-wrap gap-2 mb-4">
+          <Button size="sm" variant={logFilter === 'all' ? 'default' : 'outline'} onclick={() => (logFilter = 'all')}>
+            All ({logStats.totalEntries})
+          </Button>
+          <Button size="sm" variant={logFilter === 'info' ? 'default' : 'outline'} onclick={() => (logFilter = 'info')}>
+            Info ({logStats.byLevel?.info ?? 0})
+          </Button>
+          <Button size="sm" variant={logFilter === 'warn' ? 'default' : 'outline'} onclick={() => (logFilter = 'warn')}>
+            Warning ({logStats.byLevel?.warn ?? 0})
+          </Button>
+          <Button size="sm" variant={logFilter === 'error' ? 'default' : 'outline'} onclick={() => (logFilter = 'error')}>
+            Error ({logStats.byLevel?.error ?? 0})
+          </Button>
+        </div>
+
+        {#if filteredLogs.length > 0}
+          <div class="min-w-0 max-w-full space-y-2 max-h-96 overflow-y-auto">
+            {#each filteredLogs as log, i (i)}
+              <div class="flex min-w-0 flex-col gap-3 p-3 border border-border rounded bg-muted/50 text-sm sm:flex-row sm:items-start">
+                <Badge variant={getLogBadgeVariant(log.level)} class="mt-0.5">
+                  {log.level.toUpperCase()}
+                </Badge>
+                <div class="min-w-0 flex-1">
+                  <p class="text-foreground">{log.message}</p>
+                  <p class="text-xs text-muted-foreground mt-1">
+                    {formatDate(log.timestamp)}
+                    {#if log.channel && log.channel !== 'default'}
+                      <span class="ml-2 text-muted-foreground/70">[{log.channel}]</span>
+                    {/if}
+                  </p>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <p class="text-sm text-muted-foreground py-4 text-center">
+            No log entries found. Logs appear here as your application runs.
+          </p>
+        {/if}
+      </CardContent>
+    </Card>
+  {/if}
+</div>
+`;
 	}
 
 
