@@ -2,12 +2,37 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { compile } from 'svelte/compiler';
+import { render } from 'svelte/server';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
 import { dismiss, dismissAll, getToasts, pauseToast, resumeToast, subscribe, toast } from '../src/ui/toast';
 
 const uiDir = join(process.cwd(), 'src/ui');
 const paginationDir = join(process.cwd(), 'src/pagination');
 
 describe('UI components', () => {
+  it('uses a Node-compatible toast module specifier in the source barrel', async () => {
+    const source = await readFile(join(uiDir, 'index.ts'), 'utf8');
+    expect(source).toContain("from './toast.js'");
+    expect(source).not.toMatch(/from ['"][^'"]+\.ts['"]/);
+  });
+
+  it('renders label associations as HTML for attributes', async () => {
+    const root = await mkdtemp(join(process.cwd(), '.test-label-'));
+    try {
+      const source = await readFile(join(uiDir, 'Label.svelte'), 'utf8');
+      const compiled = compile(source, { filename: 'Label.svelte', generate: 'server' });
+      const path = join(root, 'Label.mjs');
+      await writeFile(path, compiled.js.code);
+      const { default: Label } = await import(pathToFileURL(path).href);
+      const { body } = render(Label, { props: { for: 'email' } });
+      expect(body).toContain('for="email"');
+      expect(body).not.toMatch(/htmlfor=/i);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   afterEach(() => {
     dismissAll();
     vi.useRealTimers();
