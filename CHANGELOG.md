@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-No changes yet.
+### Changed
+
+- **Logs and error correlation** — `createSvelarApp()` now creates request/correlation IDs for the request lifecycle, `Log` enriches entries with request/job/tenant/actor context, sensitive log context keys are redacted before reaching channels or `LogViewer`, and `ErrorHandler` logs unexpected failures with safe incident IDs for production responses.
 
 ## [0.8.0] - 2026-10-12
 

@@ -23,7 +23,9 @@
  * ```
  */
 
+import { randomUUID } from 'node:crypto';
 import { Log } from '../logging/index.js';
+import { ApplicationContext } from '../support/Context.js';
 
 // ── Error Classes ──────────────────────────────────────────
 
@@ -191,7 +193,9 @@ export interface ErrorHandlerConfig {
   /** Errors that should not be reported */
   dontReport?: Array<new (...args: any[]) => unknown>;
   /** Custom render function */
-  render?: (error: ErrorLike, event?: any) => Response | Promise<Response>;
+  render?: (error: ErrorLike, event?: any, incidentId?: string) => Response | Promise<Response>;
+  /** Include incident ID in safe error responses (default: true). */
+  exposeIncidentId?: boolean;
 }
 
 export class ErrorHandler {
@@ -206,6 +210,7 @@ export class ErrorHandler {
         UnauthorizedError,
         ForbiddenError,
       ],
+      exposeIncidentId: true,
       ...config,
     };
   }
@@ -217,15 +222,15 @@ export class ErrorHandler {
     const err = normalizeError(error);
 
     // Report error (if not in the dontReport list)
-    await this.reportError(err, event);
+    const incidentId = await this.reportError(err, event);
 
     // Custom render
     if (this.config.render) {
-      return this.config.render(err, event);
+      return this.config.render(err, event, incidentId);
     }
 
     // Default rendering
-    return this.renderError(err);
+    return this.renderError(err, incidentId);
   }
 
   /**
@@ -236,13 +241,15 @@ export class ErrorHandler {
       const err = normalizeError(error);
 
       // Report
-      this.reportError(err, event);
+      const incidentId = this.shouldReport(err) ? this.createIncidentId() : undefined;
+      void this.reportError(err, event, incidentId);
 
       // Return error body for SvelteKit
       if (err instanceof HttpError || isHttpErrorLike(err)) {
         return {
           message: err.message,
           status: errorStatus(err),
+          ...(this.config.exposeIncidentId && incidentId ? { incidentId } : {}),
           ...(errorDetails(err) ?? {}),
           ...(this.config.debug ? { stack: err.stack } : {}),
         };
@@ -251,6 +258,7 @@ export class ErrorHandler {
       return {
         message: this.config.debug ? err.message : 'An unexpected error occurred',
         status,
+        ...(this.config.exposeIncidentId && incidentId ? { incidentId } : {}),
         ...(this.config.debug ? { stack: err.stack } : {}),
       };
     };
@@ -272,38 +280,63 @@ export class ErrorHandler {
 
   // ── Private ──
 
-  private async reportError(error: ErrorLike, event?: any): Promise<void> {
+  private shouldReport(error: ErrorLike): boolean {
     // Skip reporting for certain error types
     if (this.config.dontReport) {
       for (const ErrorClass of this.config.dontReport) {
-        if (error instanceof ErrorClass) return;
+        if (error instanceof ErrorClass) return false;
       }
     }
+    return true;
+  }
+
+  private createIncidentId(): string {
+    return `inc_${randomUUID()}`;
+  }
+
+  private async reportError(error: ErrorLike, event?: any, incidentId?: string): Promise<string | undefined> {
+    if (!this.shouldReport(error)) return undefined;
+
+    const resolvedIncidentId = incidentId ?? this.createIncidentId();
+    ApplicationContext.set('incidentId', resolvedIncidentId);
 
     // Log via Svelar Log system (writes to configured channels: console, file, etc.)
     const context: Record<string, any> = {
+      incidentId: resolvedIncidentId,
       error: error.name,
+      status: errorStatus(error) ?? 500,
       ...(event?.url ? { url: event.url.toString() } : {}),
+      ...(event?.request?.method ? { method: event.request.method } : {}),
       ...(error.stack ? { stack: error.stack } : {}),
     };
 
-    Log.error(error.message, context);
+    await Log.error(error.message, context);
 
     // Custom reporter (Sentry, Datadog, etc.)
     if (this.config.report) {
       try {
-        await this.config.report(error, event ? { url: event.url?.toString() } : undefined);
+        await this.config.report(error, event ? {
+          incidentId: resolvedIncidentId,
+          url: event.url?.toString(),
+          method: event.request?.method,
+          ...ApplicationContext.snapshot(),
+        } : { incidentId: resolvedIncidentId, ...ApplicationContext.snapshot() });
       } catch {
         // Don't let the reporter crash things
       }
     }
+
+    return resolvedIncidentId;
   }
 
-  private renderError(error: ErrorLike): Response {
+  private renderError(error: ErrorLike, incidentId?: string): Response {
     if (error instanceof HttpError || isHttpErrorLike(error)) {
       const body: Record<string, any> = {
         message: error.message,
       };
+      if (this.config.exposeIncidentId && incidentId) {
+        body.incidentId = incidentId;
+      }
 
       if (isValidationErrorLike(error)) {
         body.errors = (error as any).errors ?? (error as any).body?.errors;
@@ -329,6 +362,9 @@ export class ErrorHandler {
     const body: Record<string, any> = {
       message: this.config.debug ? error.message : 'Internal server error',
     };
+    if (this.config.exposeIncidentId && incidentId) {
+      body.incidentId = incidentId;
+    }
 
     if (this.config.debug) {
       body.exception = error.name;

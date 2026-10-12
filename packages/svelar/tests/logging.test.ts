@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Log } from '../src/logging/index';
+import { LogViewer } from '../src/logging/LogViewer';
+import { ApplicationContext } from '../src/support/Context';
 
 describe('Logger', () => {
   beforeEach(() => {
@@ -14,6 +16,9 @@ describe('Logger', () => {
         null: { driver: 'null' },
       },
     });
+    Log.clearContext();
+    ApplicationContext.clear();
+    LogViewer.clear();
   });
 
   describe('configure', () => {
@@ -378,6 +383,114 @@ describe('Logger', () => {
       expect(parsed).toHaveProperty('context');
 
       consoleSpy.mockRestore();
+    });
+  });
+
+  describe('context and redaction', () => {
+    it('adds async-local request, tenant, actor, and job context to entries', async () => {
+      Log.configure({
+        default: 'null',
+        channels: {
+          null: { driver: 'null' },
+        },
+      });
+
+      await Log.withContext({
+        requestId: 'req-1',
+        correlationId: 'corr-1',
+        teamId: 42,
+        userId: 7,
+        jobId: 'job-1',
+      }, async () => {
+        await Log.info('contextual log', { action: 'save' });
+      });
+
+      const [entry] = LogViewer.query({ search: 'contextual log' });
+      expect(entry.context).toMatchObject({
+        requestId: 'req-1',
+        correlationId: 'corr-1',
+        teamId: 42,
+        tenantId: 42,
+        userId: 7,
+        actorId: 7,
+        jobId: 'job-1',
+        action: 'save',
+      });
+    });
+
+    it('keeps async-local logging context isolated across concurrent executions', async () => {
+      Log.configure({
+        default: 'null',
+        channels: {
+          null: { driver: 'null' },
+        },
+      });
+
+      await Promise.all([
+        Log.withContext({ requestId: 'req-a', teamId: 'team-a' }, async () => {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          await Log.info('request a');
+        }),
+        Log.withContext({ requestId: 'req-b', teamId: 'team-b' }, async () => {
+          await Log.info('request b');
+        }),
+      ]);
+
+      const byMessage = Object.fromEntries(LogViewer.query().map((entry) => [entry.message, entry.context]));
+      expect(byMessage['request a']).toMatchObject({ requestId: 'req-a', tenantId: 'team-a' });
+      expect(byMessage['request b']).toMatchObject({ requestId: 'req-b', tenantId: 'team-b' });
+    });
+
+    it('redacts sensitive context keys recursively before channels and LogViewer see them', async () => {
+      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      Log.configure({
+        default: 'console',
+        channels: {
+          console: { driver: 'console', level: 'info', format: 'json' },
+        },
+      });
+
+      await Log.info('redacted log', {
+        email: 'user@example.com',
+        password: 'secret-password',
+        nested: {
+          authorization: 'Bearer token',
+          refreshToken: 'refresh-secret',
+        },
+      });
+
+      const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+      expect(parsed.context.email).toBe('user@example.com');
+      expect(parsed.context.password).toBe('[REDACTED]');
+      expect(parsed.context.nested.authorization).toBe('[REDACTED]');
+      expect(parsed.context.nested.refreshToken).toBe('[REDACTED]');
+
+      const [entry] = LogViewer.query({ search: 'redacted log' });
+      expect(entry.context.password).toBe('[REDACTED]');
+      expect(JSON.stringify(entry.context)).not.toContain('secret-password');
+
+      consoleSpy.mockRestore();
+    });
+
+    it('applies process-wide context and preserves explicit log context', async () => {
+      Log.configure({
+        default: 'null',
+        channels: {
+          null: { driver: 'null' },
+        },
+        context: { integration: 'billing', tenantId: 'configured-tenant' },
+      });
+      Log.setContext({ release: '0.8.0' });
+
+      await Log.info('configured context', { tenantId: 'explicit-tenant' });
+
+      const [entry] = LogViewer.query({ search: 'configured context' });
+      expect(entry.context).toMatchObject({
+        integration: 'billing',
+        release: '0.8.0',
+        tenantId: 'explicit-tenant',
+      });
     });
   });
 

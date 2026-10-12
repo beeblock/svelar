@@ -14,6 +14,10 @@ import {
   abortIf,
   abortUnless,
 } from '../src/errors/Handler';
+import { Log } from '../src/logging';
+import { LogViewer } from '../src/logging/LogViewer';
+import { ApplicationContext } from '../src/support/Context';
+import { createSvelarApp } from '../src/hooks';
 
 describe('Error Classes', () => {
   describe('HttpError', () => {
@@ -259,6 +263,93 @@ describe('Abort Helpers', () => {
   });
 });
 
+describe('ErrorHandler production safety and correlation', () => {
+  beforeEach(() => {
+    Log.configure({
+      default: 'null',
+      channels: {
+        null: { driver: 'null' },
+      },
+    });
+    LogViewer.clear();
+    ApplicationContext.clear();
+  });
+
+  it('returns a safe incident id for unexpected errors and logs correlated context', async () => {
+    const handler = new ErrorHandler({ debug: false });
+
+    const response = await Log.withContext({ requestId: 'req-error-1', tenantId: 'tenant-1', actorId: 'actor-1' }, () =>
+      handler.handle(new Error('database password=super-secret exploded'), {
+        url: new URL('https://example.test/admin'),
+        request: new Request('https://example.test/admin', { method: 'POST' }),
+      }),
+    );
+
+    expect(response.status).toBe(500);
+    const body = await response.json();
+    expect(body.message).toBe('Internal server error');
+    expect(body.incidentId).toMatch(/^inc_/);
+    expect(JSON.stringify(body)).not.toContain('super-secret');
+
+    const [entry] = LogViewer.getRecentErrors();
+    expect(entry.context).toMatchObject({
+      requestId: 'req-error-1',
+      tenantId: 'tenant-1',
+      actorId: 'actor-1',
+      incidentId: body.incidentId,
+      status: 500,
+      method: 'POST',
+    });
+  });
+
+  it('does not report dontReport HTTP errors by default', async () => {
+    const handler = new ErrorHandler({ debug: false });
+
+    const response = await handler.handle(new ForbiddenError('Nope'));
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body).toEqual({ message: 'Nope' });
+    expect(LogViewer.getRecentErrors()).toHaveLength(0);
+  });
+
+  it('wraps createSvelarApp requests in request/correlation context and returns x-request-id', async () => {
+    const { handle } = createSvelarApp({
+      secret: 'test-secret',
+      sessionStore: {
+        read: async () => null,
+        write: async () => {},
+        destroy: async () => {},
+      },
+    });
+
+    const response = await handle({
+      event: {
+        request: new Request('https://example.test/dashboard', {
+          headers: {
+            'x-request-id': 'req-hook-1',
+            'x-correlation-id': 'corr-hook-1',
+          },
+        }),
+        locals: {},
+        params: {},
+        url: new URL('https://example.test/dashboard'),
+      },
+      resolve: async () => {
+        await Log.info('hook context log');
+        return new Response('ok');
+      },
+    });
+
+    expect(response.headers.get('x-request-id')).toBe('req-hook-1');
+    const [entry] = LogViewer.query({ search: 'hook context log' });
+    expect(entry.context).toMatchObject({
+      requestId: 'req-hook-1',
+      correlationId: 'corr-hook-1',
+    });
+  });
+});
+
 describe('ErrorHandler', () => {
   describe('constructor', () => {
     it('should create with default config', () => {
@@ -316,7 +407,9 @@ describe('ErrorHandler', () => {
 
       await handler.handle(error);
 
-      expect(reportFn).toHaveBeenCalledWith(error, undefined);
+      expect(reportFn).toHaveBeenCalledWith(error, expect.objectContaining({
+        incidentId: expect.stringMatching(/^inc_/),
+      }));
     });
 
     it('should pass event context to reporter', async () => {
@@ -327,7 +420,10 @@ describe('ErrorHandler', () => {
 
       await handler.handle(error, event);
 
-      expect(reportFn).toHaveBeenCalledWith(error, { url: 'http://localhost/api/users' });
+      expect(reportFn).toHaveBeenCalledWith(error, expect.objectContaining({
+        incidentId: expect.stringMatching(/^inc_/),
+        url: 'http://localhost/api/users',
+      }));
     });
 
     it('should skip reporting for dontReport errors', async () => {
@@ -350,7 +446,7 @@ describe('ErrorHandler', () => {
 
       const response = await handler.handle(error);
 
-      expect(renderFn).toHaveBeenCalledWith(error, undefined);
+      expect(renderFn).toHaveBeenCalledWith(error, undefined, expect.stringMatching(/^inc_/));
     });
   });
 

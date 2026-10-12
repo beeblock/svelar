@@ -876,6 +876,7 @@ export class AuthManager {
 // ── Auth Middleware ─────────────────────────────────────────
 
 import { Middleware, type MiddlewareContext, type NextFunction } from '../middleware/Middleware.js';
+import { ApplicationContext } from '../support/Context.js';
 
 /**
  * Authentication middleware that resolves the user from session or JWT.
@@ -927,6 +928,10 @@ export class AuthenticateMiddleware extends Middleware {
     ctx.event.locals.auth = authManager;
     ctx.locals.auth = authManager;
     ctx.locals.user = user;
+    if (user?.id != null) {
+      ApplicationContext.set('userId', user.id);
+      ApplicationContext.set('actorId', user.id);
+    }
 
     return next();
   }

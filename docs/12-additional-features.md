@@ -152,6 +152,29 @@ await Log.channel('console').warn('Logged to console only');
 
 Log writes return promises. Await file and stack channels when you need to guarantee persistence or surface write failures. Missing channels, unknown drivers, and file write errors throw instead of falling back to console.
 
+### Correlation Context And Redaction
+
+`createSvelarApp()` wraps each request with async-local logging context. Logs written during the request automatically include `requestId` and `correlationId`; authenticated requests also add `userId`/`actorId` when auth middleware resolves a user. Jobs, listeners, and custom integrations can use the same mechanism:
+
+```typescript
+await Log.withContext({ tenantId: team.id, jobId: job.id }, async () => {
+  await Log.info('Sync started', { integration: 'stripe' });
+});
+```
+
+`Log.configure()` accepts process-wide `context` and extra `redactKeys`. Sensitive fields such as passwords, tokens, secrets, authorization headers, cookies, signatures, and API keys are redacted recursively before entries reach channels or `LogViewer`.
+
+```typescript
+Log.configure({
+  default: 'file',
+  context: { integration: 'billing' },
+  redactKeys: ['tenantSecret'],
+  channels: {
+    file: { driver: 'file', path: 'storage/logs/app.log', format: 'json' },
+  },
+});
+```
+
 ## Notifications
 
 Send notifications via email, database, and custom channels.

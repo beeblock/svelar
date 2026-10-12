@@ -40,10 +40,12 @@ import {
   RateLimitMiddleware,
   ThrottleMiddleware,
 } from '../middleware/Middleware.js';
+import { randomUUID } from 'node:crypto';
 import { Application } from '../container/Application.js';
 import { SessionMiddleware, DatabaseSessionStore, type SessionStore } from '../session/Session.js';
 import { AuthenticateMiddleware, type AuthManager } from '../auth/Auth.js';
 import { ErrorHandler, type ErrorHandlerConfig } from '../errors/Handler.js';
+import { ApplicationContext } from '../support/Context.js';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -254,7 +256,20 @@ export function createSvelarApp(appConfig: SvelarAppConfig = {}) {
   }
 
   return {
-    handle: finalHandle,
+    handle: async ({ event, resolve }: any): Promise<Response> => {
+      const requestId = event.request?.headers?.get('x-request-id') || randomUUID();
+      const correlationId = event.request?.headers?.get('x-correlation-id') || requestId;
+
+      return ApplicationContext.run({ requestId, correlationId }, async () => {
+        const response = await finalHandle({ event, resolve });
+        try {
+          response.headers.set('x-request-id', requestId);
+        } catch {
+          // Immutable responses can be returned by adapters; correlation still exists in logs.
+        }
+        return response;
+      });
+    },
     handleError: errorHandler.handleSvelteKitError(),
   };
 }

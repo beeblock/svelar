@@ -22,6 +22,8 @@ import { createSvelarApp } from '@beeblock/svelar/hooks';
 export const { handle, handleError } = createSvelarApp({ auth });
 ```
 
+`createSvelarApp()` also creates a request context for logs and errors. It reads `X-Request-ID` and `X-Correlation-ID` when present, generates a request ID when absent, adds `X-Request-ID` to the response, and makes the IDs available to `Log` and `ErrorHandler`.
+
 Add the `<Toaster />` component to your layout for client-side toast notifications:
 
 ```svelte
@@ -459,6 +461,8 @@ export const { handle, handleError } = createSvelarApp({
   },
 });
 ```
+
+Unexpected errors are logged with an `incidentId`, request URL, method, status, and the active Svelar context (`requestId`, `correlationId`, `tenantId`, `actorId`, `jobId` when present). In production responses, Svelar returns a safe message plus the incident ID and never exposes stack traces. Structured HTTP errors in `dontReport` are returned with their normal status and are not logged by default.
 
 ## Next Steps
 

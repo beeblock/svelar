@@ -25,6 +25,7 @@
 import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { LogViewer } from './LogViewer.js';
+import { ApplicationContext, type ApplicationContextSnapshot } from '../support/Context.js';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -53,6 +54,10 @@ export interface LogChannelConfig {
 export interface LogConfig {
   default: string;
   channels: Record<string, LogChannelConfig>;
+  /** Context attached to every log entry after request/job context is applied. */
+  context?: Record<string, any>;
+  /** Sensitive context keys to redact before writing to channels/viewers. */
+  redactKeys?: string[];
 }
 
 interface LogEntry {
@@ -185,12 +190,16 @@ class LoggerManager {
     },
   };
   private channels = new Map<string, Channel>();
+  private context: Record<string, any> = {};
+  private redactKeys = DEFAULT_REDACT_KEYS;
 
   /**
    * Configure the logger
    */
   configure(config: LogConfig): void {
     this.config = config;
+    this.context = config.context ?? {};
+    this.redactKeys = [...DEFAULT_REDACT_KEYS, ...(config.redactKeys ?? [])];
     this.channels.clear();
   }
 
@@ -198,7 +207,28 @@ class LoggerManager {
    * Get a specific channel
    */
   channel(name: string): LoggerFacade {
-    return new LoggerFacade(this.resolveChannel(name), name);
+    return new LoggerFacade(this.resolveChannel(name), name, (context) => this.enrichContext(context));
+  }
+
+  /**
+   * Add context to every subsequent log entry in this process.
+   */
+  setContext(context: Record<string, any>): void {
+    this.context = { ...this.context, ...context };
+  }
+
+  /**
+   * Clear process-wide logger context.
+   */
+  clearContext(): void {
+    this.context = {};
+  }
+
+  /**
+   * Run a callback with async-local log context.
+   */
+  withContext<T>(context: ApplicationContextSnapshot, callback: () => T | Promise<T>): T | Promise<T> {
+    return ApplicationContext.run(context, callback);
   }
 
   // ── Log Methods ──
@@ -233,9 +263,32 @@ class LoggerManager {
     const channel = this.resolveChannel(name);
     if (LOG_LEVELS[entry.level] < LOG_LEVELS[channel.minLevel]) return;
 
-    const entryWithChannel = { ...entry, channel: name };
+    const entryWithChannel = { ...entry, context: this.enrichContext(entry.context), channel: name };
     LogViewer.addEntry(entryWithChannel);
     await channel.write(entryWithChannel);
+  }
+
+  private enrichContext(context: Record<string, any>): Record<string, any> {
+    const snapshot = ApplicationContext.snapshot();
+    const standardContext: Record<string, any> = {};
+
+    if (snapshot.requestId != null) standardContext.requestId = snapshot.requestId;
+    if (snapshot.correlationId != null) standardContext.correlationId = snapshot.correlationId;
+    if (snapshot.jobId != null) standardContext.jobId = snapshot.jobId;
+    if (snapshot.teamId != null) standardContext.teamId = snapshot.teamId;
+    if (snapshot.tenantId != null) standardContext.tenantId = snapshot.tenantId;
+    if (snapshot.userId != null) standardContext.userId = snapshot.userId;
+    if (snapshot.actorId != null) standardContext.actorId = snapshot.actorId;
+    if (snapshot.integration != null) standardContext.integration = snapshot.integration;
+
+    if (standardContext.tenantId == null && snapshot.teamId != null) {
+      standardContext.tenantId = snapshot.teamId;
+    }
+    if (standardContext.actorId == null && snapshot.userId != null) {
+      standardContext.actorId = snapshot.userId;
+    }
+
+    return redactContext({ ...standardContext, ...this.context, ...context }, this.redactKeys);
   }
 
   private resolveChannel(name: string): Channel {
@@ -272,7 +325,11 @@ class LoggerManager {
 // ── Logger Facade (for specific channels) ──────────────────
 
 class LoggerFacade {
-  constructor(private channel: Channel, private name: string) {}
+  constructor(
+    private channel: Channel,
+    private name: string,
+    private enrichContext: (context: Record<string, any>) => Record<string, any>,
+  ) {}
 
   debug(message: string, context: Record<string, any> = {}): Promise<void> {
     return this.write({ level: 'debug', message, context, timestamp: now() });
@@ -293,7 +350,7 @@ class LoggerFacade {
   private async write(entry: LogEntry): Promise<void> {
     if (LOG_LEVELS[entry.level] < LOG_LEVELS[this.channel.minLevel]) return;
 
-    const entryWithChannel = { ...entry, channel: this.name };
+    const entryWithChannel = { ...entry, context: this.enrichContext(entry.context), channel: this.name };
     LogViewer.addEntry(entryWithChannel);
     await this.channel.write(entryWithChannel);
   }
@@ -301,6 +358,61 @@ class LoggerFacade {
 
 function now(): string {
   return new Date().toISOString();
+}
+
+const DEFAULT_REDACT_KEYS = [
+  'password',
+  'password_confirmation',
+  'current_password',
+  'new_password',
+  'token',
+  'access_token',
+  'refresh_token',
+  'api_key',
+  'apikey',
+  'secret',
+  'client_secret',
+  'private_key',
+  'authorization',
+  'cookie',
+  'set-cookie',
+  'signature',
+];
+
+function redactContext(value: any, redactKeys: string[], seen = new WeakSet<object>(), depth = 0): any {
+  if (value === null || typeof value !== 'object') return value;
+  if (value instanceof Date) return value.toISOString();
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      ...(value.stack ? { stack: value.stack } : {}),
+    };
+  }
+  if (seen.has(value)) return '[Circular]';
+  if (depth > 8) return '[MaxDepth]';
+
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    return value.map((item) => redactContext(item, redactKeys, seen, depth + 1));
+  }
+
+  const output: Record<string, any> = {};
+  for (const [key, nestedValue] of Object.entries(value)) {
+    output[key] = shouldRedactKey(key, redactKeys)
+      ? '[REDACTED]'
+      : redactContext(nestedValue, redactKeys, seen, depth + 1);
+  }
+  return output;
+}
+
+function shouldRedactKey(key: string, redactKeys: string[]): boolean {
+  const normalized = key.toLowerCase().replace(/[-\s]/g, '_');
+  return redactKeys.some((redactKey) => {
+    const normalizedRedactKey = redactKey.toLowerCase().replace(/[-\s]/g, '_');
+    return normalized === normalizedRedactKey || normalized.includes(normalizedRedactKey);
+  });
 }
 
 import { singleton } from '../support/singleton.js';
