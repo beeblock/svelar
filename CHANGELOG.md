@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Incoming webhook inbox** — `@beeblock/svelar/webhooks` now includes `WebhookInbox` for durable incoming webhook capture, HMAC verification, idempotent deduplication, status transitions, replay, and database-backed operational queries.
 - **Activity-based sliding sessions** — session middleware can now renew store TTL only on real navigation/mutation activity, ignore SSE/polling, throttle touches, and enforce an absolute lifetime cap.
 - **Resilient HTTP integrations** — the server-side `Http` client now supports configurable retry policies by status/method/error, `Retry-After`, exponential backoff, full jitter, idempotency keys, process-local circuit breakers, request/response/error hooks, and redaction helpers for telemetry.
+- **Tenant-bound service account keys** — API keys now support service accounts, tenant/actor context, IP allowlists, per-key rate limits, disable/enable controls, request-local `event.locals.apiKey`, and audit/log context enrichment.
 
 ## [0.8.0] - 2026-10-12
 

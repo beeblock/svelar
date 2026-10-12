@@ -8,28 +8,63 @@ import { randomUUID } from 'crypto';
 import { singleton } from '../support/singleton.js';
 import { assertSqlIdentifier } from '../database/Connection.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
+import { Cache } from '../cache/index.js';
+import { ApplicationContext } from '../support/Context.js';
+
+export type ApiKeyActorType = 'user' | 'service_account' | 'system';
+
+export interface ApiKeyRateLimit {
+  limit: number;
+  window: number;
+}
 
 export interface ApiKeyRecord {
   id: string;
-  userId: string | number;
+  userId?: string | number;
+  teamId?: string | number;
+  actorType?: ApiKeyActorType;
+  actorId?: string | number;
+  serviceAccountId?: string;
   name: string;
   key: string; // The hashed key (stored)
   prefix: string; // First 8 chars for identification (e.g., "sk_live_")
   lastUsedAt?: number;
+  lastUsedIp?: string;
   expiresAt?: number;
   permissions?: string[];
+  allowedIps?: string[];
+  rateLimit?: ApiKeyRateLimit;
   metadata?: Record<string, any>;
   createdAt: number;
   revokedAt?: number;
+  disabledAt?: number;
 }
 
 export interface CreateKeyOptions {
   name: string;
-  userId: string | number;
+  userId?: string | number;
+  teamId?: string | number;
+  actorType?: ApiKeyActorType;
+  actorId?: string | number;
+  serviceAccountId?: string;
   prefix?: string; // default: 'sk_'
   permissions?: string[];
+  allowedIps?: string[];
+  rateLimit?: ApiKeyRateLimit;
   expiresIn?: number; // seconds
   metadata?: Record<string, any>;
+}
+
+export interface CreateServiceAccountOptions extends Omit<CreateKeyOptions, 'actorType' | 'actorId' | 'serviceAccountId'> {
+  teamId: string | number;
+  actorId?: string | number;
+  serviceAccountId?: string;
+}
+
+export interface ApiKeyValidationContext {
+  ip?: string;
+  now?: number;
+  consumeRateLimit?: boolean;
 }
 
 export interface ApiKeyConfig {
@@ -37,6 +72,24 @@ export interface ApiKeyConfig {
   table?: string;
   prefix?: string;
   hashAlgorithm?: string;
+}
+
+export class ApiKeyRateLimitError extends Error {
+  constructor(
+    message: string,
+    public readonly record: ApiKeyRecord,
+    public readonly retryAfter: number,
+  ) {
+    super(message);
+    this.name = 'ApiKeyRateLimitError';
+  }
+}
+
+export class ApiKeyAccessDeniedError extends Error {
+  constructor(message: string, public readonly record: ApiKeyRecord) {
+    super(message);
+    this.name = 'ApiKeyAccessDeniedError';
+  }
 }
 
 class ApiKeyManager {
@@ -66,16 +119,24 @@ class ApiKeyManager {
   private rowToRecord(row: any): ApiKeyRecord {
     return {
       id: row.id,
-      userId: row.user_id ?? row.userId ?? row.userid,
+      userId: (row.user_id ?? row.userId ?? row.userid) || undefined,
+      teamId: row.team_id ?? row.teamId ?? row.teamid ?? undefined,
+      actorType: row.actor_type ?? row.actorType ?? row.actortype ?? undefined,
+      actorId: row.actor_id ?? row.actorId ?? row.actorid ?? undefined,
+      serviceAccountId: row.service_account_id ?? row.serviceAccountId ?? row.serviceaccountid ?? undefined,
       name: row.name,
       key: row.key,
       prefix: row.prefix,
       lastUsedAt: row.last_used_at ?? row.lastUsedAt ?? row.lastusedat ?? undefined,
+      lastUsedIp: row.last_used_ip ?? row.lastUsedIp ?? row.lastusedip ?? undefined,
       expiresAt: row.expires_at ?? row.expiresAt ?? row.expiresat ?? undefined,
       permissions: row.permissions ? JSON.parse(row.permissions) : [],
+      allowedIps: row.allowed_ips ? JSON.parse(row.allowed_ips) : [],
+      rateLimit: row.rate_limit ? JSON.parse(row.rate_limit) : undefined,
       metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
       createdAt: row.created_at ?? row.createdAt ?? row.createdat,
       revokedAt: row.revoked_at ?? row.revokedAt ?? row.revokedat ?? undefined,
+      disabledAt: row.disabled_at ?? row.disabledAt ?? row.disabledat ?? undefined,
     };
   }
 
@@ -92,17 +153,31 @@ class ApiKeyManager {
   async create(
     options: CreateKeyOptions
   ): Promise<{ record: ApiKeyRecord; plainTextKey: string }> {
+    if (options.actorType !== 'service_account' && options.userId === undefined) {
+      throw new Error('API keys require userId unless actorType is service_account.');
+    }
+    if (options.actorType === 'service_account' && options.teamId === undefined) {
+      throw new Error('Service account API keys require teamId.');
+    }
+
     const prefix = options.prefix || this.config.prefix || 'sk_';
     const plainTextKey = `${prefix}${this.generateRandomKey(32)}`;
     const hashedKey = this.hashKey(plainTextKey);
+    const serviceAccountId = options.serviceAccountId ?? (options.actorType === 'service_account' ? randomUUID() : undefined);
 
     const record: ApiKeyRecord = {
       id: randomUUID(),
       userId: options.userId,
+      teamId: options.teamId,
+      actorType: options.actorType ?? 'user',
+      actorId: options.actorId ?? options.userId ?? serviceAccountId,
+      serviceAccountId,
       name: options.name,
       key: hashedKey,
       prefix: prefix,
       permissions: options.permissions || [],
+      allowedIps: options.allowedIps ?? [],
+      rateLimit: options.rateLimit,
       metadata: options.metadata,
       createdAt: Date.now(),
       expiresAt: options.expiresIn
@@ -115,24 +190,44 @@ class ApiKeyManager {
     } else if (this.config.driver === 'database') {
       await this.query().insert({
         id: record.id,
-        user_id: String(record.userId),
+        user_id: record.userId == null ? '' : String(record.userId),
+        team_id: record.teamId == null ? null : String(record.teamId),
+        actor_type: record.actorType ?? null,
+        actor_id: record.actorId == null ? null : String(record.actorId),
+        service_account_id: record.serviceAccountId ?? null,
         name: record.name,
         key: record.key,
         prefix: record.prefix,
         last_used_at: record.lastUsedAt ?? null,
+        last_used_ip: record.lastUsedIp ?? null,
         expires_at: record.expiresAt ?? null,
         permissions: JSON.stringify(record.permissions ?? []),
+        allowed_ips: JSON.stringify(record.allowedIps ?? []),
+        rate_limit: record.rateLimit ? JSON.stringify(record.rateLimit) : null,
         metadata: record.metadata ? JSON.stringify(record.metadata) : null,
         created_at: record.createdAt,
         revoked_at: record.revokedAt ?? null,
+        disabled_at: record.disabledAt ?? null,
       });
     }
 
     return { record, plainTextKey };
   }
 
+  /** Generate a tenant-bound service account API key. */
+  async createServiceAccount(
+    options: CreateServiceAccountOptions,
+  ): Promise<{ record: ApiKeyRecord; plainTextKey: string }> {
+    return this.create({
+      ...options,
+      actorType: 'service_account',
+      actorId: options.actorId ?? options.serviceAccountId ?? randomUUID(),
+      serviceAccountId: options.serviceAccountId,
+    });
+  }
+
   /** Validate a key and return the associated record */
-  async validate(plainTextKey: string): Promise<ApiKeyRecord | null> {
+  async validate(plainTextKey: string, context: ApiKeyValidationContext = {}): Promise<ApiKeyRecord | null> {
     const hashedKey = this.hashKey(plainTextKey);
 
     if (this.config.driver === 'database') {
@@ -140,20 +235,20 @@ class ApiKeyManager {
       if (!row) return null;
 
       const record = this.rowToRecord(row);
-      if (record.expiresAt && record.expiresAt < Date.now()) return null;
+      if (!await this.isUsable(record, context)) return null;
 
-      record.lastUsedAt = Date.now();
-      await this.query().where('id', record.id).update({ last_used_at: record.lastUsedAt });
+      record.lastUsedAt = context.now ?? Date.now();
+      record.lastUsedIp = context.ip ?? record.lastUsedIp;
+      await this.query().where('id', record.id).update({
+        last_used_at: record.lastUsedAt,
+        last_used_ip: record.lastUsedIp ?? null,
+      });
+      this.applyContext(record);
       return record;
     }
 
     for (const record of this.keys) {
       if (record.revokedAt) continue;
-
-      // Check expiry
-      if (record.expiresAt && record.expiresAt < Date.now()) {
-        continue;
-      }
 
       // Use timing-safe comparison to prevent timing attacks
       try {
@@ -163,8 +258,13 @@ class ApiKeyManager {
             Buffer.from(hashedKey)
           )
         ) {
+          if (!await this.isUsable(record, context)) {
+            return null;
+          }
           // Update lastUsedAt
-          record.lastUsedAt = Date.now();
+          record.lastUsedAt = context.now ?? Date.now();
+          record.lastUsedIp = context.ip ?? record.lastUsedIp;
+          this.applyContext(record);
           return record;
         }
       } catch {
@@ -223,8 +323,14 @@ class ApiKeyManager {
     return this.create({
       name: `${oldKey.name} (rotated)`,
       userId: oldKey.userId,
+      teamId: oldKey.teamId,
+      actorType: oldKey.actorType,
+      actorId: oldKey.actorId,
+      serviceAccountId: oldKey.serviceAccountId,
       prefix: oldKey.prefix,
       permissions: oldKey.permissions,
+      allowedIps: oldKey.allowedIps,
+      rateLimit: oldKey.rateLimit,
       metadata: oldKey.metadata,
     });
   }
@@ -234,13 +340,88 @@ class ApiKeyManager {
     plainTextKey: string,
     permission: string
   ): Promise<boolean> {
-    const record = await this.validate(plainTextKey);
+    const record = await this.validate(plainTextKey, { consumeRateLimit: false });
     if (!record) return false;
 
     if (!record.permissions || record.permissions.length === 0) return false;
     if (record.permissions.includes('*')) return true;
 
     return record.permissions.includes(permission);
+  }
+
+  /** Disable a key without deleting audit history. */
+  async disable(keyId: string): Promise<boolean> {
+    const disabledAt = Date.now();
+    if (this.config.driver === 'database') {
+      const existing = await this.findById(keyId);
+      if (!existing || existing.disabledAt || existing.revokedAt) return false;
+      await this.query().where('id', keyId).whereNull('revoked_at').update({ disabled_at: disabledAt });
+      return true;
+    }
+
+    const key = this.keys.find((k) => k.id === keyId);
+    if (!key || key.disabledAt || key.revokedAt) return false;
+    key.disabledAt = disabledAt;
+    return true;
+  }
+
+  /** Re-enable a disabled key. Revoked keys cannot be enabled. */
+  async enable(keyId: string): Promise<boolean> {
+    if (this.config.driver === 'database') {
+      const existing = await this.findById(keyId);
+      if (!existing || existing.revokedAt) return false;
+      await this.query().where('id', keyId).whereNull('revoked_at').update({ disabled_at: null });
+      return true;
+    }
+
+    const key = this.keys.find((k) => k.id === keyId);
+    if (!key || key.revokedAt) return false;
+    key.disabledAt = undefined;
+    return true;
+  }
+
+  private async isUsable(record: ApiKeyRecord, context: ApiKeyValidationContext): Promise<boolean> {
+    const now = context.now ?? Date.now();
+    if (record.disabledAt) return false;
+    if (record.expiresAt && record.expiresAt < now) return false;
+
+    if (record.allowedIps?.length) {
+      if (!context.ip || !record.allowedIps.includes(context.ip)) {
+        throw new ApiKeyAccessDeniedError('API key is not allowed from this IP address.', record);
+      }
+    }
+
+    if (context.consumeRateLimit !== false && record.rateLimit) {
+      const ttl = Math.max(1, record.rateLimit.window);
+      const bucket = Math.floor(now / (ttl * 1000));
+      const counter = await Cache.incrementWithTtl(`svelar:api-key:${record.id}:rate:${bucket}`, ttl);
+      if (counter.value > record.rateLimit.limit) {
+        const retryAfter = counter.expiresAt ? Math.max(1, Math.ceil((counter.expiresAt - now) / 1000)) : ttl;
+        throw new ApiKeyRateLimitError('API key rate limit exceeded.', record, retryAfter);
+      }
+    }
+
+    return true;
+  }
+
+  private applyContext(record: ApiKeyRecord): void {
+    if (record.teamId != null) {
+      ApplicationContext.set('teamId', record.teamId);
+      ApplicationContext.set('tenantId', record.teamId);
+    }
+    if (record.userId != null) {
+      ApplicationContext.set('userId', record.userId);
+    }
+    if (record.actorId != null) {
+      ApplicationContext.set('actorId', record.actorId);
+    }
+    if (record.actorType) {
+      ApplicationContext.set('actorType', record.actorType);
+    }
+    ApplicationContext.set('apiKeyId', record.id);
+    if (record.serviceAccountId) {
+      ApplicationContext.set('serviceAccountId', record.serviceAccountId);
+    }
   }
 }
 

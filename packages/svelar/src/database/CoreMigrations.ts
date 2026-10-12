@@ -34,6 +34,7 @@ import { CreateSvelarJobsTable } from './core/00000000_000026_create_svelar_jobs
 import { CreateSvelarFailedJobsTable } from './core/00000000_000027_create_svelar_failed_jobs_table.js';
 import { CreateScheduledTaskSettingsTable } from './core/00000000_000028_create_scheduled_task_settings_table.js';
 import { CreateWebhookInboxEntriesTable } from './core/00000000_000029_create_webhook_inbox_entries_table.js';
+import { AddServiceAccountFieldsToApiKeysTable } from './core/00000000_000030_add_service_account_fields_to_api_keys_table.js';
 
 export {
   CreateSessionsTable,
@@ -64,6 +65,7 @@ export {
   CreateSvelarFailedJobsTable,
   CreateScheduledTaskSettingsTable,
   CreateWebhookInboxEntriesTable,
+  AddServiceAccountFieldsToApiKeysTable,
 };
 
 const coreMigrationDefinitions = [
@@ -95,6 +97,7 @@ const coreMigrationDefinitions = [
   ['00000000_000027_create_svelar_failed_jobs_table', CreateSvelarFailedJobsTable],
   ['00000000_000028_create_scheduled_task_settings_table', CreateScheduledTaskSettingsTable],
   ['00000000_000029_create_webhook_inbox_entries_table', CreateWebhookInboxEntriesTable],
+  ['00000000_000030_add_service_account_fields_to_api_keys_table', AddServiceAccountFieldsToApiKeysTable],
 ] as const;
 
 export function svelarCoreMigrations(): MigrationFile[] {

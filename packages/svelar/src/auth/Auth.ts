@@ -18,7 +18,14 @@
 import { createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { assertSqlIdentifier } from '../database/Connection.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
-import { ApiKeys } from '../api-keys/index.js';
+import {
+  ApiKeyAccessDeniedError,
+  ApiKeyRateLimitError,
+  ApiKeys,
+  type ApiKeyRecord,
+  type ApiKeyValidationContext,
+  type CreateKeyOptions,
+} from '../api-keys/index.js';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -91,6 +98,10 @@ export interface TokenConfig {
   prefix?: string;
   /** Default permissions for AuthManager.generateApiToken() */
   permissions?: string[];
+  /** Default team for generated machine tokens */
+  teamId?: string | number;
+  /** Default rate limit for generated machine tokens */
+  rateLimit?: CreateKeyOptions['rateLimit'];
 }
 
 export interface AuthUser {
@@ -182,6 +193,7 @@ export function verifyJwt(token: string, secret: string, expectedAlgorithm: 'HS2
 export class AuthManager {
   private config: Required<Pick<AuthConfig, 'guard' | 'model' | 'identifierColumn' | 'passwordColumn'>> & AuthConfig;
   private currentUser: AuthUser | null = null;
+  private currentApiKey: ApiKeyRecord | null = null;
 
   constructor(userConfig: AuthConfig) {
     this.config = {
@@ -207,6 +219,7 @@ export class AuthManager {
    */
   clearUser(): void {
     this.currentUser = null;
+    this.currentApiKey = null;
   }
 
   /**
@@ -501,12 +514,19 @@ export class AuthManager {
   /**
    * Generate an API token for a user
    */
-  async generateApiToken(user: AuthUser, name: string = 'default'): Promise<string> {
+  async generateApiToken(
+    user: AuthUser,
+    name: string = 'default',
+    options: Omit<CreateKeyOptions, 'name' | 'userId'> = {},
+  ): Promise<string> {
     const { plainTextKey } = await ApiKeys.create({
+      ...options,
       userId: user.getAttribute('id'),
       name,
-      prefix: this.config.token?.prefix,
-      permissions: this.config.token?.permissions,
+      teamId: options.teamId ?? this.config.token?.teamId,
+      prefix: options.prefix ?? this.config.token?.prefix,
+      permissions: options.permissions ?? this.config.token?.permissions,
+      rateLimit: options.rateLimit ?? this.config.token?.rateLimit,
     });
 
     return plainTextKey;
@@ -515,9 +535,15 @@ export class AuthManager {
   /**
    * Resolve user from an API token
    */
-  async resolveFromApiToken(plainToken: string): Promise<AuthUser | null> {
-    const record = await ApiKeys.validate(plainToken);
+  async resolveFromApiToken(plainToken: string, context: ApiKeyValidationContext = {}): Promise<AuthUser | null> {
+    const record = await ApiKeys.validate(plainToken, context);
+    this.currentApiKey = record;
     if (!record) {
+      this.currentUser = null;
+      return null;
+    }
+
+    if (record.userId == null) {
       this.currentUser = null;
       return null;
     }
@@ -526,6 +552,13 @@ export class AuthManager {
     if (user) this.currentUser = user;
     else this.currentUser = null;
     return user;
+  }
+
+  /**
+   * Get the API key resolved for the current request, if Bearer auth used one.
+   */
+  apiKey(): ApiKeyRecord | null {
+    return this.currentApiKey;
   }
 
   // ── Password Reset ──────────────────────────────────────
@@ -916,21 +949,63 @@ export class AuthenticateMiddleware extends Middleware {
 
         if (!user) {
           try {
-            user = await authManager.resolveFromApiToken(token);
-          } catch {
+            user = await authManager.resolveFromApiToken(token, {
+              ip: ctx.event.getClientAddress?.(),
+            });
+          } catch (error) {
+            if (error instanceof ApiKeyRateLimitError) {
+              return new Response(
+                JSON.stringify({ message: error.message }),
+                {
+                  status: 429,
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Retry-After': String(error.retryAfter),
+                  },
+                },
+              );
+            }
+            if (error instanceof ApiKeyAccessDeniedError) {
+              return new Response(
+                JSON.stringify({ message: error.message }),
+                { status: 403, headers: { 'Content-Type': 'application/json' } },
+              );
+            }
             // Token table may not exist or token auth may not be configured.
           }
         }
       }
     }
 
+    const apiKey = typeof authManager.apiKey === 'function' ? authManager.apiKey() : null;
     ctx.event.locals.user = user;
+    ctx.event.locals.apiKey = apiKey;
     ctx.event.locals.auth = authManager;
     ctx.locals.auth = authManager;
     ctx.locals.user = user;
-    if (user?.id != null) {
-      ApplicationContext.set('userId', user.id);
-      ApplicationContext.set('actorId', user.id);
+    ctx.locals.apiKey = apiKey;
+    const userId = user?.getAttribute?.('id') ?? user?.id;
+    if (apiKey?.teamId != null) {
+      ApplicationContext.set('teamId', apiKey.teamId);
+      ApplicationContext.set('tenantId', apiKey.teamId);
+    }
+    if (apiKey?.actorId != null) {
+      ApplicationContext.set('actorId', apiKey.actorId);
+    }
+    if (apiKey?.actorType) {
+      ApplicationContext.set('actorType', apiKey.actorType);
+    }
+    if (apiKey?.id) {
+      ApplicationContext.set('apiKeyId', apiKey.id);
+    }
+    if (apiKey?.serviceAccountId) {
+      ApplicationContext.set('serviceAccountId', apiKey.serviceAccountId);
+    }
+    if (userId != null) {
+      ApplicationContext.set('userId', userId);
+      if (!apiKey?.actorId) {
+        ApplicationContext.set('actorId', userId);
+      }
     }
 
     return next();

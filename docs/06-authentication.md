@@ -446,7 +446,7 @@ async function fetchWithAuth(url: string, options: RequestInit = {}) {
 
 ## API Token Authentication
 
-For machine-to-machine authentication, generate API keys per user. The `api_keys` table is managed by Svelar core migrations.
+For machine-to-machine authentication, generate API keys per user or tenant-bound service accounts. The `api_keys` table is managed by Svelar core migrations.
 
 ```typescript
 import { ApiKeys } from '@beeblock/svelar/api-keys';
@@ -456,7 +456,10 @@ ApiKeys.configure({ driver: 'database', prefix: 'sk_' });
 const { plainTextKey, record } = await ApiKeys.create({
   name: 'GitHub Deploy Key',
   userId: user.id,
+  teamId: team.id,
   permissions: ['deployments:create'],
+  rateLimit: { limit: 120, window: 60 },
+  allowedIps: ['203.0.113.10'],
   expiresIn: 60 * 60 * 24 * 365,
 });
 ```
@@ -464,6 +467,31 @@ const { plainTextKey, record } = await ApiKeys.create({
 The plain text key is returned once. Svelar stores only a hash plus metadata, permissions, timestamps, and revocation state.
 
 Permissions are deny-by-default. A key with an empty permission list authenticates the user but does not pass `ApiKeys.hasPermission()`. Use explicit abilities such as `deployments:create`, or use `'*'` only for a deliberately unrestricted machine token.
+
+For service accounts that should act as a tenant-level machine actor instead of a human user:
+
+```typescript
+const { plainTextKey, record } = await ApiKeys.createServiceAccount({
+  name: 'ERP Sync',
+  teamId: team.id,
+  permissions: ['orders:sync', 'inventory:read'],
+  allowedIps: ['203.0.113.10'],
+  rateLimit: { limit: 600, window: 60 },
+  metadata: { provider: 'erp' },
+});
+```
+
+When `AuthenticateMiddleware` resolves an API key, it sets `event.locals.apiKey` and enriches the Svelar application context with `apiKeyId`, `teamId`/`tenantId`, `actorId`, `actorType`, and `serviceAccountId` when present. Logs, audit records, jobs, and downstream services can then attribute work to the correct tenant and machine actor.
+
+API keys can be disabled without revoking history:
+
+```typescript
+await ApiKeys.disable(record.id);
+await ApiKeys.enable(record.id);
+await ApiKeys.revoke(record.id);
+```
+
+If a request exceeds its API key rate limit, `AuthenticateMiddleware` returns `429` with a `Retry-After` header. If a key is used from an IP outside `allowedIps`, it returns `403`.
 
 Clients send the token in the Authorization header:
 

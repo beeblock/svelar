@@ -4,7 +4,7 @@ export class CreateApiKeysTable extends Migration {
   async up(): Promise<void> {
     await this.schema.createTable('api_keys', (table) => {
       table.string('id').primary();
-      table.string('user_id');
+      table.string('user_id').nullable();
       table.string('name');
       table.string('key').unique();
       table.string('prefix');

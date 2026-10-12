@@ -2,8 +2,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ApiKeys } from '../src/api-keys/index.js';
+import { ApiKeyRateLimitError, ApiKeys } from '../src/api-keys/index.js';
 import { AuthManager, AuthenticateMiddleware } from '../src/auth/Auth.js';
+import { Cache } from '../src/cache/index.js';
 import { Connection } from '../src/database/Connection.js';
 import { svelarCoreMigrations } from '../src/database/CoreMigrations.js';
 import { Migrator } from '../src/database/Migration.js';
@@ -11,6 +12,7 @@ import { Schema } from '../src/database/SchemaBuilder.js';
 import type { MiddlewareContext } from '../src/middleware/Middleware.js';
 import { Model } from '../src/orm/Model.js';
 import { QueryBuilder } from '../src/orm/QueryBuilder.js';
+import { ApplicationContext } from '../src/support/Context.js';
 
 class User extends Model {
   static table = 'users';
@@ -40,10 +42,15 @@ describe.sequential('ApiKeys', () => {
 
     user = await User.create({ email: 'admin@example.com', name: 'Admin' });
     ApiKeys.configure({ driver: 'database', prefix: 'sk_test_' });
+    Cache.configure({ default: 'memory', stores: { memory: { driver: 'memory' } } });
+    await Cache.flush();
+    ApplicationContext.clear();
   });
 
   afterEach(async () => {
     ApiKeys.configure({ driver: 'memory', prefix: 'sk_' });
+    await Cache.flush();
+    ApplicationContext.clear();
     await Connection.disconnect();
     await rm(root, { recursive: true, force: true });
   });
@@ -158,5 +165,115 @@ describe.sequential('ApiKeys', () => {
 
     expect(nextCalled).toBe(true);
     expect(ctx.event.locals.user?.getAttribute('email')).toBe('admin@example.com');
+  });
+
+  it('creates tenant-bound service account keys and applies audit context', async () => {
+    const { record, plainTextKey } = await ApiKeys.createServiceAccount({
+      name: 'ERP sync',
+      teamId: 'team-1',
+      permissions: ['orders:sync'],
+      allowedIps: ['10.0.0.10'],
+      rateLimit: { limit: 2, window: 60 },
+      metadata: { provider: 'erp' },
+    });
+
+    expect(record.userId).toBeUndefined();
+    expect(record.actorType).toBe('service_account');
+    expect(record.teamId).toBe('team-1');
+    expect(record.serviceAccountId).toBeTruthy();
+
+    await expect(ApiKeys.validate(plainTextKey, { ip: '10.0.0.11' })).rejects.toMatchObject({
+      name: 'ApiKeyAccessDeniedError',
+    });
+
+    await expect(ApiKeys.validate(plainTextKey, { ip: '10.0.0.10' })).resolves.toMatchObject({
+      id: record.id,
+      teamId: 'team-1',
+      actorType: 'service_account',
+      permissions: ['orders:sync'],
+      allowedIps: ['10.0.0.10'],
+      rateLimit: { limit: 2, window: 60 },
+    });
+
+    expect(ApplicationContext.snapshot()).toMatchObject({
+      teamId: 'team-1',
+      tenantId: 'team-1',
+      actorType: 'service_account',
+      apiKeyId: record.id,
+      serviceAccountId: record.serviceAccountId,
+    });
+
+    const used = await new QueryBuilder('api_keys').where('id', record.id).first();
+    expect(used.last_used_ip).toBe('10.0.0.10');
+  });
+
+  it('enforces API key rate limits and disabled state', async () => {
+    const { record, plainTextKey } = await ApiKeys.create({
+      name: 'Limited',
+      userId: user.getAttribute('id'),
+      rateLimit: { limit: 1, window: 60 },
+    });
+
+    await expect(ApiKeys.validate(plainTextKey, { ip: '127.0.0.1' })).resolves.toMatchObject({
+      id: record.id,
+    });
+    await expect(ApiKeys.validate(plainTextKey, { ip: '127.0.0.1' })).rejects.toBeInstanceOf(ApiKeyRateLimitError);
+
+    const disabled = await ApiKeys.create({
+      name: 'Disabled',
+      userId: user.getAttribute('id'),
+    });
+    await expect(ApiKeys.disable(disabled.record.id)).resolves.toBe(true);
+    await expect(ApiKeys.validate(disabled.plainTextKey)).resolves.toBeNull();
+    await expect(ApiKeys.enable(disabled.record.id)).resolves.toBe(true);
+    await expect(ApiKeys.validate(disabled.plainTextKey)).resolves.toMatchObject({
+      id: disabled.record.id,
+    });
+  });
+
+  it('sets api key locals and returns 429 when bearer key quota is exceeded', async () => {
+    const { record, plainTextKey } = await ApiKeys.create({
+      name: 'Middleware limited',
+      userId: user.getAttribute('id'),
+      teamId: 'team-2',
+      rateLimit: { limit: 1, window: 60 },
+    });
+    const auth = new AuthManager({ guard: 'session', model: User });
+    const middleware = new AuthenticateMiddleware(auth);
+
+    const makeCtx = () => ({
+      event: {
+        getClientAddress: () => '127.0.0.1',
+        request: {
+          headers: {
+            get: (name: string) => name.toLowerCase() === 'authorization' ? `Bearer ${plainTextKey}` : null,
+          },
+        },
+        locals: {},
+      },
+      params: {},
+      locals: {},
+    }) as MiddlewareContext;
+
+    const first = makeCtx();
+    let nextCalled = false;
+    await middleware.handle(first, async () => {
+      nextCalled = true;
+    });
+
+    expect(nextCalled).toBe(true);
+    expect(first.event.locals.apiKey).toMatchObject({ id: record.id, teamId: 'team-2' });
+    expect(ApplicationContext.snapshot()).toMatchObject({
+      teamId: 'team-2',
+      tenantId: 'team-2',
+      apiKeyId: record.id,
+    });
+
+    const second = makeCtx();
+    const response = await middleware.handle(second, async () => {
+      throw new Error('should not call next');
+    });
+    expect(response).toMatchObject({ status: 429 });
+    expect(response?.headers.get('Retry-After')).toBeTruthy();
   });
 });

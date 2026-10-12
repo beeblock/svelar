@@ -97,8 +97,16 @@ export { EmailTemplates, EmailTemplate } from './email-templates/index.js';
 export type { EmailTemplate as EmailTemplateRecord, RenderResult, TemplateConfig } from './email-templates/index.js';
 
 // API Keys
-export { ApiKeys } from './api-keys/index.js';
-export type { ApiKeyRecord, CreateKeyOptions, ApiKeyConfig } from './api-keys/index.js';
+export { ApiKeys, ApiKeyRateLimitError, ApiKeyAccessDeniedError } from './api-keys/index.js';
+export type {
+  ApiKeyRecord,
+  CreateKeyOptions,
+  CreateServiceAccountOptions,
+  ApiKeyConfig,
+  ApiKeyActorType,
+  ApiKeyRateLimit,
+  ApiKeyValidationContext,
+} from './api-keys/index.js';
 
 // Audit
 export { Audit, auditable } from './audit/index.js';
