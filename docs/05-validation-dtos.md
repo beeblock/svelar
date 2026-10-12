@@ -36,6 +36,19 @@ npx svelar update --add-missing-user-files --category=config --force
 
 This adds missing user-owned config files, including `src/svelar.d.ts`, but never overwrites existing files or refreshes framework files. It is separate from `--include-user-files`, which is a reviewed replacement workflow, and cannot be combined with that flag or `--migrate-zod4`. Review the dry-run list before approving additions. The migration does not automatically rewrite custom Zod APIs; complete the semantic checks below before deploying.
 
+Published 0.7.9 scaffolds also have separate core API/type changes. After the Zod migration (or directly in a Valibot app), preview and explicitly approve the bounded core migration:
+
+```bash
+npx svelar update --migrate-core --dry-run
+npx svelar update --migrate-core --force
+npx svelte-kit sync
+npx svelte-check --tsconfig ./tsconfig.json
+```
+
+`--migrate-core` prints named AST rules and token ranges for eight recognized scaffold files: provider bootstrap, queue-health observations, welcome-notification channels, admin-page authentication/role guards, and four queue/scheduler operation handlers. It preserves custom source outside those tokens, rejects unsupported modified patterns before writes, and saves exact pre-core-migration bytes in numbered `.core.bak` backups. Applying requires interactive confirmation or `--force`; it cannot be combined with other update modes. Zod `.zod4.bak` originals remain intact when both migrations edit the admin page.
+
+Queue health uses `Queue.size()` on the configured default connection/queue plus the length of `Queue.failed()`; these are observations, not complete BullMQ status counts or a healthy-worker assertion. The operator changes are semantic: missing parameters return 400, unavailable deletes return 404, unavailable retries or skipped task runs return 409, failed runs return 500, and enable/disable persistence is awaited before success. Existing authorization stays in place. Legacy toggle JSON-body validation (`body.enabled ?? true`), other app-owned response/schema contracts, custom Zod APIs and Vite/Vitest aliases are not repaired by this command and still require review. A completed codemod is not upgrade certification: run the app tests/build, browser login and authorization/operator failure checks before deployment.
+
 1. Upgrade the app's Zod dependency to the same native Zod 4 line as core. Do not mix Zod 3 schemas with native Zod 4 adapters.
 2. Import shared schemas from `@beeblock/svelar/validation` and replace Superforms `zod`/`zodClient` adapters with `zod4`/`zod4Client`. The forms helpers select native Zod 4 by default; their older `adapter: 'zod'` option name is an alias for the native adapter, not a Zod 3 shim.
 3. Review app-owned schemas, requests, and pages, then run `svelte-kit sync`, `svelte-check`, the app build, and validation/authorization tests. Keep field types inferred from the shared schema, rather than masking failures with casts; do not blanket-replace customized source.

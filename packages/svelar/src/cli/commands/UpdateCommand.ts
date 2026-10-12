@@ -6,6 +6,7 @@ import { NewCommandTemplates as T } from './NewCommandTemplates.js';
 import { transformScaffoldFile } from './NewCommand.js';
 import { MakeDashboardCommand } from './MakeDashboardCommand.js';
 import { applyZod4Migration, planZod4Migration } from '../Zod4Migration.js';
+import { applyCoreScaffoldMigration, planCoreScaffoldMigration } from '../CoreScaffoldMigration.js';
 
 interface ScaffoldFile {
   path: string;
@@ -161,6 +162,7 @@ export class UpdateCommand extends Command {
     { name: 'include-user-files', alias: 'u', description: 'Include user-customizable files (app.ts, hooks, layouts, home page, etc.)', type: 'boolean' as const, default: false },
     { name: 'add-missing-user-files', description: 'Add only missing user-owned files from the manifest; never overwrite (requires --force)', type: 'boolean' as const, default: false },
     { name: 'migrate-zod4', description: 'Opt in to backed-up Zod 4 adapter/dependency migration (requires confirmation or --force)', type: 'boolean' as const, default: false },
+    { name: 'migrate-core', description: 'Opt in to narrowly backed-up 0.7.9 scaffold API migration (requires confirmation or --force)', type: 'boolean' as const, default: false },
   ];
 
   async handle(_args: string[], flags: Record<string, any>): Promise<void> {
@@ -171,6 +173,15 @@ export class UpdateCommand extends Command {
     const listOnly = flags.list ?? false;
     const includeUserFiles = flags['include-user-files'] ?? false;
     const addMissingUserFiles = flags['add-missing-user-files'] ?? false;
+
+    if (flags['migrate-core']) {
+      if (addMissingUserFiles || includeUserFiles || flags['migrate-zod4'] || categoryFilter) {
+        this.error('--migrate-core is a separate migration. Do not combine it with other update modes or --category.');
+        return;
+      }
+      await this.migrateCore(cwd, Boolean(force), Boolean(dryRun || listOnly));
+      return;
+    }
 
     if (addMissingUserFiles && (includeUserFiles || flags['migrate-zod4'])) {
       this.error('--add-missing-user-files is a separate missing-only mode. Do not combine it with --include-user-files or --migrate-zod4.');
@@ -368,6 +379,44 @@ export class UpdateCommand extends Command {
         throw error;
       }
     }
+  }
+
+  private async migrateCore(cwd: string, force: boolean, dryRun: boolean): Promise<void> {
+    const plan = await planCoreScaffoldMigration(cwd);
+    this.info('Core scaffold API migration preflight; no templates, packages or schemas are replaced.');
+    for (const edit of plan.edits) {
+      this.log(`  ${edit.path}: ${[...new Set(edit.tokens.map((token) => token.rule))].join(', ')}`);
+      for (const token of edit.tokens) this.log(`    [${token.start}, ${token.end}) ${token.rule}: ${JSON.stringify(token.replacement)}`);
+    }
+    for (const warning of plan.warnings) this.warn(warning);
+    if (plan.errors.length) {
+      for (const error of plan.errors) this.error(error);
+      this.error('Core migration blocked before writes; review the reported customized patterns.');
+      return;
+    }
+    if (dryRun) {
+      this.info(`Dry run: ${plan.edits.length} file(s); no source or backups written.`);
+      return;
+    }
+    if (!plan.edits.length) {
+      this.info('No recognized legacy core patterns require migration. This is not a compatibility certification.');
+      return;
+    }
+    if (!force) {
+      if (!process.stdin.isTTY) {
+        this.error('Core migration requires an interactive confirmation or explicit --migrate-core --force after reviewing --dry-run.');
+        return;
+      }
+      const answer = await ask(`Apply ${plan.edits.length} reviewed core API/authorization/outcome edits with exact-original backups? [y/N] `);
+      if (answer !== 'y' && answer !== 'yes') {
+        this.info('Core migration cancelled; no files written.');
+        return;
+      }
+    }
+    try {
+      for (const backup of applyCoreScaffoldMigration(plan, { confirmed: true })) this.log(`  Backup: ${backup}`);
+      this.success('Core token migration applied. Run app type-checks, tests, browser login and reviewed admin-operation checks; compatibility is not implied.');
+    } catch (error) { this.error(error instanceof Error ? error.message : String(error)); }
   }
 
   private async migrateZod4(cwd: string, force: boolean, dryRun: boolean): Promise<void> {
