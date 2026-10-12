@@ -44,6 +44,7 @@ describe('Default admin scaffold responsive bounds', () => {
       expect(result.js.code).toContain('task.name');
       expect(result.js.code).toContain('runTask');
       expect(result.js.code).toContain('toggleTask');
+      expect(result.warnings.filter((warning) => warning.code === 'a11y_no_noninteractive_tabindex')).toEqual([]);
     });
   });
 

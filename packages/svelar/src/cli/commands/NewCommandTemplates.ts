@@ -5309,6 +5309,7 @@ export const load = guardAuth('/dashboard', { role: 'admin' });
         <CardDescription>Manage user roles and permissions ({data.stats.userCount} users)</CardDescription>
       </CardHeader>
       <CardContent>
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex (Native scroll regions need keyboard focus.) -->
         <div class="min-w-0 w-full max-w-full overflow-x-auto" role="region" aria-label="User management table" tabindex="0">
           <table class="w-full min-w-[760px] text-sm">
             <thead>
@@ -5588,6 +5589,7 @@ export const load = guardAuth('/dashboard', { role: 'admin' });
         {/if}
         <CardContent>
           {#if permissions.length > 0}
+            <!-- svelte-ignore a11y_no_noninteractive_tabindex (Native scroll regions need keyboard focus.) -->
             <div class="min-w-0 w-full max-w-full overflow-x-auto" role="region" aria-label="Permissions table" tabindex="0">
               <table class="w-full min-w-[640px] text-sm">
                 <thead>
