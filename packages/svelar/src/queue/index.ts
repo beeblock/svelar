@@ -49,6 +49,9 @@
 import { assertSqlIdentifier } from '../database/Connection.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
 import { ApplicationContext, type ApplicationContextSnapshot } from '../support/Context.js';
+import { heartbeatConfig, startWorkerHeartbeat, type WorkerHeartbeatConfig } from './BullMQTelemetry.js';
+
+export type { WorkerHeartbeatConfig } from './BullMQTelemetry.js';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -81,6 +84,8 @@ export interface QueueConnectionConfig {
   db?: number;
   /** BullMQ queue prefix (default: 'svelar') */
   prefix?: string;
+  /** Distributed worker telemetry; false disables publication. */
+  workerHeartbeat?: WorkerHeartbeatConfig | false;
   /** Default job options for BullMQ */
   defaultJobOptions?: {
     removeOnComplete?: boolean | number;
@@ -471,11 +476,13 @@ class DatabaseDriver implements QueueDriverInterface {
 
 class RedisDriver implements QueueDriverInterface {
   private queues = new Map<string, any>();  // BullMQ Queue instances
+  private workers = new Set<any>();
   private config: QueueConnectionConfig;
   private registry: JobRegistry;
   private _bullmq: any = null;
 
   constructor(config: QueueConnectionConfig, registry: JobRegistry) {
+    if (config.workerHeartbeat !== false) heartbeatConfig(config.workerHeartbeat);
     this.config = config;
     this.registry = registry;
   }
@@ -580,10 +587,14 @@ class RedisDriver implements QueueDriverInterface {
   }
 
   async close(): Promise<void> {
-    for (const q of this.queues.values()) {
-      await q.close();
-    }
+    const workerResults = await Promise.allSettled([...this.workers].map(async worker => worker.close()));
+    const queueResults = await Promise.allSettled([...this.queues.values()].map(async queue => queue.close()));
+    this.workers.clear();
     this.queues.clear();
+    const failures = [...workerResults, ...queueResults]
+      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+      .map(result => result.reason);
+    if (failures.length) throw new AggregateError(failures, 'Failed to close Redis queue resources.');
   }
 
   /**
@@ -630,8 +641,8 @@ class RedisDriver implements QueueDriverInterface {
         prefix,
         concurrency: options?.concurrency ?? 1,
         autorun: options?.autorun ?? true,
-        lockDuration: options?.lockDuration,
-        stalledInterval: options?.stalledInterval,
+        ...(options?.lockDuration !== undefined ? { lockDuration: options.lockDuration } : {}),
+        ...(options?.stalledInterval !== undefined ? { stalledInterval: options.stalledInterval } : {}),
       },
     );
 
@@ -684,6 +695,35 @@ class RedisDriver implements QueueDriverInterface {
       });
     });
 
+    const nativeClose = worker.close.bind(worker);
+    let stopHeartbeat: Awaited<ReturnType<typeof startWorkerHeartbeat>>;
+    const onStartupError = () => {};
+    worker.on('error', onStartupError);
+    try {
+      stopHeartbeat = await startWorkerHeartbeat(worker, queueName, this.config.workerHeartbeat);
+    } catch (error) {
+      await nativeClose();
+      throw error;
+    } finally {
+      worker.off('error', onStartupError);
+    }
+    let closing: Promise<void> | null = null;
+    worker.close = (...args: any[]) => closing ??= (async () => {
+      try {
+        await stopHeartbeat.drain();
+      } finally {
+        try {
+          await nativeClose(...args);
+        } finally {
+          try {
+            await stopHeartbeat();
+          } finally {
+            this.workers.delete(worker);
+          }
+        }
+      }
+    })();
+    this.workers.add(worker);
     return worker;
   }
 }
@@ -1171,8 +1211,12 @@ class QueueManager {
           if (settled) return;
           settled = true;
           cleanup();
-          await closeWorker();
-          resolve();
+          try {
+            await closeWorker();
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
         };
 
         const onWorkerError = async (error: any) => {
@@ -1180,8 +1224,13 @@ class QueueManager {
           settled = true;
           cleanup();
           this.processing = false;
-          await closeWorker();
-          reject(error instanceof Error ? error : new Error(String(error)));
+          try {
+            await closeWorker();
+          } catch {
+            // Preserve the originating failure; heartbeat TTLs bound stale data.
+          } finally {
+            reject(error instanceof Error ? error : new Error(String(error)));
+          }
         };
 
         const onCompleted = () => {
@@ -1274,11 +1323,12 @@ class QueueManager {
    */
   async stop(): Promise<void> {
     this.processing = false;
-    if (this._activeWorker) {
-      await this._activeWorker.close();
+    try {
+      if (this._activeWorker) await this._activeWorker.close();
+    } finally {
       this._activeWorker = null;
+      await this.resolveDriver(this.config.default).close?.();
     }
-    await this.resolveDriver(this.config.default).close?.();
   }
 
   /**

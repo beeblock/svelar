@@ -9,6 +9,12 @@ import { assertSqlIdentifier } from '../database/Connection.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
 import { singleton } from '../support/singleton.js';
 import { Queue, type QueueDefinition } from './index.js';
+import {
+  defaultWorkerTelemetryLimit, maxWorkerTelemetryLimit, readWorkerTelemetry,
+  type WorkerTelemetrySnapshot,
+} from './BullMQTelemetry.js';
+
+export type { WorkerHeartbeatInfo, WorkerTelemetrySnapshot } from './BullMQTelemetry.js';
 
 // Types
 export interface JobInfo {
@@ -52,6 +58,10 @@ export interface JobMonitorConfig {
   connections: Record<string, any>;
   /** Maximum live Redis jobs inspected for exact creation-order pagination. */
   redisScanLimit?: number;
+  /** Bounded distributed worker metadata read, default 100, maximum 1000. */
+  workerTelemetryLimit?: number;
+  /** Exclusive requires all queue consumers to publish Svelar heartbeats. */
+  workerTelemetryCoverage?: 'instrumented' | 'exclusive';
 }
 
 export class RedisJobScanLimitError extends Error {
@@ -87,6 +97,7 @@ export interface QueueRuntime {
   /** First ordinary waiting-list job's timestamp, not a global oldest age. */
   nextWaitingJob: number | null;
   nextWaitingLag: number | null;
+  workerTelemetry: WorkerTelemetrySnapshot | null;
 }
 
 const supportedStatuses = new Set<JobInfo['status']>(['waiting', 'active', 'completed', 'failed', 'delayed']);
@@ -131,6 +142,13 @@ class JobMonitorService {
   configure(config: JobMonitorConfig): void {
     if (config.redisScanLimit !== undefined && (!Number.isSafeInteger(config.redisScanLimit) || config.redisScanLimit < 1)) {
       throw new RangeError('redisScanLimit must be a positive safe integer.');
+    }
+    if (config.workerTelemetryLimit !== undefined && (!Number.isSafeInteger(config.workerTelemetryLimit)
+      || config.workerTelemetryLimit < 1 || config.workerTelemetryLimit > maxWorkerTelemetryLimit)) {
+      throw new RangeError(`workerTelemetryLimit must be an integer between 1 and ${maxWorkerTelemetryLimit}.`);
+    }
+    if (config.workerTelemetryCoverage !== undefined && !['instrumented', 'exclusive'].includes(config.workerTelemetryCoverage)) {
+      throw new TypeError('workerTelemetryCoverage must be instrumented or exclusive.');
     }
     this._config = { ...config };
   }
@@ -689,6 +707,7 @@ class JobMonitorService {
       lag: null,
       nextWaitingJob: null,
       nextWaitingLag: null,
+      workerTelemetry: null,
     };
     if (driver === 'database') {
       const row = await this.dbQuery().select('created_at').where('queue', queueName)
@@ -701,23 +720,27 @@ class JobMonitorService {
     } else if (driver === 'redis') {
       const queue = await this.getRedisQueue(queueName);
       try {
-        if (typeof queue.getWorkers === 'function') {
-          try {
-            const workers = await queue.getWorkers();
-            // Some Redis providers return an unsupported CLIENT LIST placeholder.
-            if (Array.isArray(workers) && workers.every((worker: any) => worker.id != null)) {
-              state.workers = workers.length;
-            }
-          } catch (error: any) {
-            if (!/NOPERM|unknown command|not supported/i.test(error.message ?? '')) throw error;
+        state.workerTelemetry = await readWorkerTelemetry(queue, queueName,
+          this._config?.workerTelemetryLimit ?? defaultWorkerTelemetryLimit,
+          this._config?.connections[this._config.default]?.workerHeartbeat === false
+            ? 'instrumented' : this._config?.workerTelemetryCoverage ?? 'instrumented');
+        if (typeof queue.isPaused === 'function') state.paused = await queue.isPaused();
+        let globalConcurrencyObserved = false;
+        if (typeof queue.getGlobalConcurrency === 'function') {
+          const concurrency = await queue.getGlobalConcurrency();
+          if (concurrency === null || (Number.isSafeInteger(concurrency) && concurrency >= 0)) {
+            state.globalConcurrency = concurrency;
+            globalConcurrencyObserved = true;
           }
         }
-        if (typeof queue.isPaused === 'function') state.paused = await queue.isPaused();
-        if (typeof queue.getGlobalConcurrency === 'function') {
-          state.globalConcurrency = await queue.getGlobalConcurrency() ?? null;
+        if (state.workerTelemetry.complete && state.workerTelemetry.coverage === 'exclusive') {
+          state.workers = state.workerTelemetry.observed!.live;
+          if (state.paused === false && globalConcurrencyObserved) {
+            const capacity = state.workerTelemetry.observed!.concurrency;
+            state.effectiveConcurrency = Math.min(capacity, state.globalConcurrency ?? capacity);
+          }
         }
-        // Remote worker concurrency is not exposed by BullMQ's public Queue API.
-        if (state.paused === true || state.workers === 0) state.effectiveConcurrency = 0;
+        if (state.paused === true) state.effectiveConcurrency = 0;
         const jobs = typeof queue.getWaiting === 'function'
           ? await queue.getWaiting(0, 0)
           : await queue.getJobs(['waiting'], 0, 0, true);

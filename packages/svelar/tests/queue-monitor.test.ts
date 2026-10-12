@@ -339,10 +339,12 @@ describe.sequential('JobMonitor contracts', () => {
     queue.getGlobalConcurrency.mockResolvedValue(4);
     redisQueues.set('emails', queue);
     const health = await JobMonitor.getHealth();
-    expect(health.runtime.emails).toEqual({
-      workers: 2, paused: false, globalConcurrency: 4, effectiveConcurrency: null,
+    expect(health.runtime.emails).toMatchObject({
+      workers: null, paused: false, globalConcurrency: 4, effectiveConcurrency: null,
       oldestWaitingJob: null, lag: null, nextWaitingJob: now - 1000, nextWaitingLag: 1000,
     });
+    expect(health.runtime.emails.workerTelemetry).toMatchObject({ source: 'unavailable', complete: false });
+    expect(queue.getWorkers).not.toHaveBeenCalled();
     expect(health.oldestWaitingJob).toBeUndefined();
     expect(queue.getWaiting).toHaveBeenCalledExactlyOnceWith(0, 0);
     expect(queue.getJobs).not.toHaveBeenCalled();
@@ -355,7 +357,7 @@ describe.sequential('JobMonitor contracts', () => {
     expect((await JobMonitor.getHealth()).runtime.emails.effectiveConcurrency).toBe(0);
     queue.isPaused.mockResolvedValue(false);
     queue.getWorkers.mockResolvedValue([]);
-    expect((await JobMonitor.getHealth()).runtime.emails).toMatchObject({ workers: 0, effectiveConcurrency: 0 });
+    expect((await JobMonitor.getHealth()).runtime.emails).toMatchObject({ workers: null, effectiveConcurrency: null });
   });
 
   it('uses only a bounded public waiting-head read on a million-job Redis backlog', async () => {
@@ -499,7 +501,7 @@ describe.sequential('JobMonitor contracts', () => {
   it('surfaces Redis observation errors and still closes monitor connections', async () => {
     configure('redis', 'emails');
     const queue = redisQueue();
-    queue.getWorkers.mockRejectedValue(new Error('Redis disconnected'));
+    queue.isPaused.mockRejectedValue(new Error('Redis disconnected'));
     redisQueues.set('emails', queue);
     await expect(JobMonitor.getHealth()).rejects.toThrow('Redis disconnected');
     expect(queue.close).toHaveBeenCalledTimes(2);
