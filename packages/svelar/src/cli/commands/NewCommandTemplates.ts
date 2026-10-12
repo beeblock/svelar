@@ -4800,9 +4800,9 @@ export const POST: RequestHandler = async (event) => {
 
   try {
     if (enabled) {
-      ScheduleMonitor.enableTask(name);
+      await ScheduleMonitor.enableTask(name);
     } else {
-      ScheduleMonitor.disableTask(name);
+      await ScheduleMonitor.disableTask(name);
     }
     return json({ success: true, message: \`Task '\${name}' \${enabled ? 'enabled' : 'disabled'}\` });
   } catch (error: any) {
@@ -5109,7 +5109,9 @@ import PruneAuditLogs from './PruneAuditLogs.js';
 import QueueHealthCheck from './QueueHealthCheck.js';
 
 export function createScheduler(): Scheduler {
-  const scheduler = new Scheduler().persistToDatabase();
+  const scheduler = new Scheduler()
+    .persistToDatabase()
+    .persistTaskSettings();
 
   scheduler.registerMany([
     new CleanupExpiredTokens(),

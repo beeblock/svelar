@@ -32,6 +32,7 @@ import { CreateSchedulerLocksTable } from './core/00000000_000024_create_schedul
 import { CreateScheduledTaskRunsTable } from './core/00000000_000025_create_scheduled_task_runs_table.js';
 import { CreateSvelarJobsTable } from './core/00000000_000026_create_svelar_jobs_table.js';
 import { CreateSvelarFailedJobsTable } from './core/00000000_000027_create_svelar_failed_jobs_table.js';
+import { CreateScheduledTaskSettingsTable } from './core/00000000_000028_create_scheduled_task_settings_table.js';
 
 export {
   CreateSessionsTable,
@@ -60,6 +61,7 @@ export {
   CreateScheduledTaskRunsTable,
   CreateSvelarJobsTable,
   CreateSvelarFailedJobsTable,
+  CreateScheduledTaskSettingsTable,
 };
 
 const coreMigrationDefinitions = [
@@ -89,6 +91,7 @@ const coreMigrationDefinitions = [
   ['00000000_000025_create_scheduled_task_runs_table', CreateScheduledTaskRunsTable],
   ['00000000_000026_create_svelar_jobs_table', CreateSvelarJobsTable],
   ['00000000_000027_create_svelar_failed_jobs_table', CreateSvelarFailedJobsTable],
+  ['00000000_000028_create_scheduled_task_settings_table', CreateScheduledTaskSettingsTable],
 ] as const;
 
 export function svelarCoreMigrations(): MigrationFile[] {

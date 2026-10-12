@@ -378,9 +378,9 @@ export const POST: RequestHandler = async (event) => {
   try {
     const { ScheduleMonitor } = await import('@beeblock/svelar/scheduler/ScheduleMonitor');
     if (enabled) {
-      ScheduleMonitor.enableTask(name);
+      await ScheduleMonitor.enableTask(name);
     } else {
-      ScheduleMonitor.disableTask(name);
+      await ScheduleMonitor.disableTask(name);
     }
 
     return json({ success: true, message: \`Task '\${name}' \${enabled ? 'enabled' : 'disabled'}\` });

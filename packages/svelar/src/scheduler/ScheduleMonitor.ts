@@ -80,6 +80,11 @@ export interface SchedulerHealth {
   uptime: number;
 }
 
+interface TaskSetting {
+  enabled: boolean;
+  updatedAt: Date;
+}
+
 // ── Schedule Monitor Service ───────────────────────────────
 
 class ScheduleMonitorService {
@@ -115,8 +120,9 @@ class ScheduleMonitorService {
     const dbHistory = await this.loadHistoryFromDb(
       tasks.map((t) => t.name),
     );
+    const settings = await this.loadSettingsFromDb(tasks.map((t) => t.name));
 
-    return tasks.map((task) => this.createTaskInfo(task, dbHistory.get(task.name) || []));
+    return tasks.map((task) => this.createTaskInfo(task, dbHistory.get(task.name) || [], settings.get(task.name)));
   }
 
   /**
@@ -131,21 +137,24 @@ class ScheduleMonitorService {
     if (!task) return null;
 
     const dbHistory = await this.loadHistoryFromDb([name]);
-    return this.createTaskInfo(task, dbHistory.get(name) || []);
+    const settings = await this.loadSettingsFromDb([name]);
+    return this.createTaskInfo(task, dbHistory.get(name) || [], settings.get(name));
   }
 
   /**
    * Enable a task
    */
-  enableTask(name: string): void {
+  async enableTask(name: string): Promise<void> {
     this.taskEnabled.set(name, true);
+    await this.persistTaskSetting(name, true);
   }
 
   /**
    * Disable a task
    */
-  disableTask(name: string): void {
+  async disableTask(name: string): Promise<void> {
     this.taskEnabled.set(name, false);
+    await this.persistTaskSetting(name, false);
   }
 
   /**
@@ -158,6 +167,11 @@ class ScheduleMonitorService {
     }
 
     if (this.taskEnabled.has(name) && !this.taskEnabled.get(name)) {
+      throw new Error(`Task "${name}" is disabled`);
+    }
+
+    const settings = await this.loadSettingsFromDb([name]);
+    if (settings.get(name)?.enabled === false) {
       throw new Error(`Task "${name}" is disabled`);
     }
 
@@ -283,15 +297,63 @@ class ScheduleMonitorService {
     });
   }
 
+  private async loadSettingsFromDb(taskNames: string[]): Promise<Map<string, TaskSetting>> {
+    const result = new Map<string, TaskSetting>();
+    if (taskNames.length === 0) return result;
+
+    let rows: any[];
+    try {
+      rows = await new QueryBuilder('scheduled_task_settings')
+        .select('task', 'enabled', 'updated_at')
+        .whereIn('task', taskNames)
+        .get();
+    } catch (error: any) {
+      if (String(error?.message ?? error).includes('scheduled_task_settings')) {
+        return result;
+      }
+      throw error;
+    }
+
+    for (const row of rows ?? []) {
+      result.set(row.task, {
+        enabled: !!row.enabled,
+        updatedAt: new Date(row.updated_at),
+      });
+    }
+
+    return result;
+  }
+
+  private async persistTaskSetting(name: string, enabled: boolean): Promise<void> {
+    const payload = {
+      task: name,
+      enabled,
+      updated_at: new Date().toISOString(),
+    };
+
+    const existing = await new QueryBuilder('scheduled_task_settings')
+      .where('task', name)
+      .first();
+
+    if (existing) {
+      await new QueryBuilder('scheduled_task_settings')
+        .where('task', name)
+        .update(payload);
+      return;
+    }
+
+    await new QueryBuilder('scheduled_task_settings').insert(payload);
+  }
+
   /**
    * Create a TaskInfo object from a ScheduledTask and its DB history
    */
-  private createTaskInfo(task: ScheduledTask, history: TaskRunRecord[]): TaskInfo {
+  private createTaskInfo(task: ScheduledTask, history: TaskRunRecord[], setting?: TaskSetting): TaskInfo {
     const expression = task.getExpression();
     const lastRecord = history.length > 0 ? history[0] : null;
 
     const enabled =
-      !this.taskEnabled.has(task.name) || this.taskEnabled.get(task.name) === true;
+      setting?.enabled ?? (!this.taskEnabled.has(task.name) || this.taskEnabled.get(task.name) === true);
 
     return {
       name: task.name,

@@ -170,7 +170,9 @@ import CleanupExpiredSessions from './CleanupExpiredSessions.ts';
 import DailyStatsSummary from './DailyStatsSummary.ts';
 
 export function createScheduler(): Scheduler {
-  const scheduler = new Scheduler().persistToDatabase();
+  const scheduler = new Scheduler()
+    .persistToDatabase()
+    .persistTaskSettings();
   scheduler.register(new CleanupExpiredSessions());
   scheduler.register(new DailyStatsSummary());
   return scheduler;
@@ -490,13 +492,21 @@ scheduler.register(cleanupTask);
 
 Task execution history is automatically persisted to the `scheduled_task_runs` database table when the scheduler registry calls `persistToDatabase()`. This is shared across all processes — the CLI scheduler writes to it, and the admin dashboard reads from it. If the table or database connection is unavailable, the scheduler run fails instead of silently dropping history.
 
-Both the `scheduled_task_runs` and `scheduler_locks` tables are managed by Svelar core migrations.
+Persistent task controls use `scheduled_task_settings`. Call `persistTaskSettings()` in the scheduler process when web/admin screens can enable or disable tasks:
+
+```typescript
+const scheduler = new Scheduler()
+  .persistToDatabase()
+  .persistTaskSettings();
+```
+
+The `scheduled_task_runs`, `scheduled_task_settings`, and `scheduler_locks` tables are managed by Svelar core migrations.
 
 ## Monitoring Scheduled Tasks
 
 The `ScheduleMonitor` provides a real-time view of all tasks for use in admin dashboards. It reads history from the database so it reflects runs from all scheduler processes:
 
-Run `npx svelar migrate` before using `ScheduleMonitor` in production. Missing `scheduled_task_runs` storage causes task listing, history reads, and manual dashboard-triggered runs to fail instead of returning empty history.
+Run `npx svelar migrate` before using `ScheduleMonitor` in production. Missing `scheduled_task_runs` storage causes task listing, history reads, and manual dashboard-triggered runs to fail instead of returning empty history. Enable/disable calls persist to `scheduled_task_settings` so a web process can control a separate scheduler process after restart.
 
 ```typescript
 import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
@@ -515,8 +525,8 @@ const health = await ScheduleMonitor.getHealth();
 await ScheduleMonitor.runTask('cleanup-expired-sessions');
 
 // Enable/disable tasks
-ScheduleMonitor.disableTask('daily-report');
-ScheduleMonitor.enableTask('daily-report');
+await ScheduleMonitor.disableTask('daily-report');
+await ScheduleMonitor.enableTask('daily-report');
 ```
 
 ## Best Practices

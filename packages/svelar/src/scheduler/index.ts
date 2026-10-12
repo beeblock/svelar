@@ -414,6 +414,7 @@ export class Scheduler {
   private history: TaskResult[] = [];
   private maxHistory = 100;
   private _persistToDb = false;
+  private _persistTaskSettings = false;
   private runtimeStatus: SchedulerRuntimeStatus = {
     running: false,
     lastTickAt: null,
@@ -429,6 +430,15 @@ export class Scheduler {
    */
   persistToDatabase(): this {
     this._persistToDb = true;
+    return this;
+  }
+
+  /**
+   * Read persistent enable/disable task controls from `scheduled_task_settings`.
+   * Use this in the scheduler process when web/admin processes toggle tasks.
+   */
+  persistTaskSettings(): this {
+    this._persistTaskSettings = true;
     return this;
   }
 
@@ -459,7 +469,7 @@ export class Scheduler {
 
     for (const task of this.tasks) {
       const expression = task.getExpression();
-      if (cronMatches(expression, date)) {
+      if (cronMatches(expression, date) && await this.isTaskEnabled(task.name)) {
         const result = await task.executeTask();
         results.push(result);
         await this.addToHistory(result);
@@ -579,6 +589,17 @@ export class Scheduler {
       error: result.error || null,
       ran_at: result.timestamp.toISOString(),
     });
+  }
+
+  private async isTaskEnabled(taskName: string): Promise<boolean> {
+    if (!this._persistTaskSettings) return true;
+
+    const row = await new QueryBuilder('scheduled_task_settings')
+      .select('enabled')
+      .where('task', taskName)
+      .first();
+
+    return row ? !!row.enabled : true;
   }
 
   private async runTick(): Promise<void> {

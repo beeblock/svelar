@@ -619,6 +619,7 @@ describe('New project templates', () => {
 
     expect(pkg.scripts['dev:worker']).toBe('node scripts/svelar-dev-runtime.mjs queue:work --queue=default');
     expect(pkg.scripts['dev:scheduler']).toBe('node scripts/svelar-dev-runtime.mjs schedule:run');
+    expect(NewCommandTemplates.schedulerIndex()).toContain('.persistTaskSettings()');
   });
 
   it('uses npm exec for generated shadcn-svelte installation', () => {

@@ -21,6 +21,7 @@ No changes yet.
 - **Model auditing and changes** — models now retain `getChanges()`, `getPreviousOriginal()`, and `wasChanged()` after save/delete/restore events so observers and audit logs see reliable diffs.
 - **Search sync resilience** — `Search.configure()` now supports `syncMode: 'strict' | 'fail-open'`, queue/outbox-style `syncHandler` hooks, async-local `withoutSyncing()`, normalized index prefixes, and chunked reindexing when model queries support chunking.
 - **Queue registry and dispatch metadata** — queues can now be registered with labels/concurrency metadata, `Queue.dispatch()` returns a job id and accepts `jobId`, `priority`, `deduplicate`, and `metadata`, and `JobMonitor.getHealth()` exposes registered queues and job classes.
+- **Persistent scheduler controls** — Svelar core migrations now include `scheduled_task_settings`; `ScheduleMonitor.enableTask()`/`disableTask()` persist task state, and scheduler processes can call `persistTaskSettings()` to respect web/admin toggles across restarts.
 
 ### Security
 
