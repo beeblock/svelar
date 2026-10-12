@@ -5266,8 +5266,7 @@ export class SendWelcomeEmail extends Job {
 
     const rendered = await EmailTemplates.render('welcome', {
       appName,
-      'user.name': this.name,
-      'user.email': this.email,
+      user: { name: this.name, email: this.email },
       confirmUrl: \`\${appUrl}/verify-email\`,
     });
 
