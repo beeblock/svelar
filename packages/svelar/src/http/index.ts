@@ -794,6 +794,11 @@ export class HttpClient {
     }
 
     if (!retryable) return false;
+    if (this._retry.respectRetryAfter && context.response) {
+      const retryAfter = retryAfterDelay(context.response.headers);
+      // A delay budget must not turn the server's minimum wait into an early retry.
+      if (retryAfter !== null && retryAfter > this._retry.maxDelay) return false;
+    }
     if (this._retry.when) {
       return Boolean(await this._retry.when(context));
     }
@@ -805,7 +810,7 @@ export class HttpClient {
       ? retryAfterDelay(lastError.headers)
       : null;
     if (retryAfter !== null) {
-      return Math.min(retryAfter, this._retry.maxDelay);
+      return retryAfter;
     }
 
     const base = this._retry.backoff === 'exponential'

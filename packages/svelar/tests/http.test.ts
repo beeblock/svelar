@@ -239,6 +239,46 @@ describe('HTTP utilities', () => {
     await expect(Http.baseUrl('https://api.example.com').timeout(1).get('/slow')).rejects.toBeInstanceOf(HttpRequestError);
   });
 
+  it.each([429, 503])('does not retry %s early when Retry-After exceeds the configured wait budget', async (status) => {
+    const sleep = vi.fn(async () => {});
+    globalThis.fetch = vi.fn(async () => new Response('wait', { status, headers: { 'Retry-After': '120' } })) as any;
+    await expect(Http.retry({ times: 2, maxDelay: 30_000, sleep }).get('https://api.example.com/budget'))
+      .rejects.toMatchObject({ status, body: 'wait' });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('honors long Retry-After when the caller permits that wait', async () => {
+    const sleep = vi.fn(async () => {});
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce(new Response('wait', { status: 429, headers: { 'Retry-After': '120' } }))
+      .mockResolvedValueOnce(new Response('ready'));
+    await expect(Http.retry({ times: 1, maxDelay: 150_000, sleep }).get('https://api.example.com/budget'))
+      .resolves.toMatchObject({ data: 'ready', status: 200 });
+    expect(sleep).toHaveBeenCalledWith(120_000);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry early for an HTTP-date Retry-After above the budget', async () => {
+    const sleep = vi.fn(async () => {});
+    const retryAt = new Date(Date.now() + 120_000).toUTCString();
+    globalThis.fetch = vi.fn(async () => new Response('wait', { status: 503, headers: { 'Retry-After': retryAt } })) as any;
+    await expect(Http.retry({ times: 1, maxDelay: 30_000, sleep }).get('https://api.example.com/budget'))
+      .rejects.toMatchObject({ status: 503 });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('retains bounded backoff when the caller explicitly ignores Retry-After', async () => {
+    const sleep = vi.fn(async () => {});
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce(new Response('wait', { status: 429, headers: { 'Retry-After': '120' } }))
+      .mockResolvedValueOnce(new Response('ready'));
+    await expect(Http.retry({ times: 1, delay: 40_000, maxDelay: 30_000, respectRetryAfter: false, sleep }).get('https://api.example.com/budget'))
+      .resolves.toMatchObject({ status: 200 });
+    expect(sleep).toHaveBeenCalledWith(30_000);
+  });
+
   it('supports retry policies for 429 Retry-After and exponential jitter-free backoff', async () => {
     let attempts = 0;
     const delays: number[] = [];
