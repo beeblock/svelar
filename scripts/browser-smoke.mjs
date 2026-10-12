@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { createRequire } from 'node:module';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
+import { createServer as createPortProbe } from 'node:net';
 import { fileURLToPath } from 'node:url';
 
 const args = process.argv.slice(2);
@@ -49,10 +50,11 @@ try {
 let server;
 try {
 	if (!noServer) {
+		await assertPortAvailable(port);
 		server = startServer();
 	}
 
-	await waitForServer(baseUrl);
+	await waitForServer(baseUrl, server);
 	await runBrowserSmoke();
 	console.log(`Browser smoke passed for ${baseUrl}`);
 } finally {
@@ -119,12 +121,15 @@ async function runBrowserSmoke() {
 
 		await goto(page, `${baseUrl}/dashboard/api-keys`);
 		await visible(page.getByRole('heading', { name: /^API Keys$/ }), 'api keys heading');
+		await assertPageWidth(page, 'API keys');
 		const keyName = `Browser smoke ${Date.now()}`;
 		await page.getByRole('button', { name: 'Create New Key' }).click();
+		await visible(page.getByLabel('Key Name', { exact: true }), 'API key name label');
+		await visible(page.getByLabel('Permissions', { exact: true }), 'API key permissions label');
 		await page.locator('input[name="name"]').fill(keyName);
 		await page.locator('input[name="permissions"]').fill('read,write');
 		await page.getByRole('button', { name: 'Create Key' }).click();
-		await visible(page.getByText('API Key Created'), 'api key created alert');
+		await visible(page.getByText('API Key Created', { exact: true }), 'api key created alert');
 		await visible(page.getByText(keyName), 'created api key row');
 		page.once('dialog', (dialog) => dialog.accept());
 		await page.getByRole('button', { name: 'Revoke' }).first().click();
@@ -152,6 +157,7 @@ async function runBrowserSmoke() {
 			await visible(page.getByRole('heading', { name: /^Admin Dashboard$/ }), `admin ${tab} heading`);
 			await visible(page.getByText(expectedText).first(), `admin ${tab} content`);
 		}
+		await runDashboardResponsiveSmoke(page);
 
 		await goto(page, `${baseUrl}/dashboard`);
 		await Promise.all([
@@ -159,6 +165,7 @@ async function runBrowserSmoke() {
 			page.getByRole('button', { name: 'Logout' }).click(),
 		]);
 		await visible(page.getByRole('button', { name: 'Login' }), 'logged-out login button');
+		await runLoginThrottleSmoke(page);
 	} finally {
 		await browser.close();
 	}
@@ -172,25 +179,27 @@ async function runBrowserSmoke() {
 }
 
 async function runAuthPagesBrowserSmoke(page) {
-	await page.setExtraHTTPHeaders({ 'x-forwarded-for': `198.51.100.${Math.floor(Math.random() * 200) + 1}` });
 	await goto(page, `${baseUrl}/login`);
 	await visible(page.getByRole('heading', { name: /^Sign In$/ }), 'login heading');
 	await visible(page.getByRole('link', { name: 'Forgot your password?' }), 'forgot password link');
 	await visible(page.getByRole('link', { name: 'Sign in with a code instead' }), 'otp login link');
 	await visible(page.getByRole('link', { name: 'Create one' }), 'register link');
-
-	for (let attempt = 0; attempt < 5; attempt += 1) {
-		await page.locator('input[name="email"]').fill('admin@svelar.dev');
-		await page.locator('input[name="password"]').fill(`wrong-${attempt}`);
-		await page.getByRole('button', { name: 'Sign In' }).click();
-		await visible(page.getByText('Invalid email or password'), `invalid login message ${attempt + 1}`);
+	await visible(page.getByLabel('Email', { exact: true }), 'login email label');
+	await visible(page.getByLabel('Password', { exact: true }), 'login password label');
+	await page.getByRole('button', { name: 'Sign In' }).click();
+	await visible(page.locator('#email[aria-invalid="true"]'), 'empty email inline validation');
+	await visible(page.locator('#password[aria-invalid="true"]'), 'empty password inline validation');
+	if (await page.getByRole('alert').count() !== 0) {
+		throw new Error('Empty login duplicated inline validation with an alert/toast.');
 	}
 
 	await page.locator('input[name="email"]').fill('admin@svelar.dev');
-	await page.locator('input[name="password"]').fill('still-wrong');
+	await page.locator('input[name="password"]').fill('wrong-password');
 	await page.getByRole('button', { name: 'Sign In' }).click();
-	await visible(page.getByText('Too many attempts. Please try again later.'), 'login throttle message');
-	await page.setExtraHTTPHeaders({});
+	await visible(page.getByText('Invalid email or password'), 'invalid login message');
+	if (await page.locator('input[name="password"]').inputValue() !== '') {
+		throw new Error('Failed login retained the password in the enhanced form.');
+	}
 
 	await goto(page, `${baseUrl}/forgot-password`);
 	await visible(page.getByRole('heading', { name: /^Forgot Password$/ }), 'forgot password heading');
@@ -234,6 +243,67 @@ async function runAuthPagesBrowserSmoke(page) {
 		page.getByRole('button', { name: 'Logout' }).click(),
 	]);
 	await visible(page.getByRole('button', { name: 'Login' }), 'logged out after registration');
+}
+
+async function assertPageWidth(page, name) {
+	const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
+	if (overflow) throw new Error(`${name} overflows the browser viewport.`);
+}
+
+async function runDashboardResponsiveSmoke(page) {
+	const desktop = page.viewportSize();
+	const screenshots = join(appDir, 'docs', 'browser-certification');
+	mkdirSync(screenshots, { recursive: true });
+	try {
+		await page.setViewportSize({ width: 390, height: 844 });
+		for (const tab of ['overview', 'users', 'roles', 'permissions', 'queue', 'scheduler', 'logs']) {
+			await goto(page, `${baseUrl}/admin?tab=${tab}`);
+			await assertPageWidth(page, `Mobile admin ${tab}`);
+			if (tab === 'scheduler') await page.screenshot({ path: join(screenshots, 'admin-scheduler-mobile.png'), fullPage: true });
+			const label = { users: 'User management table', permissions: 'Permissions table' }[tab];
+			if (label) {
+				const region = page.getByRole('region', { name: label });
+				await visible(region, `mobile ${label}`);
+				await region.focus();
+				await page.keyboard.press('ArrowRight');
+				await page.waitForFunction((name) => [...document.querySelectorAll('[role="region"]')].some((node) => node.getAttribute('aria-label') === name && node.scrollLeft > 0), label);
+			}
+		}
+		await goto(page, `${baseUrl}/admin/dashboard?tab=scheduler`);
+		await assertPageWidth(page, 'Mobile operational scheduler');
+		const table = page.getByRole('region', { name: 'Scheduled tasks table' });
+		await visible(table, 'scheduler scroll region');
+		if (!await table.evaluate((node) => node.scrollWidth > node.clientWidth)) {
+			throw new Error('Mobile scheduler does not provide bounded table scrolling.');
+		}
+		await table.focus();
+		await page.keyboard.press('ArrowRight');
+		await page.waitForFunction(() => document.querySelector('[aria-label="Scheduled tasks table"]')?.scrollLeft > 0);
+		await page.screenshot({ path: join(screenshots, 'operational-scheduler-mobile.png'), fullPage: true });
+	} finally {
+		if (desktop) await page.setViewportSize(desktop);
+	}
+}
+
+async function runLoginThrottleSmoke(page) {
+	await goto(page, `${baseUrl}/login`);
+	for (let attempt = 0; attempt < 5; attempt += 1) {
+		await page.locator('input[name="email"]').fill('admin@svelar.dev');
+		await page.locator('input[name="password"]').fill(`wrong-${attempt}`);
+		const response = page.waitForResponse((res) => res.request().method() === 'POST' && new URL(res.url()).pathname === '/login');
+		await page.getByRole('button', { name: 'Sign In' }).click();
+		await response;
+		await visible(page.getByText('Invalid email or password'), `invalid login message ${attempt + 1}`);
+	}
+	await page.locator('input[name="password"]').fill('still-wrong');
+	const response = page.waitForResponse((res) => res.request().method() === 'POST' && new URL(res.url()).pathname === '/login');
+	await page.getByRole('button', { name: 'Sign In' }).click();
+	const throttled = await response;
+	const action = await throttled.json();
+	if (action.type !== 'failure' || action.status !== 429) {
+		throw new Error(`Login throttle did not return a 429 action failure (HTTP ${throttled.status()}, action ${action.type}/${action.status}).`);
+	}
+	await visible(page.getByText('Too many attempts. Please try again later.'), 'login throttle message');
 }
 
 async function goto(page, url) {
@@ -370,12 +440,24 @@ async function runSseBrowserSmoke(page, secret) {
 	}
 }
 
+async function assertPortAvailable(port) {
+	await new Promise((resolve, reject) => {
+		const probe = createPortProbe();
+		probe.once('error', (error) => reject(new Error(`Browser smoke port ${port} is unavailable: ${error.message}. No existing server was stopped.`)));
+		probe.listen(port, '127.0.0.1', () => probe.close((error) => error ? reject(error) : resolve()));
+	});
+}
+
 function startServer() {
-	const child = spawn('npm', ['run', serverScript], {
+	const serverArgs = ['run', serverScript];
+	if (serverScript === 'smoke:serve') serverArgs.push('--', '--port', String(port), '--strictPort');
+	const child = spawn('npm', serverArgs, {
 		cwd: appDir,
 		env: {
 			...appEnv,
 			...process.env,
+			AUTH_OTP_ENABLED: 'true',
+			APP_URL: baseUrl,
 			HOST: '127.0.0.1',
 			PORT: String(port),
 			ORIGIN: baseUrl,
@@ -433,11 +515,12 @@ function loadDotEnv(dir) {
 	return env;
 }
 
-async function waitForServer(url) {
+async function waitForServer(url, child) {
 	const deadline = Date.now() + 60_000;
 	while (Date.now() < deadline) {
+		if (child && (child.exitCode !== null || child.signalCode !== null)) fail('Test server exited before becoming ready.');
 		try {
-			const response = await fetch(url);
+			const response = await fetch(url, { signal: AbortSignal.timeout(2000) });
 			if (response.status < 500) return;
 		} catch {
 			// Keep waiting while Vite starts.
@@ -461,6 +544,5 @@ function valueFor(name) {
 }
 
 function fail(message) {
-	console.error(`\nBrowser smoke failed: ${message}`);
-	process.exit(1);
+	throw new Error(`Browser smoke failed: ${message}`);
 }
