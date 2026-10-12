@@ -51,6 +51,12 @@ export interface SessionConfig {
   cookieName?: string;
   /** Session lifetime in seconds (default: 7200 = 2 hours) */
   lifetime?: number;
+  /** Absolute lifetime in seconds. When exceeded, the session is destroyed even if active. */
+  absoluteLifetime?: number;
+  /** Extend the store TTL only for real user activity instead of polling/SSE. */
+  touchOnActivity?: boolean;
+  /** Minimum seconds between activity touches (default: 300 = 5 minutes) */
+  touchThrottle?: number;
   /** Secret for signing session IDs */
   secret?: string;
   /** Cookie path */
@@ -477,13 +483,19 @@ export class RedisSessionStore implements SessionStore {
 import { Middleware, type MiddlewareContext, type NextFunction } from '../middleware/Middleware.js';
 
 export class SessionMiddleware extends Middleware {
-  private config: Required<Omit<SessionConfig, 'store'>> & { store: SessionStore };
+  private config: Required<Omit<SessionConfig, 'store' | 'absoluteLifetime'>> & {
+    store: SessionStore;
+    absoluteLifetime?: number;
+  };
 
   constructor(userConfig: SessionConfig) {
     super();
     this.config = {
       cookieName: 'svelar_session',
       lifetime: 7200,
+      absoluteLifetime: undefined,
+      touchOnActivity: false,
+      touchThrottle: 300,
       secret: '',
       path: '/',
       domain: '',
@@ -509,6 +521,11 @@ export class SessionMiddleware extends Middleware {
       if (verified) {
         sessionData = await this.config.store.read(verified);
         sessionId = verified;
+        if (sessionData && this.isAbsoluteExpired(sessionData)) {
+          await this.config.store.destroy(verified);
+          sessionData = null;
+          sessionId = null;
+        }
       } else {
         sessionId = null;
       }
@@ -530,8 +547,14 @@ export class SessionMiddleware extends Middleware {
       await this.config.store.destroy(invalidatedId);
     }
 
-    // Persist session if modified
-    if (session.isDirty()) {
+    const shouldTouch = this.shouldTouchSession(ctx, sessionData, session);
+
+    // Persist session if modified or if configured activity should slide the TTL.
+    if (session.isDirty() || shouldTouch) {
+      this.ensureSessionTimestamps(session, sessionData);
+      if (shouldTouch) {
+        this.touchSession(session);
+      }
       await this.config.store.write(session.id, session.toPersist(), this.config.lifetime);
     }
 
@@ -593,5 +616,50 @@ export class SessionMiddleware extends Middleware {
     if (this.config.httpOnly) parts.push('HttpOnly');
     parts.push(`SameSite=${this.config.sameSite}`);
     return parts.join('; ');
+  }
+
+  private ensureSessionTimestamps(session: Session, existingData: SessionData | null): void {
+    if (existingData) return;
+    const now = Date.now();
+    session.set('_svelar_created_at', now);
+    session.set('_svelar_last_activity_at', now);
+    session.set('_svelar_last_touched_at', now);
+  }
+
+  private isAbsoluteExpired(data: SessionData): boolean {
+    if (!this.config.absoluteLifetime) return false;
+    const createdAt = Number(data._svelar_created_at ?? Date.now());
+    return Date.now() - createdAt > this.config.absoluteLifetime * 1000;
+  }
+
+  private shouldTouchSession(ctx: MiddlewareContext, existingData: SessionData | null, session: Session): boolean {
+    if (!this.config.touchOnActivity || !existingData) return false;
+    if (!this.isActivityRequest(ctx.event.request)) return false;
+
+    const lastTouchedAt = Number(session.get('_svelar_last_touched_at', 0));
+    return Date.now() - lastTouchedAt >= this.config.touchThrottle * 1000;
+  }
+
+  private touchSession(session: Session): void {
+    const now = Date.now();
+    if (!session.has('_svelar_created_at')) {
+      session.set('_svelar_created_at', now);
+    }
+    session.set('_svelar_last_activity_at', now);
+    session.set('_svelar_last_touched_at', now);
+  }
+
+  private isActivityRequest(request: Request): boolean {
+    const explicit = request.headers.get('x-svelar-session-activity')?.toLowerCase();
+    if (explicit === 'true' || explicit === '1') return true;
+    if (explicit === 'false' || explicit === '0') return false;
+
+    const method = request.method.toUpperCase();
+    const accept = request.headers.get('accept')?.toLowerCase() ?? '';
+    if (accept.includes('text/event-stream')) return false;
+
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) return true;
+    if (request.headers.get('sec-fetch-mode') === 'navigate') return true;
+    return method === 'GET' && accept.includes('text/html');
   }
 }

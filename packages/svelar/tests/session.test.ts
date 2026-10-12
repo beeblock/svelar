@@ -580,6 +580,121 @@ describe.sequential('DatabaseSessionStore', () => {
   });
 });
 
+describe('SessionMiddleware activity renewal', () => {
+  const secret = 'activity-session-secret';
+
+  function signed(id: string): string {
+    return `${id}.${createHmac('sha256', secret).update(id).digest('base64url')}`;
+  }
+
+  function contextFor(request: Request): any {
+    return {
+      event: {
+        request,
+        locals: {},
+      },
+      locals: {},
+      params: {},
+    };
+  }
+
+  it('slides the store TTL for real user activity without requiring session mutation', async () => {
+    const store = new MemorySessionStore();
+    const id = Session.generateId();
+    const old = Date.now() - 10 * 60 * 1000;
+    await store.write(id, {
+      user_id: 1,
+      _svelar_created_at: old,
+      _svelar_last_activity_at: old,
+      _svelar_last_touched_at: old,
+    }, 3600);
+
+    const middleware = new SessionMiddleware({
+      store,
+      secret,
+      lifetime: 3600,
+      touchOnActivity: true,
+      touchThrottle: 300,
+    });
+    const ctx = contextFor(new Request('http://localhost/api/profile', {
+      method: 'POST',
+      headers: { Cookie: `svelar_session=${encodeURIComponent(signed(id))}` },
+    }));
+
+    await middleware.handle(ctx, async () => new Response('ok'));
+
+    const persisted = await store.read(id);
+    expect(persisted?._svelar_last_activity_at).toBeGreaterThan(old);
+    expect(persisted?._svelar_last_touched_at).toBeGreaterThan(old);
+    expect(persisted?.user_id).toBe(1);
+  });
+
+  it('does not keep sessions alive for SSE or polling-style requests', async () => {
+    const store = new MemorySessionStore();
+    const id = Session.generateId();
+    const old = Date.now() - 10 * 60 * 1000;
+    await store.write(id, {
+      user_id: 1,
+      _svelar_created_at: old,
+      _svelar_last_activity_at: old,
+      _svelar_last_touched_at: old,
+    }, 3600);
+
+    const middleware = new SessionMiddleware({
+      store,
+      secret,
+      lifetime: 3600,
+      touchOnActivity: true,
+      touchThrottle: 300,
+    });
+    const ctx = contextFor(new Request('http://localhost/api/events', {
+      headers: {
+        Cookie: `svelar_session=${encodeURIComponent(signed(id))}`,
+        Accept: 'text/event-stream',
+      },
+    }));
+
+    await middleware.handle(ctx, async () => new Response('ok'));
+
+    const persisted = await store.read(id);
+    expect(persisted?._svelar_last_activity_at).toBe(old);
+    expect(persisted?._svelar_last_touched_at).toBe(old);
+  });
+
+  it('destroys sessions that exceed absolute lifetime even when activity is present', async () => {
+    const store = new MemorySessionStore();
+    const id = Session.generateId();
+    const old = Date.now() - 2 * 60 * 60 * 1000;
+    await store.write(id, {
+      user_id: 1,
+      _svelar_created_at: old,
+      _svelar_last_activity_at: old,
+      _svelar_last_touched_at: old,
+    }, 3600);
+
+    const middleware = new SessionMiddleware({
+      store,
+      secret,
+      lifetime: 3600,
+      absoluteLifetime: 3600,
+      touchOnActivity: true,
+    });
+    const ctx = contextFor(new Request('http://localhost/dashboard', {
+      method: 'POST',
+      headers: { Cookie: `svelar_session=${encodeURIComponent(signed(id))}` },
+    }));
+
+    await middleware.handle(ctx, async () => {
+      ctx.event.locals.session.set('fresh', true);
+      return new Response('ok');
+    });
+
+    expect(ctx.event.locals.session.id).not.toBe(id);
+    await expect(store.read(id)).resolves.toBeNull();
+    await expect(store.read(ctx.event.locals.session.id)).resolves.toMatchObject({ fresh: true });
+  });
+});
+
 describe('FileSessionStore', () => {
   let root: string;
 

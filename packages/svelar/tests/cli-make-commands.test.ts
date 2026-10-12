@@ -745,6 +745,8 @@ describe('New project templates', () => {
 
     expect(hooks).toContain("import { createSvelarApp } from '@beeblock/svelar/hooks'");
     expect(hooks).toContain('secret: process.env.APP_KEY');
+    expect(hooks).toContain('sessionTouchOnActivity: process.env.SESSION_TOUCH_ON_ACTIVITY ===');
+    expect(hooks).toContain('sessionAbsoluteLifetime: process.env.SESSION_ABSOLUTE_LIFETIME');
     expect(hooks).toContain("process.env.RATE_LIMIT_STORE === 'cache'");
     expect(hooks).toContain("csrfExcludePaths: ['/api/webhooks', '/api/internal/']");
     expect(hooks).not.toContain('$env/dynamic/private');

@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Logs and error correlation** — `createSvelarApp()` now creates request/correlation IDs for the request lifecycle, `Log` enriches entries with request/job/tenant/actor context, sensitive log context keys are redacted before reaching channels or `LogViewer`, and `ErrorHandler` logs unexpected failures with safe incident IDs for production responses.
 - **CLI certification coverage** — built-in CLI commands now have a single registry shared by the binary and tests; release smoke checks validate every generated app `npx svelar <command> --help` path and the existing-app `svelar update` workflow.
 - **Incoming webhook inbox** — `@beeblock/svelar/webhooks` now includes `WebhookInbox` for durable incoming webhook capture, HMAC verification, idempotent deduplication, status transitions, replay, and database-backed operational queries.
+- **Activity-based sliding sessions** — session middleware can now renew store TTL only on real navigation/mutation activity, ignore SSE/polling, throttle touches, and enforce an absolute lifetime cap.
 
 ## [0.8.0] - 2026-10-12
 

@@ -76,6 +76,15 @@ export interface SvelarAppConfig {
   /** Session lifetime in seconds (default: 86400 = 24h) */
   sessionLifetime?: number;
 
+  /** Absolute session lifetime in seconds. Active sessions cannot exceed this age. */
+  sessionAbsoluteLifetime?: number;
+
+  /** Extend session TTL only on real user activity (navigation/mutation), not polling/SSE. */
+  sessionTouchOnActivity?: boolean;
+
+  /** Minimum seconds between activity touches (default: 300). */
+  sessionTouchThrottle?: number;
+
   /** Rate limit: max requests per window (default: 100) */
   rateLimit?: number;
 
@@ -166,6 +175,9 @@ export function createSvelarApp(appConfig: SvelarAppConfig = {}) {
     secret = process.env.APP_KEY ?? (() => { throw new Error('APP_KEY is not set. Set it in your environment or pass `secret` to createSvelarApp() — e.g. secret: process.env.APP_KEY.'); })(),
     sessionStore,
     sessionLifetime = 86400,
+    sessionAbsoluteLifetime,
+    sessionTouchOnActivity = false,
+    sessionTouchThrottle = 300,
     rateLimit = 100,
     rateLimitWindow = 60_000,
     rateLimitStore = 'memory',
@@ -199,6 +211,9 @@ export function createSvelarApp(appConfig: SvelarAppConfig = {}) {
       store: sessionStore ?? new DatabaseSessionStore(),
       secret,
       lifetime: sessionLifetime,
+      absoluteLifetime: sessionAbsoluteLifetime,
+      touchOnActivity: sessionTouchOnActivity,
+      touchThrottle: sessionTouchThrottle,
     }),
   ];
 

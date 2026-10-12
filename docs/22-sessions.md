@@ -13,6 +13,10 @@ import { DatabaseSessionStore } from '@beeblock/svelar/session';
 export const { handle, handleError } = createSvelarApp({
   auth,
   sessionStore: new DatabaseSessionStore(),  // persistent sessions
+  sessionLifetime: 60 * 60 * 24,             // idle lifetime
+  sessionAbsoluteLifetime: 60 * 60 * 24 * 30, // hard maximum age
+  sessionTouchOnActivity: true,              // do not renew on polling/SSE
+  sessionTouchThrottle: 300,                 // touch at most every 5 minutes
 });
 ```
 
@@ -27,11 +31,20 @@ export const handle = createSvelarHooks({
       store: new DatabaseSessionStore(),  // requires the sessions migration
       secret: process.env.APP_KEY!,
       lifetime: 60 * 60 * 24,  // 24 hours
+      absoluteLifetime: 60 * 60 * 24 * 30,
+      touchOnActivity: true,
+      touchThrottle: 300,
       name: 'svelar_session',   // Cookie name
     }),
   ],
 });
 ```
+
+### Sliding Sessions
+
+Set `touchOnActivity: true` when you want sessions to slide based on real user activity. Svelar renews the store TTL for mutations and document navigations, but ignores SSE (`Accept: text/event-stream`) and polling-style requests unless they explicitly send `X-Svelar-Session-Activity: true`.
+
+Use `absoluteLifetime` for a hard cap that activity cannot extend. `touchThrottle` prevents every click or tab from writing the session store; the default is 300 seconds.
 
 ### Using Sessions
 

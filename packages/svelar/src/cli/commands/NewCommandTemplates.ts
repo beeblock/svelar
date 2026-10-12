@@ -890,6 +890,10 @@ export const { handle, handleError } = createSvelarApp({
   auth,
   secret: process.env.APP_KEY,
   sessionStore: new DatabaseSessionStore(),
+  sessionLifetime: Number(process.env.SESSION_LIFETIME ?? 86400),
+  sessionAbsoluteLifetime: process.env.SESSION_ABSOLUTE_LIFETIME ? Number(process.env.SESSION_ABSOLUTE_LIFETIME) : undefined,
+  sessionTouchOnActivity: process.env.SESSION_TOUCH_ON_ACTIVITY === 'true',
+  sessionTouchThrottle: Number(process.env.SESSION_TOUCH_THROTTLE ?? 300),
   rateLimitStore: process.env.RATE_LIMIT_STORE === 'cache' ? 'cache' : 'memory',
   rateLimitCacheStore: process.env.RATE_LIMIT_CACHE_STORE || process.env.CACHE_DRIVER,
   authThrottleStore: process.env.RATE_LIMIT_STORE === 'cache' ? 'cache' : 'memory',
@@ -908,6 +912,16 @@ APP_KEY=change-me-to-a-random-string
 APP_NAME=My App
 # APP_URL: Full public URL of your app. Used for CORS, redirects, and link generation.
 APP_URL=http://localhost:5173
+
+# ── Sessions ──────────────────────────────────────────────
+# SESSION_LIFETIME: Idle session lifetime in seconds.
+# SESSION_LIFETIME=86400
+# SESSION_ABSOLUTE_LIFETIME: Optional hard maximum lifetime in seconds, regardless of activity.
+# SESSION_ABSOLUTE_LIFETIME=
+# SESSION_TOUCH_ON_ACTIVITY: Extend session TTL only for real navigation/mutations, not polling/SSE.
+# SESSION_TOUCH_ON_ACTIVITY=true
+# SESSION_TOUCH_THROTTLE: Minimum seconds between session TTL touches.
+# SESSION_TOUCH_THROTTLE=300
 
 # ── Internal ──────────────────────────────────────────────
 # INTERNAL_SECRET: Shared secret for internal HTTP bridge (scheduler -> web server).
