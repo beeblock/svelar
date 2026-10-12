@@ -24,6 +24,7 @@
  */
 
 import { QueryBuilder } from './QueryBuilder.js';
+import { Connection } from '../database/Connection.js';
 import { HasOne, HasMany, BelongsTo, BelongsToMany } from './Relationship.js';
 import { type ModelObserver, type ModelEventName, MODEL_EVENTS } from './Observer.js';
 import { Event } from '../events/index.js';
@@ -33,6 +34,13 @@ import { ApplicationContext } from '../support/Context.js';
 // ── Types ──────────────────────────────────────────────────
 
 export type ModelAttributes = Record<string, any>;
+
+/** @internal Persistence context supplied by model-backed query helpers. */
+interface ModelCreateOptions<T> {
+  query?: QueryBuilder<T>;
+  tenantId?: string | number;
+  recoverInsert?: (error: unknown) => Promise<T>;
+}
 
 export interface ModelHooks {
   creating?: (model: Model) => Promise<void> | void;
@@ -257,13 +265,18 @@ export class Model {
 
   static async create<T extends Model>(
     this: new () => T,
-    attributes: ModelAttributes
+    attributes: ModelAttributes,
+    options: ModelCreateOptions<T> = {},
   ): Promise<T> {
     const instance = new this();
     const ctor = this as unknown as typeof Model;
     instance.fill(attributes);
     instance.populateUniqueIds();
-    instance.applyTenantAttributes();
+    if (options.query) {
+      if (options.tenantId !== undefined) instance.setAttribute(ctor.tenantColumn, options.tenantId);
+    } else {
+      instance.applyTenantAttributes();
+    }
 
     // Run creating hook
     await instance.fireHook('creating');
@@ -277,8 +290,17 @@ export class Model {
     }
 
     const data = instance.getInsertableAttributes();
-    const qb = new QueryBuilder(ctor.table, this, ctor.connection);
-    const id = await qb.insertGetId(data, ctor.primaryKey);
+    const qb = options.query ?? new QueryBuilder(ctor.table, this, ctor.connection);
+    let id: any;
+    try {
+      id = await Connection.withSavepointIfNeeded(
+        () => qb.insertGetId(data, ctor.primaryKey),
+        options.query ? options.query.getConnectionName() : ctor.connection,
+      );
+    } catch (error) {
+      if (options.recoverInsert) return options.recoverInsert(error);
+      throw error;
+    }
 
     if (ctor.incrementing && id) {
       instance.setAttribute(ctor.primaryKey, id);
@@ -296,7 +318,7 @@ export class Model {
 
   // ── Instance Methods ─────────────────────────────────────
 
-  async save(): Promise<void> {
+  async save(query?: QueryBuilder): Promise<void> {
     const ctor = this.constructor as typeof Model;
 
     if (this.exists) {
@@ -309,20 +331,26 @@ export class Model {
       }
 
       const dirty = this.getDirty();
-      this.captureChanges();
       if (Object.keys(dirty).length > 0) {
-        const pk = this.getAttribute(ctor.primaryKey);
-        const qb = new QueryBuilder(ctor.table, this.constructor, ctor.connection);
-        await qb.where(ctor.primaryKey, pk).update(dirty);
+        const pk = this.getOriginal(ctor.primaryKey) ?? this.getAttribute(ctor.primaryKey);
+        const qb = query?.clone() ?? new QueryBuilder(ctor.table, this.constructor, ctor.connection);
+        qb.where(ctor.primaryKey, pk);
+        const affected = await qb.update(dirty);
+        if (query && affected === 0 && !await qb.clone().exists()) {
+          throw new Error(`Model "${ctor.name}" is no longer available in the query scope.`);
+        }
+      } else if (query && !await query.clone().where(ctor.primaryKey, this.getOriginal(ctor.primaryKey)).exists()) {
+        throw new Error(`Model "${ctor.name}" is no longer available in the query scope.`);
       }
 
+      this.captureChanges();
       await this.fireHook('updated');
       await this.fireHook('saved');
       this.syncOriginal();
     } else {
       // Insert (delegate to static create)
       this.populateUniqueIds();
-      this.applyTenantAttributes();
+      if (!query) this.applyTenantAttributes();
 
       await this.fireHook('creating');
       await this.fireHook('saving');
@@ -336,7 +364,7 @@ export class Model {
       }
 
       const data = this.getInsertableAttributes();
-      const qb = new QueryBuilder(ctor.table, this.constructor, ctor.connection);
+      const qb = query?.clone() ?? new QueryBuilder(ctor.table, this.constructor, ctor.connection);
       const id = await qb.insertGetId(data, ctor.primaryKey);
 
       if (ctor.incrementing && id) {

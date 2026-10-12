@@ -102,6 +102,11 @@ export class QueryBuilder<TModel = any> {
     this.applyTenantScope();
   }
 
+  /** @internal Preserve the connection when delegating model persistence. */
+  getConnectionName(): string | undefined {
+    return this.connectionName;
+  }
+
   private get softDeletes(): boolean {
     return Boolean(this.modelClass?.softDeletes);
   }
@@ -747,35 +752,126 @@ export class QueryBuilder<TModel = any> {
   }
 
   async firstOrCreate(search: Record<string, any>, create: Record<string, any> = {}): Promise<TModel> {
-    for (const [key, val] of Object.entries(search)) {
-      this.where(key, val);
-    }
-    const existing = await this.first();
-    if (existing) return existing;
-
-    const data = { ...search, ...create };
-    const id = await new QueryBuilder<TModel>(this.tableName, this.modelClass, this.connectionName).insertGetId(data);
-    return new QueryBuilder<TModel>(this.tableName, this.modelClass, this.connectionName).findOrFail(id) as Promise<TModel>;
+    return (await this.findOrCreate(search, create)).model;
   }
 
   async updateOrCreate(search: Record<string, any>, update: Record<string, any>): Promise<TModel> {
-    const query = new QueryBuilder<TModel>(this.tableName, this.modelClass, this.connectionName);
-    for (const [key, val] of Object.entries(search)) {
-      query.where(key, val);
-    }
-    const existing = await query.first();
+    this.assertTenantAttributes(update);
+    const { model, created } = await this.findOrCreate(search, update);
+    if (created) return model;
 
-    if (existing) {
-      await new QueryBuilder<TModel>(this.tableName, this.modelClass, this.connectionName)
-        .where((this.modelClass?.primaryKey ?? 'id'), (existing as any)[(this.modelClass?.primaryKey ?? 'id')])
-        .update(update);
-      return new QueryBuilder<TModel>(this.tableName, this.modelClass, this.connectionName)
-        .findOrFail((existing as any)[(this.modelClass?.primaryKey ?? 'id')]) as Promise<TModel>;
+    if (this.modelClass) {
+      (model as any).fill(update);
+      await (model as any).save(this.cloneForHelper());
+      return model;
     }
 
-    const data = { ...search, ...update };
-    const id = await new QueryBuilder<TModel>(this.tableName, this.modelClass, this.connectionName).insertGetId(data);
-    return new QueryBuilder<TModel>(this.tableName, this.modelClass, this.connectionName).findOrFail(id) as Promise<TModel>;
+    if (Object.keys(update).length === 0) return model;
+    const id = (model as any).id;
+    if (id === undefined || id === null) throw new Error('Raw-table updates require an id column.');
+    const target = this.cloneForHelper().where('id', id);
+    const affected = await target.update(update);
+    if (affected === 0 && !await target.clone().exists()) {
+      throw new Error('Record is no longer available in the query scope.');
+    }
+    return new QueryBuilder<TModel>(this.tableName, undefined, this.connectionName)
+      .findOrFail(update.id ?? id);
+  }
+
+  private async findOrCreate(
+    search: Record<string, any>,
+    create: Record<string, any>,
+  ): Promise<{ model: TModel; created: boolean }> {
+    this.ensureTenantScope();
+    this.assertTenantAttributes(search);
+    this.assertTenantAttributes(create);
+    if (this.joinClauses.length || this.groupByColumns.length || this.havingClauses.length ||
+        this.cteClauses.length || this.unionClauses.length ||
+        this.tableReferenceForColumn() !== this.tableName ||
+        (this.modelClass && this.tableName !== this.modelClass.table)) {
+      throw new Error('Find-or-create helpers require a single, unaliased model/table query.');
+    }
+
+    const query = this.cloneForHelper().select('*');
+    query.rawSelectColumns.clear();
+    query._selectBindings = undefined;
+    for (const [key, value] of Object.entries(search)) {
+      if (value === undefined) throw new Error(`Search attribute "${key}" must not be undefined.`);
+      if (value === null) query.whereNull(key);
+      else query.where(key, this.modelClass?.casts?.[key] === 'json' && typeof value !== 'string'
+        ? JSON.stringify(value) : value);
+    }
+    const existing = await query.clone().first();
+    if (existing) return { model: existing, created: false };
+
+    if (!this.modelClass) {
+      await new QueryBuilder(this.tableName, undefined, this.connectionName).select('id').limit(0).get();
+    }
+
+    let created = true;
+    const recoverInsert = async (error: unknown): Promise<TModel> => {
+      const code = (error as any)?.code;
+      const nativeSqliteUnique = code === 'ERR_SQLITE_ERROR' && [1555, 2067].includes((error as any)?.errcode);
+      if (!nativeSqliteUnique && !['23505', 'ER_DUP_ENTRY', 'SQLITE_CONSTRAINT_UNIQUE', 'SQLITE_CONSTRAINT_PRIMARYKEY'].includes(code)) {
+        throw error;
+      }
+      const winner = await query.clone().first();
+      if (!winner) throw error;
+      created = false;
+      return winner;
+    };
+
+    const data = { ...search, ...create };
+    let model: TModel;
+    if (this.modelClass) {
+      const tenantData = this.applyTenantInsertAttributes(data);
+      const tenantId = this.whereClauses.find((clause) => clause.tenantScope)?.value ?? tenantData[this.tenantColumn];
+      if (this.tenantScoped && this.tenantScopeDisabled && this.requireTenantContext &&
+          (tenantId === undefined || tenantId === null || tenantId === '')) {
+        throw new Error('Unscoped tenant model creation requires an explicit tenant attribute.');
+      }
+      model = await this.modelClass.create(data, {
+        query: this.clone(),
+        tenantId: this.tenantScoped ? tenantId : undefined,
+        recoverInsert,
+      });
+    } else {
+      let id: any;
+      try {
+        const generatedId = await Connection.withSavepointIfNeeded(
+          () => this.clone().insertGetId(data), this.connectionName,
+        );
+        id = data.id ?? generatedId;
+      } catch (error) {
+        model = await recoverInsert(error);
+        return { model, created };
+      }
+      model = await new QueryBuilder<TModel>(this.tableName, undefined, this.connectionName).findOrFail(id);
+    }
+    return { model, created };
+  }
+
+  private assertTenantAttributes(attributes: Record<string, any>): void {
+    this.ensureTenantScope();
+    if (!this.tenantScoped || this.tenantScopeDisabled || !(this.tenantColumn in attributes)) return;
+    const scope = this.whereClauses.find((clause) => clause.tenantScope);
+    const tenant = attributes[this.tenantColumn];
+    if (scope && ((typeof tenant !== 'string' && typeof tenant !== 'number') || String(tenant) !== String(scope.value))) {
+      throw new Error(`Cannot write a different tenant through model "${this.modelClass.name}".`);
+    }
+  }
+
+  private cloneForHelper(): QueryBuilder<TModel> {
+    const query = this.clone();
+    const scopes = query.whereClauses.filter((clause) => clause.tenantScope || clause.softDeleteScope);
+    const predicates = query.whereClauses.filter((clause) => !clause.tenantScope && !clause.softDeleteScope);
+    if (predicates.length) {
+      const { whereSQL, whereBindings } = query.compileWhereClauses(predicates);
+      query.whereClauses = [...scopes, {
+        type: 'raw', raw: `(${whereSQL.slice('WHERE '.length)})`, values: whereBindings, boolean: 'AND',
+      }];
+    }
+    return query;
   }
 
   whereColumn(first: string, operatorOrSecond: string, second?: string): this {
@@ -897,7 +993,7 @@ export class QueryBuilder<TModel = any> {
     const values = Object.values(data);
     const placeholders = values.map(() => '?').join(', ');
 
-    const sql = `INSERT INTO ${this.quoteIdentifier(this.tableName, 'Table name')} (${columns.map((column) => this.quoteIdentifier(column, 'Column name')).join(', ')}) VALUES (${placeholders})${this.buildReturning()}`;
+    const sql = `${this.buildInsertSQL(columns, placeholders)}${this.buildReturning()}`;
     return Connection.raw(sql, values, this.connectionName);
   }
 
@@ -908,7 +1004,7 @@ export class QueryBuilder<TModel = any> {
     const values = Object.values(data);
     const placeholders = values.map(() => '?').join(', ');
 
-    let sql = `INSERT INTO ${this.quoteIdentifier(this.tableName, 'Table name')} (${columns.map((column) => this.quoteIdentifier(column, 'Column name')).join(', ')}) VALUES (${placeholders})`;
+    let sql = this.buildInsertSQL(columns, placeholders);
 
     if (driver === 'postgres') {
       sql += ` RETURNING ${this.quoteIdentifier(primaryKey, 'Primary key')}`;
@@ -916,23 +1012,33 @@ export class QueryBuilder<TModel = any> {
       return rows[0]?.[primaryKey] as TId;
     }
 
-    await Connection.raw(sql, values, this.connectionName);
+    const result = await Connection.raw(sql, values, this.connectionName);
+    if (data[primaryKey] !== undefined && data[primaryKey] !== null) return data[primaryKey] as TId;
 
     if (driver === 'sqlite') {
-      const rows = await Connection.raw('SELECT last_insert_rowid() as id', [], this.connectionName);
-      return rows[0]?.id as TId;
+      return result.lastInsertRowid as TId;
     }
 
     if (driver === 'mysql') {
-      const rows = await Connection.raw('SELECT LAST_INSERT_ID() as id', [], this.connectionName);
-      return rows[0]?.id as TId;
+      return result.insertId as TId;
     }
 
     return 0 as TId;
   }
 
+  private buildInsertSQL(columns: string[], placeholders: string): string {
+    const table = this.quoteIdentifier(this.tableName, 'Table name');
+    if (columns.length === 0) {
+      return this.currentDriver() === 'mysql'
+        ? `INSERT INTO ${table} () VALUES ()`
+        : `INSERT INTO ${table} DEFAULT VALUES`;
+    }
+    return `INSERT INTO ${table} (${columns.map((column) => this.quoteIdentifier(column, 'Column name')).join(', ')}) VALUES (${placeholders})`;
+  }
+
   async update(data: Record<string, any>): Promise<number> {
     this.ensureTenantScope();
+    this.assertTenantAttributes(data);
     const columns = Object.keys(data);
     const values = Object.values(data);
     const setClause = columns.map((c) => `${this.quoteIdentifier(c, 'Column name')} = ?`).join(', ');
@@ -1130,15 +1236,29 @@ export class QueryBuilder<TModel = any> {
   // ── PRIVATE ──────────────────────────────────────────────
 
   private buildWhere(): { whereSQL: string; whereBindings: any[] } {
-    if (this.whereClauses.length === 0) {
+    const scopes = this.whereClauses.filter((clause) => clause.tenantScope || clause.softDeleteScope);
+    const predicates = this.whereClauses.filter((clause) => !clause.tenantScope && !clause.softDeleteScope);
+    if (scopes.length && predicates.length) {
+      const scoped = this.compileWhereClauses(scopes);
+      const filtered = this.compileWhereClauses(predicates);
+      return {
+        whereSQL: `${scoped.whereSQL} AND (${filtered.whereSQL.slice('WHERE '.length)})`,
+        whereBindings: [...scoped.whereBindings, ...filtered.whereBindings],
+      };
+    }
+    return this.compileWhereClauses(this.whereClauses);
+  }
+
+  private compileWhereClauses(clauses: WhereClause[]): { whereSQL: string; whereBindings: any[] } {
+    if (clauses.length === 0) {
       return { whereSQL: '', whereBindings: [] };
     }
 
     const parts: string[] = [];
     const bindings: any[] = [];
 
-    for (let i = 0; i < this.whereClauses.length; i++) {
-      const clause = this.whereClauses[i];
+    for (let i = 0; i < clauses.length; i++) {
+      const clause = clauses[i];
       const prefix = i === 0 ? 'WHERE' : clause.boolean;
 
       switch (clause.type) {
@@ -1206,11 +1326,13 @@ export class QueryBuilder<TModel = any> {
   }
 
   private applyTenantInsertAttributes(data: Record<string, any>): Record<string, any> {
+    this.assertTenantAttributes(data);
     if (!this.tenantScoped || this.tenantScopeDisabled || this.tenantColumn in data) {
       return data;
     }
 
-    const teamId = ApplicationContext.get<string | number | null>('teamId');
+    const teamId = this.whereClauses.find((clause) => clause.tenantScope)?.value ??
+      ApplicationContext.get<string | number | null>('teamId');
     if (teamId === undefined || teamId === null || teamId === '') {
       if (!this.requireTenantContext) return data;
       throw new Error(

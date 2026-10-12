@@ -343,6 +343,22 @@ class ConnectionManager {
     }
   }
 
+  /** @internal Isolate recoverable PostgreSQL statements within an existing transaction. */
+  async withSavepointIfNeeded<T>(callback: () => Promise<T>, connectionName?: string): Promise<T> {
+    const connName = connectionName ?? this.defaultName;
+    if (this.getDriver(connName) !== 'postgres') return callback();
+
+    const current = this.transactionClients.getStore();
+    const transactionClient = current?.get(connName);
+    if (!transactionClient) return callback();
+
+    return transactionClient.savepoint(async (savepointClient: any) => {
+      const scoped = new Map(current);
+      scoped.set(connName, savepointClient);
+      return this.transactionClients.run(scoped, callback);
+    });
+  }
+
   // ── Private ──────────────────────────────────────────────
 
   private async createConnection(config: DatabaseConfig): Promise<ActiveConnection> {

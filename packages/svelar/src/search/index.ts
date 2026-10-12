@@ -503,8 +503,8 @@ export function Searchable<TBase extends Constructor>(
 
   const origCreate = (SearchableMixin as any).create;
   if (origCreate) {
-    (SearchableMixin as any).create = async function (data: any) {
-      const result = await origCreate.call(this, data);
+    (SearchableMixin as any).create = async function (...args: any[]) {
+      const result = await origCreate.apply(this, args);
       if (!Search.isSyncingDisabled() && result) {
         await result.searchable();
       }
