@@ -1,5 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { Broadcast } from '../src/broadcasting/index.js';
+import { Broadcast, type BroadcastBackplane, type BroadcastBackplaneMessage } from '../src/broadcasting/index.js';
+
+class FakeBackplane implements BroadcastBackplane {
+  published: BroadcastBackplaneMessage[] = [];
+  handler: ((message: BroadcastBackplaneMessage) => void | Promise<void>) | null = null;
+
+  async publish(message: BroadcastBackplaneMessage): Promise<void> {
+    this.published.push(message);
+  }
+
+  async subscribe(handler: (message: BroadcastBackplaneMessage) => void | Promise<void>): Promise<void> {
+    this.handler = handler;
+  }
+
+  async emit(message: BroadcastBackplaneMessage): Promise<void> {
+    await this.handler?.(message);
+  }
+}
 
 async function readChunk(response: Response): Promise<string> {
   const reader = response.body!.getReader();
@@ -84,5 +101,45 @@ describe('Broadcasting', () => {
 
     expect(chunk).toContain('event: connected');
     expect(chunk).toContain(`"channel":"${channelName}"`);
+  });
+
+  it('publishes SSE events through a backplane and consumes remote messages', async () => {
+    Broadcast.configure({
+      default: 'sse',
+      drivers: {
+        sse: { driver: 'sse' },
+      },
+    });
+    const backplane = new FakeBackplane();
+    Broadcast.useBackplane(backplane);
+
+    const channelName = `distributed-${Date.now()}`;
+    const response = Broadcast.subscribe(channelName);
+    const reader = response.body!.getReader();
+    await reader.read();
+
+    await Broadcast.to(channelName).send('local-event', { ok: true });
+    expect(backplane.published).toHaveLength(1);
+    expect(backplane.published[0]).toMatchObject({
+      channel: channelName,
+      event: 'local-event',
+      data: { ok: true },
+    });
+
+    await reader.read();
+    await backplane.emit({
+      id: 'remote-1',
+      origin: 'another-process',
+      channel: channelName,
+      event: 'remote-event',
+      data: { value: 42 },
+    });
+
+    const { value } = await reader.read();
+    await reader.cancel();
+    const chunk = new TextDecoder().decode(value);
+    expect(chunk).toContain('event: remote-event');
+    expect(chunk).toContain('"value":42');
+    await Broadcast.closeBackplane();
   });
 });

@@ -117,8 +117,17 @@ export { Notifier, Notification } from './notifications/index.js';
 export type { Notifiable, NotificationChannel } from './notifications/index.js';
 
 // Broadcasting
-export { Broadcast } from './broadcasting/index.js';
-export type { BroadcastConfig, BroadcastEvent, ChannelAuthCallback, PresenceMember, ChannelType } from './broadcasting/index.js';
+export { Broadcast, MemoryBroadcastBackplane, RedisBroadcastBackplane } from './broadcasting/index.js';
+export type {
+  BroadcastConfig,
+  BroadcastEvent,
+  ChannelAuthCallback,
+  PresenceMember,
+  ChannelType,
+  BroadcastBackplane,
+  BroadcastBackplaneConfig,
+  BroadcastBackplaneMessage,
+} from './broadcasting/index.js';
 
 // Dashboard
 export { Dashboard, configureDashboard } from './dashboard/index.js';

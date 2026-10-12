@@ -53,6 +53,9 @@
  * ```
  */
 
+import { randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
+
 // ── Types ──────────────────────────────────────────────────
 
 export interface BroadcastConfig {
@@ -61,7 +64,7 @@ export interface BroadcastConfig {
 }
 
 export type BroadcastDriverConfig =
-  | { driver: 'sse' }
+  | { driver: 'sse'; backplane?: BroadcastBackplaneConfig }
   | { driver: 'log' }
   | {
       driver: 'pusher';
@@ -78,6 +81,25 @@ export interface BroadcastEvent {
   event: string;
   data: any;
   id?: string;
+}
+
+export type BroadcastBackplaneConfig =
+  | { driver: 'redis'; url?: string; channel?: string; client?: any; subscriber?: any }
+  | { driver: 'memory' };
+
+export interface BroadcastBackplaneMessage {
+  id: string;
+  origin: string;
+  channel: string;
+  event: string;
+  data: any;
+  targetUserId?: string | number;
+}
+
+export interface BroadcastBackplane {
+  publish(message: BroadcastBackplaneMessage): Promise<void>;
+  subscribe(handler: (message: BroadcastBackplaneMessage) => void | Promise<void>): Promise<void>;
+  close?(): Promise<void>;
 }
 
 /** Channel authorization callback */
@@ -97,6 +119,88 @@ type Subscriber = {
   userId?: string | number;
   userInfo?: Record<string, any>;
 };
+
+export class MemoryBroadcastBackplane implements BroadcastBackplane {
+  private handlers = new Set<(message: BroadcastBackplaneMessage) => void | Promise<void>>();
+
+  async publish(message: BroadcastBackplaneMessage): Promise<void> {
+    for (const handler of this.handlers) {
+      await handler(message);
+    }
+  }
+
+  async subscribe(handler: (message: BroadcastBackplaneMessage) => void | Promise<void>): Promise<void> {
+    this.handlers.add(handler);
+  }
+
+  async close(): Promise<void> {
+    this.handlers.clear();
+  }
+}
+
+export class RedisBroadcastBackplane implements BroadcastBackplane {
+  private channel: string;
+  private publisher: any;
+  private subscriber: any;
+  private ownsPublisher = false;
+  private ownsSubscriber = false;
+  private subscribed = false;
+
+  constructor(config: Extract<BroadcastBackplaneConfig, { driver: 'redis' }> = { driver: 'redis' }) {
+    this.channel = config.channel ?? 'svelar:broadcasting:sse';
+    this.publisher = config.client;
+    this.subscriber = config.subscriber;
+
+    if (!this.publisher || !this.subscriber) {
+      const RedisCtor = this.loadRedis();
+      if (!this.publisher) {
+        this.publisher = new RedisCtor(config.url);
+        this.ownsPublisher = true;
+      }
+      if (!this.subscriber) {
+        this.subscriber = new RedisCtor(config.url);
+        this.ownsSubscriber = true;
+      }
+    }
+  }
+
+  async publish(message: BroadcastBackplaneMessage): Promise<void> {
+    await this.publisher.publish(this.channel, JSON.stringify(message));
+  }
+
+  async subscribe(handler: (message: BroadcastBackplaneMessage) => void | Promise<void>): Promise<void> {
+    if (this.subscribed) return;
+    this.subscribed = true;
+    this.subscriber.on('message', async (channel: string, payload: string) => {
+      if (channel !== this.channel) return;
+      try {
+        await handler(JSON.parse(payload));
+      } catch {
+        // Ignore malformed backplane messages. A bad publisher should not kill subscribers.
+      }
+    });
+    await this.subscriber.subscribe(this.channel);
+  }
+
+  async close(): Promise<void> {
+    if (this.subscribed) {
+      try { await this.subscriber.unsubscribe(this.channel); } catch {}
+      this.subscribed = false;
+    }
+    if (this.ownsSubscriber) await this.subscriber.quit?.();
+    if (this.ownsPublisher) await this.publisher.quit?.();
+  }
+
+  private loadRedis(): any {
+    try {
+      const require = createRequire(import.meta.url);
+      const mod = require('ioredis');
+      return mod.default ?? mod;
+    } catch {
+      throw new Error('Redis broadcast backplane requires optional dependency "ioredis".');
+    }
+  }
+}
 
 function validateDriverConfig(name: string, config: BroadcastDriverConfig): void {
   switch (config.driver) {
@@ -431,6 +535,9 @@ class BroadcastManager {
   private sseChannels = new Map<string, SSEChannel>();
   private channelAuth = new Map<string, ChannelAuthCallback>();
   private pusherDriver: PusherDriver | null = null;
+  private backplane: BroadcastBackplane | null = null;
+  private backplaneSubscribed = false;
+  private origin = randomUUID();
 
   /**
    * Configure broadcasting drivers.
@@ -447,10 +554,32 @@ class BroadcastManager {
 
     this.config = config;
     this.pusherDriver = null;
+    this.backplaneSubscribed = false;
 
     if (defaultConfig.driver === 'pusher') {
       this.pusherDriver = new PusherDriver(defaultConfig);
     }
+
+    if (defaultConfig.driver === 'sse' && defaultConfig.backplane) {
+      this.useBackplane(this.makeBackplane(defaultConfig.backplane));
+    } else {
+      const oldBackplane = this.backplane;
+      this.backplane = null;
+      this.backplaneSubscribed = false;
+      void oldBackplane?.close?.();
+    }
+  }
+
+  useBackplane(backplane: BroadcastBackplane): void {
+    this.backplane = backplane;
+    this.backplaneSubscribed = false;
+    void this.ensureBackplaneSubscribed();
+  }
+
+  async closeBackplane(): Promise<void> {
+    await this.backplane?.close?.();
+    this.backplane = null;
+    this.backplaneSubscribed = false;
   }
 
   // ── Channel Authorization ──
@@ -635,12 +764,8 @@ class BroadcastManager {
         break;
 
       case 'sse':
-        // Send to all SSE channels matching the name
-        for (const [, ch] of this.sseChannels) {
-          if (ch.name === channelName) {
-            ch.send(event, data, targetUserId);
-          }
-        }
+        this.sendLocalSse(channelName, event, data, targetUserId);
+        await this.publishBackplane(channelName, event, data, targetUserId);
         break;
 
       default:
@@ -729,6 +854,41 @@ class BroadcastManager {
         this.sseChannels.delete(key);
       }
     }
+  }
+
+  private makeBackplane(config: BroadcastBackplaneConfig): BroadcastBackplane {
+    if (config.driver === 'memory') return new MemoryBroadcastBackplane();
+    return new RedisBroadcastBackplane(config);
+  }
+
+  private sendLocalSse(channelName: string, event: string, data: any, targetUserId?: string | number): void {
+    for (const [, ch] of this.sseChannels) {
+      if (ch.name === channelName) {
+        ch.send(event, data, targetUserId);
+      }
+    }
+  }
+
+  private async ensureBackplaneSubscribed(): Promise<void> {
+    if (!this.backplane || this.backplaneSubscribed) return;
+    this.backplaneSubscribed = true;
+    await this.backplane.subscribe((message) => {
+      if (message.origin === this.origin) return;
+      this.sendLocalSse(message.channel, message.event, message.data, message.targetUserId);
+    });
+  }
+
+  private async publishBackplane(channelName: string, event: string, data: any, targetUserId?: string | number): Promise<void> {
+    if (!this.backplane) return;
+    await this.ensureBackplaneSubscribed();
+    await this.backplane.publish({
+      id: randomUUID(),
+      origin: this.origin,
+      channel: channelName,
+      event,
+      data,
+      targetUserId,
+    });
   }
 
   // ── Pattern Matching ──

@@ -59,6 +59,36 @@ The configured `default` driver must exist in `drivers`. Pusher/Soketi drivers m
 
 In Docker Compose the app gets `PUSHER_HOST=soketi` automatically, so Soketi works without any `.env` changes.
 
+### Distributed SSE
+
+The SSE driver is zero-dependency by default and delivers events to subscribers in the current web process. For multi-process deployments where workers, schedulers, or another web replica must publish to connected SSE clients, configure a backplane:
+
+```typescript
+Broadcast.configure({
+  default: 'sse',
+  drivers: {
+    sse: {
+      driver: 'sse',
+      backplane: {
+        driver: 'redis',
+        url: process.env.REDIS_URL,
+        channel: 'my-app:broadcasting:sse',
+      },
+    },
+  },
+});
+```
+
+Redis is optional; install/configure `ioredis` only when using the Redis backplane. Tests can inject an in-memory or fake backplane:
+
+```typescript
+import { Broadcast, MemoryBroadcastBackplane } from '@beeblock/svelar/broadcasting';
+
+Broadcast.useBackplane(new MemoryBroadcastBackplane());
+```
+
+If you use Soketi/Pusher as the default driver, events already go through the external WebSocket server and do not need the SSE backplane.
+
 ### Client-Side Setup
 
 The generated `src/lib/broadcasting.ts` initializes the Pusher connection:

@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Tenant-bound service account keys** — API keys now support service accounts, tenant/actor context, IP allowlists, per-key rate limits, disable/enable controls, request-local `event.locals.apiKey`, and audit/log context enrichment.
 - **Architecture lint guard** — `npx svelar lint:architecture` now detects thin-route, controller-flow, runtime DDL, raw persistence, mutating `fetch`, and write-flow convention drift.
 - **PostgreSQL-ready query builder APIs** — query builder raw expressions now accept bindings in `selectRaw()`/`orderByRaw()`, PostgreSQL placeholder conversion preserves JSONB `?` operators, and common production helpers now include `countDistinct()`, `chunkById()`, `forUpdate()`, `skipLocked()`, and typed returning helpers.
+- **Distributed SSE backplanes** — the SSE broadcaster can now publish through a pluggable backplane, including optional Redis pub/sub, so workers/schedulers/other web processes can fan out events to connected SSE clients.
 
 ## [0.8.0] - 2026-10-12
 
