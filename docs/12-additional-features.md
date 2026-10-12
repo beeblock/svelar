@@ -427,36 +427,60 @@ Commands are auto-discovered from `src/lib/commands/` in flat projects and `src/
 
 ## Admin Dashboard
 
-Scaffold a production-ready admin dashboard:
+Scaffold the operational admin dashboard:
 
 ```bash
 npx svelar make:dashboard
 ```
 
-This creates API routes (`/api/admin/*`) and a dashboard page with system health, queue monitoring, scheduler management, and log viewing.
+This creates thin API routes (`/api/admin/*`) bound to the public `DashboardController` and a Svelte 5 page at `/admin/dashboard`. The same file manifest is available through `MakeDashboardCommand.files()` for project scaffolding and updates. Existing files are preserved unless `--force` is supplied; review customized routes before overwriting them.
 
-Generated admin API routes require `event.locals.user.role === 'admin'` by default. Adjust the generated check if your app uses a different admin contract.
+The page and every API operation require an authenticated global admin by default. Configure the server-side authorization callback for a different access policy; hiding a button does not authorize an operation. Mutations also pass through an authorizing FormRequest, validated DTO, and action/service using the public monitors. Disabled dashboards deny page/API access.
 
 ```typescript
 import { configureDashboard } from '@beeblock/svelar/dashboard';
 import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
 import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
 
-configureDashboard({ enabled: true, prefix: '/admin' });
+configureDashboard({
+  enabled: true,
+  authorize: (event, operation) => {
+    // Replace this with your application's server-side permission contract.
+    return event.locals.user?.role === 'admin';
+  },
+});
 ```
 
-When the dashboard plugin is booted with background health collection enabled, it records the latest health snapshot plus last run/success/error metadata. Health collection failures are exposed through dashboard data instead of being logged and forgotten.
+Configure `Queue`/`JobMonitor`, load the same scheduler task registry in web and scheduler processes, configure `ScheduleMonitor`, and run migrations before operating the console. The generated URLs are fixed; the dashboard plugin's `prefix` setting does not relocate generated files.
 
-Queue health includes the public queue registry from `Queue.registerQueue()`/`Queue.registerQueues()` and the registered job class list from `Queue.registeredJobs()`, so operational screens can show expected queues, labels, concurrency hints, and job classes without importing BullMQ internals.
+The browser uses `apiFetch` to send the `X-CSRF-Token` header from `XSRF-TOKEN`. The controller enforces CSRF for session mutations even if a caller adds a Bearer header. Responses use `{ data, meta }` and `Cache-Control: no-store`; clients migrating from older generated APIs must read `payload.data` and `payload.meta.message`.
+
+When the dashboard plugin is booted with background health collection enabled, it records the latest health snapshot plus last run/success/error metadata. Polling begins on boot, does not overlap slow snapshots, and stops on shutdown. Health collection failures remain visible in dashboard data. Unexpected HTTP operation failures are logged with an incident ID and return a safe error, never the raw driver exception.
+
+The overview consumes the public queue registry, counts, and `JobMonitor.getHealth().runtime`. It shows labels/metadata, waiting/active/failed/completed/delayed counts, observed workers, configured versus effective/global concurrency, pause state, and available age metrics without importing BullMQ. Missing telemetry and registry connections outside the monitor's configured connection are shown as unknown, not zero. Redis absolute oldest-job age and effective remote-worker concurrency may be unknown; registry concurrency is only a configuration hint.
+
+Jobs have queue/status filters, pagination (`limit` 1-100, non-negative bounded `offset`), redacted payload/metadata/progress, stack errors, attempts, and the timestamps available from the monitor. Inspection, retry, and deletion pass an explicit queue name because Redis job IDs are queue-local. Retry is limited to failed jobs; active deletion is rejected. Destructive deletion requires both browser confirmation and `{ confirmed: true }`. Mutations prevent duplicate clicks and refresh visible state without an invalidation loop. Redis exact listing can refuse a backlog exceeding `JobMonitor.redisScanLimit`; configure that limit deliberately rather than assuming unbounded scans are safe.
+
+Scheduled task controls persist through `ScheduleMonitor` to `scheduled_task_settings`; history comes from `scheduled_task_runs`. Manual runs report the actual result: overlap skips return 409 and failed runs return a safe 503 with a logged error. Enabled/running checks prevent known invalid runs, but a web process's running flag is not a distributed lock viewer.
+
+Mutations record intent before executing and completion afterwards through `Audit`. Configure a persistent audit driver for production. If intent cannot be recorded, the operation is blocked; if completion audit fails after execution, the response warns not to repeat the operation without checking state. Queue/scheduler side effects and audit persistence are not a single transaction.
+
+The logs tab has minimum-level/channel/search filters and pagination with filtered totals. Payloads, log context, and common credential formats in text are redacted at the dashboard boundary. Invalid/unstructured job payloads are withheld rather than exposed verbatim. Keep secrets out of free-form logs: redaction cannot recognize every arbitrary secret string. LogViewer queries and SSE tail are explicitly scoped to the current web process's ring buffer, not persistent shared log storage. SSE disconnect/cancel paths unsubscribe, bound slow clients, and reconnect periodically to recheck authorization.
+
+This bounded console does not yet provide batch retry/cleanup, DLQ routing, safe resource deep links, queue pause/resume commands, a distributed scheduler lock inspector, persistent shared log queries, integration kill switches, or a complete user/tenant permission editor. Those require additional public contracts or their owning scaffold surfaces; the UI does not invent telemetry or bypass those boundaries.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/admin/health` | System health |
-| GET | `/api/admin/queue` | List jobs |
+| GET | `/api/admin/queue` | Status-filtered paginated jobs (default: failed) |
+| GET | `/api/admin/queue/[id]?queue=...` | Redacted job inspection |
 | POST | `/api/admin/queue/[id]/retry` | Retry failed job |
+| DELETE | `/api/admin/queue/[id]?queue=...` | Delete non-active job with explicit confirmation |
 | GET | `/api/admin/scheduler` | List scheduled tasks |
 | POST | `/api/admin/scheduler/[name]/run` | Run task manually |
+| POST | `/api/admin/scheduler/[name]/toggle` | Persist boolean enabled state |
 | GET | `/api/admin/logs` | Query logs |
+| GET | `/api/admin/logs/tail` | Authorized, redacted process-local SSE logs |
 | GET | `/api/admin/stats` | Combined dashboard stats |
 
 ## Plugin System

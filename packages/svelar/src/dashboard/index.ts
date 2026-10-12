@@ -30,10 +30,17 @@ import { singleton } from '../support/singleton.js';
 import { LogViewer } from '../logging/LogViewer.js';
 import { JobMonitor, type QueueHealth } from '../queue/JobMonitor.js';
 import { ScheduleMonitor, type SchedulerHealth } from '../scheduler/ScheduleMonitor.js';
+import { dashboardAccess, redactDashboardValue, type DashboardAuthorizer } from './security.js';
+
+export { DashboardController } from './DashboardController.js';
+export { authorizeDashboard, redactDashboardValue, redactDashboardPayload, redactDashboardText } from './security.js';
+export type { DashboardOperation, DashboardAuthorizer } from './security.js';
 
 // ── Types ──────────────────────────────────────────────────
 
 export interface DashboardConfig {
+  /** Server-side authorization hook, checked for reads and each mutation. Defaults to the global admin role. */
+  authorize?: DashboardAuthorizer;
   /** Enable or disable the dashboard */
   enabled?: boolean;
   /** Route prefix for dashboard endpoints (default: '/admin/dashboard') */
@@ -88,7 +95,7 @@ class DashboardPlugin extends Plugin {
   readonly version = '1.0.0';
   readonly description = 'Admin dashboard with system health monitoring';
 
-  private dashboardConfig: Required<DashboardConfig> = {
+  private dashboardConfig: Required<Omit<DashboardConfig, 'authorize'>> & Pick<DashboardConfig, 'authorize'> = {
     enabled: true,
     prefix: '/admin/dashboard',
     refreshInterval: 5000,
@@ -103,6 +110,8 @@ class DashboardPlugin extends Plugin {
   private startTime = Date.now();
   private healthCollectionInterval: NodeJS.Timeout | null = null;
   private latestHealth: SystemHealth | null = null;
+  private booted = false;
+  private collecting: Promise<SystemHealth> | null = null;
   private healthCollectionStatus: DashboardHealthCollectionStatus = {
     lastRunAt: null,
     lastSuccessAt: null,
@@ -138,14 +147,18 @@ class DashboardPlugin extends Plugin {
    * Bootstrap the dashboard plugin
    */
   async boot(app: Container): Promise<void> {
+    await this.shutdown();
+    this.booted = true;
     // Start periodic health collection
     if (this.dashboardConfig.enabled && this.dashboardConfig.refreshInterval > 0) {
       await this.collectHealthSnapshot();
+      if (!this.booted || !this.dashboardConfig.enabled || this.dashboardConfig.refreshInterval <= 0 || this.healthCollectionInterval) return;
       this.healthCollectionInterval = setInterval(() => {
         void this.collectHealthSnapshot().catch(() => {
           // Error details are stored in healthCollectionStatus for dashboards/supervisors.
         });
       }, this.dashboardConfig.refreshInterval);
+      this.healthCollectionInterval.unref?.();
     }
   }
 
@@ -153,6 +166,7 @@ class DashboardPlugin extends Plugin {
    * Clean up on shutdown
    */
   async shutdown(): Promise<void> {
+    this.booted = false;
     if (this.healthCollectionInterval) {
       clearInterval(this.healthCollectionInterval);
       this.healthCollectionInterval = null;
@@ -163,6 +177,9 @@ class DashboardPlugin extends Plugin {
    * Update dashboard configuration
    */
   setConfig(config: DashboardConfig): void {
+    if (config.refreshInterval !== undefined && (!Number.isSafeInteger(config.refreshInterval) || config.refreshInterval < 0 || config.refreshInterval > 2_147_483_647)) {
+      throw new Error('Dashboard refreshInterval must be an integer between 0 and 2147483647.');
+    }
     this.dashboardConfig = {
       ...this.dashboardConfig,
       ...config,
@@ -171,6 +188,8 @@ class DashboardPlugin extends Plugin {
         ...(config.sections ?? {}),
       },
     };
+    dashboardAccess.enabled = this.dashboardConfig.enabled;
+    if (config.authorize) dashboardAccess.authorize = config.authorize;
 
     // Restart health collection with new interval
     if (this.healthCollectionInterval) {
@@ -178,12 +197,13 @@ class DashboardPlugin extends Plugin {
       this.healthCollectionInterval = null;
     }
 
-    if (this.dashboardConfig.enabled && this.dashboardConfig.refreshInterval > 0) {
+    if (this.booted && this.dashboardConfig.enabled && this.dashboardConfig.refreshInterval > 0) {
       this.healthCollectionInterval = setInterval(() => {
         void this.collectHealthSnapshot().catch(() => {
           // Error details are stored in healthCollectionStatus for dashboards/supervisors.
         });
       }, this.dashboardConfig.refreshInterval);
+      this.healthCollectionInterval.unref?.();
     }
   }
 
@@ -202,6 +222,12 @@ class DashboardPlugin extends Plugin {
   }
 
   private async collectHealthSnapshot(): Promise<SystemHealth> {
+    if (this.collecting) return this.collecting;
+    this.collecting = this.collectHealth();
+    try { return await this.collecting; } finally { this.collecting = null; }
+  }
+
+  private async collectHealth(): Promise<SystemHealth> {
     const startedAt = new Date().toISOString();
     this.healthCollectionStatus.lastRunAt = startedAt;
 
@@ -318,7 +344,7 @@ class DashboardPlugin extends Plugin {
       };
     }
 
-    return data;
+    return redactDashboardValue(data) as Record<string, any>;
   }
 }
 

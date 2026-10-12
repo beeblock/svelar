@@ -1,1152 +1,266 @@
-/**
- * make:dashboard — Scaffold admin dashboard routes
- *
- * Creates API routes and dashboard page for monitoring:
- * - System health
- * - Job queue (BullMQ)
- * - Scheduled tasks
- * - Application logs
- */
-
+/** Scaffold the monitor-backed administrative console. */
 import { Command } from '../Command.js';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 export class MakeDashboardCommand extends Command {
   name = 'make:dashboard';
   description = 'Scaffold admin dashboard routes (health, queue, scheduler, logs)';
   arguments = [];
-  flags = [
-    { name: 'force', alias: 'f', description: 'Overwrite existing files', type: 'boolean' as const },
-  ];
+  flags = [{ name: 'force', alias: 'f', description: 'Overwrite existing files', type: 'boolean' as const }];
+
+  /** Shared by new, update, and make:dashboard so their operational routes cannot drift. */
+  files(): Array<{ path: string; content: string }> {
+    const routes: Array<[string, Record<string, string>]> = [
+      ['health', { GET: 'health' }], ['stats', { GET: 'stats' }], ['queue', { GET: 'queue' }],
+      ['queue/[id]', { GET: 'job', DELETE: 'deleteJob' }], ['queue/[id]/retry', { POST: 'retryJob' }],
+      ['scheduler', { GET: 'scheduler' }], ['scheduler/[name]/run', { POST: 'runTask' }],
+      ['scheduler/[name]/toggle', { POST: 'toggleTask' }], ['logs', { GET: 'logs' }], ['logs/tail', { GET: 'logsTail' }],
+    ];
+    const files = routes.map(([path, handlers]) => ({
+      path: `src/routes/api/admin/${path}/+server.ts`,
+      content: `import { DashboardController } from '@beeblock/svelar/dashboard';\n\nconst controller = new DashboardController();\n${Object.entries(handlers).map(([method, handler]) => `export const ${method} = controller.handle('${handler}');`).join('\n')}\n`,
+    }));
+    files.push(
+      { path: 'src/routes/admin/dashboard/+page.server.ts', content: this.dashboardPageServerTemplate() },
+      { path: 'src/routes/admin/dashboard/+page.svelte', content: this.dashboardPageSvelteTemplate() },
+    );
+    return files;
+  }
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
-    const cwd = process.cwd();
-    const force = flags.force ?? false;
-
-    const files: Array<{ path: string; content: string; label: string }> = [
-      // API Routes
-      {
-        path: join(cwd, 'src/routes/api/admin/health/+server.ts'),
-        content: this.healthServerTemplate(),
-        label: 'api/admin/health/+server.ts',
-      },
-      {
-        path: join(cwd, 'src/routes/api/admin/queue/+server.ts'),
-        content: this.queueServerTemplate(),
-        label: 'api/admin/queue/+server.ts',
-      },
-      {
-        path: join(cwd, 'src/routes/api/admin/queue/[id]/retry/+server.ts'),
-        content: this.queueRetryServerTemplate(),
-        label: 'api/admin/queue/[id]/retry/+server.ts',
-      },
-      {
-        path: join(cwd, 'src/routes/api/admin/queue/[id]/+server.ts'),
-        content: this.queueDeleteServerTemplate(),
-        label: 'api/admin/queue/[id]/+server.ts',
-      },
-      {
-        path: join(cwd, 'src/routes/api/admin/scheduler/+server.ts'),
-        content: this.schedulerServerTemplate(),
-        label: 'api/admin/scheduler/+server.ts',
-      },
-      {
-        path: join(cwd, 'src/routes/api/admin/scheduler/[name]/run/+server.ts'),
-        content: this.schedulerRunServerTemplate(),
-        label: 'api/admin/scheduler/[name]/run/+server.ts',
-      },
-      {
-        path: join(cwd, 'src/routes/api/admin/scheduler/[name]/toggle/+server.ts'),
-        content: this.schedulerToggleServerTemplate(),
-        label: 'api/admin/scheduler/[name]/toggle/+server.ts',
-      },
-      {
-        path: join(cwd, 'src/routes/api/admin/logs/+server.ts'),
-        content: this.logsServerTemplate(),
-        label: 'api/admin/logs/+server.ts',
-      },
-      {
-        path: join(cwd, 'src/routes/api/admin/logs/tail/+server.ts'),
-        content: this.logsTailServerTemplate(),
-        label: 'api/admin/logs/tail/+server.ts',
-      },
-      {
-        path: join(cwd, 'src/routes/api/admin/stats/+server.ts'),
-        content: this.statsServerTemplate(),
-        label: 'api/admin/stats/+server.ts',
-      },
-      // Dashboard Page
-      {
-        path: join(cwd, 'src/routes/admin/dashboard/+page.server.ts'),
-        content: this.dashboardPageServerTemplate(),
-        label: 'admin/dashboard/+page.server.ts',
-      },
-      {
-        path: join(cwd, 'src/routes/admin/dashboard/+page.svelte'),
-        content: this.dashboardPageSvelteTemplate(),
-        label: 'admin/dashboard/+page.svelte',
-      },
-    ];
-
     let created = 0;
     let skipped = 0;
-
-    for (const file of files) {
-      // Create directory if needed
-      const dir = file.path.substring(0, file.path.lastIndexOf('/'));
-      mkdirSync(dir, { recursive: true });
-
-      if (existsSync(file.path) && !force) {
-        this.warn(`${file.label} already exists (use --force to overwrite)`);
+    for (const file of this.files()) {
+      const path = join(process.cwd(), file.path);
+      if (existsSync(path) && !flags.force) {
+        this.warn(`${file.path} already exists (use --force to overwrite)`);
         skipped++;
         continue;
       }
-
-      writeFileSync(file.path, file.content);
-      this.success(`Created ${file.label}`);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, file.content);
+      this.success(`Created ${file.path}`);
       created++;
     }
-
-    this.newLine();
-    if (created > 0) {
-      this.info(`${created} file(s) created${skipped > 0 ? `, ${skipped} skipped` : ''}`);
-    } else {
-      this.info('No files created (all exist already)');
-    }
-
-    this.newLine();
-    this.info('Setup instructions:');
-    this.log('  1. Import dashboard modules in your app:');
-    this.log('     import { ScheduleMonitor } from "@beeblock/svelar/scheduler/ScheduleMonitor";');
-    this.log('     import { JobMonitor } from "@beeblock/svelar/queue/JobMonitor";');
-    this.log('     import { LogViewer } from "@beeblock/svelar/logging/LogViewer";');
-    this.newLine();
-    this.log('  2. Configure auth middleware on admin routes:');
-    this.log('     - API routes require event.locals.user.role === "admin" by default.');
-    this.log('     - Adjust the generated requireAdmin check if your app uses a different admin contract.');
-    this.newLine();
-    this.log('  3. Access the dashboard:');
-    this.log('     - Navigate to: /admin/dashboard');
-    this.newLine();
-    this.log('  4. API endpoints available at:');
-    this.log('     - GET  /api/admin/health');
-    this.log('     - GET  /api/admin/queue');
-    this.log('     - GET  /api/admin/scheduler');
-    this.log('     - GET  /api/admin/logs');
-    this.log('     - GET  /api/admin/stats');
-    this.newLine();
+    this.info(`${created} file(s) created, ${skipped} skipped`);
+    this.info('Open /admin/dashboard. Admin authorization and CSRF are enforced by DashboardController.');
+    this.info('Customize configureDashboard({ authorize: (event, operation) => ... }) in src/app.ts for your access policy.');
+    this.info('Configure Queue/JobMonitor and ScheduleMonitor in src/app.ts, load the same task registry in web and scheduler, and run migrations.');
+    this.info('Use a persistent Audit driver in production. Logs are limited to the current web process.');
   }
 
-  // ── API Route Templates ──
+  private dashboardPageServerTemplate(): string {
+    return `import { error } from '@sveltejs/kit';
+import { authorizeDashboard } from '@beeblock/svelar/dashboard';
+import type { PageServerLoad } from './$types';
 
-  private healthServerTemplate(): string {
-    return `import { json } from '@sveltejs/kit';
-import type { RequestHandler } from '@sveltejs/kit';
-
-/**
- * GET /api/admin/health
- * Returns system health status
- */
-export const GET: RequestHandler = async (event) => {
-  if (!event.locals.user || event.locals.user.role !== 'admin') {
-    return new Response('Unauthorized', { status: 403 });
-  }
-
-
-  const health = {
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    memory: process.memoryUsage(),
-    version: '0.1.0',
+export const load: PageServerLoad = async (event) => {
+  if (!await authorizeDashboard(event)) error(403, 'Dashboard access denied.');
+  const query = event.url.searchParams;
+  const selection = {
+    queue: query.get('queue') ?? 'default', status: query.get('status') ?? 'failed',
+    offset: query.get('offset') ?? '0', limit: query.get('limit') ?? '25',
+    level: query.get('level') ?? '', channel: query.get('channel') ?? '', search: query.get('search') ?? '', logOffset: query.get('logOffset') ?? '0',
   };
-
-  return json(health);
-};
-`;
-  }
-
-  private queueServerTemplate(): string {
-    return `import { json } from '@sveltejs/kit';
-import type { RequestHandler } from '@sveltejs/kit';
-
-/**
- * GET /api/admin/queue
- * List jobs from the queue
- *
- * Query params:
- * - status: 'completed' | 'failed' | 'delayed' | 'active' | 'waiting'
- * - queue: queue name (default: 'default')
- * - limit: number of jobs (default: 50)
- * - offset: pagination offset (default: 0)
- */
-export const GET: RequestHandler = async (event) => {
-  if (!event.locals.user || event.locals.user.role !== 'admin') {
-    return new Response('Unauthorized', { status: 403 });
-  }
-
-
-  const { searchParams } = event.url;
-  const status = searchParams.get('status') || 'all';
-  const queueName = searchParams.get('queue') || 'default';
-  const limit = parseInt(searchParams.get('limit') || '50');
-  const offset = parseInt(searchParams.get('offset') || '0');
-
-  try {
-    const { JobMonitor } = await import('@beeblock/svelar/queue/JobMonitor');
-
-    const jobs = await JobMonitor.listJobs({
-      queue: queueName,
-      status: status === 'all' ? undefined : status as any,
-      limit,
-      offset,
-    });
-
-    const counts = await JobMonitor.getCounts(queueName);
-
-    return json({
-      jobs,
-      counts,
-      queueName,
-    });
-  } catch (error: any) {
-    return json(
-      {
-        error: error.message || 'Failed to fetch queue jobs',
-      },
-      { status: 500 }
-    );
-  }
-};
-`;
-  }
-
-  private queueRetryServerTemplate(): string {
-    return `import { json } from '@sveltejs/kit';
-import type { RequestHandler } from '@sveltejs/kit';
-
-/**
- * POST /api/admin/queue/[id]/retry
- * Retry a failed job
- */
-export const POST: RequestHandler = async (event) => {
-  if (!event.locals.user || event.locals.user.role !== 'admin') {
-    return new Response('Unauthorized', { status: 403 });
-  }
-
-
-  const { id } = event.params;
-
-  try {
-    const { JobMonitor } = await import('@beeblock/svelar/queue/JobMonitor');
-    await JobMonitor.retryJob(id);
-
-    return json({ success: true, message: 'Job queued for retry' });
-  } catch (error: any) {
-    return json(
-      {
-        error: error.message || 'Failed to retry job',
-      },
-      { status: 500 }
-    );
-  }
-};
-`;
-  }
-
-  private queueDeleteServerTemplate(): string {
-    return `import { json } from '@sveltejs/kit';
-import type { RequestHandler } from '@sveltejs/kit';
-
-/**
- * DELETE /api/admin/queue/[id]
- * Remove a job from the queue
- */
-export const DELETE: RequestHandler = async (event) => {
-  if (!event.locals.user || event.locals.user.role !== 'admin') {
-    return new Response('Unauthorized', { status: 403 });
-  }
-
-
-  const { id } = event.params;
-
-  try {
-    const { JobMonitor } = await import('@beeblock/svelar/queue/JobMonitor');
-    await JobMonitor.deleteJob(id);
-
-    return json({ success: true, message: 'Job removed' });
-  } catch (error: any) {
-    return json(
-      {
-        error: error.message || 'Failed to remove job',
-      },
-      { status: 500 }
-    );
-  }
-};
-`;
-  }
-
-  private schedulerServerTemplate(): string {
-    return `import { json } from '@sveltejs/kit';
-import type { RequestHandler } from '@sveltejs/kit';
-
-/**
- * GET /api/admin/scheduler
- * List all scheduled tasks
- */
-export const GET: RequestHandler = async (event) => {
-  if (!event.locals.user || event.locals.user.role !== 'admin') {
-    return new Response('Unauthorized', { status: 403 });
-  }
-
-
-  try {
-    const { ScheduleMonitor } = await import('@beeblock/svelar/scheduler/ScheduleMonitor');
-
-    const tasks = await ScheduleMonitor.listTasks();
-    const health = await ScheduleMonitor.getHealth();
-
-    return json({
-      tasks,
-      health,
-    });
-  } catch (error: any) {
-    return json(
-      {
-        error: error.message || 'Failed to fetch scheduled tasks',
-      },
-      { status: 500 }
-    );
-  }
-};
-`;
-  }
-
-  private schedulerRunServerTemplate(): string {
-    return `import { json } from '@sveltejs/kit';
-import type { RequestHandler } from '@sveltejs/kit';
-
-/**
- * POST /api/admin/scheduler/[name]/run
- * Manually trigger a scheduled task
- */
-export const POST: RequestHandler = async (event) => {
-  if (!event.locals.user || event.locals.user.role !== 'admin') {
-    return new Response('Unauthorized', { status: 403 });
-  }
-
-
-  const { name } = event.params;
-
-  try {
-    const { ScheduleMonitor } = await import('@beeblock/svelar/scheduler/ScheduleMonitor');
-    await ScheduleMonitor.runTask(name);
-
-    return json({ success: true, message: \`Task '\${name}' triggered\` });
-  } catch (error: any) {
-    return json(
-      {
-        error: error.message || 'Failed to run task',
-      },
-      { status: 500 }
-    );
-  }
-};
-`;
-  }
-
-  private schedulerToggleServerTemplate(): string {
-    return `import { json } from '@sveltejs/kit';
-import type { RequestHandler } from '@sveltejs/kit';
-
-/**
- * POST /api/admin/scheduler/[name]/toggle
- * Enable or disable a scheduled task
- */
-export const POST: RequestHandler = async (event) => {
-  if (!event.locals.user || event.locals.user.role !== 'admin') {
-    return new Response('Unauthorized', { status: 403 });
-  }
-
-
-  const { name } = event.params;
-  const body = await event.request.json();
-  const enabled = body.enabled ?? true;
-
-  try {
-    const { ScheduleMonitor } = await import('@beeblock/svelar/scheduler/ScheduleMonitor');
-    if (enabled) {
-      await ScheduleMonitor.enableTask(name);
-    } else {
-      await ScheduleMonitor.disableTask(name);
-    }
-
-    return json({ success: true, message: \`Task '\${name}' \${enabled ? 'enabled' : 'disabled'}\` });
-  } catch (error: any) {
-    return json(
-      {
-        error: error.message || 'Failed to toggle task',
-      },
-      { status: 500 }
-    );
-  }
-};
-`;
-  }
-
-  private logsServerTemplate(): string {
-    return `import { json } from '@sveltejs/kit';
-import type { RequestHandler } from '@sveltejs/kit';
-
-/**
- * GET /api/admin/logs
- * Retrieve logs with filtering
- *
- * Query params:
- * - level: 'debug' | 'info' | 'warn' | 'error'
- * - channel: log channel name
- * - search: search term
- * - limit: number of logs (default: 100)
- * - offset: pagination offset (default: 0)
- */
-export const GET: RequestHandler = async (event) => {
-  if (!event.locals.user || event.locals.user.role !== 'admin') {
-    return new Response('Unauthorized', { status: 403 });
-  }
-
-
-  const { searchParams } = event.url;
-  const level = searchParams.get('level');
-  const channel = searchParams.get('channel');
-  const search = searchParams.get('search');
-  const limit = parseInt(searchParams.get('limit') || '100');
-  const offset = parseInt(searchParams.get('offset') || '0');
-
-  try {
-    const { LogViewer } = await import('@beeblock/svelar/logging/LogViewer');
-
-    const logs = LogViewer.query({
-      level: level as any,
-      channel: channel ?? undefined,
-      search: search ?? undefined,
-      limit,
-      offset,
-    });
-
-    const stats = LogViewer.getStats();
-
-    return json({
-      logs,
-      total: stats.totalEntries,
-      limit,
-      offset,
-    });
-  } catch (error: any) {
-    return json(
-      {
-        error: error.message || 'Failed to fetch logs',
-      },
-      { status: 500 }
-    );
-  }
-};
-`;
-  }
-
-  private logsTailServerTemplate(): string {
-    return `import type { RequestHandler } from '@sveltejs/kit';
-
-/**
- * GET /api/admin/logs/tail
- * Server-Sent Events stream of live logs
- *
- * Returns a text/event-stream response with real-time log entries
- */
-export const GET: RequestHandler = async (event) => {
-  if (!event.locals.user || event.locals.user.role !== 'admin') {
-    return new Response('Unauthorized', { status: 403 });
-  }
-
-
-  const { LogViewer } = await import('@beeblock/svelar/logging/LogViewer');
-
-  // Set up SSE headers
-  const headers = {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-  };
-
-  // Create a readable stream using the tail() subscription
-  const stream = new ReadableStream({
-    start(controller) {
-      const encoder = new TextEncoder();
-      const unsubscribe = LogViewer.tail((entry) => {
-        try {
-          controller.enqueue(encoder.encode(\`data: \${JSON.stringify(entry)}\n\n\`));
-        } catch {
-          unsubscribe();
-        }
-      });
-
-      // Clean up when the client disconnects
-      event.request.signal.addEventListener('abort', () => {
-        unsubscribe();
-        controller.close();
-      });
-    },
-  });
-
-  return new Response(stream, { headers });
-};
-`;
-  }
-
-  private statsServerTemplate(): string {
-    return `import { json } from '@sveltejs/kit';
-import type { RequestHandler } from '@sveltejs/kit';
-
-/**
- * GET /api/admin/stats
- * Dashboard overview statistics
- */
-export const GET: RequestHandler = async (event) => {
-  if (!event.locals.user || event.locals.user.role !== 'admin') {
-    return new Response('Unauthorized', { status: 403 });
-  }
-
-
-  try {
-    const { JobMonitor } = await import('@beeblock/svelar/queue/JobMonitor');
-    const { ScheduleMonitor } = await import('@beeblock/svelar/scheduler/ScheduleMonitor');
-    const { LogViewer } = await import('@beeblock/svelar/logging/LogViewer');
-
-    const [queueHealth, recentErrors] = await Promise.all([
-      JobMonitor.getHealth(),
-      Promise.resolve(LogViewer.getRecentErrors(10)),
-    ]);
-
-    const schedulerHealth = await ScheduleMonitor.getHealth();
-    const logStats = LogViewer.getStats();
-
-    return json({
-      queue: queueHealth,
-      scheduler: schedulerHealth,
-      logs: logStats,
-      recentErrors,
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error: any) {
-    return json(
-      {
-        error: error.message || 'Failed to fetch stats',
-      },
-      { status: 500 }
-    );
-  }
-};
-`;
-  }
-
-  // ── Dashboard Page Templates ──
-
-	  private dashboardPageServerTemplate(): string {
-	    return `import type { PageServerLoad } from './$types';
-
-	export const load: PageServerLoad = async ({ fetch }) => {
-	  try {
-	    const [statsRes, healthRes, queueRes, schedulerRes, logsRes] = await Promise.all([
-	      fetch('/api/admin/stats'),
-	      fetch('/api/admin/health'),
-	      fetch('/api/admin/queue?limit=10'),
-	      fetch('/api/admin/scheduler'),
-	      fetch('/api/admin/logs?limit=25'),
-	    ]);
-
-	    const [stats, health, queue, scheduler, logs] = await Promise.all([
-	      statsRes.json(),
-	      healthRes.json(),
-	      queueRes.json(),
-	      schedulerRes.json(),
-	      logsRes.json(),
-	    ]);
-
-	    return {
-	      stats,
-	      health,
-	      queue,
-	      scheduler,
-	      logs,
-	    };
-	  } catch (error) {
-	    console.error('Failed to load dashboard:', error);
-	    return {
-	      stats: null,
-	      health: null,
-	      queue: null,
-	      scheduler: null,
-	      logs: null,
-	      error: 'Failed to load dashboard data',
-	    };
-	  }
+  const queueQuery = new URLSearchParams({ queue: selection.queue, status: selection.status, offset: selection.offset, limit: selection.limit });
+  const logQuery = new URLSearchParams({ limit: '25', offset: selection.logOffset });
+  for (const key of ['level', 'channel', 'search'] as const) if (selection[key]) logQuery.set(key, selection[key]);
+  const endpoints = { stats: '/api/admin/stats', health: '/api/admin/health', queue: '/api/admin/queue?' + queueQuery,
+    scheduler: '/api/admin/scheduler', logs: '/api/admin/logs?' + logQuery };
+  const panels = await Promise.all(Object.entries(endpoints).map(async ([name, url]) => {
+    try {
+      const response = await event.fetch(url);
+      const payload = await response.json();
+      if (!response.ok) return [name, { data: null, error: payload.meta?.message ?? 'Panel unavailable.' }] as const;
+      return [name, { data: payload.data, meta: payload.meta, error: '' }] as const;
+    } catch { return [name, { data: null, error: 'Panel unavailable.' }] as const; }
+  }));
+  return { panels: Object.fromEntries(panels), selection };
 };
 `;
   }
 
   private dashboardPageSvelteTemplate(): string {
     return `<script lang="ts">
+  import { page } from '$app/state';
+  import { replaceState } from '$app/navigation';
+  import { apiFetch } from '@beeblock/svelar/http';
+  import RefreshCw from 'lucide-svelte/icons/refresh-cw';
+  import RotateCcw from 'lucide-svelte/icons/rotate-ccw';
+  import Trash2 from 'lucide-svelte/icons/trash-2';
+  import Play from 'lucide-svelte/icons/play';
+  import ChevronLeft from 'lucide-svelte/icons/chevron-left';
+  import ChevronRight from 'lucide-svelte/icons/chevron-right';
   import type { PageData } from './$types';
 
-  export let data: PageData;
+  let { data }: { data: PageData } = $props();
+  // svelte-ignore state_referenced_locally
+  let panels = $state<any>(data.panels);
+  let queueName = $state('default');
+  let status = $state('failed');
+  let offset = $state(0);
+  let limit = $state(25);
+  let level = $state('');
+  let channel = $state('');
+  let search = $state('');
+  let logOffset = $state(0);
+  let pending = $state('');
+  let notice = $state('');
+  let noticeError = $state(false);
+  const tabs = ['overview', 'queue', 'scheduler', 'logs'] as const;
+  const selectedTab = $derived(tabs.find((tab) => tab === page.url.searchParams.get('tab')) ?? 'overview');
+  const topology = $derived(panels.stats?.data?.queue?.topology ?? []);
+  const jobs = $derived(panels.queue?.data?.jobs ?? []);
+  const tasks = $derived(panels.scheduler?.data?.tasks ?? []);
+  const totalJobs = $derived(topology.reduce((sum: number, queue: any) => sum + (queue.counts?.total ?? 0), 0));
+  $effect(() => {
+    panels = data.panels;
+    queueName = data.selection.queue; status = data.selection.status;
+    offset = Number(data.selection.offset); limit = Number(data.selection.limit);
+    level = data.selection.level; channel = data.selection.channel; search = data.selection.search; logOffset = Number(data.selection.logOffset);
+  });
 
-	  let selectedTab: 'overview' | 'queue' | 'scheduler' | 'logs' = 'overview';
-	  let loading = false;
-	  let actionMessage = '';
-
-	  async function refreshData() {
-	    loading = true;
-	    actionMessage = '';
-	    try {
-	      const [statsRes, healthRes, queueRes, schedulerRes, logsRes] = await Promise.all([
-	        fetch('/api/admin/stats'),
-	        fetch('/api/admin/health'),
-	        fetch('/api/admin/queue?limit=10'),
-	        fetch('/api/admin/scheduler'),
-	        fetch('/api/admin/logs?limit=25'),
-	      ]);
-	      data.stats = await statsRes.json();
-	      data.health = await healthRes.json();
-	      data.queue = await queueRes.json();
-	      data.scheduler = await schedulerRes.json();
-	      data.logs = await logsRes.json();
-	    } catch (error) {
-	      console.error('Failed to refresh:', error);
-	      actionMessage = 'Failed to refresh dashboard data';
-	    } finally {
-	      loading = false;
-	    }
-	  }
-
-	  async function retryJob(id: string) {
-	    await postAction(\`/api/admin/queue/\${id}/retry\`, {});
-	  }
-
-	  async function deleteJob(id: string) {
-	    await postAction(\`/api/admin/queue/\${id}\`, {}, 'DELETE');
-	  }
-
-	  async function runTask(name: string) {
-	    await postAction(\`/api/admin/scheduler/\${encodeURIComponent(name)}/run\`, {});
-	  }
-
-	  async function toggleTask(name: string, enabled: boolean) {
-	    await postAction(\`/api/admin/scheduler/\${encodeURIComponent(name)}/toggle\`, { enabled });
-	  }
-
-	  async function postAction(url: string, body: Record<string, unknown>, method = 'POST') {
-	    loading = true;
-	    actionMessage = '';
-	    try {
-	      const response = await fetch(url, {
-	        method,
-	        headers: { 'content-type': 'application/json' },
-	        body: method === 'DELETE' ? undefined : JSON.stringify(body),
-	      });
-	      const payload = await response.json().catch(() => ({}));
-	      if (!response.ok) throw new Error(payload.error ?? 'Dashboard action failed');
-	      actionMessage = payload.message ?? 'Action completed';
-	      await refreshData();
-	    } catch (error: any) {
-	      actionMessage = error.message ?? 'Dashboard action failed';
-	    } finally {
-	      loading = false;
-	    }
-	  }
+  function selectTab(tab: string) { const url = new URL(page.url); url.searchParams.set('tab', tab); replaceState(url, page.state); }
+  function syncQuery() {
+    const url = new URL(page.url);
+    for (const [key, value] of Object.entries({ queue: queueName, status, offset, limit, level, channel, search, logOffset })) {
+      if (value === '') url.searchParams.delete(key); else url.searchParams.set(key, String(value));
+    }
+    replaceState(url, page.state);
+  }
+  async function refreshPanels() {
+    const queueQuery = new URLSearchParams({ queue: queueName, status, limit: String(limit), offset: String(offset) });
+    const logQuery = new URLSearchParams({ limit: '25', offset: String(logOffset) });
+    if (level) logQuery.set('level', level); if (channel) logQuery.set('channel', channel); if (search) logQuery.set('search', search);
+    const urls = { stats: '/api/admin/stats', health: '/api/admin/health', queue: '/api/admin/queue?' + queueQuery,
+      scheduler: '/api/admin/scheduler', logs: '/api/admin/logs?' + logQuery };
+    const next = await Promise.all(Object.entries(urls).map(async ([name, url]) => {
+      try {
+        const response = await apiFetch(url, { showToast: false }); const payload = await response.json();
+        if (!response.ok) return [name, { data: null, error: payload.meta?.message ?? 'Panel unavailable.' }];
+        return [name, { data: payload.data, meta: payload.meta, error: '' }];
+      } catch { return [name, { data: null, error: 'Panel unavailable.' }]; }
+    }));
+    panels = Object.fromEntries(next);
+  }
+  async function refreshData() { if (pending) return; pending = 'refresh'; try { syncQuery(); await refreshPanels(); } finally { pending = ''; } }
+  async function filterJobs() { offset = 0; await refreshData(); }
+  async function filterLogs() { logOffset = 0; await refreshData(); }
+  async function jobPage(direction: number) { offset = Math.max(0, offset + direction * limit); await refreshData(); }
+  async function logPage(direction: number) { logOffset = Math.max(0, logOffset + direction * 25); await refreshData(); }
+  async function postAction(key: string, url: string, body: Record<string, unknown>, method = 'POST') {
+    if (pending) return; pending = key; notice = ''; noticeError = false;
+    try {
+      const response = await apiFetch(url, { method, showToast: false, body: JSON.stringify(body) }); const payload = await response.json();
+      if (!response.ok) throw new Error(payload.meta?.message ?? 'Dashboard action failed.');
+      notice = [payload.meta?.message ?? 'Action completed.', payload.meta?.auditWarning].filter(Boolean).join(' ');
+      await refreshPanels();
+    } catch (error) { notice = error instanceof Error ? error.message : 'Dashboard action failed.'; noticeError = true; }
+    finally { pending = ''; }
+  }
+  async function retryJob(job: any) {
+    if (pending || !confirm('Retry job ' + job.id + '? This can repeat external side effects.')) return;
+    await postAction('retry:' + job.id, '/api/admin/queue/' + encodeURIComponent(job.id) + '/retry?queue=' + encodeURIComponent(job.queue), {});
+  }
+  async function deleteJob(job: any) {
+    if (pending || !confirm('Delete job ' + job.id + '? This cannot be undone.')) return;
+    await postAction('delete:' + job.id, '/api/admin/queue/' + encodeURIComponent(job.id) + '?queue=' + encodeURIComponent(job.queue), { confirmed: true }, 'DELETE');
+  }
+  async function runTask(name: string) {
+    if (pending || !confirm('Run task ' + name + ' now?')) return;
+    await postAction('run:' + name, '/api/admin/scheduler/' + encodeURIComponent(name) + '/run', {});
+  }
+  async function toggleTask(name: string, enabled: boolean) {
+    if (pending || (!enabled && !confirm('Disable task ' + name + '?'))) return;
+    await postAction('toggle:' + name, '/api/admin/scheduler/' + encodeURIComponent(name) + '/toggle', { enabled });
+  }
+  function date(value: string | number | null | undefined) { return value == null ? 'Unknown' : new Date(value).toLocaleString(); }
+  function json(value: unknown) { return JSON.stringify(value, null, 2); }
 </script>
 
-<div class="dashboard">
-	  <header class="dashboard-header">
-	    <h1>Admin Dashboard</h1>
-	    <button on:click={refreshData} disabled={loading}>
-	      {loading ? 'Refreshing...' : 'Refresh'}
-	    </button>
-	  </header>
-
-	  {#if actionMessage}
-	    <p class="notice">{actionMessage}</p>
-	  {/if}
-
-  <nav class="tabs">
-    <button
-      class:active={selectedTab === 'overview'}
-      on:click={() => (selectedTab = 'overview')}
-    >
-      Overview
-    </button>
-    <button
-      class:active={selectedTab === 'queue'}
-      on:click={() => (selectedTab = 'queue')}
-    >
-      Queue
-    </button>
-    <button
-      class:active={selectedTab === 'scheduler'}
-      on:click={() => (selectedTab = 'scheduler')}
-    >
-      Scheduler
-    </button>
-    <button
-      class:active={selectedTab === 'logs'}
-      on:click={() => (selectedTab = 'logs')}
-    >
-      Logs
-    </button>
-  </nav>
-
-  <main class="dashboard-content">
+<svelte:head><title>Admin Dashboard</title></svelte:head>
+<div class="dashboard" aria-busy={Boolean(pending)}>
+  <header><h1>Admin Dashboard</h1><button title="Refresh dashboard" aria-label="Refresh dashboard" disabled={Boolean(pending)} onclick={refreshData}><RefreshCw size={18} class={pending === 'refresh' ? 'spinning' : ''} /></button></header>
+  <nav aria-label="Dashboard sections">{#each tabs as tab}<a href={'?tab=' + tab} aria-current={selectedTab === tab ? 'page' : undefined} onclick={(event) => { event.preventDefault(); selectTab(tab); }}>{tab}</a>{/each}</nav>
+  {#if notice}<p role={noticeError ? 'alert' : 'status'} class:error={noticeError}>{notice}</p>{/if}
+  {#each Object.entries(panels) as [name, panel]}{#if (panel as any)?.error}<p role="alert">{name}: {(panel as any).error}</p>{/if}{/each}
+  <main>
     {#if selectedTab === 'overview'}
-      <section class="overview">
-        <h2>System Overview</h2>
-
-        {#if data.health}
-          <div class="health-card">
-            <h3>System Health</h3>
-            <p>Status: <strong>{data.health.status}</strong></p>
-            <p>Uptime: {(data.health.uptime / 3600).toFixed(2)} hours</p>
-            <p>Memory: {(data.health.memory.heapUsed / 1024 / 1024).toFixed(2)} MB</p>
-          </div>
-        {/if}
-
-        {#if data.stats}
-          <div class="stats-grid">
-	            <div class="stat-card">
-	              <h3>Queue Jobs</h3>
-	              <p class="stat-number">{data.stats.queue?.queues?.default?.total || 0}</p>
-	              <small>Active: {data.stats.queue?.queues?.default?.active || 0}</small>
-	            </div>
-
-	            <div class="stat-card">
-	              <h3>Scheduled Tasks</h3>
-	              <p class="stat-number">{data.stats.scheduler?.totalTasks || 0}</p>
-	              <small>Enabled: {data.stats.scheduler?.enabledTasks || 0}</small>
-	            </div>
-
-            <div class="stat-card">
-              <h3>Recent Errors</h3>
-              <p class="stat-number">{data.stats.recentErrors?.length || 0}</p>
-              <small>Last 24 hours</small>
-            </div>
-          </div>
-        {/if}
-      </section>
-	    {:else if selectedTab === 'queue'}
-	      <section class="queue">
-	        <h2>Job Queue</h2>
-	        {#if data.queue?.counts}
-	          <div class="stats-grid compact">
-	            <div class="stat-card"><h3>Waiting</h3><p class="stat-number">{data.queue.counts.waiting}</p></div>
-	            <div class="stat-card"><h3>Active</h3><p class="stat-number">{data.queue.counts.active}</p></div>
-	            <div class="stat-card"><h3>Failed</h3><p class="stat-number">{data.queue.counts.failed}</p></div>
-	            <div class="stat-card"><h3>Delayed</h3><p class="stat-number">{data.queue.counts.delayed}</p></div>
-	          </div>
-	        {/if}
-
-	        <div class="table-wrap">
-	          <table>
-	            <thead>
-	              <tr>
-	                <th>ID</th>
-	                <th>Job</th>
-	                <th>Queue</th>
-	                <th>Status</th>
-	                <th>Attempts</th>
-	                <th>Created</th>
-	                <th>Actions</th>
-	              </tr>
-	            </thead>
-	            <tbody>
-	              {#each data.queue?.jobs ?? [] as job}
-	                <tr>
-	                  <td class="mono">{job.id}</td>
-	                  <td>{job.jobClass}</td>
-	                  <td>{job.queue}</td>
-	                  <td><span class="badge {job.status}">{job.status}</span></td>
-	                  <td>{job.attempts}/{job.maxAttempts}</td>
-	                  <td>{new Date(job.createdAt).toLocaleString()}</td>
-	                  <td class="actions">
-	                    {#if job.status === 'failed'}
-	                      <button on:click={() => retryJob(job.id)} disabled={loading}>Retry</button>
-	                    {/if}
-	                    <button class="danger" on:click={() => deleteJob(job.id)} disabled={loading}>Delete</button>
-	                  </td>
-	                </tr>
-	              {:else}
-	                <tr><td colspan="7" class="empty">No jobs found.</td></tr>
-	              {/each}
-	            </tbody>
-	          </table>
-	        </div>
-	      </section>
-	    {:else if selectedTab === 'scheduler'}
-	      <section class="scheduler">
-	        <h2>Scheduled Tasks</h2>
-	        {#if data.scheduler?.health}
-	          <div class="stats-grid compact">
-	            <div class="stat-card"><h3>Total</h3><p class="stat-number">{data.scheduler.health.totalTasks}</p></div>
-	            <div class="stat-card"><h3>Enabled</h3><p class="stat-number">{data.scheduler.health.enabledTasks}</p></div>
-	            <div class="stat-card"><h3>Running</h3><p class="stat-number">{data.scheduler.health.runningTasks}</p></div>
-	          </div>
-	        {/if}
-
-	        <div class="table-wrap">
-	          <table>
-	            <thead>
-	              <tr>
-	                <th>Task</th>
-	                <th>Schedule</th>
-	                <th>Next Run</th>
-	                <th>Last Status</th>
-	                <th>Enabled</th>
-	                <th>Actions</th>
-	              </tr>
-	            </thead>
-	            <tbody>
-	              {#each data.scheduler?.tasks ?? [] as task}
-	                <tr>
-	                  <td>{task.name}</td>
-	                  <td>{task.humanReadable}</td>
-	                  <td>{task.nextRun ? new Date(task.nextRun).toLocaleString() : 'n/a'}</td>
-	                  <td><span class="badge {task.lastStatus ?? 'waiting'}">{task.lastStatus ?? 'waiting'}</span></td>
-	                  <td>{task.enabled ? 'Yes' : 'No'}</td>
-	                  <td class="actions">
-	                    <button on:click={() => runTask(task.name)} disabled={loading || task.isRunning}>Run</button>
-	                    <button on:click={() => toggleTask(task.name, !task.enabled)} disabled={loading}>
-	                      {task.enabled ? 'Disable' : 'Enable'}
-	                    </button>
-	                  </td>
-	                </tr>
-	              {:else}
-	                <tr><td colspan="6" class="empty">No scheduled tasks registered.</td></tr>
-	              {/each}
-	            </tbody>
-	          </table>
-	        </div>
-	      </section>
-	    {:else if selectedTab === 'logs'}
-	      <section class="logs">
-	        <h2>Application Logs</h2>
-	        {#if data.logs}
-	          <div class="stats-grid compact">
-	            <div class="stat-card"><h3>Total</h3><p class="stat-number">{data.logs.total ?? 0}</p></div>
-	            <div class="stat-card"><h3>Limit</h3><p class="stat-number">{data.logs.limit ?? 0}</p></div>
-	          </div>
-	        {/if}
-
-	        <div class="table-wrap">
-	          <table>
-	            <thead>
-	              <tr>
-	                <th>Time</th>
-	                <th>Level</th>
-	                <th>Channel</th>
-	                <th>Message</th>
-	              </tr>
-	            </thead>
-	            <tbody>
-	              {#each data.logs?.logs ?? [] as log}
-	                <tr>
-	                  <td>{new Date(log.timestamp).toLocaleString()}</td>
-	                  <td><span class="badge {log.level}">{log.level}</span></td>
-	                  <td>{log.channel}</td>
-	                  <td>
-	                    <div>{log.message}</div>
-	                    {#if Object.keys(log.context ?? {}).length}
-	                      <pre>{JSON.stringify(log.context, null, 2)}</pre>
-	                    {/if}
-	                  </td>
-	                </tr>
-	              {:else}
-	                <tr><td colspan="4" class="empty">No log entries captured yet.</td></tr>
-	              {/each}
-	            </tbody>
-	          </table>
-	        </div>
-	      </section>
-	    {/if}
+      <h2>System Overview</h2>
+      <dl class="metrics">
+        <div><dt>Jobs (observed queues)</dt><dd>{panels.stats?.data ? totalJobs : 'Unknown'}</dd></div>
+        <div><dt>Scheduled Tasks</dt><dd>{panels.scheduler?.data?.health?.totalTasks ?? 'Unknown'}</dd></div>
+        <div><dt>Recent Errors</dt><dd>{panels.stats?.data?.recentErrors?.length ?? 'Unknown'}</dd></div>
+        <div><dt>Web Uptime</dt><dd>{panels.health?.data ? (panels.health.data.uptime / 3600).toFixed(2) + ' h' : 'Unknown'}</dd></div>
+        <div><dt>Web Heap Used</dt><dd>{panels.health?.data ? (panels.health.data.memory.heapUsed / 1024 / 1024).toFixed(2) + ' MB' : 'Unknown'}</dd></div>
+      </dl>
+      <h2>Queues</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Queue / Connection</th><th>Waiting</th><th>Active</th><th>Failed</th><th>Completed</th><th>Delayed</th><th>Workers</th><th>Concurrency (effective / configured / global)</th><th>Paused</th><th>Lag</th><th>Oldest Waiting</th></tr></thead>
+        <tbody>{#each topology as queue}<tr>
+          <td><button disabled={Boolean(pending) || !queue.counts} onclick={() => { queueName = queue.name; selectTab('queue'); filterJobs(); }}>{queue.definition?.label ?? queue.name}</button><small>{queue.name} / {queue.definition?.connection ?? 'default connection'}</small>{#if queue.definition?.metadata}<details><summary>Metadata</summary><pre>{json(queue.definition.metadata)}</pre></details>{/if}</td>
+          {#each ['waiting', 'active', 'failed', 'completed', 'delayed'] as state}<td>{queue.counts?.[state] ?? 'Unknown'}</td>{/each}
+          <td>{queue.runtime?.workers ?? 'Unknown'}</td><td>{queue.runtime?.effectiveConcurrency ?? 'Unknown'} / {queue.definition?.concurrency ?? 'Unknown'} / {queue.runtime?.globalConcurrency ?? 'Unknown'}</td>
+          <td>{queue.runtime?.paused == null ? 'Unknown' : queue.runtime.paused ? 'Yes' : 'No'}</td><td>{queue.runtime?.lag == null ? 'Unknown' : Math.round(queue.runtime.lag / 1000) + ' s'}</td><td>{date(queue.runtime?.oldestWaitingJob)}</td>
+        </tr>{:else}<tr><td colspan="11">No queue topology available.</td></tr>{/each}</tbody>
+      </table></div>
+    {:else if selectedTab === 'queue'}
+      <h2>Job Queue</h2>
+      <form class="filters" onsubmit={(event) => { event.preventDefault(); filterJobs(); }}>
+        <label>Queue<select bind:value={queueName} disabled={Boolean(pending)} onchange={filterJobs}>{#if !topology.some((entry: any) => entry.name === queueName)}<option value={queueName}>{queueName}</option>{/if}{#each topology as entry}<option value={entry.name} disabled={!entry.counts}>{entry.definition?.label ?? entry.name}</option>{/each}</select></label>
+        <label>Status<select bind:value={status} disabled={Boolean(pending)} onchange={filterJobs}>{#each ['waiting', 'active', 'failed', 'completed', 'delayed'] as state}<option value={state}>{state}</option>{/each}</select></label>
+        <label>Page Size<select bind:value={limit} disabled={Boolean(pending)} onchange={filterJobs}><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option></select></label>
+      </form>
+      {#if panels.queue?.data?.counts}<dl class="metrics">{#each Object.entries(panels.queue.data.counts) as [state, count]}<div><dt>{state}</dt><dd>{count}</dd></div>{/each}</dl>{/if}
+      <div class="table-wrap"><table><thead><tr><th>Job</th><th>Status</th><th>Attempts</th><th>Created</th><th>Inspection</th><th>Actions</th></tr></thead>
+        <tbody>{#each jobs as job}<tr>
+          <td>{job.jobClass}<small>{job.id} / {job.queue}</small></td><td>{job.status}</td><td>{job.attempts} / {job.maxAttempts}</td><td>{date(job.createdAt)}</td>
+          <td><details><summary>Details</summary>{#if job.error}<h3>Error</h3><pre>{job.error}</pre>{/if}<h3>Payload</h3><pre>{json(job.payload)}</pre><h3>Metadata</h3><pre>{json(job.metadata)}</pre><h3>Progress</h3><pre>{json(job.progress)}</pre><h3>Timeline</h3>{#each job.timeline ?? [] as entry}<p>{entry.event}: {date(entry.timestamp)}</p>{/each}</details></td>
+          <td><div class="actions">{#if job.status === 'failed'}<button aria-label={'Retry job ' + job.id} title="Retry job" aria-busy={pending === 'retry:' + job.id} disabled={Boolean(pending)} onclick={() => retryJob(job)}><RotateCcw size={16} /></button>{/if}<button class="danger" aria-label={'Delete job ' + job.id} title="Delete job" aria-busy={pending === 'delete:' + job.id} disabled={Boolean(pending) || job.status === 'active'} onclick={() => deleteJob(job)}><Trash2 size={16} /></button></div></td>
+        </tr>{:else}<tr><td colspan="6">{panels.queue?.error ? 'Jobs unavailable.' : 'No jobs found.'}</td></tr>{/each}</tbody>
+      </table></div>
+      <div class="pager"><button title="Previous jobs page" aria-label="Previous jobs page" disabled={Boolean(pending) || offset <= 0} onclick={() => jobPage(-1)}><ChevronLeft size={18} /></button><span>{offset + (jobs.length ? 1 : 0)} - {offset + jobs.length} / {panels.queue?.meta?.total ?? 'Unknown'}</span><button title="Next jobs page" aria-label="Next jobs page" disabled={Boolean(pending) || !panels.queue?.meta?.hasMore} onclick={() => jobPage(1)}><ChevronRight size={18} /></button></div>
+    {:else if selectedTab === 'scheduler'}
+      <h2>Scheduled Tasks</h2>
+      <div class="table-wrap"><table><thead><tr><th>Task</th><th>Schedule</th><th>Last / Next Run</th><th>Duration / Status</th><th>History</th><th>Enabled</th><th>Run</th></tr></thead>
+        <tbody>{#each tasks as task}<tr><td>{task.name}</td><td>{task.humanReadable}<small>{task.expression}</small></td><td>{date(task.lastRun)}<small>{date(task.nextRun)}</small></td><td>{task.lastDuration == null ? 'Unknown' : task.lastDuration + ' ms'}<small>{task.isRunning ? 'Running (web process)' : task.lastStatus ?? 'Not run'}</small></td>
+          <td><details><summary>Runs</summary>{#each task.history as run}<p>{date(run.timestamp)}: {run.success ? 'success' : 'failed'} ({run.duration} ms)</p>{#if run.error}<pre>{run.error}</pre>{/if}{:else}<p>No history.</p>{/each}</details></td>
+          <td><input type="checkbox" aria-label={'Enable task ' + task.name} checked={task.enabled} disabled={Boolean(pending)} onchange={(event) => { const enabled = event.currentTarget.checked; event.currentTarget.checked = task.enabled; toggleTask(task.name, enabled); }} /></td><td><button title="Run task now" aria-label={'Run task ' + task.name} aria-busy={pending === 'run:' + task.name} disabled={Boolean(pending) || task.isRunning || !task.enabled} onclick={() => runTask(task.name)}><Play size={16} /></button></td>
+        </tr>{:else}<tr><td colspan="7">{panels.scheduler?.error ? 'Scheduler unavailable.' : 'No scheduled tasks registered.'}</td></tr>{/each}</tbody>
+      </table></div>
+    {:else if selectedTab === 'logs'}
+      <h2>Application Logs</h2><p>Scope: {panels.logs?.data?.scope ?? 'Unknown'}</p>
+      <form class="filters" onsubmit={(event) => { event.preventDefault(); filterLogs(); }}><label>Minimum Level<select bind:value={level} disabled={Boolean(pending)}><option value="">All</option>{#each ['debug', 'info', 'warn', 'error', 'fatal'] as value}<option value={value}>{value}</option>{/each}</select></label><label>Channel<input bind:value={channel} maxlength="255" disabled={Boolean(pending)} /></label><label>Search<input type="search" bind:value={search} maxlength="500" disabled={Boolean(pending)} /></label><button disabled={Boolean(pending)} type="submit">Search</button></form>
+      <div class="table-wrap"><table><thead><tr><th>Time</th><th>Level / Channel</th><th>Message / Context</th></tr></thead><tbody>{#each panels.logs?.data?.logs ?? [] as log}<tr><td>{date(log.timestamp)}</td><td>{log.level}<small>{log.channel}</small></td><td>{log.message}<details><summary>Context</summary><pre>{json(log.context)}</pre></details></td></tr>{:else}<tr><td colspan="3">{panels.logs?.error ? 'Logs unavailable.' : 'No log entries found.'}</td></tr>{/each}</tbody></table></div>
+      <div class="pager"><button title="Previous logs page" aria-label="Previous logs page" disabled={Boolean(pending) || logOffset <= 0} onclick={() => logPage(-1)}><ChevronLeft size={18} /></button><span>{logOffset + (panels.logs?.data?.logs?.length ? 1 : 0)} - {logOffset + (panels.logs?.data?.logs?.length ?? 0)} / {panels.logs?.data?.total ?? 'Unknown'}</span><button title="Next logs page" aria-label="Next logs page" disabled={Boolean(pending) || logOffset + 25 >= (panels.logs?.data?.total ?? 0)} onclick={() => logPage(1)}><ChevronRight size={18} /></button></div>
+    {/if}
   </main>
 </div>
 
 <style>
-  .dashboard {
-    padding: 2rem;
-    max-width: 1200px;
-    margin: 0 auto;
-  }
-
-  .dashboard-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 2rem;
-  }
-
-  .dashboard-header h1 {
-    margin: 0;
-    font-size: 2rem;
-  }
-
-  .dashboard-header button {
-    padding: 0.5rem 1rem;
-    background: #0066cc;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 1rem;
-  }
-
-  .dashboard-header button:hover:not(:disabled) {
-    background: #0052a3;
-  }
-
-  .dashboard-header button:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-
-  .tabs {
-    display: flex;
-    gap: 1rem;
-    margin-bottom: 2rem;
-    border-bottom: 1px solid #e0e0e0;
-  }
-
-  .tabs button {
-    padding: 0.75rem 1.5rem;
-    background: none;
-    border: none;
-    border-bottom: 3px solid transparent;
-    cursor: pointer;
-    font-size: 1rem;
-    color: #666;
-    transition: all 0.3s ease;
-  }
-
-  .tabs button:hover {
-    color: #0066cc;
-  }
-
-  .tabs button.active {
-    color: #0066cc;
-    border-bottom-color: #0066cc;
-  }
-
-  .dashboard-content {
-    animation: fadeIn 0.3s ease;
-  }
-
-  @keyframes fadeIn {
-    from {
-      opacity: 0;
-      transform: translateY(10px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  .overview {
-    display: flex;
-    flex-direction: column;
-    gap: 2rem;
-  }
-
-  .health-card {
-    padding: 1.5rem;
-    background: #f5f5f5;
-    border-radius: 8px;
-    border-left: 4px solid #00aa00;
-  }
-
-  .health-card h3 {
-    margin-top: 0;
-  }
-
-  .health-card p {
-    margin: 0.5rem 0;
-  }
-
-  .stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 1.5rem;
-  }
-
-  .stat-card {
-    padding: 1.5rem;
-    background: white;
-    border: 1px solid #e0e0e0;
-    border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  }
-
-  .stat-card h3 {
-    margin-top: 0;
-    font-size: 0.9rem;
-    color: #666;
-    text-transform: uppercase;
-  }
-
-  .stat-number {
-    margin: 0.5rem 0;
-    font-size: 2rem;
-    font-weight: bold;
-    color: #0066cc;
-  }
-
-	  .stat-card small {
-	    display: block;
-	    color: #999;
-	    font-size: 0.85rem;
-	  }
-
-	  .notice {
-	    margin: 0 0 1rem;
-	    padding: 0.75rem 1rem;
-	    background: #eef6ff;
-	    border: 1px solid #b8dcff;
-	    border-radius: 6px;
-	    color: #164a7a;
-	  }
-
-	  .compact {
-	    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-	    gap: 1rem;
-	    margin-bottom: 1.5rem;
-	  }
-
-	  .compact .stat-card {
-	    padding: 1rem;
-	  }
-
-	  .table-wrap {
-	    overflow-x: auto;
-	    border: 1px solid #e0e0e0;
-	    border-radius: 8px;
-	    background: white;
-	  }
-
-	  table {
-	    width: 100%;
-	    border-collapse: collapse;
-	    font-size: 0.92rem;
-	  }
-
-	  th,
-	  td {
-	    padding: 0.75rem;
-	    border-bottom: 1px solid #eee;
-	    text-align: left;
-	    vertical-align: top;
-	  }
-
-	  th {
-	    background: #f7f8fa;
-	    color: #555;
-	    font-size: 0.78rem;
-	    text-transform: uppercase;
-	  }
-
-	  tr:last-child td {
-	    border-bottom: 0;
-	  }
-
-	  .mono {
-	    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-	    font-size: 0.82rem;
-	  }
-
-	  .actions {
-	    display: flex;
-	    gap: 0.5rem;
-	    white-space: nowrap;
-	  }
-
-	  .actions button {
-	    padding: 0.35rem 0.65rem;
-	    border: 1px solid #c9d7e8;
-	    border-radius: 6px;
-	    background: #fff;
-	    color: #164a7a;
-	    cursor: pointer;
-	  }
-
-	  .actions button:hover:not(:disabled) {
-	    background: #eef6ff;
-	  }
-
-	  .actions button.danger {
-	    border-color: #f1c0c0;
-	    color: #a52323;
-	  }
-
-	  .actions button.danger:hover:not(:disabled) {
-	    background: #fff0f0;
-	  }
-
-	  .badge {
-	    display: inline-block;
-	    padding: 0.18rem 0.45rem;
-	    border-radius: 999px;
-	    background: #eef0f4;
-	    color: #3f4652;
-	    font-size: 0.75rem;
-	    font-weight: 600;
-	    text-transform: uppercase;
-	  }
-
-	  .badge.active,
-	  .badge.completed,
-	  .badge.success,
-	  .badge.info {
-	    background: #e8f7ee;
-	    color: #176b39;
-	  }
-
-	  .badge.failed,
-	  .badge.error,
-	  .badge.fatal {
-	    background: #fdeeee;
-	    color: #a52323;
-	  }
-
-	  .badge.delayed,
-	  .badge.warn {
-	    background: #fff6df;
-	    color: #8a5a00;
-	  }
-
-	  pre {
-	    margin: 0.5rem 0 0;
-	    padding: 0.5rem;
-	    max-width: 36rem;
-	    overflow: auto;
-	    background: #f7f8fa;
-	    border-radius: 6px;
-	    font-size: 0.78rem;
-	  }
-
-	  .empty {
-	    color: #777;
-	    text-align: center;
-	  }
-
-	  section h2 {
-	    margin-top: 0;
-	  }
+  .dashboard { max-width: 1440px; margin: 0 auto; padding: 24px; color: #1f2937; background: #fff; }
+  header, .actions, .pager, .filters { display: flex; align-items: center; gap: 12px; }
+  header { justify-content: space-between; } h1 { font-size: 24px; margin: 0; } h2 { font-size: 20px; margin: 24px 0 16px; } h3 { font-size: 14px; }
+  nav { display: flex; flex-wrap: wrap; gap: 8px; border-bottom: 1px solid #d1d5db; margin: 20px 0; }
+  nav a { padding: 12px; color: #374151; text-transform: capitalize; text-decoration: none; border-bottom: 3px solid transparent; }
+  nav a[aria-current="page"] { color: #075985; border-color: #0284c7; }
+  button { min-width: 40px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; padding: 8px; border: 1px solid #9ca3af; border-radius: 4px; background: #fff; color: #075985; cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; } .danger { color: #b91c1c; }
+  :global(.spinning) { animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
+  .metrics { display: flex; flex-wrap: wrap; gap: 24px; padding: 16px 0; border-bottom: 1px solid #d1d5db; }
+  dt { color: #4b5563; font-size: 13px; text-transform: capitalize; } dd { margin: 4px 0 0; font-size: 22px; font-weight: 600; }
+  .filters { flex-wrap: wrap; margin-bottom: 16px; align-items: end; } label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+  select, input:not([type="checkbox"]) { box-sizing: border-box; min-height: 40px; max-width: 100%; padding: 8px; border: 1px solid #9ca3af; border-radius: 4px; background: #fff; color: #1f2937; }
+  input[type="checkbox"] { width: 20px; height: 20px; } .table-wrap { max-width: 100%; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; } th, td { text-align: left; vertical-align: top; padding: 12px; border-bottom: 1px solid #e5e7eb; }
+  th { background: #f3f4f6; white-space: nowrap; font-size: 12px; } td { max-width: 420px; overflow-wrap: anywhere; }
+  small { display: block; margin-top: 4px; color: #4b5563; } summary { cursor: pointer; padding: 8px 0; color: #075985; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 420px; font-size: 12px; background: #f3f4f6; padding: 12px; }
+  [role="alert"], .error { color: #b91c1c; } .pager { justify-content: center; margin-top: 16px; }
+  :focus-visible { outline: 2px solid #0284c7; outline-offset: 2px; }
+  @media (max-width: 640px) { .dashboard { padding: 12px; } .filters > label { width: 100%; } h1 { font-size: 22px; } }
+  @media (prefers-reduced-motion: reduce) { :global(.spinning) { animation: none; } }
 </style>
 `;
   }
