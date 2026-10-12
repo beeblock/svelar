@@ -24,7 +24,7 @@ That's it. The CLI scaffolds a complete SvelteKit + Svelar project, installs dep
 - **Tailwind CSS 4** with theme variables (`--color-brand`, etc.)
 - **Svelar Framework** — ORM, Auth, Sessions, Middleware, Queue, Scheduler, and 35+ modules
 - **SQLite Database** — Pre-configured, zero setup
-- **Icon Libraries** — `@lucide/svelte` and `@tabler/icons-svelte` included
+- **Icons** — `@lucide/svelte` included; install `@tabler/icons-svelte` separately when needed
 - **Environment Config** — `.env.example` with sensible defaults
 - **Vite Config** — All `@beeblock/svelar/*` aliases, SSR config, and `fs.allow` pre-wired
 - **EventServiceProvider** — Pre-wired for event listeners, subscribers, and model observers

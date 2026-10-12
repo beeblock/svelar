@@ -219,6 +219,8 @@ Props: `icon` (Component), `path` (string), `size` (number, default 24), `stroke
 
 #### Vite Configuration for Icon Libraries
 
+Generated apps include Lucide icons. Tabler components are also supported by `Icon`, but are optional: run `npm install @tabler/icons-svelte` when your app uses them. The framework does not install the full Tabler catalogue for apps that do not need it.
+
 When using `@lucide/svelte` or `@tabler/icons-svelte`, add these to your `vite.config.ts`:
 
 ```typescript

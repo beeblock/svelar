@@ -259,7 +259,7 @@
 		}
 	},
 	"scripts": {
-		"build": "tsup && (tsc --emitDeclarationOnly || echo 'Warning: tsc declaration emit had errors') && npm run copy-cli-scripts",
+		"build": "tsup && tsc --emitDeclarationOnly && npm run copy-cli-scripts",
 		"copy-cli-scripts": "node -e \"const fs=require('fs');['ts-resolver.mjs','ts-resolve-hook.mjs'].forEach(f=>fs.copyFileSync('src/cli/'+f,'dist/cli/'+f))\"",
 		"dev": "tsup --watch",
 		"test": "vitest run",
@@ -271,7 +271,6 @@
 		"node": ">=22.0.0"
 	},
 	"dependencies": {
-		"@tabler/icons-svelte": "^3.49.0",
 		"date-fns": "^4.4.0",
 		"drizzle-orm": "^0.45.4",
 		"jiti": "^2.7.0",
