@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Resilient HTTP integrations** — the server-side `Http` client now supports configurable retry policies by status/method/error, `Retry-After`, exponential backoff, full jitter, idempotency keys, process-local circuit breakers, request/response/error hooks, and redaction helpers for telemetry.
 - **Tenant-bound service account keys** — API keys now support service accounts, tenant/actor context, IP allowlists, per-key rate limits, disable/enable controls, request-local `event.locals.apiKey`, and audit/log context enrichment.
 - **Architecture lint guard** — `npx svelar lint:architecture` now detects thin-route, controller-flow, runtime DDL, raw persistence, mutating `fetch`, and write-flow convention drift.
+- **PostgreSQL-ready query builder APIs** — query builder raw expressions now accept bindings in `selectRaw()`/`orderByRaw()`, PostgreSQL placeholder conversion preserves JSONB `?` operators, and common production helpers now include `countDistinct()`, `chunkById()`, `forUpdate()`, `skipLocked()`, and typed returning helpers.
 
 ## [0.8.0] - 2026-10-12
 

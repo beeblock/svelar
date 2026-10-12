@@ -53,6 +53,8 @@ interface JoinClause {
 interface OrderClause {
   column: string;
   direction: OrderDirection;
+  bindings?: any[];
+  raw?: boolean;
 }
 
 interface PaginationResult<T> {
@@ -85,6 +87,9 @@ export class QueryBuilder<TModel = any> {
   private forceDeleting = false;
   private tenantScopeDisabled = false;
   private tenantScopeApplied = false;
+  private lockMode: 'update' | null = null;
+  private useSkipLocked = false;
+  private returningColumns: string[] = [];
 
   // Model class reference for hydrating results
   private modelClass?: any;
@@ -559,6 +564,12 @@ export class QueryBuilder<TModel = any> {
     return Number(rows[0]?.aggregate ?? 0);
   }
 
+  async countDistinct(column: string): Promise<number> {
+    const { sql, bindings } = this.buildAggregate('COUNT DISTINCT', column);
+    const rows = await Connection.raw(sql, bindings, this.connectionName);
+    return Number(rows[0]?.aggregate ?? 0);
+  }
+
   async sum(column: string): Promise<number> {
     const { sql, bindings } = this.buildAggregate('SUM', column);
     const rows = await Connection.raw(sql, bindings, this.connectionName);
@@ -632,6 +643,32 @@ export class QueryBuilder<TModel = any> {
     }
   }
 
+  async chunkById(
+    size: number,
+    callback: (items: TModel[], lastId: any) => Promise<boolean | void>,
+    column: string = 'id',
+  ): Promise<void> {
+    let lastId: any = null;
+
+    for (;;) {
+      const cloned = this.clone();
+      cloned.orderClauses = [];
+      cloned.limitValue = size;
+      cloned.orderBy(column, 'asc');
+      if (lastId !== null && lastId !== undefined) {
+        cloned.where(column, '>', lastId);
+      }
+
+      const results = await cloned.get();
+      if (results.length === 0) break;
+
+      const last = results[results.length - 1] as any;
+      lastId = typeof last?.getAttribute === 'function' ? last.getAttribute(column) : last?.[column];
+      const shouldContinue = await callback(results, lastId);
+      if (shouldContinue === false || results.length < size) break;
+    }
+  }
+
   when(condition: boolean | any, callback: (query: this) => this): this {
     if (condition) {
       callback(this);
@@ -639,13 +676,17 @@ export class QueryBuilder<TModel = any> {
     return this;
   }
 
-  selectRaw(expression: string): this {
+  selectRaw(expression: string, bindings: any[] = []): this {
     if (this.selectColumns[0] === '*') {
       this.selectColumns = [expression];
     } else {
       this.selectColumns.push(expression);
     }
     this.rawSelectColumns.add(expression);
+    if (bindings.length > 0) {
+      if (!this._selectBindings) this._selectBindings = [];
+      this._selectBindings.push(...bindings);
+    }
     return this;
   }
 
@@ -767,10 +808,36 @@ export class QueryBuilder<TModel = any> {
     return this;
   }
 
-  orderByRaw(sql: string): this {
+  orderByRaw(sql: string, bindings: any[] = []): this {
     // Store as a special order clause
-    this.orderClauses.push({ column: sql, direction: 'asc' as OrderDirection });
-    (this.orderClauses[this.orderClauses.length - 1] as any).__raw = true;
+    this.orderClauses.push({ column: sql, direction: 'asc' as OrderDirection, raw: true, bindings });
+    return this;
+  }
+
+  returning(...columns: string[]): this {
+    this.returningColumns = columns.length > 0 ? columns : ['*'];
+    return this;
+  }
+
+  async insertReturning(data: Record<string, any>, columns: string[] = ['*']): Promise<any[]> {
+    return await this.returning(...columns).insert(data);
+  }
+
+  async updateReturning(data: Record<string, any>, columns: string[] = ['*']): Promise<any[]> {
+    return await this.returning(...columns).update(data) as unknown as any[];
+  }
+
+  async deleteReturning(columns: string[] = ['*']): Promise<any[]> {
+    return await this.returning(...columns).delete() as unknown as any[];
+  }
+
+  forUpdate(): this {
+    this.lockMode = 'update';
+    return this;
+  }
+
+  skipLocked(): this {
+    this.useSkipLocked = true;
     return this;
   }
 
@@ -830,11 +897,11 @@ export class QueryBuilder<TModel = any> {
     const values = Object.values(data);
     const placeholders = values.map(() => '?').join(', ');
 
-    const sql = `INSERT INTO ${this.quoteIdentifier(this.tableName, 'Table name')} (${columns.map((column) => this.quoteIdentifier(column, 'Column name')).join(', ')}) VALUES (${placeholders})`;
+    const sql = `INSERT INTO ${this.quoteIdentifier(this.tableName, 'Table name')} (${columns.map((column) => this.quoteIdentifier(column, 'Column name')).join(', ')}) VALUES (${placeholders})${this.buildReturning()}`;
     return Connection.raw(sql, values, this.connectionName);
   }
 
-  async insertGetId(data: Record<string, any>, primaryKey: string = 'id'): Promise<number> {
+  async insertGetId<TId = number>(data: Record<string, any>, primaryKey: string = 'id'): Promise<TId> {
     data = this.applyTenantInsertAttributes(data);
     const driver = Connection.getDriver(this.connectionName);
     const columns = Object.keys(data);
@@ -846,22 +913,22 @@ export class QueryBuilder<TModel = any> {
     if (driver === 'postgres') {
       sql += ` RETURNING ${this.quoteIdentifier(primaryKey, 'Primary key')}`;
       const rows = await Connection.raw(sql, values, this.connectionName);
-      return rows[0]?.[primaryKey];
+      return rows[0]?.[primaryKey] as TId;
     }
 
     await Connection.raw(sql, values, this.connectionName);
 
     if (driver === 'sqlite') {
       const rows = await Connection.raw('SELECT last_insert_rowid() as id', [], this.connectionName);
-      return rows[0]?.id;
+      return rows[0]?.id as TId;
     }
 
     if (driver === 'mysql') {
       const rows = await Connection.raw('SELECT LAST_INSERT_ID() as id', [], this.connectionName);
-      return rows[0]?.id;
+      return rows[0]?.id as TId;
     }
 
-    return 0;
+    return 0 as TId;
   }
 
   async update(data: Record<string, any>): Promise<number> {
@@ -871,9 +938,11 @@ export class QueryBuilder<TModel = any> {
     const setClause = columns.map((c) => `${this.quoteIdentifier(c, 'Column name')} = ?`).join(', ');
 
     const { whereSQL, whereBindings } = this.buildWhere();
-    const sql = `UPDATE ${this.quoteIdentifier(this.tableName, 'Table name')} SET ${setClause}${whereSQL ? ` ${whereSQL}` : ''}`;
+    const returning = this.buildReturning();
+    const sql = `UPDATE ${this.quoteIdentifier(this.tableName, 'Table name')} SET ${setClause}${whereSQL ? ` ${whereSQL}` : ''}${returning}`;
 
     const result = await Connection.raw(sql, [...values, ...whereBindings], this.connectionName);
+    if (returning) return result as any;
     return this.affectedRows(result);
   }
 
@@ -884,8 +953,10 @@ export class QueryBuilder<TModel = any> {
 
     this.ensureTenantScope();
     const { whereSQL, whereBindings } = this.buildWhere();
-    const sql = `DELETE FROM ${this.quoteIdentifier(this.tableName, 'Table name')}${whereSQL ? ` ${whereSQL}` : ''}`;
+    const returning = this.buildReturning();
+    const sql = `DELETE FROM ${this.quoteIdentifier(this.tableName, 'Table name')}${whereSQL ? ` ${whereSQL}` : ''}${returning}`;
     const result = await Connection.raw(sql, whereBindings, this.connectionName);
+    if (returning) return result as any;
     return this.affectedRows(result);
   }
 
@@ -996,9 +1067,12 @@ export class QueryBuilder<TModel = any> {
     // ORDER BY
     if (this.orderClauses.length > 0) {
       const orderParts = this.orderClauses.map((o) =>
-        (o as any).__raw ? o.column : `${this.quoteIdentifier(o.column, 'Order column')} ${o.direction.toUpperCase()}`
+        o.raw ? o.column : `${this.quoteIdentifier(o.column, 'Order column')} ${o.direction.toUpperCase()}`
       );
       parts.push(`ORDER BY ${orderParts.join(', ')}`);
+      for (const order of this.orderClauses) {
+        if (order.raw && order.bindings?.length) bindings.push(...order.bindings);
+      }
     }
 
     // LIMIT
@@ -1010,6 +1084,9 @@ export class QueryBuilder<TModel = any> {
     if (this.offsetValue !== null) {
       parts.push(`OFFSET ${this.offsetValue}`);
     }
+
+    const lockSQL = this.buildLock();
+    if (lockSQL) parts.push(lockSQL);
 
     // UNIONs
     if (this.unionClauses.length > 0) {
@@ -1044,6 +1121,9 @@ export class QueryBuilder<TModel = any> {
     cloned.forceDeleting = this.forceDeleting;
     cloned.tenantScopeDisabled = this.tenantScopeDisabled;
     cloned.tenantScopeApplied = this.tenantScopeApplied;
+    cloned.lockMode = this.lockMode;
+    cloned.useSkipLocked = this.useSkipLocked;
+    cloned.returningColumns = [...this.returningColumns];
     return cloned;
   }
 
@@ -1147,7 +1227,10 @@ export class QueryBuilder<TModel = any> {
     const savedOrder = this.orderClauses;
     const savedLimit = this.limitValue;
     const savedOffset = this.offsetValue;
-    this.selectColumns = [`${fn}(${this.quoteIdentifier(column, 'Aggregate column')}) as aggregate`];
+    const expression = fn === 'COUNT DISTINCT'
+      ? `COUNT(DISTINCT ${this.quoteIdentifier(column, 'Aggregate column')}) as aggregate`
+      : `${fn}(${this.quoteIdentifier(column, 'Aggregate column')}) as aggregate`;
+    this.selectColumns = [expression];
     this.orderClauses = [];
     this.limitValue = null;
     this.offsetValue = null;
@@ -1157,6 +1240,24 @@ export class QueryBuilder<TModel = any> {
     this.limitValue = savedLimit;
     this.offsetValue = savedOffset;
     return result;
+  }
+
+  private buildReturning(): string {
+    if (this.returningColumns.length === 0) return '';
+    const driver = this.currentDriver();
+    if (driver === 'mysql') {
+      throw new Error('RETURNING is not supported by the MySQL query builder.');
+    }
+    return ` RETURNING ${this.returningColumns.map((column) => this.formatSelectColumn(column)).join(', ')}`;
+  }
+
+  private buildLock(): string {
+    if (!this.lockMode) return '';
+    const driver = this.currentDriver();
+    if (driver === 'sqlite') return '';
+    let sql = this.lockMode === 'update' ? 'FOR UPDATE' : '';
+    if (sql && this.useSkipLocked) sql += ' SKIP LOCKED';
+    return sql;
   }
 
   private currentDriver(): DatabaseDriver {

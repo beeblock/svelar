@@ -53,9 +53,47 @@ export function normalizeDatabaseDriver(driver: string): DatabaseDriver {
   throw new Error(`Unsupported database driver: ${driver}`);
 }
 
-function postgresSql(sql: string): string {
+function postgresSql(sql: string, bindingCount: number): string {
   let index = 0;
-  return sql.replace(/\?/g, () => `$${++index}`);
+  let result = '';
+  let singleQuoted = false;
+  let doubleQuoted = false;
+
+  for (let i = 0; i < sql.length; i++) {
+    const char = sql[i];
+    const next = sql[i + 1];
+
+    if (char === "'" && !doubleQuoted) {
+      result += char;
+      if (singleQuoted && next === "'") {
+        result += next;
+        i++;
+        continue;
+      }
+      singleQuoted = !singleQuoted;
+      continue;
+    }
+
+    if (char === '"' && !singleQuoted) {
+      result += char;
+      doubleQuoted = !doubleQuoted;
+      continue;
+    }
+
+    if (char === '?' && !singleQuoted && !doubleQuoted && index < bindingCount) {
+      const nextNonSpace = sql.slice(i + 1).match(/\S/)?.[0] ?? '';
+      if (nextNonSpace === "'" || nextNonSpace === '"' || nextNonSpace === '?' || nextNonSpace === '|') {
+        result += char;
+        continue;
+      }
+      result += `$${++index}`;
+      continue;
+    }
+
+    result += char;
+  }
+
+  return result;
 }
 
 const ISO_DATE_TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/;
@@ -195,7 +233,7 @@ class ConnectionManager {
       }
       case 'postgres': {
         const client = await this.rawClient(connectionName);
-        return client.unsafe(postgresSql(sql), bindings);
+        return client.unsafe(postgresSql(sql, bindings.length), bindings);
       }
       case 'mysql': {
         const client = await this.rawClient(connectionName);

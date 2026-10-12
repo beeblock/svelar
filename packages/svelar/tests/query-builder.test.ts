@@ -495,6 +495,91 @@ describe('QueryBuilder - SQL Generation', () => {
       );
       expect(bindings).toEqual(['ada@example.com']);
     });
+
+    it('supports bindings in selectRaw and orderByRaw', () => {
+      const qb = new QueryBuilder('users');
+      qb.selectRaw('CASE WHEN score > ? THEN ? ELSE ? END as tier', [90, 'gold', 'standard'])
+        .where('active', true)
+        .orderByRaw('CASE WHEN role = ? THEN 0 ELSE 1 END', ['admin']);
+
+      const { sql, bindings } = qb.toSQL();
+
+      expect(sql).toBe(
+        'SELECT CASE WHEN score > ? THEN ? ELSE ? END as tier FROM "users" WHERE "active" = ? ORDER BY CASE WHEN role = ? THEN 0 ELSE 1 END',
+      );
+      expect(bindings).toEqual([90, 'gold', 'standard', true, 'admin']);
+    });
+
+    it('supports countDistinct, row locks, skip locked, and returning SQL', async () => {
+      const getDriver = vi.spyOn(Connection, 'getDriver').mockReturnValue('postgres');
+      const raw = vi.spyOn(Connection, 'raw')
+        .mockResolvedValueOnce([{ aggregate: 2 }])
+        .mockResolvedValueOnce([{ id: 1, email: 'ada@example.com' }]);
+
+      try {
+        const lock = new QueryBuilder('jobs');
+        lock.where('status', 'queued').orderBy('id').limit(10).forUpdate().skipLocked();
+        expect(lock.toSQL()).toEqual({
+          sql: 'SELECT * FROM "jobs" WHERE "status" = ? ORDER BY "id" ASC LIMIT 10 FOR UPDATE SKIP LOCKED',
+          bindings: ['queued'],
+        });
+
+        const aggregate = new QueryBuilder('users');
+        aggregate.where('active', true);
+        await expect(aggregate.countDistinct('email')).resolves.toBe(2);
+        expect(raw).toHaveBeenNthCalledWith(
+          1,
+          'SELECT COUNT(DISTINCT "email") as "aggregate" FROM "users" WHERE "active" = ?',
+          [true],
+          undefined,
+        );
+
+        const update = new QueryBuilder('users');
+        update.where('id', 1).returning('id', 'email');
+        await expect(update.update({ email: 'ada@example.com' })).resolves.toEqual([{ id: 1, email: 'ada@example.com' }]);
+        expect(raw).toHaveBeenNthCalledWith(
+          2,
+          'UPDATE "users" SET "email" = ? WHERE "id" = ? RETURNING "id", "email"',
+          ['ada@example.com', 1],
+          undefined,
+        );
+      } finally {
+        raw.mockRestore();
+        getDriver.mockRestore();
+      }
+    });
+  });
+});
+
+describe('Connection - PostgreSQL placeholders', () => {
+  it('does not rewrite JSONB ? operators as placeholders', async () => {
+    await Connection.disconnect();
+    Connection.configure({
+      default: 'postgres',
+      connections: {
+        postgres: { driver: 'postgres', database: 'test' },
+      },
+    });
+
+    const unsafe = vi.fn().mockResolvedValue([]);
+    const connectionSpy = vi.spyOn(Connection, 'connection').mockResolvedValue({} as any);
+    const rawClientSpy = vi.spyOn(Connection, 'rawClient').mockResolvedValue({ unsafe });
+
+    try {
+      await Connection.raw(
+        'SELECT * FROM "events" WHERE "payload" ? ? AND "tenant_id" = ?',
+        ['kind', 'team-1'],
+      );
+
+      expect(unsafe).toHaveBeenCalledWith(
+        'SELECT * FROM "events" WHERE "payload" ? $1 AND "tenant_id" = $2',
+        ['kind', 'team-1'],
+      );
+    } finally {
+      connectionSpy.mockRestore();
+      rawClientSpy.mockRestore();
+      await Connection.disconnect();
+    }
   });
 });
 
@@ -569,6 +654,40 @@ describe('QueryBuilder - database mutations', () => {
       expect(rows).toEqual([
         { name: 'locale', value: 'en', updated_at: '2' },
         { name: 'theme', value: 'dark', updated_at: '2' },
+      ]);
+    } finally {
+      await Connection.disconnect();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('chunks by id without offset drift', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'svelar-query-builder-chunk-by-id-'));
+    const filename = join(root, 'query.sqlite');
+
+    try {
+      await Connection.disconnect();
+      Connection.configure({
+        default: 'sqlite',
+        connections: {
+          sqlite: { driver: 'sqlite', filename },
+        },
+      });
+
+      await Connection.raw('CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)');
+      await Connection.raw(
+        'INSERT INTO users (name) VALUES (?), (?), (?)',
+        ['Ada', 'Grace', 'Linus'],
+      );
+
+      const pages: Array<{ ids: number[]; lastId: number }> = [];
+      await new QueryBuilder('users').chunkById(2, async (items: any[], lastId) => {
+        pages.push({ ids: items.map((item) => item.id), lastId });
+      });
+
+      expect(pages).toEqual([
+        { ids: [1, 2], lastId: 2 },
+        { ids: [3], lastId: 3 },
       ]);
     } finally {
       await Connection.disconnect();

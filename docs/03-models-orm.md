@@ -291,6 +291,11 @@ const users = await User.query()
 const today = await Order.query()
   .whereRaw('DATE(created_at) = DATE(?)', [new Date().toISOString()])
   .get();
+
+// PostgreSQL JSONB operators are preserved while placeholders stay parameterized
+const events = await EventLog.query()
+  .whereRaw('"payload" ? ? AND "tenant_id" = ?', ['kind', teamId])
+  .get();
 ```
 
 ## Selecting Columns
@@ -307,6 +312,9 @@ const users = await User.query()
 
 // Distinct values
 const cities = await User.query().distinct().select('city').get();
+
+// Count distinct values
+const uniqueEmails = await User.query().countDistinct('email');
 ```
 
 ## Ordering
@@ -1530,6 +1538,11 @@ const stats = await Order.query()
   .groupBy('user_id')
   .having('order_count', '>', 5)
   .get();
+
+// Raw select expressions can receive bindings
+const tiers = await User.query()
+  .selectRaw('CASE WHEN score > ? THEN ? ELSE ? END as tier', [90, 'gold', 'standard'])
+  .get();
 ```
 
 ### Single Value
@@ -1573,6 +1586,40 @@ await User.query()
     console.log(`Processed page ${page}`);
     // Return false to stop early
   });
+
+// Prefer chunkById when rows may be inserted/deleted while processing
+await User.query()
+  .where('active', true)
+  .chunkById(100, async (users, lastId) => {
+    await syncUsers(users);
+    console.log(`Processed through ${lastId}`);
+  });
+```
+
+### Locks and Returning
+
+Use row locks for workers that safely claim database-backed work in PostgreSQL/MySQL:
+
+```typescript
+const jobs = await Job.query()
+  .where('status', 'queued')
+  .orderBy('id')
+  .limit(10)
+  .forUpdate()
+  .skipLocked()
+  .get();
+```
+
+PostgreSQL and SQLite can return changed rows:
+
+```typescript
+const updated = await User.query()
+  .where('id', userId)
+  .updateReturning({ email: 'new@example.com' }, ['id', 'email']);
+
+const deleted = await Session.query()
+  .where('expires_at', '<', Date.now())
+  .deleteReturning(['id']);
 ```
 
 ### Upsert (Insert or Update)
@@ -1727,7 +1774,7 @@ const stats = await Order.query()
 
 // Order by raw expression
 const users = await User.query()
-  .orderByRaw("CASE WHEN role = 'admin' THEN 0 WHEN role = 'mod' THEN 1 ELSE 2 END")
+  .orderByRaw('CASE WHEN role = ? THEN 0 WHEN role = ? THEN 1 ELSE 2 END', ['admin', 'mod'])
   .get();
 ```
 
