@@ -435,7 +435,8 @@ jobs:
             echo "\${{ secrets.ENV_PROD }}" > .env
             echo "DOCKER_IMAGE=\${{ secrets.DOCKER_USERNAME }}/\${{ secrets.DOCKER_IMAGE_NAME }}" >> .env
             docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm --no-deps app npx svelar migrate --force
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans --wait
             docker image prune -f
 `;
   }

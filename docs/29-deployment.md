@@ -130,8 +130,12 @@ Uses `docker-compose.yml` + `docker-compose.prod.yml`. Pulls a pre-built image f
 | `npx svelar prod:up` | `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d` |
 | `npx svelar prod:down` | `docker compose -f docker-compose.yml -f docker-compose.prod.yml down` |
 | `npx svelar prod:logs` | `docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f` |
-| `npx svelar prod:restart` | `prod:down` then `prod:up` |
-| `npx svelar prod:deploy` | `pull` then `up -d` (pull latest image and restart) |
+| `npx svelar prod:restart` | `up -d --force-recreate --remove-orphans --wait app worker scheduler` |
+| `npx svelar prod:deploy` | `pull`, `run --rm --no-deps app npx svelar migrate --force`, then `up -d --remove-orphans --wait` |
+
+`prod:restart` does not run `down` by default because that tears down every dependency and causes avoidable downtime. It recreates the runtime containers (`app`, `worker`, and `scheduler`) and waits for health checks. Use `--service=app` to target one container, and `--no-wait` only when your Docker Compose version does not support health waiting.
+
+`prod:deploy` runs migrations by default before starting the updated image. Use `--no-migrate` for exceptional deploys where migrations are managed by a separate release step.
 
 ### Targeting a specific service
 
@@ -376,7 +380,7 @@ Used by:
 1. **Triggers** on push to `main` (also builds on PRs, but only deploys on push)
 2. **Builds** the Docker image (production target)
 3. **Pushes** to Docker Hub with `:latest` and `:timestamp` tags
-4. **SSHs** into your droplet, writes `ENV_PROD` secret to `.env`, pulls the image, and starts containers
+4. **SSHs** into your droplet, writes `ENV_PROD` secret to `.env`, pulls the image, runs migrations, and starts containers with health waiting
 
 ### Required GitHub Secrets
 
@@ -448,8 +452,10 @@ jobs:
             echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
             cd ${{ secrets.DROPLET_PROJECT }}/
             echo "${{ secrets.ENV_PROD }}" > .env
+            echo "DOCKER_IMAGE=${{ secrets.DOCKER_USERNAME }}/${{ secrets.DOCKER_IMAGE_NAME }}" >> .env
             docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm --no-deps app npx svelar migrate --force
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans --wait
             docker image prune -f
 ```
 
@@ -1108,7 +1114,7 @@ done
 
 # 4. Run migrations
 docker compose -f docker-compose.yml -f docker-compose.${NEXT}.yml \
-  exec app-${NEXT} npx svelar migrate
+  exec app-${NEXT} npx svelar migrate --force
 
 # 5. Switch traffic
 docker compose -f docker-compose.yml -f docker-compose.${NEXT}.yml up -d

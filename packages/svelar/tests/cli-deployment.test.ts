@@ -22,6 +22,7 @@ import { MakeInfraCommand } from '../src/cli/commands/MakeInfraCommand';
 import { MakeSeederCommand } from '../src/cli/commands/MakeSeederCommand';
 import { MakeTestCommand } from '../src/cli/commands/MakeTestCommand';
 import { ProdDeployCommand } from '../src/cli/commands/ProdDeployCommand';
+import { ProdRestartCommand } from '../src/cli/commands/ProdRestartCommand';
 
 let originalCwd: string;
 let tmpDir: string;
@@ -64,6 +65,8 @@ describe('CLI deployment and utility commands', () => {
     expect(workflow).toContain('DOCKER_USERNAME');
     expect(workflow).toContain('DROPLET_SSH_KEY');
     expect(workflow).toContain('ENV_PROD');
+    expect(workflow).toContain('docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm --no-deps app npx svelar migrate --force');
+    expect(workflow).toContain('docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans --wait');
 
     writeFileSync(workflowPath, 'custom workflow');
     await command.handle([], {});
@@ -179,6 +182,9 @@ describe('CLI deployment and utility commands', () => {
     await new DevLogsCommand().handle([], { service: 'postgres_1' });
     await new DevRestartCommand().handle([], {});
     await new ProdDeployCommand().handle([], { service: 'worker-1' });
+    await new ProdDeployCommand().handle([], {});
+    await new ProdRestartCommand().handle([], {});
+    await new ProdRestartCommand().handle([], { service: 'app', wait: false });
 
     expect(vi.mocked(execSync).mock.calls.map((call) => call[0])).toEqual([
       'docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build web',
@@ -186,12 +192,17 @@ describe('CLI deployment and utility commands', () => {
       'docker compose -f docker-compose.yml -f docker-compose.dev.yml down',
       'docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build',
       'docker compose -f docker-compose.yml -f docker-compose.prod.yml pull worker-1',
-      'docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d worker-1',
+      'docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans --wait worker-1',
+      'docker compose -f docker-compose.yml -f docker-compose.prod.yml pull',
+      'docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm --no-deps app npx svelar migrate --force',
+      'docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans --wait',
+      'docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --force-recreate --remove-orphans --wait app worker scheduler',
+      'docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --force-recreate --remove-orphans app',
     ]);
 
     await new DevUpCommand().handle([], { service: 'web; rm -rf /' });
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid service name'));
-    expect(vi.mocked(execSync).mock.calls).toHaveLength(6);
+    expect(vi.mocked(execSync).mock.calls).toHaveLength(11);
   });
 
   it('reports missing docker compose files before executing runtime commands', async () => {

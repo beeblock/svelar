@@ -13,20 +13,28 @@ import { join } from 'node:path';
 export abstract class DockerComposeCommand extends Command {
   arguments = [];
 
-  protected composeExec(args: string[], dev: boolean, flags: Record<string, any> = {}): void {
+  protected composeExec(
+    args: string[],
+    dev: boolean,
+    flags: Record<string, any> = {},
+    options: {
+      appendService?: boolean;
+      defaultServices?: string[];
+    } = {},
+  ): boolean {
     const cwd = process.cwd();
     const base = join(cwd, 'docker-compose.yml');
     const override = join(cwd, dev ? 'docker-compose.dev.yml' : 'docker-compose.prod.yml');
 
     if (!existsSync(base)) {
       this.error('docker-compose.yml not found. Run `npx svelar make:docker` first.');
-      return;
+      return false;
     }
 
     if (!existsSync(override)) {
       const name = dev ? 'docker-compose.dev.yml' : 'docker-compose.prod.yml';
       this.error(`${name} not found. Run \`npx svelar make:docker\` first.`);
-      return;
+      return false;
     }
 
     const service = flags.service as string | undefined;
@@ -34,7 +42,7 @@ export abstract class DockerComposeCommand extends Command {
     // Validate service name to prevent command injection
     if (service && !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(service)) {
       this.error(`Invalid service name: ${service}`);
-      return;
+      return false;
     }
 
     const parts = [
@@ -44,8 +52,10 @@ export abstract class DockerComposeCommand extends Command {
       ...args,
     ];
 
-    if (service) {
+    if (service && options.appendService !== false) {
       parts.push(service);
+    } else if (!service && options.defaultServices?.length) {
+      parts.push(...options.defaultServices);
     }
 
     const cmd = parts.join(' ');
@@ -53,8 +63,9 @@ export abstract class DockerComposeCommand extends Command {
 
     try {
       execSync(cmd, { cwd, stdio: 'inherit' });
+      return true;
     } catch {
-      // Exit code is already visible to the user via stdio: 'inherit'
+      throw new Error(`Docker compose command failed: ${cmd}`);
     }
   }
 }
