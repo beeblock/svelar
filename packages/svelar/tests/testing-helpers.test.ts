@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Connection } from '../src/database/Connection';
 import { Schema } from '../src/database/SchemaBuilder';
+import { Mailer } from '../src/mail';
 import { Model } from '../src/orm/Model';
 import {
   Factory,
@@ -12,6 +13,7 @@ import {
   assertDatabaseHas,
   assertDatabaseMissing,
   createRequestEvent,
+  fakeMailer,
   refreshDatabase,
 } from '../src/testing';
 
@@ -187,5 +189,29 @@ export default class CreateWidgetsTable extends Migration {
     await refreshDatabase({ migrationsPath: 'migrations', migrationsTable: 'custom_migrations' });
     await assertDatabaseMissing('widgets', { name: 'first' });
     await assertDatabaseHas('custom_migrations', { migration: '00000001_create_widgets_table' });
+  });
+
+  it('fakes mail delivery with assertions for tests', async () => {
+    const mail = fakeMailer({
+      from: { name: 'Svelar Tests', address: 'tests@svelar.dev' },
+    });
+
+    await Mailer.send({
+      to: ['admin@svelar.dev', 'ops@svelar.dev'],
+      subject: 'Release candidate',
+      text: 'Ready',
+      tags: { flow: 'release' },
+    });
+
+    expect(mail.count()).toBe(1);
+    expect(mail.sent()[0].message.from).toEqual({ name: 'Svelar Tests', address: 'tests@svelar.dev' });
+    expect(mail.sent()[0].result.messageId).toBe('fake-1');
+    expect(() => mail.assertSent((record) => record.message.subject === 'Release candidate')).not.toThrow();
+    expect(() => mail.assertNotSent((record) => record.message.subject === 'Unexpected')).not.toThrow();
+    expect(() => mail.assertNothingSent()).toThrow('Expected no mail');
+
+    mail.reset();
+    expect(mail.count()).toBe(0);
+    expect(() => mail.assertNothingSent()).not.toThrow();
   });
 });

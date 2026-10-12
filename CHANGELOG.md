@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Distributed SSE backplanes** — the SSE broadcaster can now publish through a pluggable backplane, including optional Redis pub/sub, so workers/schedulers/other web processes can fan out events to connected SSE clients.
 - **Production deploy safety** — `prod:deploy` now pulls images, runs migrations in a one-off app container, starts containers with `--remove-orphans --wait`, and `prod:restart` recreates only runtime containers instead of doing a full `down`.
 - **RBAC capability registry** — `Permissions` can now register code-defined capabilities, expose them to admin UIs, and sync/prune them against database permission records so UI-created permissions do not drift from application gates.
+- **Testing fakes** — `@beeblock/svelar/testing` now includes `fakeMailer()` and `FakeMailTransport` for asserting mail delivery without SMTP/Postmark/Resend/Mailtrap credentials.
 
 ## [0.8.0] - 2026-10-12
 

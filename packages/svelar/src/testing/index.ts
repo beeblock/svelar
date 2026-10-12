@@ -8,3 +8,8 @@ export {
 export { assertDatabaseHas, assertDatabaseMissing, assertDatabaseCount } from './assertions.js';
 export { actingAs } from './auth.js';
 export { createRequestEvent, type RequestEventOptions } from './request.js';
+export {
+  FakeMailTransport,
+  fakeMailer,
+  type FakeMailRecord,
+} from './fakes.js';

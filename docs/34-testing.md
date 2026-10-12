@@ -3,7 +3,7 @@
 Svelar provides a Laravel-inspired testing module built on top of **Vitest** (unit/feature) and **Playwright** (end-to-end). New projects scaffolded with `npx @beeblock/svelar new` come with everything pre-configured.
 
 ```
-import { useSvelarTest, assertDatabaseHas, Factory, actingAs, createRequestEvent } from '@beeblock/svelar/testing';
+import { useSvelarTest, assertDatabaseHas, Factory, actingAs, createRequestEvent, fakeMailer } from '@beeblock/svelar/testing';
 ```
 
 ## Quick Start
@@ -268,6 +268,30 @@ describe('PostController', () => {
 });
 ```
 
+## Faking Mail
+
+Use `fakeMailer()` when a feature sends email through Svelar mail, notifications, auth recovery, or queued jobs. It configures `Mailer` with a custom in-memory transport and gives you assertion helpers:
+
+```typescript
+import { Mailer } from '@beeblock/svelar/mail';
+import { fakeMailer } from '@beeblock/svelar/testing';
+
+it('sends a welcome email', async () => {
+  const mail = fakeMailer({
+    from: { name: 'My App', address: 'noreply@example.com' },
+  });
+
+  await Mailer.send({
+    to: 'alice@example.com',
+    subject: 'Welcome',
+    text: 'Hello',
+  });
+
+  mail.assertSent((record) => record.message.to === 'alice@example.com');
+  mail.assertNotSent((record) => record.message.subject === 'Password reset');
+});
+```
+
 ## E2E Tests with Playwright
 
 E2E tests live in `tests/e2e/` and use Playwright. The scaffolded `playwright.config.ts` starts your dev server automatically.
@@ -371,3 +395,5 @@ export default defineConfig({
 | `assertDatabaseCount(table, expected, conditions?)` | Assert exact row count |
 | `actingAs(user, event?)` | Simulate authenticated user |
 | `createRequestEvent(options?)` | Build mock SvelteKit RequestEvent |
+| `fakeMailer(options?)` | Configure an in-memory mail transport with sent-mail assertions |
+| `FakeMailTransport` | Mail fake implementation returned by `fakeMailer()` |
