@@ -192,6 +192,8 @@ await Gate.forUser(user).authorize('update', post);
 
 ### Opt-In Team-Scoped RBAC
 
+Application tenant/actor context is shared across the independently bundled public subpaths. `Teams.runWithTeam`, ORM tenant scopes, queued dispatch context, logging, and audit use the same `ApplicationContext` singleton with async-local request isolation. Importing them from separate package subpaths must not create separate context stores; release tests exercise that bundle boundary.
+
 Existing `Permissions` calls and `HasRoles` model methods remain global, even inside `Teams.runWithTeam` or an application context. Use `Permissions.global()` to make a platform/admin check explicit. Global grants are never inherited by team checks, and team grants never satisfy global checks.
 
 `Permissions.forTeam(teamId)` returns an immutable assignment facade. Role and permission definitions (names and guards) remain shared catalogues managed by `Permissions`. Model-role assignments, direct permissions, and role-permission links are independent per team. The same user can have different roles in two teams; even the same role can have different permission links in each team.

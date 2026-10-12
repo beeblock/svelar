@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { singleton } from './singleton.js';
 
 export interface ApplicationContextSnapshot {
   teamId?: string | number | null;
@@ -40,4 +41,4 @@ class ApplicationContextManager {
   }
 }
 
-export const ApplicationContext = new ApplicationContextManager();
+export const ApplicationContext = singleton('svelar.applicationContext', () => new ApplicationContextManager());
