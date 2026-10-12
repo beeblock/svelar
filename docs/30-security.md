@@ -190,6 +190,82 @@ await Gate.forUser(user).allows('create', Post);
 await Gate.forUser(user).authorize('update', post);
 ```
 
+### Opt-In Team-Scoped RBAC
+
+Existing `Permissions` calls and `HasRoles` model methods remain global, even inside `Teams.runWithTeam` or an application context. Use `Permissions.global()` to make a platform/admin check explicit. Global grants are never inherited by team checks, and team grants never satisfy global checks.
+
+`Permissions.forTeam(teamId)` returns an immutable assignment facade. Role and permission definitions (names and guards) remain shared catalogues managed by `Permissions`. Model-role assignments, direct permissions, and role-permission links are independent per team. The same user can have different roles in two teams; even the same role can have different permission links in each team.
+
+Choose a validated team from the request, authorize membership/resource access, and then pass its ID explicitly. The facade does not read ambient `Context`, does not switch the current team, and does not perform membership authorization. Missing/invalid IDs throw instead of selecting global access.
+
+```typescript
+import { Permissions } from '@beeblock/svelar/permissions';
+import { Teams } from '@beeblock/svelar/teams';
+
+// Inside a FormRequest or policy, after resolving the requested team:
+if (!await Teams.isMember(team.id, user.id)) return false;
+const grants = Permissions.forTeam(team.id);
+return grants.modelHasPermission('User', user.id, 'boards.move-cards');
+```
+
+Use the same stable model type as the global `HasRoles` model (normally its class name). Seed or administer grants through the selected facade, using IDs from the shared catalogue:
+
+```typescript
+const grants = Permissions.forTeam(team.id);
+await grants.assignRole('User', user.id, editor.id);
+await grants.giveRolePermission(editor.id, moveCards.id);
+await grants.giveModelPermission('User', user.id, exportBoards.id);
+
+await grants.syncRoles('User', user.id, ['editor']);
+await grants.syncPermissions('User', user.id, ['boards.export']);
+await grants.syncRolePermissions(editor.id, ['boards.move-cards']);
+
+await grants.revokeModelPermission('User', user.id, exportBoards.id);
+await grants.removeRole('User', user.id, editor.id);
+await grants.removeModelAssignments('User', user.id);
+```
+
+The assignment methods use the same signatures as global RBAC. Checks and sync methods accept a guard (default `web`). Role-permission links require matching guards. Role/direct-permission sync replaces only the selected scope and guard, rejects unknown names without deleting existing grants, and rolls back failed writes. `removeModelAssignments` atomically removes all roles and direct permissions for that model in the selected scope, across guards. Individual revocations are single atomic deletes. These operations do not modify another team or global grants.
+
+Membership roles in `team_members.role` are not RBAC roles and are not converted automatically. Removing membership does not itself remove RBAC assignments: keep membership checks in policies/FormRequests and call `removeModelAssignments` when permanently clearing a user's team grants. Team deletion cascades team pivots; catalogue deletion removes links in every scope. The team facade cannot create/delete shared catalogue definitions.
+
+Middleware remains global by default. For a team route, provide an explicit per-request resolver using a team already authorized by an earlier membership/resource check. A resolver returning `null`, `undefined`, or an invalid team ID denies with 403; it never falls back to global. Unauthenticated requests return 401.
+
+```typescript
+import { RequirePermissionMiddleware, RequireRoleMiddleware } from '@beeblock/svelar/permissions';
+
+const scope = (ctx) => ctx.event.locals.authorizedTeam
+  ? { teamId: ctx.event.locals.authorizedTeam.id }
+  : null;
+
+new RequirePermissionMiddleware('boards.move-cards', { scope });
+new RequireRoleMiddleware('editor', { scope, guard: 'web' });
+new RequirePermissionMiddleware('admin.manage', { scope: { global: true } });
+```
+
+#### Existing App Upgrade
+
+New scaffolds include these additive core migrations:
+
+| Migration | Export from `@beeblock/svelar/database` |
+|-----------|----------------------------------------|
+| `00000000_000031_create_team_role_has_permissions_table` | `CreateTeamRoleHasPermissionsTable` |
+| `00000000_000032_create_team_model_has_roles_table` | `CreateTeamModelHasRolesTable` |
+| `00000000_000033_create_team_model_has_permissions_table` | `CreateTeamModelHasPermissionsTable` |
+
+Existing apps must add one app migration wrapper per exported class before using team grants. Use `npx svelar make:migration <name>` for each table, then replace the generated class with a wrapper like this (changing both class names for the other two tables):
+
+```typescript
+import { CreateTeamRoleHasPermissionsTable as CoreMigration } from '@beeblock/svelar/database';
+
+export default class CreateTeamRoleHasPermissionsTable extends CoreMigration {}
+```
+
+Run `npx svelar migrate`. No runtime schema creation occurs. SQLite, PostgreSQL, and MySQL use non-null team IDs and composite primary keys including the team ID; foreign keys clean up team/catalogue deletions.
+
+There is deliberately no automatic backfill from global assignments or membership role strings. Existing global records remain unchanged, and team pivots start empty. Seed explicit team grants after upgrading. Rolling back these three migrations drops only team grants and preserves global access.
+
+
 ---
 
 ## Docker & Infrastructure Security

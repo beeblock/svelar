@@ -35,6 +35,9 @@ import { CreateSvelarFailedJobsTable } from './core/00000000_000027_create_svela
 import { CreateScheduledTaskSettingsTable } from './core/00000000_000028_create_scheduled_task_settings_table.js';
 import { CreateWebhookInboxEntriesTable } from './core/00000000_000029_create_webhook_inbox_entries_table.js';
 import { AddServiceAccountFieldsToApiKeysTable } from './core/00000000_000030_add_service_account_fields_to_api_keys_table.js';
+import { CreateTeamRoleHasPermissionsTable } from './core/00000000_000031_create_team_role_has_permissions_table.js';
+import { CreateTeamModelHasRolesTable } from './core/00000000_000032_create_team_model_has_roles_table.js';
+import { CreateTeamModelHasPermissionsTable } from './core/00000000_000033_create_team_model_has_permissions_table.js';
 
 export {
   CreateSessionsTable,
@@ -66,6 +69,9 @@ export {
   CreateScheduledTaskSettingsTable,
   CreateWebhookInboxEntriesTable,
   AddServiceAccountFieldsToApiKeysTable,
+  CreateTeamRoleHasPermissionsTable,
+  CreateTeamModelHasRolesTable,
+  CreateTeamModelHasPermissionsTable,
 };
 
 const coreMigrationDefinitions = [
@@ -98,6 +104,9 @@ const coreMigrationDefinitions = [
   ['00000000_000028_create_scheduled_task_settings_table', CreateScheduledTaskSettingsTable],
   ['00000000_000029_create_webhook_inbox_entries_table', CreateWebhookInboxEntriesTable],
   ['00000000_000030_add_service_account_fields_to_api_keys_table', AddServiceAccountFieldsToApiKeysTable],
+  ['00000000_000031_create_team_role_has_permissions_table', CreateTeamRoleHasPermissionsTable],
+  ['00000000_000032_create_team_model_has_roles_table', CreateTeamModelHasRolesTable],
+  ['00000000_000033_create_team_model_has_permissions_table', CreateTeamModelHasPermissionsTable],
 ] as const;
 
 export function svelarCoreMigrations(): MigrationFile[] {

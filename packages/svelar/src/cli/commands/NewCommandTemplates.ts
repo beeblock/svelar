@@ -2976,6 +2976,9 @@ export type PostResponse = z.infer<typeof postResponseSchema>;
 			['00000000_000028_create_scheduled_task_settings_table.ts', 'CreateScheduledTaskSettingsTable', 'Scheduled task settings table'],
 			['00000000_000029_create_webhook_inbox_entries_table.ts', 'CreateWebhookInboxEntriesTable', 'Webhook inbox entries table'],
 			['00000000_000030_add_service_account_fields_to_api_keys_table.ts', 'AddServiceAccountFieldsToApiKeysTable', 'API key service account fields'],
+			['00000000_000031_create_team_role_has_permissions_table.ts', 'CreateTeamRoleHasPermissionsTable', 'Team role permissions table'],
+			['00000000_000032_create_team_model_has_roles_table.ts', 'CreateTeamModelHasRolesTable', 'Team model roles table'],
+			['00000000_000033_create_team_model_has_permissions_table.ts', 'CreateTeamModelHasPermissionsTable', 'Team model permissions table'],
 		] as const;
 
 		return migrations.map(([file, className, label]) => ({

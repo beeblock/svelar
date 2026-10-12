@@ -30,6 +30,19 @@
 
 import { Middleware, type MiddlewareContext, type NextFunction } from '../middleware/Middleware.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
+import { Connection } from '../database/Connection.js';
+import { PermissionAssignments } from './PermissionAssignments.js';
+
+export { PermissionAssignments } from './PermissionAssignments.js';
+
+function normalizeTeamId(teamId: string | number): string {
+  if ((typeof teamId !== 'string' && typeof teamId !== 'number')
+    || (typeof teamId === 'number' && !Number.isSafeInteger(teamId))
+    || String(teamId).trim().length === 0 || String(teamId).length > 255) {
+    throw new Error('Team permission scope requires a non-empty team ID.');
+  }
+  return String(teamId);
+}
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -81,8 +94,18 @@ export interface SyncCapabilitiesResult {
 
 // ── Permission Manager ─────────────────────────────────────
 
-class PermissionManager {
+class PermissionManager extends PermissionAssignments {
   private capabilityRegistry = new Map<string, PermissionCapability>();
+
+  forTeam(teamId: string | number): PermissionAssignments {
+    const assignments = new PermissionAssignments(normalizeTeamId(teamId));
+    Object.freeze(assignments);
+    return assignments;
+  }
+
+  global(): PermissionAssignments {
+    return this;
+  }
 
   private capabilityKey(name: string, guard: string = 'web'): string {
     return `${guard}:${name}`;
@@ -94,18 +117,6 @@ class PermissionManager {
 
   private rolesQuery(): QueryBuilder<RoleRecord> {
     return new QueryBuilder<RoleRecord>('roles');
-  }
-
-  private rolePermissionsQuery(): QueryBuilder<any> {
-    return new QueryBuilder('role_has_permissions');
-  }
-
-  private modelRolesQuery(): QueryBuilder<any> {
-    return new QueryBuilder('model_has_roles');
-  }
-
-  private modelPermissionsQuery(): QueryBuilder<any> {
-    return new QueryBuilder('model_has_permissions');
   }
 
   // ── Capability Registry ─────────────────────────────────
@@ -225,7 +236,13 @@ class PermissionManager {
   }
 
   async deletePermission(name: string, guard: string = 'web'): Promise<void> {
-    await this.permissionsQuery().where('name', name).where('guard', guard).delete();
+    await Connection.transaction(async () => {
+      const permission = await this.findPermission(name, guard);
+      if (!permission) return;
+      await new QueryBuilder('role_has_permissions').where('permission_id', permission.id).delete();
+      await new QueryBuilder('model_has_permissions').where('permission_id', permission.id).delete();
+      await this.permissionsQuery().where('id', permission.id).delete();
+    });
   }
 
   // ── Role CRUD ────────────────────────────────────────
@@ -258,181 +275,15 @@ class PermissionManager {
   }
 
   async deleteRole(name: string, guard: string = 'web'): Promise<void> {
-    await this.rolesQuery().where('name', name).where('guard', guard).delete();
+    await Connection.transaction(async () => {
+      const role = await this.findRole(name, guard);
+      if (!role) return;
+      await new QueryBuilder('role_has_permissions').where('role_id', role.id).delete();
+      await new QueryBuilder('model_has_roles').where('role_id', role.id).delete();
+      await this.rolesQuery().where('id', role.id).delete();
+    });
   }
 
-  // ── Role ↔ Permission ────────────────────────────────
-
-  async giveRolePermission(roleId: number, permissionId: number): Promise<void> {
-    await this.rolePermissionsQuery().upsert(
-      { role_id: roleId, permission_id: permissionId },
-      ['role_id', 'permission_id'],
-      [],
-    );
-  }
-
-  async revokeRolePermission(roleId: number, permissionId: number): Promise<void> {
-    await this.rolePermissionsQuery().where('role_id', roleId).where('permission_id', permissionId).delete();
-  }
-
-  async getRolePermissions(roleId: number): Promise<PermissionRecord[]> {
-    return new QueryBuilder<PermissionRecord>('permissions p')
-      .select('p.*')
-      .join('role_has_permissions rp', 'p.id', '=', 'rp.permission_id')
-      .where('rp.role_id', roleId)
-      .orderBy('p.name')
-      .get();
-  }
-
-  async roleHasPermission(roleId: number, permissionName: string, guard: string = 'web'): Promise<boolean> {
-    return new QueryBuilder('role_has_permissions rp')
-      .join('permissions p', 'p.id', '=', 'rp.permission_id')
-      .where('rp.role_id', roleId)
-      .where('p.name', permissionName)
-      .where('p.guard', guard)
-      .exists();
-  }
-
-  // ── Model ↔ Role ─────────────────────────────────────
-
-  async assignRole(modelType: string, modelId: number, roleId: number): Promise<void> {
-    await this.modelRolesQuery().upsert(
-      { model_type: modelType, model_id: modelId, role_id: roleId },
-      ['model_type', 'model_id', 'role_id'],
-      [],
-    );
-  }
-
-  async removeRole(modelType: string, modelId: number, roleId: number): Promise<void> {
-    await this.modelRolesQuery()
-      .where('model_type', modelType)
-      .where('model_id', modelId)
-      .where('role_id', roleId)
-      .delete();
-  }
-
-  async getModelRoles(modelType: string, modelId: number): Promise<RoleRecord[]> {
-    return new QueryBuilder<RoleRecord>('roles r')
-      .select('r.*')
-      .join('model_has_roles mr', 'r.id', '=', 'mr.role_id')
-      .where('mr.model_type', modelType)
-      .where('mr.model_id', modelId)
-      .orderBy('r.name')
-      .get();
-  }
-
-  async modelHasRole(modelType: string, modelId: number, roleName: string, guard: string = 'web'): Promise<boolean> {
-    return new QueryBuilder('model_has_roles mr')
-      .join('roles r', 'r.id', '=', 'mr.role_id')
-      .where('mr.model_type', modelType)
-      .where('mr.model_id', modelId)
-      .where('r.name', roleName)
-      .where('r.guard', guard)
-      .exists();
-  }
-
-  // ── Model ↔ Permission (direct) ──────────────────────
-
-  async giveModelPermission(modelType: string, modelId: number, permissionId: number): Promise<void> {
-    await this.modelPermissionsQuery().upsert(
-      { model_type: modelType, model_id: modelId, permission_id: permissionId },
-      ['model_type', 'model_id', 'permission_id'],
-      [],
-    );
-  }
-
-  async revokeModelPermission(modelType: string, modelId: number, permissionId: number): Promise<void> {
-    await this.modelPermissionsQuery()
-      .where('model_type', modelType)
-      .where('model_id', modelId)
-      .where('permission_id', permissionId)
-      .delete();
-  }
-
-  async getModelDirectPermissions(modelType: string, modelId: number): Promise<PermissionRecord[]> {
-    return new QueryBuilder<PermissionRecord>('permissions p')
-      .select('p.*')
-      .join('model_has_permissions mp', 'p.id', '=', 'mp.permission_id')
-      .where('mp.model_type', modelType)
-      .where('mp.model_id', modelId)
-      .orderBy('p.name')
-      .get();
-  }
-
-  /**
-   * Get ALL permissions for a model (direct + via roles)
-   */
-  async getModelAllPermissions(modelType: string, modelId: number): Promise<PermissionRecord[]> {
-    const direct = await this.getModelDirectPermissions(modelType, modelId);
-    const roles = await this.getModelRoles(modelType, modelId);
-    const byId = new Map<number, PermissionRecord>();
-
-    for (const permission of direct) {
-      byId.set(permission.id, permission);
-    }
-
-    for (const role of roles) {
-      const permissions = await this.getRolePermissions(role.id);
-      for (const permission of permissions) {
-        byId.set(permission.id, permission);
-      }
-    }
-
-    return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }
-
-  /**
-   * Check if a model has a permission (direct or via role)
-   */
-  async modelHasPermission(modelType: string, modelId: number, permissionName: string, guard: string = 'web'): Promise<boolean> {
-    const direct = await new QueryBuilder('model_has_permissions mp')
-      .join('permissions p', 'p.id', '=', 'mp.permission_id')
-      .where('mp.model_type', modelType)
-      .where('mp.model_id', modelId)
-      .where('p.name', permissionName)
-      .where('p.guard', guard)
-      .exists();
-    if (direct) return true;
-
-    return new QueryBuilder('model_has_roles mr')
-      .join('role_has_permissions rp', 'rp.role_id', '=', 'mr.role_id')
-      .join('permissions p', 'p.id', '=', 'rp.permission_id')
-      .join('roles r', 'r.id', '=', 'mr.role_id')
-      .where('mr.model_type', modelType)
-      .where('mr.model_id', modelId)
-      .where('p.name', permissionName)
-      .where('p.guard', guard)
-      .where('r.guard', guard)
-      .exists();
-  }
-
-  // ── Sync Operations ──────────────────────────────────
-
-  /**
-   * Sync roles for a model (remove all, then assign new ones)
-   */
-  async syncRoles(modelType: string, modelId: number, roleNames: string[], guard: string = 'web'): Promise<void> {
-    await this.modelRolesQuery().where('model_type', modelType).where('model_id', modelId).delete();
-    for (const roleName of roleNames) {
-      const role = await this.findRole(roleName, guard);
-      if (role) {
-        await this.assignRole(modelType, modelId, role.id);
-      }
-    }
-  }
-
-  /**
-   * Sync permissions for a model (remove all direct, then assign new ones)
-   */
-  async syncPermissions(modelType: string, modelId: number, permissionNames: string[], guard: string = 'web'): Promise<void> {
-    await this.modelPermissionsQuery().where('model_type', modelType).where('model_id', modelId).delete();
-    for (const permName of permissionNames) {
-      const perm = await this.findPermission(permName, guard);
-      if (perm) {
-        await this.giveModelPermission(modelType, modelId, perm.id);
-      }
-    }
-  }
 }
 
 // ── HasRoles Mixin ─────────────────────────────────────────
@@ -630,11 +481,33 @@ export function HasRoles<TBase extends Constructor>(Base: TBase): TBase & (new (
 
 // ── Middleware ──────────────────────────────────────────────
 
+export type PermissionScope = { teamId: string | number } | { global: true };
+
+export interface PermissionMiddlewareOptions {
+  guard?: string;
+  /** Resolve an authorized scope per request. Missing scope denies; it never becomes global. */
+  scope?: PermissionScope | ((ctx: MiddlewareContext) => PermissionScope | null | undefined | Promise<PermissionScope | null | undefined>);
+}
+
+async function middlewareAssignments(ctx: MiddlewareContext, options: PermissionMiddlewareOptions): Promise<PermissionAssignments | null> {
+  if (options.scope === undefined) return Permissions.global();
+  const scope = typeof options.scope === 'function' ? await options.scope(ctx) : options.scope;
+  if (!scope || typeof scope !== 'object') return null;
+  if ('teamId' in scope) {
+    try {
+      return Permissions.forTeam(scope.teamId);
+    } catch {
+      return null;
+    }
+  }
+  return 'global' in scope && scope.global === true ? Permissions.global() : null;
+}
+
 /**
  * Middleware that requires a specific permission
  */
 export class RequirePermissionMiddleware extends Middleware {
-  constructor(private permission: string) {
+  constructor(private permission: string, private options: PermissionMiddlewareOptions = {}) {
     super();
   }
 
@@ -650,7 +523,8 @@ export class RequirePermissionMiddleware extends Middleware {
     const modelType = user.constructor?.name || 'User';
     const modelId = user.id ?? user.getAttribute?.('id');
 
-    const hasPermission = await Permissions.modelHasPermission(modelType, modelId, this.permission);
+    const assignments = await middlewareAssignments(ctx, this.options);
+    const hasPermission = assignments && await assignments.modelHasPermission(modelType, modelId, this.permission, this.options.guard ?? 'web');
     if (!hasPermission) {
       return new Response(
         JSON.stringify({ message: `Missing permission: ${this.permission}` }),
@@ -666,7 +540,7 @@ export class RequirePermissionMiddleware extends Middleware {
  * Middleware that requires a specific role
  */
 export class RequireRoleMiddleware extends Middleware {
-  constructor(private role: string) {
+  constructor(private role: string, private options: PermissionMiddlewareOptions = {}) {
     super();
   }
 
@@ -682,7 +556,8 @@ export class RequireRoleMiddleware extends Middleware {
     const modelType = user.constructor?.name || 'User';
     const modelId = user.id ?? user.getAttribute?.('id');
 
-    const hasRole = await Permissions.modelHasRole(modelType, modelId, this.role);
+    const assignments = await middlewareAssignments(ctx, this.options);
+    const hasRole = assignments && await assignments.modelHasRole(modelType, modelId, this.role, this.options.guard ?? 'web');
     if (!hasRole) {
       return new Response(
         JSON.stringify({ message: `Missing role: ${this.role}` }),
