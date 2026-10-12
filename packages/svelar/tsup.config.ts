@@ -65,9 +65,12 @@ export default defineConfig({
   clean: true,
   sourcemap: false,
   minify: true,
+  keepNames: true,
   target: 'node22',
   splitting: false,
   external: [
+    'cron-parser',
+    'zod',
     '@sveltejs/kit',
     'date-fns',
     'date-fns/locale',

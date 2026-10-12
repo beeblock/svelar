@@ -4,7 +4,7 @@ import { createFormAction, loadForm, validateForm, FormValidationError } from '.
 import { createI18nHandle, createReroute } from '../src/i18n';
 
 vi.mock('sveltekit-superforms/adapters', () => ({
-  zod: (schema: z.ZodTypeAny) => schema,
+  zod4: (schema: z.ZodType) => schema,
 }));
 
 vi.mock('sveltekit-superforms', () => ({
@@ -13,7 +13,7 @@ vi.mock('sveltekit-superforms', () => ({
     status: options.status ?? 400,
     data: { form: { ...form, message: text } },
   }),
-  superValidate: async (input: any, schema: z.ZodTypeAny) => {
+  superValidate: async (input: any, schema: z.ZodType) => {
     let raw: any = {};
     let posted = false;
 
@@ -30,7 +30,7 @@ vi.mock('sveltekit-superforms', () => ({
       valid: result.success,
       posted,
       data: result.success ? result.data : raw,
-      errors: result.success ? {} : result.error.flatten().fieldErrors,
+      errors: result.success ? {} : z.flattenError(result.error).fieldErrors,
     };
   },
 }));

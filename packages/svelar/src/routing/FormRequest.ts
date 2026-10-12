@@ -38,24 +38,28 @@
  * ```
  */
 
-import { z, type ZodTypeAny } from 'zod';
+import { z, type ZodType } from 'zod/v4';
 import type { BaseIssue, BaseSchema, BaseSchemaAsync, InferOutput } from 'valibot';
 import type { RequestEvent } from './Controller.js';
 
 export type FormRequestSchema =
-  | ZodTypeAny
+  | ZodType
   | BaseSchema<unknown, unknown, BaseIssue<unknown>>
   | BaseSchemaAsync<unknown, unknown, BaseIssue<unknown>>
   | unknown;
 
 export type InferFormRequestOutput<TSchema> =
-  TSchema extends ZodTypeAny ? z.infer<TSchema>
+  TSchema extends ZodType ? z.output<TSchema>
     : TSchema extends BaseSchema<unknown, unknown, BaseIssue<unknown>> | BaseSchemaAsync<unknown, unknown, BaseIssue<unknown>>
       ? InferOutput<TSchema>
       : unknown;
 
 export type FormRequestValidated<TRequest> =
-  TRequest extends FormRequest<any, infer TOutput> ? TOutput : never;
+  TRequest extends { passedValidation(...args: any[]): infer TOutput }
+    ? unknown extends Awaited<TOutput>
+      ? TRequest extends { rules(): infer TSchema } ? InferFormRequestOutput<TSchema> : unknown
+      : Awaited<TOutput>
+    : never;
 
 type NormalizedValidationIssue = {
   path: string;

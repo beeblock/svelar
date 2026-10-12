@@ -2,6 +2,8 @@
 
 ## Introduction
 
+Core and generated apps use a tested TypeScript 6.0.3 toolchain baseline (`^6.0.3`) with Node.js 22 type definitions and explicit ambient types. TypeScript 7 is not the supported baseline: Svelte tooling and compiler-API consumers still require the TypeScript 6 JavaScript API.
+
 Svelar is a Laravel-inspired framework built on top of SvelteKit 2. It brings enterprise-grade patterns like MVC, ORM, middleware pipelines, session management, and authentication to the SvelteKit ecosystem. Svelar provides a complete backend framework with a familiar developer experience for anyone coming from Laravel.
 
 ### Key Features

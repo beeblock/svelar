@@ -4,7 +4,7 @@
  * Re-exports Zod with some convenience helpers for common validation patterns.
  */
 
-import { z } from 'zod';
+import { z } from 'zod/v4';
 import { isUlid, isUuidv7 } from '../support/uuid.js';
 
 // Re-export Zod for direct usage
@@ -41,9 +41,9 @@ export const rules = {
       message: 'Must be a valid ULID',
     }),
   enum: <T extends [string, ...string[]]>(values: T) => z.enum(values),
-  array: <T extends z.ZodTypeAny>(schema: T) => z.array(schema),
-  nullable: <T extends z.ZodTypeAny>(schema: T) => schema.nullable(),
-  optional: <T extends z.ZodTypeAny>(schema: T) => schema.optional(),
+  array: <T extends z.ZodType>(schema: T) => z.array(schema),
+  nullable: <T extends z.ZodType>(schema: T) => schema.nullable(),
+  optional: <T extends z.ZodType>(schema: T) => schema.optional(),
   confirmed: (field: string = 'password') =>
     z
       .object({
@@ -86,7 +86,7 @@ export const rules = {
 
 // ── Validate helper function ───────────────────────────────
 
-export function validate<T extends z.ZodTypeAny>(
+export function validate<T extends z.ZodType>(
   schema: T,
   data: unknown
 ): { success: true; data: z.infer<T> } | { success: false; errors: Record<string, any> } {
@@ -98,7 +98,7 @@ export function validate<T extends z.ZodTypeAny>(
 
   const errors: Record<string, any> = {};
   for (const issue of result.error.issues) {
-    const path = issue.path.length > 0 ? issue.path : ['_root'];
+    const path = issue.path.length > 0 ? issue.path.map(String) : ['_root'];
 
     // Navigate/create nested object structure
     let current = errors;

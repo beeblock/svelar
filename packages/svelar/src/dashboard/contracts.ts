@@ -5,7 +5,7 @@ import { authorizeDashboard, type DashboardOperation } from './security.js';
 
 const identifier = z.string().min(1).max(255).refine((value) => !/[\x00-\x1f\x7f]/.test(value), 'Invalid identifier');
 const integer = (fallback: number, maximum: number) => z.string().regex(/^\d+$/)
-  .transform(Number).refine((value) => Number.isSafeInteger(value) && value <= maximum, 'Out of range').default(String(fallback));
+  .transform(Number).refine((value) => Number.isSafeInteger(value) && value <= maximum, 'Out of range').prefault(String(fallback));
 
 export const dashboardQueueSchema = z.object({
   queue: identifier.default('default'),
@@ -34,7 +34,7 @@ export class DashboardMutationDto {
   constructor(readonly operation: Exclude<DashboardOperation, 'view'>, readonly input: DashboardMutationInput) {}
 }
 
-export class DashboardMutationRequest extends FormRequest<z.ZodTypeAny, DashboardMutationDto> {
+export class DashboardMutationRequest extends FormRequest<z.ZodType, DashboardMutationDto> {
     constructor(readonly operation: Exclude<DashboardOperation, 'view'> = 'retryJob') { super(); }
 
     rules() {

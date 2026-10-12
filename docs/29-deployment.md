@@ -4,6 +4,12 @@ Svelar provides a complete Docker-based deployment pipeline. A single `npx svela
 
 CLI wrapper commands (`dev:up`, `prod:deploy`, etc.) let you manage containers without memorizing long compose flags.
 
+The core and generated app toolchain baseline is TypeScript 6.0.3, not an unconstrained `typescript@latest`. Root/core manifests and new apps use `^6.0.3`; generated apps keep `@types/node` on the 22.x line. This compiler change does not raise the runtime contract to Node 25 or migrate plugin manifests.
+
+TypeScript 6 no longer includes every visible `@types` package automatically. Core compiler configurations explicitly include `types: ['node']`; app templates include `types: ['node', 'vite/client']` and retain the SvelteKit-generated configuration. Existing apps should update their compiler dependency, rerun `svelte-kit sync`, and verify their required ambient types rather than setting `types: ['*']`. Core retains its existing explicit `rootDir`, ES2022 target, and module-resolution settings.
+
+Verify the migration with strict declaration emission, source tests, and app `svelte-check`/build for both Zod and Valibot projects. Passing runtime tests alone does not prove that form/DTO types or compiler-API consumers work. No blanket `ignoreDeprecations` setting is used to suppress migration errors. See [TypeScript 6 release notes](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-6-0.html); [TypeScript 7 guidance](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/) explains why embedded Svelte tooling still needs the 6.x API.
+
 ---
 
 ## Table of Contents

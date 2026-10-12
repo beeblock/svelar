@@ -169,8 +169,10 @@ npm install mysql2
 
 ## Requirements
 
+Core and generated apps use a tested TypeScript 6.0.3 toolchain baseline (`^6.0.3`) with Node.js 22 type definitions and explicit ambient types. TypeScript 7 is not the supported baseline: Svelte tooling and compiler-API consumers still require the TypeScript 6 JavaScript API.
+
 - Node.js >= 22
-- SvelteKit >= 2.0
+- SvelteKit >= 2.0 and < 3.0
 
 ## License
 

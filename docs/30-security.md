@@ -370,6 +370,28 @@ Every allowlisted advisory must include a reason and an expiration date. Use it 
 
 Do not run `npm audit fix --force` blindly. Review the proposed dependency changes, run `npm run build`, `npm run test`, and the relevant smoke/certification checks before publishing.
 
+### Compatible Transitive Overrides
+
+The 0.8.0 candidate keeps SvelteKit 2 and ExcelJS 4.4 instead of accepting audit suggestions to upgrade Kit to 3 or downgrade ExcelJS to 3.4. Generated apps carry these narrowly scoped npm overrides:
+
+```json
+{
+  "overrides": {
+    "@sveltejs/kit": { "cookie": "^0.7.2" },
+    "exceljs": { "uuid": "^11.1.1" },
+    "esbuild@>=0.27.3 <0.28.1": "^0.28.2"
+  }
+}
+```
+
+- Cookie 0.7.2 retains Kit 2's parse/serialize APIs and rejects unsafe names, paths, and domains. See [GHSA-pxg6-pf52-xh8x](https://github.com/advisories/GHSA-pxg6-pf52-xh8x).
+- UUID 11.1.1 fixes output-buffer bounds checks while preserving the CommonJS `require('uuid').v4()` API used by ExcelJS. Do not replace it with an ESM-only major without migrating the consumer. See [GHSA-w5hq-g745-h8pq](https://github.com/advisories/GHSA-w5hq-g745-h8pq).
+- The esbuild selector targets the affected Windows development-server versions. The repository separately pins its build tool through the existing `$esbuild` override. See [GHSA-g7r4-m6w7-qqqr](https://github.com/advisories/GHSA-g7r4-m6w7-qqqr).
+
+Overrides must live in the consuming application's root `package.json`; an installed library cannot impose its own overrides on consumers. Existing apps must add the entries and refresh their lockfile. A manifest alone does not prove the dependency graph is patched: check `npm ls cookie uuid esbuild --all` and `npm audit`, including nested copies. Review a targeted lockfile diff and verify a clean `npm ci` before release rather than blindly regenerating the whole dependency graph.
+
+Regression checks exercise real Kit session-cookie serialization and ExcelJS import/export, streaming, and UUID-backed conditional formatting. The high/critical release gate is not equivalent to a zero-finding full audit; audit the packed, installed application separately, and record its actual result.
+
 ---
 
 ## Production Checklist

@@ -26,7 +26,9 @@
  * ```
  */
 
-import { z } from 'zod';
+import { z } from 'zod/v4';
+import type { SuperValidated } from 'sveltekit-superforms';
+import type * as v from 'valibot';
 
 // Re-export FormRequest so `import { FormRequest } from '@beeblock/svelar/forms'` works
 export { FormRequest, FormValidationError, FormAuthorizationError } from '../routing/FormRequest.js';
@@ -35,10 +37,10 @@ export { FormRequest, FormValidationError, FormAuthorizationError } from '../rou
 
 export type { z };
 
-export type ValidationAdapter = 'zod' | 'valibot';
+export type ValidationAdapter = 'zod' | 'zod4' | 'valibot';
 
 export interface FormActionOptions {
-  /** Validation adapter to pass to sveltekit-superforms (default: zod) */
+  /** Native Zod 4 by default. The legacy 'zod' option name also selects Zod 4. */
   adapter?: ValidationAdapter;
   /** Redirect URL on success */
   redirectTo?: string;
@@ -48,27 +50,27 @@ export interface FormActionOptions {
   resetOnSuccess?: boolean;
 }
 
-async function superformsAdapter(schema: unknown, adapter: ValidationAdapter = 'zod') {
+async function superformsAdapter(schema: unknown, adapter: ValidationAdapter = 'zod4') {
   const adapters = await import('sveltekit-superforms/adapters');
   return adapter === 'valibot'
     ? adapters.valibot(schema as any)
-    : adapters.zod(schema as any);
+    : adapters.zod4(schema as any);
 }
 
-async function parseSchema(schema: unknown, data: unknown, adapter: ValidationAdapter = 'zod') {
+async function parseSchema(schema: unknown, data: unknown, adapter: ValidationAdapter = 'zod4') {
   if (adapter === 'valibot') {
     const valibot = await import('valibot');
     return valibot.safeParse(schema as any, data);
   }
 
-  return (schema as z.ZodTypeAny).safeParse(data);
+  return (schema as z.ZodType).safeParse(data);
 }
 
 function validationErrors(result: any): Record<string, string[]> {
   const errors: Record<string, string[]> = {};
 
-  if (result.error?.flatten) {
-    return result.error.flatten().fieldErrors as Record<string, string[]>;
+  if (result.error instanceof z.ZodError) {
+    return z.flattenError(result.error).fieldErrors as Record<string, string[]>;
   }
 
   for (const issue of result.issues ?? []) {
@@ -102,6 +104,16 @@ function validationErrors(result: any): Record<string, string[]> {
  * };
  * ```
  */
+export function createFormAction<TSchema extends z.ZodType<Record<string, unknown>>>(
+  schema: TSchema,
+  handler: (data: z.output<TSchema>, event: any) => Promise<void | Record<string, any>>,
+  options?: FormActionOptions & { adapter?: 'zod' | 'zod4' },
+): (event: any) => Promise<any>;
+export function createFormAction<TSchema extends v.GenericSchema<unknown, Record<string, unknown>>>(
+  schema: TSchema,
+  handler: (data: v.InferOutput<TSchema>, event: any) => Promise<void | Record<string, any>>,
+  options: FormActionOptions & { adapter: 'valibot' },
+): (event: any) => Promise<any>;
 export function createFormAction<TData = any>(
   schema: unknown,
   handler: (data: TData, event: any) => Promise<void | Record<string, any>>,
@@ -148,10 +160,20 @@ export function createFormAction<TData = any>(
  * });
  * ```
  */
+export function loadForm<TSchema extends z.ZodType<Record<string, unknown>>>(
+  schema: TSchema,
+  data?: Record<string, unknown>,
+  adapter?: 'zod' | 'zod4',
+): Promise<SuperValidated<z.output<TSchema>>>;
+export function loadForm<TSchema extends v.GenericSchema<unknown, Record<string, unknown>>>(
+  schema: TSchema,
+  data: Record<string, unknown> | undefined,
+  adapter: 'valibot',
+): Promise<SuperValidated<v.InferOutput<TSchema>>>;
 export async function loadForm(
   schema: unknown,
   data?: Record<string, unknown>,
-  adapter: ValidationAdapter = 'zod',
+  adapter: ValidationAdapter = 'zod4',
 ) {
   const { superValidate } = await import('sveltekit-superforms');
 
@@ -167,10 +189,20 @@ export async function loadForm(
  * const data = await validateForm(event, createPostSchema);
  * ```
  */
+export function validateForm<TSchema extends z.ZodType>(
+  event: any,
+  schema: TSchema,
+  adapter?: 'zod' | 'zod4',
+): Promise<z.output<TSchema>>;
+export function validateForm<TSchema extends v.GenericSchema>(
+  event: any,
+  schema: TSchema,
+  adapter: 'valibot',
+): Promise<v.InferOutput<TSchema>>;
 export async function validateForm<TData = any>(
   event: any,
   schema: unknown,
-  adapter: ValidationAdapter = 'zod',
+  adapter: ValidationAdapter = 'zod4',
 ): Promise<TData> {
   const formData = await event.request.formData();
   const raw: Record<string, any> = {};

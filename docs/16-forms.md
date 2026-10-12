@@ -1,6 +1,6 @@
 # Forms
 
-Svelar bridges [sveltekit-superforms](https://superforms.rocks) with Zod or Valibot validation, providing helpers for creating validated form actions with minimal boilerplate.
+Svelar bridges [sveltekit-superforms](https://superforms.rocks) with native Zod 4 or Valibot validation, providing helpers for creating validated form actions with minimal boilerplate. Direct Superforms calls use `zod4`/`zod4Client`, not the legacy Zod 3 adapters. See [Migrating To Zod 4](./05-validation-dtos.md#migrating-to-zod-4) before upgrading an existing Zod app.
 
 ## Setup
 
@@ -16,7 +16,7 @@ npx svelar new my-app --validation=valibot
 
 ```typescript
 // src/lib/schemas/post.ts
-import { z } from 'zod';
+import { z } from '@beeblock/svelar/validation';
 
 export const createPostSchema = z.object({
   title: z.string().min(3, 'Title must be at least 3 characters'),
@@ -97,7 +97,7 @@ createFormAction(schema, handler, options?)
 - `handler` — Async function receiving validated data and the SvelteKit event
 - `options.redirectTo` — URL to redirect on success
 - `options.errorMessage` — Custom error message on failure
-- `options.adapter` — `zod` by default, or `valibot` when using a Valibot schema
+- `options.adapter` — `zod4` by default, or `valibot` when using a Valibot schema. The older `zod` option name also selects native Zod 4.
 
 ```typescript
 // With redirect

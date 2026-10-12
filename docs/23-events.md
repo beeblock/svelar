@@ -69,6 +69,10 @@ export class SendWelcomeEmail extends Listener<UserRegistered> {
 
 This gives you the same module-decoupling benefits while letting the queue system handle retries, backoff, worker isolation, and slow external services.
 
+### Production Class Names
+
+Class-based events, model observer registrations and queued job registries use constructor names as identifiers. Svelar's package build preserves these names across independently bundled subpaths, including PDF jobs. If you customize application bundling, preserve class names too (`keepNames: true` with esbuild); do not rename serialized job identifiers between web and worker builds while jobs are pending. String-named events use the explicit name passed to `Event.emit()`.
+
 ### Dispatching Events
 
 ```typescript

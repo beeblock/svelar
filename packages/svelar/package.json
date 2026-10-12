@@ -271,11 +271,12 @@
 		"node": ">=22.0.0"
 	},
 	"dependencies": {
+		"cron-parser": "^5.10.2",
 		"date-fns": "^4.4.0",
 		"drizzle-orm": "^0.45.4",
 		"jiti": "^2.7.0",
 		"pusher-js": "^8.6.0",
-		"zod": "^3.23.0"
+		"zod": "^4.6.7"
 	},
 	"devDependencies": {
 		"@types/node": "^22.20.5",
@@ -285,7 +286,7 @@
 		"exceljs": "^4.4.0",
 		"sveltekit-superforms": "^2.31.0",
 		"tsup": "^8.5.1",
-		"typescript": "^5.7.0",
+		"typescript": "^6.0.3",
 		"valibot": "^1.5.0",
 		"vitest": "^4.1.11"
 	},
@@ -304,7 +305,7 @@
 		"nodemailer": ">=6.0.0",
 		"pdfkit": ">=0.18.0",
 		"postgres": "*",
-		"sveltekit-superforms": ">=2.0.0",
+		"sveltekit-superforms": ">=2.31.0",
 		"valibot": ">=1.0.0",
 		"vitest": ">=1.0.0"
 	},

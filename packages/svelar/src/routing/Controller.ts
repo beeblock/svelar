@@ -36,7 +36,9 @@
  */
 
 import { isHttpError, isRedirect } from '@sveltejs/kit';
-import { z, type ZodObject, type ZodRawShape } from 'zod';
+import { z, type ZodObject } from 'zod/v4';
+
+type ZodRawShape = z.core.$ZodShape;
 import { MiddlewareStack, type MiddlewareHandler, Middleware } from '../middleware/Middleware.js';
 
 // ── Types ──────────────────────────────────────────────────
@@ -52,7 +54,7 @@ export interface RequestEvent {
 }
 
 type ValidationIssue = {
-  path: Array<string | number>;
+  path: PropertyKey[];
   message: string;
 };
 
