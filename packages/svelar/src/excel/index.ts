@@ -120,11 +120,32 @@ function getSheetByOption(workbook: any, option?: string | number): any {
   return workbook.getWorksheet(option);
 }
 
-function rowToObject(row: any, headers: string[]): Record<string, any> {
+function resolveCellValue(cell: any, sharedStrings?: readonly any[]): any {
+  const value = cell.value;
+  if (value && typeof value === 'object' && 'sharedString' in value) {
+    const index = value.sharedString;
+    if (!Number.isInteger(index) || index < 0 || sharedStrings?.[index] === undefined) {
+      throw new Error('Unresolved Excel shared string');
+    }
+    cell.value = sharedStrings[index];
+  }
+  return cell.value;
+}
+
+function rowHeaders(row: any, sharedStrings?: readonly any[]): string[] {
+  const headers: string[] = [];
+  row.eachCell({ includeEmpty: true }, (cell: any, colNumber: number) => {
+    const value = resolveCellValue(cell, sharedStrings);
+    headers[colNumber - 1] = value == null ? `col${colNumber}` : cell.text;
+  });
+  return headers;
+}
+
+function rowToObject(row: any, headers: string[], sharedStrings?: readonly any[]): Record<string, any> {
   const obj: Record<string, any> = {};
   for (let i = 0; i < headers.length; i++) {
     const cell = row.getCell(i + 1);
-    obj[headers[i]] = cell.value;
+    obj[headers[i]] = resolveCellValue(cell, sharedStrings);
   }
   return obj;
 }
@@ -138,11 +159,7 @@ async function processLoadedWorkbookRows(
   const worksheet = getSheetByOption(workbook, targetSheet);
   if (!worksheet) throw new Error('Worksheet not found');
 
-  const headerRow = worksheet.getRow(headerRowNum);
-  const headers: string[] = [];
-  headerRow.eachCell({ includeEmpty: true }, (cell: any, colNumber: number) => {
-    headers[colNumber - 1] = String(cell.value ?? `col${colNumber}`);
-  });
+  const headers = rowHeaders(worksheet.getRow(headerRowNum));
 
   let rowIndex = 0;
   for (let rowNumber = headerRowNum + 1; rowNumber <= worksheet.rowCount; rowNumber++) {
@@ -378,11 +395,7 @@ class ExcelManager {
     if (!worksheet) throw new Error('Worksheet not found');
 
     const headerRowNum = options.headerRow ?? 1;
-    const headerRow = worksheet.getRow(headerRowNum);
-    const headers: string[] = [];
-    headerRow.eachCell({ includeEmpty: true }, (cell: any, colNumber: number) => {
-      headers[colNumber - 1] = String(cell.value ?? `col${colNumber}`);
-    });
+    const headers = rowHeaders(worksheet.getRow(headerRowNum));
 
     const rows: Record<string, any>[] = [];
     worksheet.eachRow({ includeEmpty: false }, (row: any, rowNumber: number) => {
@@ -420,42 +433,44 @@ class ExcelManager {
       throw new Error('Unsupported Excel import stream input');
     }
 
-    const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(stream, {});
-
-    let headers: string[] = [];
-    let rowIndex = 0;
+    const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(stream, { sharedStrings: 'cache' });
+    let deliveryStarted = false;
 
     try {
       for await (const worksheetReader of workbookReader) {
         // Skip sheets that don't match
         if (targetSheet) {
           if (typeof targetSheet === 'string' && worksheetReader.name !== targetSheet) continue;
-          if (typeof targetSheet === 'number' && worksheetReader.id !== targetSheet) continue;
+          if (typeof targetSheet === 'number' && Number(worksheetReader.id) !== targetSheet) continue;
         }
 
+        let headers: string[] | undefined;
+        let rowIndex = 0;
         for await (const row of worksheetReader) {
-          rowIndex++;
-          if (rowIndex === headerRowNum) {
-            // Extract headers from this row
-            row.eachCell({ includeEmpty: true }, (cell: any, colNumber: number) => {
-              headers[colNumber - 1] = String(cell.value ?? `col${colNumber}`);
-            });
+          if (row.number === headerRowNum) {
+            headers = rowHeaders(row, workbookReader.sharedStrings);
             continue;
           }
-          if (rowIndex <= headerRowNum) continue;
+          if (row.number <= headerRowNum || !row.hasValues) continue;
+          if (!headers) throw new Error('Excel header row not found');
 
-          const obj = rowToObject(row, headers);
-          await options.onRow(obj, rowIndex - headerRowNum - 1);
+          const obj = rowToObject(row, headers, workbookReader.sharedStrings);
+          deliveryStarted = true;
+          await options.onRow(obj, rowIndex++);
         }
 
         // Only process the first matching sheet
         return;
       }
+      throw new Error('Worksheet not found');
     } catch (error) {
-      if (typeof input !== 'string') throw error;
+      // Retrying after user code ran could duplicate committed side effects.
+      if (deliveryStarted) throw error;
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.readFile(input);
       await processLoadedWorkbookRows(workbook, options);
+    } finally {
+      stream.destroy();
     }
   }
 

@@ -45,16 +45,20 @@ import { Excel } from '@beeblock/svelar/excel';
 
 // From uploaded file buffer
 const rows = await Excel.import(buffer, { sheet: 'Users' });
-// [{ name: 'John', email: 'john@example.com', role: 'admin' }, ...]
+// Keys match the worksheet headers, such as Name, Email, and Role.
 
 for (const row of rows) {
   await User.create(row);
 }
 ```
 
+Header names use ExcelJS cell text, including rich-text and hyperlink labels. Cached shared-string references are resolved before rows are delivered; unresolved references are never converted into `[object Object]` keys. Imported data-cell values retain their ExcelJS types.
+
 ### Streaming Export (Low Memory)
 
 For large datasets, use async generators to avoid loading everything into memory:
+
+Rows are constructed incrementally, but `Excel.stream()` still returns the completed XLSX as a `Buffer`; it is not a streaming HTTP response.
 
 ```typescript
 const buffer = await Excel.stream({
@@ -79,16 +83,22 @@ const buffer = await Excel.stream({
 
 ### Streaming Import (Low Memory)
 
-Process rows one at a time without loading the entire file:
+Pass a file path to use the streaming reader:
 
 ```typescript
-await Excel.importStream(buffer, {
+await Excel.importStream(uploadedFilePath, {
   sheet: 'Orders',
   onRow: async (row, index) => {
     await Order.create(row);
   },
 });
 ```
+
+Buffer input is supported but loads the workbook before invoking callbacks. File input normally uses the streaming reader; if parsing or shared-string resolution fails before any callback begins, Svelar may load the workbook as a compatibility fallback. This fallback is not a low-memory path.
+
+Callbacks receive contiguous zero-based indexes for nonempty data rows. `headerRow` is a physical, one-based worksheet row number, even when preceding or intermediate rows are blank. A missing requested worksheet rejects the import.
+
+If a callback throws, or the reader fails after callbacks have begun, the import rejects without replaying earlier rows. Previously committed side effects are not rolled back automatically: use transactions or idempotent application actions when required, and do not blindly retry a partially completed import.
 
 ### Spreadsheet Builder
 
