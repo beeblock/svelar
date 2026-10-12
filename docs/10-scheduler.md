@@ -502,6 +502,8 @@ const scheduler = new Scheduler()
 
 The `scheduled_task_runs`, `scheduled_task_settings`, and `scheduler_locks` tables are managed by Svelar core migrations.
 
+Manual monitor-triggered execution fails before running the task if enablement controls cannot be read, including missing migrations and database permission errors. The monitor bounds history per task, so a frequently running task cannot hide another task's last failure.
+
 ## Monitoring Scheduled Tasks
 
 The `ScheduleMonitor` provides a real-time view of all tasks for use in admin dashboards. It reads history from the database so it reflects runs from all scheduler processes:

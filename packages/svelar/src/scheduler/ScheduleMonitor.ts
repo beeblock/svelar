@@ -248,7 +248,7 @@ class ScheduleMonitorService {
 
   /**
    * Load task run history from the database.
-   * Single query fetches the latest N records per task.
+   * Bound history per task so frequent tasks cannot hide other tasks' latest runs.
    */
   private async loadHistoryFromDb(
     taskNames: string[],
@@ -257,26 +257,19 @@ class ScheduleMonitorService {
     const result = new Map<string, TaskRunRecord[]>();
     if (taskNames.length === 0) return result;
 
-    const rows = await new QueryBuilder('scheduled_task_runs')
-      .select('task', 'success', 'duration', 'error', 'ran_at')
-      .whereIn('task', taskNames)
-      .orderBy('ran_at', 'desc')
-      .limit(taskNames.length * limit)
-      .get();
-
-    for (const row of rows) {
-      if (!result.has(row.task)) {
-        result.set(row.task, []);
-      }
-      const history = result.get(row.task)!;
-      if (history.length < limit) {
-        history.push({
+    for (const task of taskNames) {
+      const rows = await new QueryBuilder('scheduled_task_runs')
+        .select('task', 'success', 'duration', 'error', 'ran_at')
+        .where('task', task)
+        .orderBy('ran_at', 'desc')
+        .limit(limit)
+        .get();
+      result.set(task, rows.map((row) => ({
           timestamp: new Date(row.ran_at),
           success: !!row.success,
           duration: row.duration,
           error: row.error || undefined,
-        });
-      }
+      })));
     }
 
     return result;
@@ -299,18 +292,10 @@ class ScheduleMonitorService {
     const result = new Map<string, TaskSetting>();
     if (taskNames.length === 0) return result;
 
-    let rows: any[];
-    try {
-      rows = await new QueryBuilder('scheduled_task_settings')
-        .select('task', 'enabled', 'updated_at')
-        .whereIn('task', taskNames)
-        .get();
-    } catch (error: any) {
-      if (String(error?.message ?? error).includes('scheduled_task_settings')) {
-        return result;
-      }
-      throw error;
-    }
+    const rows = await new QueryBuilder('scheduled_task_settings')
+      .select('task', 'enabled', 'updated_at')
+      .whereIn('task', taskNames)
+      .get();
 
     for (const row of rows ?? []) {
       result.set(row.task, {

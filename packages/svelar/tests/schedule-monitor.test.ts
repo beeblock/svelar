@@ -1,13 +1,14 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Connection } from '../src/database/Connection.js';
 import { svelarCoreMigrations } from '../src/database/CoreMigrations.js';
 import { Migrator } from '../src/database/Migration.js';
 import { ScheduledTask, Scheduler } from '../src/scheduler/index.js';
 import { ScheduleMonitor } from '../src/scheduler/ScheduleMonitor.js';
 import { QueryBuilder } from '../src/orm/QueryBuilder.js';
+import { Schema } from '../src/database/SchemaBuilder.js';
 
 class MonitorTestTask extends ScheduledTask {
   name = 'monitor-test-task';
@@ -33,6 +34,7 @@ describe.sequential('ScheduleMonitor', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await Connection.disconnect();
     await rm(root, { recursive: true, force: true });
   });
@@ -46,6 +48,11 @@ describe.sequential('ScheduleMonitor', () => {
   });
 
   it('fails manual task runs when scheduled_task_runs persistence is unavailable', async () => {
+    await new Schema().createTable('scheduled_task_settings', (table) => {
+      table.string('task').primary();
+      table.boolean('enabled');
+      table.timestamp('updated_at');
+    });
     const task = new MonitorTestTask();
     const scheduler = new Scheduler();
     scheduler.register(task);
@@ -53,6 +60,52 @@ describe.sequential('ScheduleMonitor', () => {
 
     await expect(ScheduleMonitor.runTask('monitor-test-task')).rejects.toThrow('scheduled_task_runs');
     expect(task.handled).toBe(true);
+  });
+
+  it('does not execute when persisted enablement controls are unavailable', async () => {
+    const task = new MonitorTestTask();
+    const scheduler = new Scheduler();
+    scheduler.register(task);
+    ScheduleMonitor.configure(scheduler);
+
+    await expect(ScheduleMonitor.runTask(task.name)).rejects.toThrow('scheduled_task_settings');
+    expect(task.handled).toBe(false);
+  });
+
+  it('does not turn a controls permission error into an enabled task', async () => {
+    const task = new MonitorTestTask();
+    const scheduler = new Scheduler();
+    scheduler.register(task);
+    ScheduleMonitor.configure(scheduler);
+    vi.spyOn(QueryBuilder.prototype, 'get').mockRejectedValueOnce(new Error('permission denied for table scheduled_task_settings'));
+
+    await expect(ScheduleMonitor.runTask(task.name)).rejects.toThrow('permission denied');
+    expect(task.handled).toBe(false);
+  });
+
+  it('keeps the latest result of quiet tasks when another task dominates history', async () => {
+    await new Migrator().fresh(svelarCoreMigrations());
+    const busy = new MonitorTestTask();
+    const quiet = new MonitorTestTask();
+    quiet.name = 'quiet-task';
+    const scheduler = new Scheduler();
+    scheduler.register(busy).register(quiet);
+    ScheduleMonitor.configure(scheduler);
+    await new QueryBuilder('scheduled_task_runs').insert({
+      task: quiet.name, success: false, duration: 7, error: 'Quiet task failed', ran_at: '2026-10-10T12:00:00.000Z',
+    });
+    for (let i = 0; i < 50; i++) {
+      await new QueryBuilder('scheduled_task_runs').insert({
+        task: busy.name, success: true, duration: 1, error: null, ran_at: new Date(Date.UTC(2026, 9, 12, 12, i)).toISOString(),
+      });
+    }
+
+    const tasks = await ScheduleMonitor.listTasks();
+    expect(tasks.find((task) => task.name === quiet.name)).toMatchObject({
+      lastStatus: 'failed', lastDuration: 7,
+      history: [expect.objectContaining({ error: 'Quiet task failed' })],
+    });
+    expect(tasks.find((task) => task.name === busy.name)?.history).toHaveLength(5);
   });
 
   it('persists task enablement and scheduler processes respect it after restart', async () => {
