@@ -119,6 +119,22 @@ export class SendUrgentAlert extends Job {
 }
 ```
 
+### progress(value, message?, metadata?)
+
+Long-running jobs can report progress from inside `handle()`:
+
+```typescript
+export class GenerateBoardReport extends Job {
+  async handle(): Promise<void> {
+    await this.progress(10, 'Loading board');
+    await this.progress(60, 'Rendering PDF', { stage: 'pdf' });
+    await this.progress(100, 'Done');
+  }
+}
+```
+
+Redis/BullMQ workers persist progress through BullMQ's native progress field, and `JobMonitor.listJobs()` / `JobMonitor.getJob()` expose it as `job.progress`. All drivers also expose `jobId`, `jobClass`, and `queue` through `ApplicationContext` while the job is running.
+
 ### serialize() / restore()
 
 Override these for custom serialization when your job carries complex data:

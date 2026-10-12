@@ -114,6 +114,17 @@ export interface QueueDefinition {
   metadata?: Record<string, any>;
 }
 
+export type QueueProgressValue = number | string | Record<string, any>;
+
+export interface QueueProgressUpdate {
+  value: QueueProgressValue;
+  message?: string;
+  metadata?: Record<string, any>;
+  updatedAt: number;
+}
+
+type QueueProgressReporter = (update: QueueProgressUpdate) => void | Promise<void>;
+
 interface QueuedJob {
   id: string;
   jobClass: string;
@@ -128,6 +139,19 @@ interface QueuedJob {
   createdAt: number;
   job: Job;
   context?: ApplicationContextSnapshot;
+}
+
+function normalizeProgressUpdate(
+  value: QueueProgressValue,
+  message?: string,
+  metadata?: Record<string, any>,
+): QueueProgressUpdate {
+  return {
+    value,
+    message,
+    metadata,
+    updatedAt: Date.now(),
+  };
 }
 
 function parseDatabaseJobPayload(
@@ -154,12 +178,23 @@ function parseDatabaseJobPayload(
 }
 
 async function handleQueuedJob(queuedJob: QueuedJob): Promise<void> {
-  await ApplicationContext.run(queuedJob.context ?? {}, () => queuedJob.job.handle());
+  queuedJob.job.id = queuedJob.id;
+  queuedJob.job.queue = queuedJob.queue;
+
+  await ApplicationContext.run({
+    ...(queuedJob.context ?? {}),
+    jobId: queuedJob.id,
+    jobClass: queuedJob.jobClass,
+    queue: queuedJob.queue,
+  }, () => queuedJob.job.handle());
 }
 
 // ── Job Base Class ─────────────────────────────────────────
 
 export abstract class Job {
+  /** Queue job id assigned at dispatch/processing time */
+  id?: string;
+
   /** Number of times this job has been attempted */
   attempts: number = 0;
 
@@ -189,6 +224,24 @@ export abstract class Job {
    */
   retrying(attempt: number): void {
     // Override if needed
+  }
+
+  /**
+   * Report progress for long-running jobs.
+   *
+   * Redis/BullMQ workers persist this through BullMQ's native progress field.
+   * Other drivers expose jobId/jobClass/queue in ApplicationContext so tests
+   * and custom runners can observe progress with queueProgressReporter.
+   */
+  protected async progress(
+    value: QueueProgressValue,
+    message?: string,
+    metadata?: Record<string, any>,
+  ): Promise<void> {
+    const reporter = ApplicationContext.get<QueueProgressReporter>('queueProgressReporter');
+    if (reporter) {
+      await reporter(normalizeProgressUpdate(value, message, metadata));
+    }
   }
 
   /**
@@ -488,6 +541,7 @@ class RedisDriver implements QueueDriverInterface {
         jobClass: job.jobClass,
         payload: job.payload,
         context: job.context,
+        metadata: job.metadata,
       },
       {
         jobId: job.id,
@@ -558,8 +612,18 @@ class RedisDriver implements QueueDriverInterface {
       async (bullJob: any) => {
         const data = bullJob.data;
         const jobInstance = registry.resolve(data.jobClass, data.payload);
+        jobInstance.id = String(bullJob.id);
+        jobInstance.queue = queueName;
         jobInstance.attempts = bullJob.attemptsMade + 1;
-        await ApplicationContext.run(data.context ?? {}, () => jobInstance.handle());
+        await ApplicationContext.run({
+          ...(data.context ?? {}),
+          jobId: String(bullJob.id),
+          jobClass: data.jobClass,
+          queue: queueName,
+          queueProgressReporter: async (update: QueueProgressUpdate) => {
+            await bullJob.updateProgress(update);
+          },
+        }, () => jobInstance.handle());
       },
       {
         connection,

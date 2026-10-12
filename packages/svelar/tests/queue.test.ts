@@ -7,6 +7,7 @@ import { svelarCoreMigrations } from '../src/database/CoreMigrations.js';
 import { Migrator } from '../src/database/Migration.js';
 import { Queue, Job, QueueRetryAllError } from '../src/queue/index';
 import { JobMonitor } from '../src/queue/JobMonitor.js';
+import { ApplicationContext } from '../src/support/Context.js';
 import { Teams } from '../src/teams/index.js';
 
 describe('Queue and Job Processing', () => {
@@ -77,6 +78,30 @@ describe('Queue and Job Processing', () => {
       const job = new PriorityJob();
 
       expect(job.queue).toBe('priority');
+    });
+
+    it('reports progress through the active queue context', async () => {
+      const updates: any[] = [];
+
+      class ProgressJob extends Job {
+        async handle(): Promise<void> {
+          await this.progress(50, 'Halfway', { step: 'processing' });
+        }
+      }
+
+      await ApplicationContext.run({
+        queueProgressReporter: (update: any) => updates.push(update),
+      }, async () => {
+        await new ProgressJob().handle();
+      });
+
+      expect(updates).toHaveLength(1);
+      expect(updates[0]).toMatchObject({
+        value: 50,
+        message: 'Halfway',
+        metadata: { step: 'processing' },
+      });
+      expect(typeof updates[0].updatedAt).toBe('number');
     });
 
     it('should support serialization', () => {
@@ -406,16 +431,27 @@ describe('Queue and Job Processing', () => {
 
     it('should dispatch jobs', async () => {
       let executed = false;
+      let context: any = null;
+      let jobId: string | undefined;
 
       class DispatchJob extends Job {
         async handle(): Promise<void> {
           executed = true;
+          jobId = this.id;
+          context = ApplicationContext.snapshot();
         }
       }
 
-      await Queue.dispatch(new DispatchJob());
+      const dispatchedId = await Queue.dispatch(new DispatchJob(), { jobId: 'dispatch-test' });
 
       expect(executed).toBe(true);
+      expect(dispatchedId).toBe('dispatch-test');
+      expect(jobId).toBe('dispatch-test');
+      expect(context).toMatchObject({
+        jobId: 'dispatch-test',
+        jobClass: 'DispatchJob',
+        queue: 'default',
+      });
     });
 
     it('should expose queue and job registries for monitors', () => {

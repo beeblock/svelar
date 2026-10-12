@@ -20,6 +20,7 @@ export interface JobInfo {
   maxAttempts: number;
   priority?: number;
   metadata?: Record<string, any>;
+  progress?: unknown;
   payload: string;
   error?: string;
   createdAt: number;
@@ -482,6 +483,7 @@ class JobMonitorService {
       maxAttempts: job.opts?.attempts ?? 3,
       priority: job.opts?.priority,
       metadata: job.data?.metadata,
+      progress: job.progress,
       payload: JSON.stringify(job.data ?? {}),
       error: job.failedReason ?? undefined,
       createdAt: job.timestamp ?? Date.now(),

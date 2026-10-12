@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Production deploy safety** — `prod:deploy` now pulls images, runs migrations in a one-off app container, starts containers with `--remove-orphans --wait`, and `prod:restart` recreates only runtime containers instead of doing a full `down`.
 - **RBAC capability registry** — `Permissions` can now register code-defined capabilities, expose them to admin UIs, and sync/prune them against database permission records so UI-created permissions do not drift from application gates.
 - **Testing fakes** — `@beeblock/svelar/testing` now includes `fakeMailer()` and `FakeMailTransport` for asserting mail delivery without SMTP/Postmark/Resend/Mailtrap credentials.
+- **Queue progress tracking** — jobs can now call `this.progress(...)`, Redis/BullMQ persists progress for `JobMonitor`, and queued job context exposes `jobId`, `jobClass`, and `queue` while handlers run.
 
 ## [0.8.0] - 2026-10-12
 
