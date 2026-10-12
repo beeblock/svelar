@@ -38,6 +38,7 @@ import { AddServiceAccountFieldsToApiKeysTable } from './core/00000000_000030_ad
 import { CreateTeamRoleHasPermissionsTable } from './core/00000000_000031_create_team_role_has_permissions_table.js';
 import { CreateTeamModelHasRolesTable } from './core/00000000_000032_create_team_model_has_roles_table.js';
 import { CreateTeamModelHasPermissionsTable } from './core/00000000_000033_create_team_model_has_permissions_table.js';
+import { ScopeWebhookInboxIdempotency } from './core/00000000_000034_scope_webhook_inbox_idempotency.js';
 
 export {
   CreateSessionsTable,
@@ -72,6 +73,7 @@ export {
   CreateTeamRoleHasPermissionsTable,
   CreateTeamModelHasRolesTable,
   CreateTeamModelHasPermissionsTable,
+  ScopeWebhookInboxIdempotency,
 };
 
 const coreMigrationDefinitions = [
@@ -107,6 +109,7 @@ const coreMigrationDefinitions = [
   ['00000000_000031_create_team_role_has_permissions_table', CreateTeamRoleHasPermissionsTable],
   ['00000000_000032_create_team_model_has_roles_table', CreateTeamModelHasRolesTable],
   ['00000000_000033_create_team_model_has_permissions_table', CreateTeamModelHasPermissionsTable],
+  ['00000000_000034_scope_webhook_inbox_idempotency', ScopeWebhookInboxIdempotency],
 ] as const;
 
 export function svelarCoreMigrations(): MigrationFile[] {

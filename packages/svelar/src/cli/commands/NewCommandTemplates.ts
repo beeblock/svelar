@@ -3078,6 +3078,7 @@ export type PostResponse = z.infer<typeof postResponseSchema>;
 			['00000000_000031_create_team_role_has_permissions_table.ts', 'CreateTeamRoleHasPermissionsTable', 'Team role permissions table'],
 			['00000000_000032_create_team_model_has_roles_table.ts', 'CreateTeamModelHasRolesTable', 'Team model roles table'],
 			['00000000_000033_create_team_model_has_permissions_table.ts', 'CreateTeamModelHasPermissionsTable', 'Team model permissions table'],
+			['00000000_000034_scope_webhook_inbox_idempotency.ts', 'ScopeWebhookInboxIdempotency', 'Tenant-scoped incoming webhook idempotency'],
 		] as const;
 
 		return migrations.map(([file, className, label]) => ({

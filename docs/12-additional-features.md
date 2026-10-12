@@ -586,6 +586,12 @@ export const POST = async ({ request }) => {
 
 The inbox supports memory and database drivers. Run Svelar core migrations to create `webhook_inbox_entries`, then use `markProcessing()`, `markProcessed()`, `markFailed()`, and `replay()` from workers or admin tooling. Invalid HMAC signatures throw `WebhookSignatureError` before the entry is stored.
 
+Capture is idempotent within `(source, tenantId, idempotencyKey)`: concurrent deliveries return one winning entry and retain its original payload. Different tenants can receive the same provider key without sharing entries. Numeric tenant IDs normalize to strings (`42` and `'42'` identify the same tenant); omitted or `null` tenant IDs share a separate global namespace. The visible `idempotencyKey` is unchanged. Database arbitration uses a unique internal SHA-256 hash of the JSON scope tuple, including the global namespace, rather than a nullable tenant column in a composite unique constraint.
+
+Resolve `tenantId` from trusted server-side configuration or an authorized provider-account mapping. Do not trust a tenant ID supplied in webhook headers or payloads. Signature verification runs before duplicate recovery, including for existing keys; a valid signature alone does not authorize the tenant mapping. Entry lookup and processing by ID still require application-level authorization.
+
+For existing installations, stop webhook receivers, review `npx svelar update --category migration --dry-run`, apply the missing framework migration with `npx svelar update --category migration`, and run `npx svelar migrate` before restarting updated receivers. Additive migration `00000000_000034_scope_webhook_inbox_idempotency` backfills retained records, creates `idx_webhook_inbox_deduplication`, then removes the old source/key-only constraint; it does not replace stored payloads or visible keys. Custom inbox tables need the same `deduplication_key` column and unique index. Do not run mixed old/new writers during this change. SQLite and PostgreSQL schema changes are transactional; MySQL DDL implicitly commits, so take a backup and inspect any failed migration before retrying. Rollback refuses to restore the old global source/key constraint when different tenants share a key; it never deletes entries to make rollback succeed.
+
 ## Teams & Workspaces
 
 Multi-tenant team management:

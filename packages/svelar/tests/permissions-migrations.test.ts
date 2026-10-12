@@ -8,7 +8,8 @@ import { QueryBuilder } from '../src/orm/QueryBuilder.js';
 import { Permissions } from '../src/permissions/index.js';
 import { Teams } from '../src/teams/index.js';
 
-const teamMigrations = () => svelarCoreMigrations().filter((file) => file.name >= '00000000_000031');
+const permissionHistory = () => svelarCoreMigrations().filter((file) => file.name < '00000000_000034');
+const teamMigrations = () => permissionHistory().filter((file) => file.name >= '00000000_000031');
 const legacyMigrations = () => svelarCoreMigrations().filter((file) => file.name < '00000000_000031');
 
 describe.sequential('Permission migration upgrades', () => {
@@ -37,8 +38,8 @@ describe.sequential('Permission migration upgrades', () => {
     const direct = await new QueryBuilder('model_has_permissions').get();
     const roleGrants = await new QueryBuilder('role_has_permissions').get();
 
-    expect(await migrator.run(svelarCoreMigrations())).toEqual(teamMigrations().map((file) => file.name));
-    expect(await migrator.run(svelarCoreMigrations())).toEqual([]);
+    expect(await migrator.run(permissionHistory())).toEqual(teamMigrations().map((file) => file.name));
+    expect(await migrator.run(permissionHistory())).toEqual([]);
     expect(await new QueryBuilder('model_has_roles').get()).toEqual(existing);
     expect(await new QueryBuilder('model_has_permissions').get()).toEqual(direct);
     expect(await new QueryBuilder('role_has_permissions').get()).toEqual(roleGrants);
@@ -51,10 +52,10 @@ describe.sequential('Permission migration upgrades', () => {
     await scope.giveRolePermission(role.id, permission.id);
     await scope.giveModelPermission('User', 1, permission.id);
     expect(await scope.modelHasPermission('User', 1, 'admin.manage')).toBe(true);
-    expect(await migrator.rollback(svelarCoreMigrations())).toEqual(teamMigrations().map((file) => file.name).reverse());
+    expect(await migrator.rollback(permissionHistory())).toEqual(teamMigrations().map((file) => file.name).reverse());
     expect(await new Schema().hasTable('team_model_has_roles')).toBe(false);
     expect(await Permissions.modelHasPermission('User', 1, 'admin.manage')).toBe(true);
-    await migrator.run(svelarCoreMigrations());
+    await migrator.run(permissionHistory());
     expect(await scope.getModelAllPermissions('User', 1)).toEqual([]);
     expect(await Permissions.getModelAllPermissions('User', 1)).toEqual([permission]);
   });

@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Connection } from '../src/database/Connection';
-import { CreateWebhookDeliveriesTable, CreateWebhookInboxEntriesTable, CreateWebhooksTable } from '../src/database/CoreMigrations';
+import { CreateWebhookDeliveriesTable, CreateWebhookInboxEntriesTable, CreateWebhooksTable, ScopeWebhookInboxIdempotency } from '../src/database/CoreMigrations';
 import { WebhookInbox, WebhookSignatureError, Webhooks } from '../src/webhooks';
 
 let tempRoot: string | null = null;
@@ -39,6 +39,7 @@ async function useDatabaseWebhooks(): Promise<void> {
   await new CreateWebhooksTable().up();
   await new CreateWebhookDeliveriesTable().up();
   await new CreateWebhookInboxEntriesTable().up();
+  await new ScopeWebhookInboxIdempotency().up();
   Webhooks.configure({
     driver: 'database',
     maxAttempts: 2,
@@ -274,6 +275,7 @@ describe('WebhookInbox', () => {
 
     const second = await WebhookInbox.receive({
       source: 'stripe',
+      tenantId: '42',
       rawBody,
       idempotencyKey: 'evt_1',
     });
@@ -284,7 +286,7 @@ describe('WebhookInbox', () => {
     expect(first.entry).toMatchObject({
       source: 'stripe',
       event: 'checkout.session.completed',
-      tenantId: 42,
+      tenantId: '42',
       status: 'received',
       payload: { id: 'evt_1', ok: true },
       attempts: 0,

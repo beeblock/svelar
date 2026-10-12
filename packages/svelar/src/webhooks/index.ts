@@ -7,6 +7,7 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import { singleton } from '../support/singleton.js';
 import { assertSqlIdentifier } from '../database/Connection.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
+import { normalizeWebhookInboxTenantId, webhookInboxDeduplicationKey } from './InboxIdentity.js';
 
 export interface WebhookEndpoint {
   id: string;
@@ -72,7 +73,7 @@ export interface WebhookInboxReceiveInput {
   rawBody: string | Buffer | ArrayBuffer | Uint8Array;
   headers?: Headers | Record<string, string | string[] | undefined> | Array<[string, string]>;
   event?: string;
-  tenantId?: string | number;
+  tenantId?: string | number | null;
   actorId?: string | number;
   idempotencyKey?: string;
   metadata?: Record<string, any>;
@@ -464,41 +465,63 @@ class WebhookInboxManager {
     if (!source) throw new Error('Webhook inbox source is required.');
 
     const rawBody = bodyToString(input.rawBody);
-    const headers = redactHeaders(normalizeHeaders(input.headers), this.config.redactedHeaders);
-
-    if (input.verifier) {
-      const valid = await input.verifier({ source, rawBody, headers: normalizeHeaders(input.headers) });
-      if (!valid) throw new WebhookSignatureError(source);
-    }
-
+    const tenantId = normalizeWebhookInboxTenantId(input.tenantId);
     const digest = createHash('sha256').update(rawBody).digest('hex');
     const idempotencyKey = input.idempotencyKey ?? `${source}:${digest}`;
-    const existing = await this.findByIdempotencyKey(source, idempotencyKey);
-    if (existing) {
-      return { entry: existing, duplicate: true };
+    const deduplicationKey = webhookInboxDeduplicationKey(source, tenantId, idempotencyKey);
+    const verificationHeaders = normalizeHeaders(input.headers);
+    const headers = redactHeaders(verificationHeaders, this.config.redactedHeaders);
+    const { event, actorId, status, verifier } = input;
+    const metadata = input.metadata ? { ...input.metadata } : undefined;
+    const query = this.config.driver === 'database' ? this.query() : undefined;
+
+    if (verifier) {
+      const valid = await verifier({ source, rawBody, headers: verificationHeaders });
+      if (!valid) throw new WebhookSignatureError(source);
     }
 
     const now = Date.now();
     const entry: WebhookInboxEntry = {
       id: randomUUID(),
       source,
-      event: input.event,
-      tenantId: input.tenantId,
-      actorId: input.actorId,
+      event,
+      tenantId,
+      actorId,
       idempotencyKey,
       digest,
-      status: input.status ?? 'received',
+      status: status ?? 'received',
       headers,
       rawBody,
       payload: parseJsonOrUndefined(rawBody),
-      metadata: input.metadata,
+      metadata,
       attempts: 0,
       createdAt: now,
       updatedAt: now,
     };
 
-    await this.save(entry);
-    return { entry, duplicate: false };
+    if (!query) {
+      // Verification may yield; the winner check and commit must not.
+      const existing = this.entries.find((item) => item.source === source
+        && item.tenantId === tenantId && item.idempotencyKey === idempotencyKey);
+      if (existing) return { entry: cloneEntry(existing), duplicate: true };
+      this.entries.push(cloneEntry(entry));
+      return { entry: cloneEntry(entry), duplicate: false };
+    }
+
+    try {
+      await query.insert(this.entryToRow(entry));
+      return { entry: cloneEntry(entry), duplicate: false };
+    } catch (error) {
+      if (!isInboxUniqueConflict(error)) throw error;
+      query.where('deduplication_key', deduplicationKey)
+        .where('source', source)
+        .where('idempotency_key', idempotencyKey);
+      if (tenantId === undefined) query.whereNull('tenant_id');
+      else query.where('tenant_id', tenantId);
+      const winner = await query.first();
+      if (!winner) throw error;
+      return { entry: this.rowToEntry(winner), duplicate: true };
+    }
   }
 
   async receiveRequest(source: string, request: Request, options: Omit<WebhookInboxReceiveInput, 'source' | 'rawBody' | 'headers'> = {}): Promise<WebhookInboxReceiveResult> {
@@ -618,28 +641,6 @@ class WebhookInboxManager {
     return new QueryBuilder(this.table());
   }
 
-  private async findByIdempotencyKey(source: string, idempotencyKey: string): Promise<WebhookInboxEntry | null> {
-    if (this.config.driver === 'memory') {
-      const entry = this.entries.find((item) => item.source === source && item.idempotencyKey === idempotencyKey);
-      return entry ? cloneEntry(entry) : null;
-    }
-
-    const row = await this.query()
-      .where('source', source)
-      .where('idempotency_key', idempotencyKey)
-      .first();
-    return row ? this.rowToEntry(row) : null;
-  }
-
-  private async save(entry: WebhookInboxEntry): Promise<void> {
-    if (this.config.driver === 'memory') {
-      this.entries.push(cloneEntry(entry));
-      return;
-    }
-
-    await this.query().insert(this.entryToRow(entry));
-  }
-
   private async transition(id: string, status: WebhookInboxStatus, changes: Partial<WebhookInboxEntry>): Promise<WebhookInboxEntry | null> {
     const current = await this.find(id);
     if (!current) return null;
@@ -670,6 +671,7 @@ class WebhookInboxManager {
       tenant_id: entry.tenantId == null ? null : String(entry.tenantId),
       actor_id: entry.actorId == null ? null : String(entry.actorId),
       idempotency_key: entry.idempotencyKey,
+      deduplication_key: webhookInboxDeduplicationKey(entry.source, entry.tenantId, entry.idempotencyKey),
       digest: entry.digest,
       status: entry.status,
       headers: JSON.stringify(entry.headers),
@@ -707,6 +709,11 @@ class WebhookInboxManager {
       updatedAt: row.updated_at ?? row.updatedAt,
     };
   }
+}
+
+function isInboxUniqueConflict(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return false;
+  return error.code === '23505' || error.code === 'ER_DUP_ENTRY' || error.code === 'SQLITE_CONSTRAINT_UNIQUE';
 }
 
 function normalizeHeaders(headers: WebhookInboxReceiveInput['headers']): Record<string, string> {
