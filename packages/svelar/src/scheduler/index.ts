@@ -44,74 +44,7 @@
  */
 
 import { QueryBuilder } from '../orm/QueryBuilder.js';
-
-// ── Cron Expression Parser ─────────────────────────────────
-
-interface CronFields {
-  minute: number[] | null;    // 0-59
-  hour: number[] | null;      // 0-23
-  dayOfMonth: number[] | null; // 1-31
-  month: number[] | null;     // 1-12
-  dayOfWeek: number[] | null;  // 0-6 (Sun=0)
-}
-
-function parseCronField(field: string, min: number, max: number): number[] | null {
-  if (field === '*') return null; // matches all
-
-  const values = new Set<number>();
-
-  for (const part of field.split(',')) {
-    // Handle step: */5 or 1-10/2
-    const [rangePart, stepStr] = part.split('/');
-    const step = stepStr ? parseInt(stepStr, 10) : 1;
-
-    if (rangePart === '*') {
-      for (let i = min; i <= max; i += step) values.add(i);
-    } else if (rangePart.includes('-')) {
-      const [startStr, endStr] = rangePart.split('-');
-      const start = parseInt(startStr, 10);
-      const end = parseInt(endStr, 10);
-      for (let i = start; i <= end; i += step) values.add(i);
-    } else {
-      values.add(parseInt(rangePart, 10));
-    }
-  }
-
-  return [...values].sort((a, b) => a - b);
-}
-
-function parseCron(expression: string): CronFields {
-  const parts = expression.trim().split(/\s+/);
-  if (parts.length !== 5) {
-    throw new Error(`Invalid cron expression: "${expression}". Expected 5 fields.`);
-  }
-
-  return {
-    minute: parseCronField(parts[0], 0, 59),
-    hour: parseCronField(parts[1], 0, 23),
-    dayOfMonth: parseCronField(parts[2], 1, 31),
-    month: parseCronField(parts[3], 1, 12),
-    dayOfWeek: parseCronField(parts[4], 0, 6),
-  };
-}
-
-function cronMatches(expression: string, date: Date): boolean {
-  const fields = parseCron(expression);
-
-  const minute = date.getMinutes();
-  const hour = date.getHours();
-  const dayOfMonth = date.getDate();
-  const month = date.getMonth() + 1;
-  const dayOfWeek = date.getDay();
-
-  if (fields.minute && !fields.minute.includes(minute)) return false;
-  if (fields.hour && !fields.hour.includes(hour)) return false;
-  if (fields.dayOfMonth && !fields.dayOfMonth.includes(dayOfMonth)) return false;
-  if (fields.month && !fields.month.includes(month)) return false;
-  if (fields.dayOfWeek && !fields.dayOfWeek.includes(dayOfWeek)) return false;
-
-  return true;
-}
+import { cronMatches, parseCron, scheduleTime, validateTimezone } from './cron.js';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -160,6 +93,8 @@ export abstract class ScheduledTask {
   /** The cron expression */
   private _expression: string = '* * * * *';
 
+  private _timezone?: string;
+
   /**
    * Define the schedule for this task.
    * Return `this` after calling a scheduling method.
@@ -189,14 +124,12 @@ export abstract class ScheduledTask {
 
   /** Run every minute */
   everyMinute(): this {
-    this._expression = '* * * * *';
-    return this;
+    return this.cron('* * * * *');
   }
 
   /** Run every N minutes */
   everyMinutes(n: number): this {
-    this._expression = `*/${n} * * * *`;
-    return this;
+    return this.cron(`*/${n} * * * *`);
   }
 
   /** Run every 5 minutes */
@@ -221,88 +154,83 @@ export abstract class ScheduledTask {
 
   /** Run every hour */
   hourly(): this {
-    this._expression = '0 * * * *';
-    return this;
+    return this.cron('0 * * * *');
   }
 
   /** Run every hour at a specific minute */
   hourlyAt(minute: number): this {
-    this._expression = `${minute} * * * *`;
-    return this;
+    return this.cron(`${minute} * * * *`);
   }
 
   /** Run every day at midnight */
   daily(): this {
-    this._expression = '0 0 * * *';
-    return this;
+    return this.cron('0 0 * * *');
   }
 
   /** Run every day at a specific time (HH:MM) */
   dailyAt(time: string): this {
-    const [hour, minute] = time.split(':').map(Number);
-    this._expression = `${minute ?? 0} ${hour} * * *`;
-    return this;
+    const { hour, minute } = scheduleTime(time);
+    return this.cron(`${minute} ${hour} * * *`);
   }
 
   /** Run twice daily at specific hours */
   twiceDaily(hour1: number = 1, hour2: number = 13): this {
-    this._expression = `0 ${hour1},${hour2} * * *`;
-    return this;
+    return this.cron(`0 ${hour1},${hour2} * * *`);
   }
 
   /** Run every week (Sunday at midnight) */
   weekly(): this {
-    this._expression = '0 0 * * 0';
-    return this;
+    return this.cron('0 0 * * 0');
   }
 
   /** Run on a specific day and time */
   weeklyOn(day: number, time: string = '00:00'): this {
-    const [hour, minute] = time.split(':').map(Number);
-    this._expression = `${minute ?? 0} ${hour} * * ${day}`;
-    return this;
+    const { hour, minute } = scheduleTime(time);
+    return this.cron(`${minute} ${hour} * * ${day}`);
   }
 
   /** Run on weekdays (Mon-Fri) */
   weekdays(): this {
-    this._expression = `${this._expression.split(' ').slice(0, 4).join(' ')} 1-5`;
-    return this;
+    return this.cron(`${this._expression.trim().split(/\s+/).slice(0, 4).join(' ')} 1-5`);
   }
 
   /** Run on weekends (Sat-Sun) */
   weekends(): this {
-    this._expression = `${this._expression.split(' ').slice(0, 4).join(' ')} 0,6`;
-    return this;
+    return this.cron(`${this._expression.trim().split(/\s+/).slice(0, 4).join(' ')} 0,6`);
   }
 
   /** Run monthly (1st at midnight) */
   monthly(): this {
-    this._expression = '0 0 1 * *';
-    return this;
+    return this.cron('0 0 1 * *');
   }
 
   /** Run monthly on a specific day and time */
   monthlyOn(day: number, time: string = '00:00'): this {
-    const [hour, minute] = time.split(':').map(Number);
-    this._expression = `${minute ?? 0} ${hour} ${day} * *`;
-    return this;
+    const { hour, minute } = scheduleTime(time);
+    return this.cron(`${minute} ${hour} ${day} * *`);
   }
 
   /** Run quarterly (1st of Jan, Apr, Jul, Oct) */
   quarterly(): this {
-    this._expression = '0 0 1 1,4,7,10 *';
-    return this;
+    return this.cron('0 0 1 1,4,7,10 *');
   }
 
   /** Run yearly (Jan 1st at midnight) */
   yearly(): this {
-    this._expression = '0 0 1 1 *';
-    return this;
+    return this.cron('0 0 1 1 *');
   }
 
   /** Set a custom cron expression */
   cron(expression: string): this {
+    parseCron(expression);
     this._expression = expression;
+    return this;
+  }
+
+  /** Interpret this task's schedule in an explicit timezone. Defaults to system time. */
+  timezone(timezone: string): this {
+    validateTimezone(timezone);
+    this._timezone = timezone;
     return this;
   }
 
@@ -323,7 +251,13 @@ export abstract class ScheduledTask {
   /** @internal */
   getExpression(): string {
     this.schedule(); // ensure schedule() has been called
+    parseCron(this._expression);
     return this._expression;
+  }
+
+  getTimezone(): string | undefined {
+    this.schedule();
+    return this._timezone;
   }
 
   /** @internal */
@@ -448,6 +382,7 @@ export class Scheduler {
    * Register a scheduled task
    */
   register(task: ScheduledTask): this {
+    task.getExpression();
     this.tasks.push(task);
     return this;
   }
@@ -471,7 +406,7 @@ export class Scheduler {
 
     for (const task of this.tasks) {
       const expression = task.getExpression();
-      if (cronMatches(expression, date) && await this.isTaskEnabled(task.name)) {
+      if (cronMatches(expression, date, task.getTimezone()) && await this.isTaskEnabled(task.name)) {
         const result = await task.executeTask();
         results.push(result);
         if (!result.skipped) await this.addToHistory(result);
@@ -550,7 +485,7 @@ export class Scheduler {
    */
   dueTasks(now?: Date): ScheduledTask[] {
     const date = now ?? new Date();
-    return this.tasks.filter((task) => cronMatches(task.getExpression(), date));
+    return this.tasks.filter((task) => cronMatches(task.getExpression(), date, task.getTimezone()));
   }
 
   /**

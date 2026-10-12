@@ -65,6 +65,26 @@ export default class MyTask extends ScheduledTask {
 
 ## Task Methods
 
+### Cron Semantics And Timezones
+
+Svelar uses [cron-parser 5](https://github.com/harrisiirak/cron-parser) for validation, calendar iteration, and timezone handling. The public contract remains five fields: minute, hour, day of month, month, and day of week. Numeric lists, ranges, positive steps, three-letter month/weekday names, and Sunday `0` or `7` are supported. Seconds fields, macros, randomized `H`, and Quartz-style `L`, `#`, or `?` extensions are not enabled.
+
+`parseCron(expression)` returns sorted numeric arrays, with `null` for literal `*` fields and Sunday normalized to `0`. Invalid zero steps, out-of-range values, reversed ranges, trailing characters, and impossible explicit calendar dates reject before iteration. Fluent methods validate their inputs too; time strings must use `HH:MM` (a single-digit hour is also accepted).
+
+When both day of month and day of week are restricted, either may match: `0 9 1 * MON` runs on the first of the month **or** on Mondays. The minute, hour, and month still must match. `cronMatches` checks the specified minute and ignores seconds/milliseconds without modifying the caller's date.
+
+Use a per-task timezone for consistent behavior across hosts:
+
+```typescript
+schedule() {
+  return this.dailyAt('09:00').timezone('America/Sao_Paulo');
+}
+```
+
+Without `.timezone(...)`, schedules use the process's system timezone (including `TZ`); they do not implicitly default to UTC. Task timezones affect both due checks and monitor previews. DST calendar adjustments follow cron-parser's iterator policy. There is no historical catch-up or general exactly-once guarantee; changing clocks, repeated local times, and multiple ticks in the same minute still require application-level idempotency and the appropriate overlap controls.
+
+`Scheduler.register()` validates a task before adding it. Manually calling `Scheduler.run()` twice in the same due minute can execute a task twice; a timezone does not add deduplication.
+
 ### handle()
 
 The main method that runs when the task is triggered:
@@ -394,7 +414,7 @@ export default class OptimizeDatabaseTask extends ScheduledTask {
   name = 'optimize-database';
 
   schedule() {
-    return this.weeklyOn('sunday', '02:00');  // Sunday at 2:00 AM
+    return this.weeklyOn(0, '02:00');  // Sunday at 2:00 AM
   }
 
   async handle(): Promise<void> {
@@ -537,6 +557,8 @@ await ScheduleMonitor.enableTask('daily-report');
 ```
 
 `runTask()` returns a `TaskResult`; completion of its promise alone does not mean the task succeeded. Overlap-skipped executions set `skipped: true` and do not add a successful run to persisted history. Tasks with no history have an undefined `lastStatus`, rather than a false failure. Persisted task settings take precedence over stale process-local settings, including in health metrics, and enable/disable writes use an atomic upsert.
+
+Monitor previews use calendar iteration rather than a one-year minute scan, so schedules such as February 29 can correctly return a date several years away, including across non-leap century years. `TaskInfo.nextRun` is now `Date | null`; a calculation failure produces `null` and a safe `nextRunError`, never a fabricated current timestamp. `TaskInfo.timezone` identifies an explicit task timezone; undefined means system time. Update typed consumers to handle unavailable previews.
 
 ## Best Practices
 

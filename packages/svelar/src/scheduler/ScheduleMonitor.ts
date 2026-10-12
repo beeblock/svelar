@@ -22,11 +22,11 @@
  * await ScheduleMonitor.runTask('SendDailyReport');
  *
  * // Toggle task enabled state
- * ScheduleMonitor.disableTask('SendDailyReport');
+ * await ScheduleMonitor.disableTask('SendDailyReport');
  * ```
  */
 
-import { cronMatches } from './index.js';
+import { nextCronDate } from './cron.js';
 import type { Scheduler, ScheduledTask, TaskResult } from './index.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
 import { singleton } from '../support/singleton.js';
@@ -51,8 +51,12 @@ export interface TaskInfo {
   expression: string;
   /** Human-readable schedule description */
   humanReadable: string;
-  /** Next scheduled run time */
-  nextRun: Date;
+  /** Next scheduled run time, or null when unavailable */
+  nextRun: Date | null;
+  /** Safe preview failure feedback */
+  nextRunError?: string;
+  /** Explicit task timezone; undefined means system time */
+  timezone?: string;
   /** Last execution timestamp */
   lastRun?: Date;
   /** Duration of last execution (ms) */
@@ -322,6 +326,8 @@ class ScheduleMonitorService {
    */
   private createTaskInfo(task: ScheduledTask, history: TaskRunRecord[], setting?: TaskSetting): TaskInfo {
     const expression = task.getExpression();
+    const timezone = task.getTimezone();
+    const nextRun = this.getNextRun(expression, timezone);
     const lastRecord = history.length > 0 ? history[0] : null;
 
     const enabled =
@@ -331,7 +337,9 @@ class ScheduleMonitorService {
       name: task.name,
       expression,
       humanReadable: this.humanizeExpression(expression),
-      nextRun: this.getNextRun(expression),
+      nextRun,
+      nextRunError: nextRun === null ? 'Unable to calculate the next scheduled run' : undefined,
+      timezone,
       lastRun: lastRecord?.timestamp,
       lastDuration: lastRecord?.duration,
       lastStatus: lastRecord ? (lastRecord.success ? 'success' : 'failed') : undefined,
@@ -366,7 +374,7 @@ class ScheduleMonitorService {
 
     // Daily at specific time
     if (dayOfMonth === '*' && month === '*' && dayOfWeek === '*') {
-      if (hour !== '*' && minute !== '*') {
+      if (/^\d+$/.test(hour) && /^\d+$/.test(minute)) {
         const h = parseInt(hour, 10);
         const m = parseInt(minute, 10);
         return `Daily at ${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
@@ -375,7 +383,7 @@ class ScheduleMonitorService {
 
     // Weekdays only
     if (dayOfWeek === '1-5' && dayOfMonth === '*' && month === '*') {
-      if (hour !== '*' && minute !== '*') {
+      if (/^\d+$/.test(hour) && /^\d+$/.test(minute)) {
         const h = parseInt(hour, 10);
         const m = parseInt(minute, 10);
         return `Weekdays at ${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
@@ -389,27 +397,12 @@ class ScheduleMonitorService {
   /**
    * Calculate the next run time for a task given its cron expression
    */
-  private getNextRun(expression: string): Date {
-    const now = new Date();
-    const next = new Date(now);
-    next.setSeconds(0);
-    next.setMilliseconds(0);
-    next.setMinutes(next.getMinutes() + 1);
-
-    // Simple heuristic: check the next 366 days
-    const maxChecks = 366 * 24 * 60;
-    let checks = 0;
-
-    while (checks < maxChecks) {
-      if (cronMatches(expression, next)) {
-        return next;
-      }
-      next.setMinutes(next.getMinutes() + 1);
-      checks++;
+  private getNextRun(expression: string, timezone?: string): Date | null {
+    try {
+      return nextCronDate(expression, new Date(), timezone);
+    } catch {
+      return null;
     }
-
-    // If no match found in a year, return now
-    return now;
   }
 }
 
