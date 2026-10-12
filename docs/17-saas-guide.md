@@ -480,6 +480,21 @@ await user.hasPermission('manage-users');  // true/false
 await user.can('manage-users');     // Laravel-style authorization helper
 ```
 
+### Capability Registry
+
+Do not let admin-created permission rows become the only source of truth for security-sensitive gates. Declare capabilities in code and sync them from a provider or seeder:
+
+```typescript
+Permissions.registerCapabilities([
+  { name: 'admin.users.view', module: 'admin', screen: '/admin', action: 'view' },
+  { name: 'boards.move-cards', module: 'boards', screen: '/boards/:id', action: 'update' },
+]);
+
+await Permissions.syncCapabilities();
+```
+
+`Permissions.capabilities()` returns the code-defined catalog for admin screens. `syncCapabilities({ prune: true })` also removes database permissions for that guard that are no longer registered.
+
 ### Authorization Gates
 
 Gates defined in `src/lib/auth/gates.ts` provide inline authorization:

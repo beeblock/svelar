@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **PostgreSQL-ready query builder APIs** — query builder raw expressions now accept bindings in `selectRaw()`/`orderByRaw()`, PostgreSQL placeholder conversion preserves JSONB `?` operators, and common production helpers now include `countDistinct()`, `chunkById()`, `forUpdate()`, `skipLocked()`, and typed returning helpers.
 - **Distributed SSE backplanes** — the SSE broadcaster can now publish through a pluggable backplane, including optional Redis pub/sub, so workers/schedulers/other web processes can fan out events to connected SSE clients.
 - **Production deploy safety** — `prod:deploy` now pulls images, runs migrations in a one-off app container, starts containers with `--remove-orphans --wait`, and `prod:restart` recreates only runtime containers instead of doing a full `down`.
+- **RBAC capability registry** — `Permissions` can now register code-defined capabilities, expose them to admin UIs, and sync/prune them against database permission records so UI-created permissions do not drift from application gates.
 
 ## [0.8.0] - 2026-10-12
 

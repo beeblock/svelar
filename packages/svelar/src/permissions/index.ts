@@ -51,9 +51,43 @@ export interface RoleRecord {
   updated_at?: string;
 }
 
+export interface PermissionCapability {
+  /** Stable permission name used by policies, FormRequests, middleware, and UI gates. */
+  name: string;
+  guard?: string;
+  description?: string;
+  /** Optional bounded context/module label for admin screens and docs. */
+  module?: string;
+  /** Optional screen/page where this capability is commonly surfaced. */
+  screen?: string;
+  /** Optional action label such as view, create, update, delete, export, or approve. */
+  action?: string;
+  /** Additional app-owned metadata. Stored in memory, not in the permissions table. */
+  metadata?: Record<string, any>;
+}
+
+export interface SyncCapabilitiesOptions {
+  guard?: string;
+  /** Delete database permissions for the guard that are no longer registered. Default: false. */
+  prune?: boolean;
+}
+
+export interface SyncCapabilitiesResult {
+  created: PermissionRecord[];
+  updated: PermissionRecord[];
+  pruned: PermissionRecord[];
+  unchanged: PermissionRecord[];
+}
+
 // ── Permission Manager ─────────────────────────────────────
 
 class PermissionManager {
+  private capabilityRegistry = new Map<string, PermissionCapability>();
+
+  private capabilityKey(name: string, guard: string = 'web'): string {
+    return `${guard}:${name}`;
+  }
+
   private permissionsQuery(): QueryBuilder<PermissionRecord> {
     return new QueryBuilder<PermissionRecord>('permissions');
   }
@@ -72,6 +106,93 @@ class PermissionManager {
 
   private modelPermissionsQuery(): QueryBuilder<any> {
     return new QueryBuilder('model_has_permissions');
+  }
+
+  // ── Capability Registry ─────────────────────────────────
+
+  registerCapability(capability: PermissionCapability): PermissionCapability {
+    const guard = capability.guard ?? 'web';
+    const normalized = { ...capability, guard };
+    this.capabilityRegistry.set(this.capabilityKey(capability.name, guard), normalized);
+    return normalized;
+  }
+
+  registerCapabilities(capabilities: PermissionCapability[]): PermissionCapability[] {
+    return capabilities.map((capability) => this.registerCapability(capability));
+  }
+
+  capabilities(guard: string = 'web'): PermissionCapability[] {
+    return [...this.capabilityRegistry.values()]
+      .filter((capability) => capability.guard === guard)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  findCapability(name: string, guard: string = 'web'): PermissionCapability | null {
+    return this.capabilityRegistry.get(this.capabilityKey(name, guard)) ?? null;
+  }
+
+  capabilityNames(guard: string = 'web'): string[] {
+    return this.capabilities(guard).map((capability) => capability.name);
+  }
+
+  clearCapabilities(guard?: string): void {
+    if (!guard) {
+      this.capabilityRegistry.clear();
+      return;
+    }
+
+    for (const capability of this.capabilities(guard)) {
+      this.capabilityRegistry.delete(this.capabilityKey(capability.name, guard));
+    }
+  }
+
+  async syncCapabilities(options: SyncCapabilitiesOptions = {}): Promise<SyncCapabilitiesResult> {
+    const guard = options.guard ?? 'web';
+    const now = new Date().toISOString();
+    const result: SyncCapabilitiesResult = {
+      created: [],
+      updated: [],
+      pruned: [],
+      unchanged: [],
+    };
+    const capabilities = this.capabilities(guard);
+    const databasePermissions = await this.allPermissions(guard);
+    const byName = new Map(databasePermissions.map((permission) => [permission.name, permission]));
+
+    for (const capability of capabilities) {
+      const existing = byName.get(capability.name);
+      if (!existing) {
+        result.created.push(await this.createPermission({
+          name: capability.name,
+          guard,
+          description: capability.description,
+        }));
+        continue;
+      }
+
+      const desiredDescription = capability.description ?? null;
+      const currentDescription = existing.description ?? null;
+      if (desiredDescription !== currentDescription) {
+        await this.permissionsQuery().where('id', existing.id).update({
+          description: desiredDescription,
+          updated_at: now,
+        });
+        result.updated.push(await this.findPermissionById(existing.id) ?? existing);
+      } else {
+        result.unchanged.push(existing);
+      }
+    }
+
+    if (options.prune) {
+      const registered = new Set(capabilities.map((capability) => capability.name));
+      for (const permission of databasePermissions) {
+        if (registered.has(permission.name)) continue;
+        await this.deletePermission(permission.name, guard);
+        result.pruned.push(permission);
+      }
+    }
+
+    return result;
   }
 
   // ── Permission CRUD ──────────────────────────────────

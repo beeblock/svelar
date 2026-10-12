@@ -163,6 +163,24 @@ if (!await user.hasPermission('manage-users')) {
 }
 ```
 
+For app-defined RBAC, register a capability catalog in a provider or seeder and sync it to the permissions table. This keeps the code gates and the admin UI from drifting:
+
+```typescript
+import { Permissions } from '@beeblock/svelar/permissions';
+
+Permissions.registerCapabilities([
+  {
+    name: 'boards.move-cards',
+    description: 'Move cards between board columns',
+    module: 'boards',
+    screen: '/boards/:id',
+    action: 'update',
+  },
+]);
+
+await Permissions.syncCapabilities();
+```
+
 Policies must be checked with an explicit model target:
 
 ```typescript
