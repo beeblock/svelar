@@ -38,6 +38,14 @@ export class EventDispatcher {
   private listeners = new Map<string, EventListener[]>();
   private wildcardListeners: WildcardListener[] = [];
   private onceListeners = new Map<string, EventListener[]>();
+  private testingInterceptors = new Set<(name: string, payload: unknown) => boolean>();
+
+  /** @internal Intercept delivery without modifying registered listeners. */
+  interceptForTesting(interceptor: (name: string, payload: unknown) => boolean): () => void {
+    const handler = (name: string, payload: unknown) => interceptor(name, payload);
+    this.testingInterceptors.add(handler);
+    return () => { this.testingInterceptors.delete(handler); };
+  }
 
   /**
    * Register an event listener
@@ -96,6 +104,9 @@ export class EventDispatcher {
    */
   async dispatch<T extends object>(event: T): Promise<void> {
     const name = event.constructor.name;
+    for (const interceptor of [...this.testingInterceptors].reverse()) {
+      if (interceptor(name, event)) return;
+    }
 
     // Regular listeners
     const listeners = this.listeners.get(name) ?? [];
@@ -120,6 +131,9 @@ export class EventDispatcher {
    * Dispatch an event by string name with payload
    */
   async emit(name: string, payload?: any): Promise<void> {
+    for (const interceptor of [...this.testingInterceptors].reverse()) {
+      if (interceptor(name, payload)) return;
+    }
     const listeners = this.listeners.get(name) ?? [];
     for (const listener of listeners) {
       await listener(payload);

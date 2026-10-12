@@ -873,6 +873,14 @@ class QueueManager {
   private failedStore = new FailedJobStore();
   private _activeWorker: any = null;
   private queueRegistry = new Map<string, QueueDefinition>();
+  private testingInterceptors = new Set<(job: Readonly<QueuedJob>, mode: 'async' | 'sync') => boolean>();
+
+  /** @internal Intercept dispatch without replacing configuration or initialized drivers. */
+  interceptForTesting(interceptor: (job: Readonly<QueuedJob>, mode: 'async' | 'sync') => boolean): () => void {
+    const handler = (job: Readonly<QueuedJob>, mode: 'async' | 'sync') => interceptor(job, mode);
+    this.testingInterceptors.add(handler);
+    return () => { this.testingInterceptors.delete(handler); };
+  }
 
   configure(config: QueueConfig): void {
     this.config = config;
@@ -941,7 +949,6 @@ class QueueManager {
   async dispatch(job: Job, options?: DispatchOptions): Promise<string> {
     const connName = this.config.default;
     const connConfig = this.config.connections[connName];
-    const driver = this.resolveDriver(connName);
 
     // Apply dispatch options to the job instance
     if (options?.queue) {
@@ -967,7 +974,10 @@ class QueueManager {
       context: ApplicationContext.snapshot(),
     };
 
-    await driver.push(queuedJob);
+    for (const interceptor of [...this.testingInterceptors].reverse()) {
+      if (interceptor(queuedJob, 'async')) return queuedJob.id;
+    }
+    await this.resolveDriver(connName).push(queuedJob);
     return queuedJob.id;
   }
 
@@ -987,8 +997,6 @@ class QueueManager {
    * await Queue.dispatchSync(new ProcessPayment(orderId));
    */
   async dispatchSync(job: Job): Promise<void> {
-    const syncDriver = new SyncDriver(this.failedStore);
-
     const queuedJob: QueuedJob = {
       id: crypto.randomUUID(),
       jobClass: job.constructor.name,
@@ -1002,7 +1010,10 @@ class QueueManager {
       context: ApplicationContext.snapshot(),
     };
 
-    await syncDriver.push(queuedJob);
+    for (const interceptor of [...this.testingInterceptors].reverse()) {
+      if (interceptor(queuedJob, 'sync')) return;
+    }
+    await new SyncDriver(this.failedStore).push(queuedJob);
   }
 
   /**

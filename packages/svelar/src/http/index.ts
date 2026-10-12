@@ -20,6 +20,8 @@
  * ```
  */
 
+import { singleton } from '../support/singleton.js';
+
 // ── Types ──────────────────────────────────────────────────
 
 export interface ApiFetchOptions extends RequestInit {
@@ -148,7 +150,8 @@ export async function apiFetch(url: string, options: ApiFetchOptions = {}): Prom
   }
 
   try {
-    const response = await fetch(url, { ...fetchOptions, headers });
+    const runtime = resolveHttpTestingRuntime();
+    const response = await (runtime?.fetch ?? globalThis.fetch)(url, { ...fetchOptions, headers });
 
     // Show toast on error responses
     if (!response.ok && shouldToast) {
@@ -437,6 +440,28 @@ interface CircuitBreakerState {
   openedUntil: number;
 }
 
+/** @internal Scoped transport and circuit state supplied by the testing module. */
+export interface HttpTestingRuntime {
+  fetch: (url: string, init: RequestInit) => Promise<Response>;
+  circuitBreakerStates: Map<string, CircuitBreakerState>;
+}
+
+const httpTestingResolvers = singleton('svelar.http.testing-resolvers', () => new Set<() => HttpTestingRuntime | undefined>());
+
+/** @internal Register a context-aware test runtime; teardown removes only this registration. */
+export function interceptHttpForTesting(resolve: () => HttpTestingRuntime | undefined): () => void {
+  const resolver = () => resolve();
+  httpTestingResolvers.add(resolver);
+  return () => { httpTestingResolvers.delete(resolver); };
+}
+
+function resolveHttpTestingRuntime(): HttpTestingRuntime | undefined {
+  for (const resolve of [...httpTestingResolvers].reverse()) {
+    const runtime = resolve();
+    if (runtime) return runtime;
+  }
+}
+
 const DEFAULT_RETRY_STATUSES = [408, 409, 425, 429, 500, 502, 503, 504];
 const DEFAULT_RETRY_METHODS = ['GET', 'HEAD', 'OPTIONS', 'PUT', 'PATCH', 'POST', 'DELETE'];
 const DEFAULT_CIRCUIT_STATUSES = [429, 500, 502, 503, 504];
@@ -599,6 +624,8 @@ export class HttpClient {
   }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<HttpClientResponse<T>> {
+    const runtime = resolveHttpTestingRuntime();
+    const circuitStates = runtime?.circuitBreakerStates ?? circuitBreakerStates;
     const url = this.buildFullUrl(path);
     const headers: Record<string, string> = { ...this._headers };
 
@@ -618,7 +645,7 @@ export class HttpClient {
       headers['Idempotency-Key'] = this._idempotencyKey;
     }
 
-    this.assertCircuitClosed(url);
+    this.assertCircuitClosed(url, circuitStates);
 
     let lastError: Error | null = null;
     const maxAttempts = 1 + this._retry.times;
@@ -640,7 +667,7 @@ export class HttpClient {
 
         let response: Response;
         try {
-          response = await fetch(prepared.url, {
+          response = await (runtime?.fetch ?? globalThis.fetch)(prepared.url, {
             ...prepared.init,
             signal: controller.signal,
           });
@@ -675,11 +702,11 @@ export class HttpClient {
           throw error;
         }
 
-        this.recordCircuitSuccess(url);
+        this.recordCircuitSuccess(url, circuitStates);
         return { data, status: response.status, headers: response.headers, ok: true };
       } catch (err: any) {
         if (err instanceof HttpRequestError) {
-          this.recordCircuitFailure(url, err.status);
+          this.recordCircuitFailure(url, circuitStates, err.status);
           await this.runErrorHooks(prepared, err);
           throw err;
         }
@@ -689,7 +716,7 @@ export class HttpClient {
           lastError = new HttpRequestError('Request timed out', 0, null);
         }
         if (attempt >= maxAttempts - 1 || !await this.shouldRetry({ method, url: prepared.url, attempt, maxAttempts, error: lastError })) {
-          this.recordCircuitFailure(url, lastError instanceof HttpRequestError ? lastError.status : undefined);
+          this.recordCircuitFailure(url, circuitStates, lastError instanceof HttpRequestError ? lastError.status : undefined);
           await this.runErrorHooks(prepared, lastError);
           break;
         }
@@ -801,30 +828,30 @@ export class HttpClient {
     }
   }
 
-  private assertCircuitClosed(url: string) {
+  private assertCircuitClosed(url: string, states: Map<string, CircuitBreakerState>) {
     if (!this._circuitBreaker) return;
-    const state = circuitBreakerStates.get(this.circuitKey(url));
+    const state = states.get(this.circuitKey(url));
     if (state && state.openedUntil > Date.now()) {
       throw new HttpCircuitOpenError('HTTP circuit breaker is open', state.openedUntil);
     }
   }
 
-  private recordCircuitSuccess(url: string) {
+  private recordCircuitSuccess(url: string, states: Map<string, CircuitBreakerState>) {
     if (!this._circuitBreaker) return;
-    circuitBreakerStates.delete(this.circuitKey(url));
+    states.delete(this.circuitKey(url));
   }
 
-  private recordCircuitFailure(url: string, status?: number) {
+  private recordCircuitFailure(url: string, states: Map<string, CircuitBreakerState>, status?: number) {
     if (!this._circuitBreaker) return;
     if (status !== undefined && status !== 0 && !this._circuitBreaker.statuses.includes(status)) return;
 
     const key = this.circuitKey(url);
-    const state = circuitBreakerStates.get(key) ?? { failures: 0, openedUntil: 0 };
+    const state = states.get(key) ?? { failures: 0, openedUntil: 0 };
     state.failures += 1;
     if (state.failures >= this._circuitBreaker.failureThreshold) {
       state.openedUntil = Date.now() + this._circuitBreaker.cooldown;
     }
-    circuitBreakerStates.set(key, state);
+    states.set(key, state);
   }
 
   private async runErrorHooks(request: HttpPreparedRequest, error: unknown) {

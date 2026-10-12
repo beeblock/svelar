@@ -125,6 +125,11 @@ export interface MailTransport {
   send(message: MailMessage): Promise<SendResult>;
 }
 
+/** @internal Scoped delivery interceptor supplied by the testing module. */
+export interface MailTestingTransport {
+  send(message: MailMessage, mailer: string): Promise<SendResult>;
+}
+
 // ── Helpers ────────────────────────────────────────────────
 
 function formatFrom(from: string | { name: string; address: string }): string {
@@ -516,6 +521,21 @@ export abstract class Mailable {
 class MailManager {
   private config: MailerConfig | null = null;
   private transports = new Map<string, MailTransport>();
+  private testingResolvers = new Set<() => MailTestingTransport | undefined>();
+
+  /** @internal Intercept delivery without changing configuration or cached transports. */
+  interceptForTesting(resolve: () => MailTestingTransport | undefined): () => void {
+    const resolver = () => resolve();
+    this.testingResolvers.add(resolver);
+    return () => { this.testingResolvers.delete(resolver); };
+  }
+
+  private resolveTestingTransport(): MailTestingTransport | undefined {
+    for (const resolve of [...this.testingResolvers].reverse()) {
+      const transport = resolve();
+      if (transport) return transport;
+    }
+  }
 
   configure(config: MailerConfig): void {
     this.config = config;
@@ -523,14 +543,15 @@ class MailManager {
   }
 
   async send(message: MailMessage, mailer?: string): Promise<SendResult> {
-    const transport = this.resolveTransport(mailer);
-
+    const testingTransport = this.resolveTestingTransport();
+    const transport = testingTransport ? undefined : this.resolveTransport(mailer);
     // Apply default from
     if (!message.from && this.config?.from) {
       message.from = this.config.from;
     }
 
-    return transport.send(message);
+    if (testingTransport) return testingTransport.send(message, mailer ?? this.config?.default ?? 'log');
+    return transport!.send(message);
   }
 
   async sendMailable(mailable: Mailable, mailer?: string): Promise<SendResult> {
@@ -545,10 +566,13 @@ class MailManager {
   }
 
   mailer(name: string): { send: (msg: MailMessage) => Promise<SendResult> } {
-    const transport = this.resolveTransport(name);
+    let transport = this.resolveTestingTransport() ? undefined : this.resolveTransport(name);
     return {
       send: (msg: MailMessage) => {
         if (!msg.from && this.config?.from) msg.from = this.config.from;
+        const testingTransport = this.resolveTestingTransport();
+        if (testingTransport) return testingTransport.send(msg, name);
+        transport ??= this.resolveTransport(name);
         return transport.send(msg);
       },
     };

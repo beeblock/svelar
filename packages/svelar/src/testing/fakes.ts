@@ -1,4 +1,27 @@
 import { Mailer, type MailMessage, type MailTransport, type SendResult } from '../mail/index.js';
+import { cloneMailMessage } from './mail-message.js';
+
+export {
+  FakeMail,
+  fakeMail,
+  type ScopedFakeMailRecord,
+  FakeQueue,
+  FakeEvents,
+  FakeNotifications,
+  FakeHttp,
+  fakeQueue,
+  fakeEvents,
+  fakeNotifications,
+  fakeHttp,
+  type FakeOptions,
+  type FakePredicate,
+  type FakeQueueRecord,
+  type FakeEventRecord,
+  type FakeEventsOptions,
+  type FakeNotificationRecord,
+  type FakeHttpRecord,
+  type FakeHttpResponse,
+} from './scoped-fakes.js';
 
 export interface FakeMailRecord {
   message: MailMessage;
@@ -11,13 +34,13 @@ export class FakeMailTransport implements MailTransport {
 
   async send(message: MailMessage): Promise<SendResult> {
     const result = {
-      accepted: Array.isArray(message.to) ? message.to : [message.to],
+      accepted: Array.isArray(message.to) ? [...message.to] : [message.to],
       rejected: [],
       messageId: `fake-${this.records.length + 1}`,
     };
 
     this.records.push({
-      message: structuredCloneMailMessage(message),
+      message: cloneMailMessage(message),
       result,
       sentAt: new Date(),
     });
@@ -56,6 +79,7 @@ export class FakeMailTransport implements MailTransport {
   }
 }
 
+/** Legacy configuration helper. Prefer callback-scoped fakeMail() for automatic restoration. */
 export function fakeMailer(options: {
   name?: string;
   from?: { name: string; address: string };
@@ -75,18 +99,4 @@ export function fakeMailer(options: {
   });
 
   return transport;
-}
-
-function structuredCloneMailMessage(message: MailMessage): MailMessage {
-  return {
-    ...message,
-    to: Array.isArray(message.to) ? [...message.to] : message.to,
-    cc: Array.isArray(message.cc) ? [...message.cc] : message.cc,
-    bcc: Array.isArray(message.bcc) ? [...message.bcc] : message.bcc,
-    from: typeof message.from === 'object' && message.from
-      ? { ...message.from }
-      : message.from,
-    attachments: message.attachments?.map((attachment) => ({ ...attachment })),
-    tags: message.tags ? { ...message.tags } : undefined,
-  };
 }

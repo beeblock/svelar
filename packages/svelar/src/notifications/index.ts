@@ -109,6 +109,22 @@ class DatabaseNotificationChannel implements NotificationChannelDriver {
 
 class NotifierManager {
   private channels = new Map<string, NotificationChannelDriver>();
+  private testingInterceptors = new Set<(
+    notifiable: Notifiable,
+    notification: Notification,
+    channels: NotificationChannel[],
+  ) => boolean>();
+
+  /** @internal Intercept all delivery channels without replacing configured drivers. */
+  interceptForTesting(interceptor: (
+    notifiable: Notifiable,
+    notification: Notification,
+    channels: NotificationChannel[],
+  ) => boolean): () => void {
+    const handler: typeof interceptor = (...args) => interceptor(...args);
+    this.testingInterceptors.add(handler);
+    return () => { this.testingInterceptors.delete(handler); };
+  }
 
   constructor() {
     this.configure();
@@ -150,6 +166,9 @@ class NotifierManager {
     notification: Notification,
     channels: NotificationChannel[],
   ): Promise<void> {
+    for (const interceptor of [...this.testingInterceptors].reverse()) {
+      if (interceptor(notifiable, notification, channels)) return;
+    }
     for (const channelName of channels) {
       const channel = this.channels.get(channelName);
       if (!channel) {

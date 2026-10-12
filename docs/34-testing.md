@@ -3,7 +3,7 @@
 Svelar provides a Laravel-inspired testing module built on top of **Vitest** (unit/feature) and **Playwright** (end-to-end). New projects scaffolded with `npx @beeblock/svelar new` come with everything pre-configured.
 
 ```
-import { useSvelarTest, assertDatabaseHas, Factory, actingAs, createRequestEvent, fakeMailer } from '@beeblock/svelar/testing';
+import { useSvelarTest, assertDatabaseHas, Factory, actingAs, createRequestEvent, fakeMail } from '@beeblock/svelar/testing';
 ```
 
 ## Quick Start
@@ -270,27 +270,106 @@ describe('PostController', () => {
 
 ## Faking Mail
 
-Use `fakeMailer()` when a feature sends email through Svelar mail, notifications, auth recovery, or queued jobs. It configures `Mailer` with a custom in-memory transport and gives you assertion helpers:
+Use callback-scoped `fakeMail()` when a feature sends email through Svelar mail, notification email channels, auth recovery, or queued jobs. It suppresses delivery without replacing mail configuration or clearing initialized transports, and restores normal delivery automatically after the callback:
 
 ```typescript
 import { Mailer } from '@beeblock/svelar/mail';
-import { fakeMailer } from '@beeblock/svelar/testing';
+import { fakeMail } from '@beeblock/svelar/testing';
 
 it('sends a welcome email', async () => {
-  const mail = fakeMailer({
-    from: { name: 'My App', address: 'noreply@example.com' },
-  });
+  await fakeMail(async (mail) => {
+    await Mailer.send({
+      to: 'alice@example.com',
+      subject: 'Welcome',
+      text: 'Hello',
+    });
 
-  await Mailer.send({
-    to: 'alice@example.com',
-    subject: 'Welcome',
-    text: 'Hello',
+    mail.assertSent((record) => record.message.to === 'alice@example.com');
+    mail.assertNotSent((record) => record.message.subject === 'Password reset');
   });
-
-  mail.assertSent((record) => record.message.to === 'alice@example.com');
-  mail.assertNotSent((record) => record.message.subject === 'Password reset');
 });
 ```
+
+`fakeMail` intercepts `send`, `sendMailable`, and named `mailer(name).send` handles, including handles created before the callback. Configured default senders and explicit message senders are honored. Records include the selected `mailer`, copied message fields and attachment buffers, fake delivery result, and timestamp. `Mailable.build()` still runs. Nested/concurrent scopes and failure teardown follow the same rules as the other runtime fakes below.
+
+### Legacy Configuration Helper
+
+`fakeMailer({ name?, from? })` remains available for compatibility and returns `FakeMailTransport`. It permanently calls `Mailer.configure`, clears the transport cache, and does **not** automatically restore the previous configuration. It is not safe for concurrent tests sharing a runtime. Use it only when deliberately configuring the test runtime and explicitly reconfiguring `Mailer` afterward; prefer `fakeMail(callback)` for scoped isolation without configuration snapshots.
+
+## Scoped Runtime Fakes
+
+Use `fakeMail`, `fakeQueue`, `fakeEvents`, `fakeNotifications`, and `fakeHttp` from `@beeblock/svelar/testing` to isolate side effects inside an awaited callback. These Node-only helpers capture records instead of sending mail, executing jobs, invoking event listeners, delivering notifications, or making HTTP requests. Each callback returns its result and automatically removes its interception hooks in `finally`, including when the callback throws.
+
+Nested scopes restore the enclosing fake, and overlapping async callbacks capture independently. Code outside a callback continues using the original runtime. Always await all work inside the callback; do not leave background promises or timers running past its teardown. These helpers do not change `fakeMailer()`'s existing configuration-based behavior.
+
+### Queue, Events, and Notifications
+
+```typescript
+import { Queue } from '@beeblock/svelar/queue';
+import { Event } from '@beeblock/svelar/events';
+import { Notifier } from '@beeblock/svelar/notifications';
+import { fakeQueue, fakeEvents, fakeNotifications } from '@beeblock/svelar/testing';
+
+await fakeQueue(async (queue) => {
+  await Queue.dispatch(new SendWelcomeEmail(user.id), { queue: 'emails' });
+  queue.assertPushed((record) => record.job instanceof SendWelcomeEmail && record.queue === 'emails');
+  queue.assertCount(1);
+});
+
+await fakeEvents(async (events) => {
+  await Event.dispatch(new UserRegistered(user));
+  events.assertDispatched((record) => record.event instanceof UserRegistered);
+  events.assertNotDispatched((record) => record.name === 'UserDeleted');
+});
+
+await fakeNotifications(async (notifications) => {
+  await Notifier.notify(user, new WelcomeNotification());
+  notifications.assertSent((record) => record.notifiable === user && record.channels.includes('email'));
+  notifications.assertCount(1);
+});
+```
+
+The queue fake also suppresses `dispatchSync` and `chain`. Records include the returned job ID, job reference, serialized dispatch-time `payload`, queue, `mode` (`async` or `sync`), attempts limit, scheduling timestamps, priority, deduplication flag, and copied metadata. A chain is captured as one `ChainedJob` with its serialized constituent jobs; no job runs. The original queue configuration, initialized drivers, and pending jobs remain untouched.
+
+The event fake captures class-based `dispatch` and named `emit`, including empty payloads, without consuming one-time listeners or changing existing listener registrations. It uses the global `Event` dispatcher by default; pass `{ dispatcher }` as the second argument to fake a local `EventDispatcher`.
+
+The notification fake captures one record per recipient for both `notify` and `notifyVia`, with a copied channel list. `notification.channels()` still selects channels during `notify`, but channel drivers and `toEmail`, `toDatabase`, and `toChannel` are not called. Email, database, custom, and even unconfigured channels cannot deliver inside the fake.
+
+### HTTP
+
+```typescript
+import { Http } from '@beeblock/svelar/http';
+import { fakeHttp } from '@beeblock/svelar/testing';
+
+await fakeHttp(async (http) => {
+  http.respond(
+    (record) => record.method === 'POST' && record.url === 'https://api.example.com/payments',
+    new Response(JSON.stringify({ id: 'payment-1' }), {
+      status: 201,
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  );
+
+  const response = await Http.post('https://api.example.com/payments', { amount: 100 });
+  expect(response.status).toBe(201);
+  http.assertSent((record) => JSON.parse(record.body!).amount === 100);
+  http.assertCount(1);
+});
+```
+
+The first matching responder wins. `respondWith(response)` matches every request; either responder method also accepts an async `(record) => Response` function for sequences and simulated errors. Response templates are cloned before consumption and can be reused. Unmatched requests throw instead of falling back to the network. Transport failures are captured with `error`; HTTP error responses retain their response status and headers.
+
+The fake intercepts `Http`, existing `HttpClient` instances, fluent clones, `apiFetch`, `apiFetchJson`, and `signedFetch`. Direct calls to global `fetch` or other HTTP libraries are outside its scope. Global `fetch` is never replaced. Request records contain the URL, method, copied `Headers`, normalized body text, timestamp, and response status/headers or error. Retries and HTTP hooks still run; each transport attempt is captured. Abort signals and client timeouts are honored, and circuit-breaker state is isolated from the original runtime. Retry delays still apply; use the existing `retry({ sleep })` option to avoid waiting in tests.
+
+### Records and Limits
+
+All five fakes provide `records()`, `count(predicate?)`, `assertCount(expected, predicate?)`, and `reset()` to clear records. Queue adds `pushed`, `assertPushed`, `assertNotPushed`, and `assertNothingPushed`; events adds `dispatched`, `assertDispatched`, `assertNotDispatched`, and `assertNothingDispatched`; mail, notifications, and HTTP add `sent()` or `requests()`, `assertSent`, `assertNotSent`, and `assertNothingSent`. Positive/negative predicate assertions accept an optional custom failure message.
+
+Record accessors return a copied array. Job, event/payload, notification, and recipient objects retain their original identity, so avoid mutating them before assertions; queue `payload` remains a serialized snapshot. HTTP request bodies are normalized text rather than parsed JSON.
+
+Each fake captures at most 1,000 records by default. Pass `{ maxRecords: 5000 }` as the second argument to increase the limit. Limits must be positive safe integers; overflow throws without performing the real side effect. The corresponding `FakeMail`, `FakeQueue`, `FakeEvents`, `FakeNotifications`, and `FakeHttp` classes accept the same options and expose `run(callback)` for reuse. A single instance cannot run overlapping scopes; use separate instances for nested or concurrent work. `reset()` only clears captured records, not HTTP responders or circuit state.
+
+Svelar currently uses native time APIs without an injectable clock contract. Use Vitest's clock controls when needed; these helpers do not patch time globally.
 
 ## E2E Tests with Playwright
 
