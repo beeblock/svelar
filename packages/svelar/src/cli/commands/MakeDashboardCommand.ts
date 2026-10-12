@@ -86,12 +86,12 @@ export const load: PageServerLoad = async (event) => {
   import { page } from '$app/state';
   import { replaceState } from '$app/navigation';
   import { apiFetch } from '@beeblock/svelar/http';
-  import RefreshCw from 'lucide-svelte/icons/refresh-cw';
-  import RotateCcw from 'lucide-svelte/icons/rotate-ccw';
-  import Trash2 from 'lucide-svelte/icons/trash-2';
-  import Play from 'lucide-svelte/icons/play';
-  import ChevronLeft from 'lucide-svelte/icons/chevron-left';
-  import ChevronRight from 'lucide-svelte/icons/chevron-right';
+  import RefreshCw from '@lucide/svelte/icons/refresh-cw';
+  import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
+  import Trash2 from '@lucide/svelte/icons/trash-2';
+  import Play from '@lucide/svelte/icons/play';
+  import ChevronLeft from '@lucide/svelte/icons/chevron-left';
+  import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -213,7 +213,8 @@ export const load: PageServerLoad = async (event) => {
         <label>Page Size<select bind:value={limit} disabled={Boolean(pending)} onchange={filterJobs}><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option></select></label>
       </form>
       {#if panels.queue?.data?.counts}<dl class="metrics">{#each Object.entries(panels.queue.data.counts) as [state, count]}<div><dt>{state}</dt><dd>{count}</dd></div>{/each}</dl>{/if}
-      <div class="table-wrap"><table><thead><tr><th>Job</th><th>Status</th><th>Attempts</th><th>Created</th><th>Inspection</th><th>Actions</th></tr></thead>
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex (Native scroll regions need keyboard focus.) -->
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Jobs table"><table><thead><tr><th>Job</th><th>Status</th><th>Attempts</th><th>Created</th><th>Inspection</th><th>Actions</th></tr></thead>
         <tbody>{#each jobs as job}<tr>
           <td>{job.jobClass}<small>{job.id} / {job.queue}</small></td><td>{job.status}</td><td>{job.attempts} / {job.maxAttempts}</td><td>{date(job.createdAt)}</td>
           <td><details><summary>Details</summary>{#if job.error}<h3>Error</h3><pre>{job.error}</pre>{/if}<h3>Payload</h3><pre>{json(job.payload)}</pre><h3>Metadata</h3><pre>{json(job.metadata)}</pre><h3>Progress</h3><pre>{json(job.progress)}</pre><h3>Timeline</h3>{#each job.timeline ?? [] as entry}<p>{entry.event}: {date(entry.timestamp)}</p>{/each}</details></td>
@@ -223,7 +224,8 @@ export const load: PageServerLoad = async (event) => {
       <div class="pager"><button title="Previous jobs page" aria-label="Previous jobs page" disabled={Boolean(pending) || offset <= 0} onclick={() => jobPage(-1)}><ChevronLeft size={18} /></button><span>{offset + (jobs.length ? 1 : 0)} - {offset + jobs.length} / {panels.queue?.meta?.total ?? 'Unknown'}</span><button title="Next jobs page" aria-label="Next jobs page" disabled={Boolean(pending) || !panels.queue?.meta?.hasMore} onclick={() => jobPage(1)}><ChevronRight size={18} /></button></div>
     {:else if selectedTab === 'scheduler'}
       <h2>Scheduled Tasks</h2>
-      <div class="table-wrap"><table><thead><tr><th>Task</th><th>Schedule</th><th>Last / Next Run</th><th>Duration / Status</th><th>History</th><th>Enabled</th><th>Run</th></tr></thead>
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex (Native scroll regions need keyboard focus.) -->
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Scheduled tasks table"><table><thead><tr><th>Task</th><th>Schedule</th><th>Last / Next Run</th><th>Duration / Status</th><th>History</th><th>Enabled</th><th>Run</th></tr></thead>
         <tbody>{#each tasks as task}<tr><td>{task.name}</td><td>{task.humanReadable}<small>{task.expression}</small></td><td>{date(task.lastRun)}<small>{date(task.nextRun)}</small></td><td>{task.lastDuration == null ? 'Unknown' : task.lastDuration + ' ms'}<small>{task.isRunning ? 'Running (web process)' : task.lastStatus ?? 'Not run'}</small></td>
           <td><details><summary>Runs</summary>{#each task.history as run}<p>{date(run.timestamp)}: {run.success ? 'success' : 'failed'} ({run.duration} ms)</p>{#if run.error}<pre>{run.error}</pre>{/if}{:else}<p>No history.</p>{/each}</details></td>
           <td><input type="checkbox" aria-label={'Enable task ' + task.name} checked={task.enabled} disabled={Boolean(pending)} onchange={(event) => { const enabled = event.currentTarget.checked; event.currentTarget.checked = task.enabled; toggleTask(task.name, enabled); }} /></td><td><button title="Run task now" aria-label={'Run task ' + task.name} aria-busy={pending === 'run:' + task.name} disabled={Boolean(pending) || task.isRunning || !task.enabled} onclick={() => runTask(task.name)}><Play size={16} /></button></td>
@@ -239,7 +241,7 @@ export const load: PageServerLoad = async (event) => {
 </div>
 
 <style>
-  .dashboard { max-width: 1440px; margin: 0 auto; padding: 24px; color: #1f2937; background: #fff; }
+  .dashboard { box-sizing: border-box; width: 100%; min-width: 0; max-width: 1440px; margin: 0 auto; padding: 24px; color: #1f2937; background: #fff; }
   header, .actions, .pager, .filters { display: flex; align-items: center; gap: 12px; }
   header { justify-content: space-between; } h1 { font-size: 24px; margin: 0; } h2 { font-size: 20px; margin: 24px 0 16px; } h3 { font-size: 14px; }
   nav { display: flex; flex-wrap: wrap; gap: 8px; border-bottom: 1px solid #d1d5db; margin: 20px 0; }
@@ -252,8 +254,8 @@ export const load: PageServerLoad = async (event) => {
   dt { color: #4b5563; font-size: 13px; text-transform: capitalize; } dd { margin: 4px 0 0; font-size: 22px; font-weight: 600; }
   .filters { flex-wrap: wrap; margin-bottom: 16px; align-items: end; } label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
   select, input:not([type="checkbox"]) { box-sizing: border-box; min-height: 40px; max-width: 100%; padding: 8px; border: 1px solid #9ca3af; border-radius: 4px; background: #fff; color: #1f2937; }
-  input[type="checkbox"] { width: 20px; height: 20px; } .table-wrap { max-width: 100%; overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: 14px; } th, td { text-align: left; vertical-align: top; padding: 12px; border-bottom: 1px solid #e5e7eb; }
+  input[type="checkbox"] { width: 20px; height: 20px; } .table-wrap { width: 100%; min-width: 0; max-width: 100%; overflow-x: auto; }
+  table { width: 100%; min-width: 880px; border-collapse: collapse; font-size: 14px; } th, td { text-align: left; vertical-align: top; padding: 12px; border-bottom: 1px solid #e5e7eb; }
   th { background: #f3f4f6; white-space: nowrap; font-size: 12px; } td { max-width: 420px; overflow-wrap: anywhere; }
   small { display: block; margin-top: 4px; color: #4b5563; } summary { cursor: pointer; padding: 8px 0; color: #075985; }
   pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 420px; font-size: 12px; background: #f3f4f6; padding: 12px; }

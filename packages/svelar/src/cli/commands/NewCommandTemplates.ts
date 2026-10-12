@@ -10,10 +10,10 @@ export type ValidationProvider = 'zod' | 'valibot';
 export class NewCommandTemplates {
 	// ─── Config ─────────────────────────────────────────────────
 
-	static packageJson(name: string, svelarVersion: string = "0.4.0", validation: ValidationProvider = 'zod'): string {
+	static packageJson(name: string, svelarVersion: string, validation: ValidationProvider = 'zod'): string {
 		const validationDependencies = validation === 'valibot'
 			? { valibot: "^1.4.1" }
-			: { zod: "^3.25.0", valibot: "^1.4.1" };
+			: { zod: "^4.6.7", valibot: "^1.4.1" };
 
 		return (
 			JSON.stringify(
@@ -23,6 +23,7 @@ export class NewCommandTemplates {
 					private: true,
 					type: "module",
 					scripts: {
+						prepare: "svelte-kit sync",
 						dev: "vite dev",
 						build: "vite build",
 						preview: "vite preview",
@@ -48,7 +49,8 @@ export class NewCommandTemplates {
 						svelte: "^5.0.0",
 						"svelte-check": "^4.0.0",
 						tailwindcss: "^4.2.2",
-						typescript: "^5.7.0",
+						typescript: "^6.0.3",
+						"@types/node": "^22.20.5",
 						vite: "^6.0.0",
 						vitest: "^4.1.11",
 						"@playwright/test": "^1.48.0",
@@ -57,7 +59,7 @@ export class NewCommandTemplates {
 							"@internationalized/date": "^3.12.2",
 							"@aws-sdk/client-s3": "^3.700.0",
 							"@aws-sdk/s3-request-presigner": "^3.700.0",
-							"better-sqlite3": "^11.0.0",
+							"better-sqlite3": "^12.11.1",
 							"bits-ui": "^2.18.1",
 							bullmq: "^5.0.0",
 							"drizzle-orm": "^0.45.2",
@@ -74,7 +76,7 @@ export class NewCommandTemplates {
 						clsx: "^2.1.0",
 						pdfkit: "^0.18.0",
 						"svelte-sonner": "^1.1.1",
-						"sveltekit-superforms": "^2.30.1",
+							"sveltekit-superforms": "^2.31.0",
 						"tailwind-merge": "^3.0.0",
 						"tailwind-variants": "^3.2.2",
 						"tw-animate-css": "^1.2.0",
@@ -84,7 +86,9 @@ export class NewCommandTemplates {
 						...validationDependencies,
 					},
 					overrides: {
-						cookie: "^0.7.2",
+						"@sveltejs/kit": { cookie: "^0.7.2" },
+						exceljs: { uuid: "^11.1.1" },
+						"esbuild@>=0.27.3 <0.28.1": "^0.28.2",
 					},
 				},
 				null,
@@ -101,8 +105,10 @@ export class NewCommandTemplates {
 		if (validation === 'zod') return content;
 
 		return content
-			.replace(/import \{ zod \} from 'sveltekit-superforms\/adapters';/g, "import { valibot } from 'sveltekit-superforms/adapters';")
-			.replace(/\bzod\(/g, 'valibot(');
+			.replace(/(import \{)([^}]+)(\} from 'sveltekit-superforms\/adapters';)/g, (_match, start: string, imports: string, end: string) =>
+				start + imports.replace(/\bzod4?Client\b/g, 'valibotClient').replace(/\bzod4?\b/g, 'valibot') + end)
+			.replace(/\bzod4?Client\(/g, 'valibotClient(')
+			.replace(/\bzod4?\(/g, 'valibot(');
 	}
 
 	static svelteConfig(): string {
@@ -226,6 +232,7 @@ export default defineConfig(({ mode }) => {
 
   return {
   plugins: [sveltekit(), tailwindcss()],
+  esbuild: { keepNames: true },
   resolve: {
     alias: {
       '@beeblock/svelar/actions': resolve(svelarRoot, 'dist/actions/index.js'),
@@ -278,6 +285,7 @@ export default defineConfig(({ mode }) => {
       '@beeblock/svelar/support': resolve(svelarRoot, 'dist/support/index.js'),
       '@beeblock/svelar/teams': resolve(svelarRoot, 'dist/teams/index.js'),
       '@beeblock/svelar/uploads': resolve(svelarRoot, 'dist/uploads/index.js'),
+      '@beeblock/svelar/validation/valibot': resolve(svelarRoot, 'dist/validation/valibot.js'),
       '@beeblock/svelar/validation': resolve(svelarRoot, 'dist/validation/index.js'),
       '@beeblock/svelar/webhooks': resolve(svelarRoot, 'dist/webhooks/index.js'),
       '@beeblock/svelar/ui': resolve(svelarRoot, 'src/ui'),
@@ -347,6 +355,7 @@ export default defineConfig(({ mode }) => {
 						sourceMap: true,
 						strict: true,
 						moduleResolution: "bundler",
+						types: ["node", "vite/client"],
 					},
 				},
 				null,
@@ -611,6 +620,25 @@ export function cn(...inputs: ClassValue[]) {
 `;
 	}
 
+	static appDts(): string {
+		return `import type { AuthManager } from '@beeblock/svelar/auth';
+import type { Session } from '@beeblock/svelar/session';
+import type { User } from '$lib/modules/auth/User.js';
+
+declare global {
+  namespace App {
+    interface Locals {
+      auth: AuthManager;
+      session: Session;
+      user: User | null;
+    }
+  }
+}
+
+export {};
+`;
+	}
+
 	static appTs(): string {
 		return `/**
  * Svelar Application Bootstrap
@@ -621,6 +649,7 @@ export function cn(...inputs: ClassValue[]) {
  */
 
 import { Connection } from '@beeblock/svelar/database';
+import { container } from '@beeblock/svelar/container';
 import { config } from '@beeblock/svelar/config';
 import { Hash } from '@beeblock/svelar/hashing';
 import { AuthManager } from '@beeblock/svelar/auth';
@@ -862,14 +891,37 @@ import { ExportDataJob } from './lib/shared/jobs/ExportDataJob.js';
 Queue.registerAll([SendWelcomeEmail, DailyDigestJob, ExportDataJob]);
 
 // ── Events (boot listeners + observers) ──────────────────
-const esp = new EventServiceProvider();
-esp.boot();
+const esp = new EventServiceProvider(container);
+await esp.boot();
 
 // ── Auth Feature Toggles ─────────────────────────────────
 export const authConfig = {
-  otpEnabled: process.env.AUTH_OTP_ENABLED !== 'false',
-  emailVerificationRequired: process.env.AUTH_EMAIL_VERIFICATION_REQUIRED === 'true',
+  appName: config.get('app.name', process.env.APP_NAME ?? 'Svelar'),
+  otpEnabled: config.get('auth.otp.enabled', process.env.AUTH_OTP_ENABLED === 'true') === true,
+  emailVerificationRequired: config.get('auth.emailVerification.required', process.env.AUTH_EMAIL_VERIFICATION_REQUIRED === 'true') === true,
 };
+
+export function authRedirect(url: URL): string {
+  const localPath = (target: unknown): string | null => {
+    if (typeof target !== 'string' || !target.startsWith('/')) return null;
+    try {
+      const decoded = decodeURIComponent(target);
+      if (decoded.startsWith('//') || [...decoded].some((char) => {
+        const code = char.charCodeAt(0);
+        return code < 32 || code === 127 || code === 92;
+      })) return null;
+      const destination = new URL(target, url.origin);
+      if (destination.origin !== url.origin || destination.pathname.startsWith('//')) return null;
+      return destination.pathname + destination.search + destination.hash;
+    } catch {
+      return null;
+    }
+  };
+
+  return localPath(url.searchParams.get('redirectTo'))
+    ?? localPath(config.get('auth.redirectTo', '/dashboard'))
+    ?? '/dashboard';
+}
 
 export { Connection, Hash, Broadcast };
 `;
@@ -969,8 +1021,8 @@ DB_PATH=database.db
 # MYSQL_HOST_PORT=53306
 
 # ── Auth ──────────────────────────────────────────────────
-# AUTH_OTP_ENABLED: Enable one-time password (magic link) login.
-AUTH_OTP_ENABLED=true
+# AUTH_OTP_ENABLED: Opt in to emailed one-time code login after configuring mail delivery.
+AUTH_OTP_ENABLED=false
 # AUTH_EMAIL_VERIFICATION_REQUIRED: Require email verification before access.
 AUTH_EMAIL_VERIFICATION_REQUIRED=false
 # JWT_SECRET: Secret key for signing JWT tokens. Required if using JWT auth.
@@ -1200,6 +1252,7 @@ coverage/
 ## Verification
 
 - Before shipping meaningful changes, run focused tests and \`npm run build\` when feasible.
+- Ambient \`App.Locals\` declarations belong in \`src/svelar.d.ts\`; \`src/app.ts\` shadows a same-name \`app.d.ts\`. Keep anonymous users nullable and narrow authentication before reading user IDs.
 - For queue or scheduler behavior, run \`npm run dev:worker\` and \`npm run dev:scheduler\` locally with Redis available.
 - Do not revert unrelated user changes in the working tree.
 `;
@@ -1297,7 +1350,7 @@ Use focused generators for individual artifacts:
 - \`npx svelar make:broadcasting\`
 - \`npx svelar make:dashboard\`
 - \`npx svelar make:docker\`
-- \`npx svelar make:test InvoiceService --type=unit\`
+- \`npx svelar make:test InvoiceService --unit\`
 
 Runtime commands include \`migrate\`, \`seed:run\`, \`routes:list\`, \`queue:work\`, \`queue:failed\`, \`queue:retry\`, \`queue:flush\`, \`schedule:run\`, \`search:setup\`, and \`tinker\`.
 
@@ -1402,6 +1455,8 @@ Controllers validate through FormRequests, call actions/services, and return res
 - Use policies for model/resource decisions.
 - Use \`Permissions\` and roles for RBAC.
 - Use \`Teams\` for team-scoped membership, invitations, and resource access.
+- Team RBAC uses an explicit immutable \`Permissions.forTeam(team.id)\` facade after membership authorization. Global \`Permissions\`/\`HasRoles\` checks do not inherit team grants. Use \`Permissions.global()\` for platform gates.
+- Register application capabilities in code and sync them in a seeder with \`Permissions.syncCapabilities()\`; UI-created permission names alone do not create backend gates.
 - Unauthorized page actions should surface a toast/alert/modal or inline message where the user can continue, not crash into a generic 500.
 - API routes should return 401/403 resource responses, not unhandled exceptions.
 
@@ -1420,6 +1475,9 @@ For request/response reads across modules, do not import another module's model/
 - Use database-backed scheduler locks for no-overlap tasks.
 - Run \`npm run dev:worker\` and \`npm run dev:scheduler\` when testing local runtime behavior.
 - Expose queue/scheduler status through the Svelar dashboard when relevant.
+- Pass the queue name to \`JobMonitor.getJob/retryJob/deleteJob\` so job IDs cannot resolve in another queue. Runtime metrics can be unknown; do not replace null with a false healthy value.
+- Inspect \`ScheduleMonitor.runTask()\` results: \`skipped\` means overlap prevented execution and \`success: false\` means execution failed. An awaited promise alone is not success.
+- Use callback-scoped \`fakeQueue\`, \`fakeEvents\`, \`fakeNotifications\`, \`fakeHttp\`, and \`fakeMail\` from \`@beeblock/svelar/testing\`; await all work inside the callback so interception is restored reliably.
 
 ## Storage, Uploads, PDF, Mail, Search
 
@@ -1474,6 +1532,7 @@ A dogfood app must expose user workflows that prove Svelar features, not only se
 ## Verification
 
 - Run focused tests after changes.
+- Keep ambient \`App.Locals\` declarations in \`src/svelar.d.ts\`, not a file shadowed by the \`src/app.ts\` bootstrap. Never hide missing auth checks with non-null assertions or an \`any\` index signature.
 - Run \`npm run build\` before release-impacting work.
 - For generated app or dogfood verification, use sibling apps under \`/Users/rzeradev/projects/beeblock/svelar-testing-area/\`.
 - Test browser-visible behavior with Postgres/PgBouncer, Redis/BullMQ/cache, RustFS, Gotenberg, Meilisearch, auth/session/API tokens, policies/permissions, teams, webhooks, uploads, PDF, SSE, Soketi/Pusher realtime, logs, audit, exception handling, scheduler, CLI commands, and tinker when those features are in scope.
@@ -1785,11 +1844,7 @@ export class AuthController extends Controller {
   async register(event: any) {
     const data = await RegisterRequest.validate(event);
 
-    const result = await registerAction.run({
-      name: data.name,
-      email: data.email,
-      password: data.password,
-    });
+    const result = await registerAction.run(data);
 
     if (!result.success) {
       return this.json({ message: result.error }, 422);
@@ -1806,23 +1861,18 @@ export class AuthController extends Controller {
   async login(event: any) {
     const data = await LoginRequest.validate(event);
 
-    const result = await authService.login(data.email, data.password);
+    const user = await event.locals.auth.attempt(data, event.locals.session);
 
-    if (!result.success) {
-      return this.json({ message: result.error }, 401);
+    if (!user) {
+      return this.json({ message: 'Invalid email or password' }, 401);
     }
-
-    const user = result.data!;
-    event.locals.session.set('auth_user_id', (user as any).id);
-    event.locals.session.regenerateId();
 
     return UserResource.make(user).toResponse();
   }
 
   /** POST /api/auth/logout */
   async logout(event: any) {
-    event.locals.session.forget('auth_user_id');
-    event.locals.session.regenerateId();
+    await event.locals.auth.logout(event.locals.session);
 
     return this.json({ message: 'Logged out successfully' });
   }
@@ -2150,11 +2200,17 @@ export class AdminController extends Controller {
 
 	static registerRequest(): string {
 		return `import { FormRequest } from '@beeblock/svelar/forms';
-import { registerSchema } from './schemas.js';
+import { registerSchema, type RegisterInput } from './schemas.js';
 
-export class RegisterRequest extends FormRequest {
+export type RegisterUserDto = Readonly<Pick<RegisterInput, 'name' | 'email' | 'password'>>;
+
+export class RegisterRequest extends FormRequest<typeof registerSchema, RegisterUserDto> {
   rules() {
     return registerSchema;
+  }
+
+  passedValidation(data: RegisterInput): RegisterUserDto {
+    return { name: data.name, email: data.email, password: data.password };
   }
 }
 `;
@@ -2162,11 +2218,17 @@ export class RegisterRequest extends FormRequest {
 
 	static loginRequest(): string {
 		return `import { FormRequest } from '@beeblock/svelar/forms';
-import { loginSchema } from './schemas.js';
+import { loginSchema, type LoginInput } from './schemas.js';
 
-export class LoginRequest extends FormRequest {
+export type LoginDto = Readonly<LoginInput>;
+
+export class LoginRequest extends FormRequest<typeof loginSchema, LoginDto> {
   rules() {
     return loginSchema;
+  }
+
+  passedValidation(data: LoginInput): LoginDto {
+    return { email: data.email, password: data.password };
   }
 }
 `;
@@ -2174,11 +2236,17 @@ export class LoginRequest extends FormRequest {
 
 	static forgotPasswordRequest(): string {
 		return `import { FormRequest } from '@beeblock/svelar/forms';
-import { forgotPasswordSchema } from './schemas.js';
+import { forgotPasswordSchema, type ForgotPasswordInput } from './schemas.js';
 
-export class ForgotPasswordRequest extends FormRequest {
+export type ForgotPasswordDto = Readonly<ForgotPasswordInput>;
+
+export class ForgotPasswordRequest extends FormRequest<typeof forgotPasswordSchema, ForgotPasswordDto> {
   rules() {
     return forgotPasswordSchema;
+  }
+
+  passedValidation(data: ForgotPasswordInput): ForgotPasswordDto {
+    return { email: data.email };
   }
 }
 `;
@@ -2186,11 +2254,17 @@ export class ForgotPasswordRequest extends FormRequest {
 
 	static resetPasswordRequest(): string {
 		return `import { FormRequest } from '@beeblock/svelar/forms';
-import { resetPasswordSchema } from './schemas.js';
+import { resetPasswordSchema, type ResetPasswordInput } from './schemas.js';
 
-export class ResetPasswordRequest extends FormRequest {
+export type ResetPasswordDto = Readonly<Pick<ResetPasswordInput, 'token' | 'email' | 'password'>>;
+
+export class ResetPasswordRequest extends FormRequest<typeof resetPasswordSchema, ResetPasswordDto> {
   rules() {
     return resetPasswordSchema;
+  }
+
+  passedValidation(data: ResetPasswordInput): ResetPasswordDto {
+    return { token: data.token, email: data.email, password: data.password };
   }
 }
 `;
@@ -2198,11 +2272,22 @@ export class ResetPasswordRequest extends FormRequest {
 
 	static otpSendRequest(): string {
 		return `import { FormRequest } from '@beeblock/svelar/forms';
-import { otpRequestSchema } from './schemas.js';
+import { config } from '@beeblock/svelar/config';
+import { otpRequestSchema, type OtpRequestInput } from './schemas.js';
 
-export class OtpSendRequest extends FormRequest {
+export type OtpSendDto = Readonly<OtpRequestInput>;
+
+export class OtpSendRequest extends FormRequest<typeof otpRequestSchema, OtpSendDto> {
   rules() {
     return otpRequestSchema;
+  }
+
+  authorize(_event: any): boolean {
+    return config.get('auth.otp.enabled', process.env.AUTH_OTP_ENABLED === 'true') === true;
+  }
+
+  passedValidation(data: OtpRequestInput): OtpSendDto {
+    return { email: data.email };
   }
 }
 `;
@@ -2210,11 +2295,22 @@ export class OtpSendRequest extends FormRequest {
 
 	static otpVerifyRequest(): string {
 		return `import { FormRequest } from '@beeblock/svelar/forms';
-import { otpVerifySchema } from './schemas.js';
+import { config } from '@beeblock/svelar/config';
+import { otpVerifySchema, type OtpVerifyInput } from './schemas.js';
 
-export class OtpVerifyRequest extends FormRequest {
+export type OtpVerifyDto = Readonly<OtpVerifyInput>;
+
+export class OtpVerifyRequest extends FormRequest<typeof otpVerifySchema, OtpVerifyDto> {
   rules() {
     return otpVerifySchema;
+  }
+
+  authorize(_event: any): boolean {
+    return config.get('auth.otp.enabled', process.env.AUTH_OTP_ENABLED === 'true') === true;
+  }
+
+  passedValidation(data: OtpVerifyInput): OtpVerifyDto {
+    return { email: data.email, code: data.code };
   }
 }
 `;
@@ -2462,7 +2558,7 @@ export type PermissionResponse = v.InferOutput<typeof permissionResponseSchema>;
 `;
 		}
 
-		return "import { z } from 'zod';\n\nexport const updateUserRoleSchema = z.object({\n  userId: z.coerce.number().int().positive(),\n  role: z.enum(['user', 'admin']),\n});\n\nexport const deleteUserSchema = z.object({\n  userId: z.coerce.number().int().positive(),\n});\n\nexport const createRoleSchema = z.object({\n  name: z.string().trim().min(2, 'Role name must be at least 2 characters').max(50),\n  guard: z.string().trim().optional().or(z.literal('')),\n  description: z.string().trim().max(255).optional().or(z.literal('')),\n});\n\nexport const deleteRoleSchema = z.object({\n  name: z.string().trim().min(1),\n  guard: z.string().trim().optional().or(z.literal('')),\n});\n\nexport const createPermissionSchema = z.object({\n  name: z.string().trim().min(2, 'Permission name must be at least 2 characters').max(50),\n  guard: z.string().trim().optional().or(z.literal('')),\n  description: z.string().trim().max(255).optional().or(z.literal('')),\n});\n\nexport const deletePermissionSchema = z.object({\n  name: z.string().trim().min(1),\n  guard: z.string().trim().optional().or(z.literal('')),\n});\n\nexport const rolePermissionSchema = z.object({\n  roleId: z.coerce.number().int().positive(),\n  permissionId: z.coerce.number().int().positive(),\n});\n\nexport const userRoleSchema = z.object({\n  userId: z.coerce.number().int().positive(),\n  roleId: z.coerce.number().int().positive(),\n});\n\nexport const userPermissionSchema = z.object({\n  userId: z.coerce.number().int().positive(),\n  permissionId: z.coerce.number().int().positive(),\n});\n\nexport const exportDataSchema = z.object({\n  format: z.enum(['csv', 'json']).default('csv'),\n});\n\n// ── Inferred Types ───────────────────────────────────────\n\nexport type UpdateUserRoleInput = z.infer<typeof updateUserRoleSchema>;\nexport type DeleteUserInput = z.infer<typeof deleteUserSchema>;\nexport type CreateRoleInput = z.infer<typeof createRoleSchema>;\nexport type DeleteRoleInput = z.infer<typeof deleteRoleSchema>;\nexport type CreatePermissionInput = z.infer<typeof createPermissionSchema>;\nexport type DeletePermissionInput = z.infer<typeof deletePermissionSchema>;\nexport type RolePermissionInput = z.infer<typeof rolePermissionSchema>;\nexport type UserRoleInput = z.infer<typeof userRoleSchema>;\nexport type UserPermissionInput = z.infer<typeof userPermissionSchema>;\nexport type ExportDataInput = z.infer<typeof exportDataSchema>;\n\n// ── Response Schemas ─────────────────────────────────────\n\nexport const roleResponseSchema = z.object({\n  id: z.number(),\n  name: z.string(),\n  guard: z.string(),\n  description: z.string().nullable(),\n});\n\nexport const permissionResponseSchema = z.object({\n  id: z.number(),\n  name: z.string(),\n  guard: z.string(),\n  description: z.string().nullable(),\n});\n\nexport type RoleResponse = z.infer<typeof roleResponseSchema>;\nexport type PermissionResponse = z.infer<typeof permissionResponseSchema>;\n";
+		return "import { z } from '@beeblock/svelar/validation';\n\nexport const updateUserRoleSchema = z.object({\n  userId: z.coerce.number().int().positive(),\n  role: z.enum(['user', 'admin']),\n});\n\nexport const deleteUserSchema = z.object({\n  userId: z.coerce.number().int().positive(),\n});\n\nexport const createRoleSchema = z.object({\n  name: z.string().trim().min(2, 'Role name must be at least 2 characters').max(50),\n  guard: z.string().trim().optional().or(z.literal('')),\n  description: z.string().trim().max(255).optional().or(z.literal('')),\n});\n\nexport const deleteRoleSchema = z.object({\n  name: z.string().trim().min(1),\n  guard: z.string().trim().optional().or(z.literal('')),\n});\n\nexport const createPermissionSchema = z.object({\n  name: z.string().trim().min(2, 'Permission name must be at least 2 characters').max(50),\n  guard: z.string().trim().optional().or(z.literal('')),\n  description: z.string().trim().max(255).optional().or(z.literal('')),\n});\n\nexport const deletePermissionSchema = z.object({\n  name: z.string().trim().min(1),\n  guard: z.string().trim().optional().or(z.literal('')),\n});\n\nexport const rolePermissionSchema = z.object({\n  roleId: z.coerce.number().int().positive(),\n  permissionId: z.coerce.number().int().positive(),\n});\n\nexport const userRoleSchema = z.object({\n  userId: z.coerce.number().int().positive(),\n  roleId: z.coerce.number().int().positive(),\n});\n\nexport const userPermissionSchema = z.object({\n  userId: z.coerce.number().int().positive(),\n  permissionId: z.coerce.number().int().positive(),\n});\n\nexport const exportDataSchema = z.object({\n  format: z.enum(['csv', 'json']).default('csv'),\n});\n\n// ── Inferred Types ───────────────────────────────────────\n\nexport type UpdateUserRoleInput = z.infer<typeof updateUserRoleSchema>;\nexport type DeleteUserInput = z.infer<typeof deleteUserSchema>;\nexport type CreateRoleInput = z.infer<typeof createRoleSchema>;\nexport type DeleteRoleInput = z.infer<typeof deleteRoleSchema>;\nexport type CreatePermissionInput = z.infer<typeof createPermissionSchema>;\nexport type DeletePermissionInput = z.infer<typeof deletePermissionSchema>;\nexport type RolePermissionInput = z.infer<typeof rolePermissionSchema>;\nexport type UserRoleInput = z.infer<typeof userRoleSchema>;\nexport type UserPermissionInput = z.infer<typeof userPermissionSchema>;\nexport type ExportDataInput = z.infer<typeof exportDataSchema>;\n\n// ── Response Schemas ─────────────────────────────────────\n\nexport const roleResponseSchema = z.object({\n  id: z.number(),\n  name: z.string(),\n  guard: z.string(),\n  description: z.string().nullable(),\n});\n\nexport const permissionResponseSchema = z.object({\n  id: z.number(),\n  name: z.string(),\n  guard: z.string(),\n  description: z.string().nullable(),\n});\n\nexport type RoleResponse = z.infer<typeof roleResponseSchema>;\nexport type PermissionResponse = z.infer<typeof permissionResponseSchema>;\n";
 	}
 
 
@@ -2531,7 +2627,7 @@ export type PermissionResponse = v.InferOutput<typeof permissionResponseSchema>;
 		return `import { FormRequest } from '@beeblock/svelar/forms';
 import { exportDataSchema } from './schemas.js';
 
-export class ExportDataRequest extends FormRequest {
+export class ExportDataRequest extends FormRequest<typeof exportDataSchema> {
   rules() {
     return exportDataSchema;
   }
@@ -2725,7 +2821,7 @@ Gate.defineSuperUser((user) => user?.role === 'admin');
 
 	static authSchema(validation: ValidationProvider = 'zod'): string {
 		if (validation === 'valibot') {
-			return `import * as v from 'valibot';
+			return `import { v } from '@beeblock/svelar/validation/valibot';
 
 // ── Input Schemas (DTOs + UI validation) ─────────────────
 
@@ -2753,7 +2849,7 @@ export const forgotPasswordSchema = v.object({
 
 export const resetPasswordSchema = v.pipe(
   v.object({
-    token: v.string(),
+    token: v.pipe(v.string(), v.minLength(1, 'Reset token is required')),
     email: v.pipe(v.string(), v.email()),
     password: v.pipe(v.string(), v.minLength(8, 'Password must be at least 8 characters')),
     password_confirmation: v.string(),
@@ -2770,7 +2866,7 @@ export const otpRequestSchema = v.object({
 
 export const otpVerifySchema = v.object({
   email: v.pipe(v.string(), v.email()),
-  code: v.pipe(v.string(), v.length(6, 'Code must be 6 digits')),
+  code: v.pipe(v.string(), v.regex(/^[0-9]{6}$/, 'Code must be 6 digits')),
 });
 
 // ── Inferred Types ───────────────────────────────────────
@@ -2796,7 +2892,7 @@ export type UserResponse = v.InferOutput<typeof userResponseSchema>;
 `;
 		}
 
-		return `import { z } from 'zod';
+		return `import { z } from '@beeblock/svelar/validation';
 
 // ── Input Schemas (DTOs + UI validation) ─────────────────
 
@@ -2820,7 +2916,7 @@ export const forgotPasswordSchema = z.object({
 });
 
 export const resetPasswordSchema = z.object({
-  token: z.string(),
+  token: z.string().min(1, 'Reset token is required'),
   email: z.string().email(),
   password: z.string().min(8, 'Password must be at least 8 characters'),
   password_confirmation: z.string(),
@@ -2835,7 +2931,7 @@ export const otpRequestSchema = z.object({
 
 export const otpVerifySchema = z.object({
   email: z.string().email(),
-  code: z.string().length(6, 'Code must be 6 digits'),
+  code: z.string().regex(/^[0-9]{6}$/, 'Code must be 6 digits'),
 });
 
 // ── Inferred Types ───────────────────────────────────────
@@ -2903,7 +2999,7 @@ export type PostResponse = v.InferOutput<typeof postResponseSchema>;
 `;
 		}
 
-		return `import { z } from 'zod';
+		return `import { z } from '@beeblock/svelar/validation';
 
 // ── Input Schemas ────────────────────────────────────────
 
@@ -3159,13 +3255,13 @@ export class DatabaseSeeder extends Seeder {
 		return `import type { Actions, PageServerLoad } from './$types';
 import { fail, redirect } from '@sveltejs/kit';
 import { superValidate, message } from 'sveltekit-superforms';
-import { zod } from 'sveltekit-superforms/adapters';
+import { zod4 } from 'sveltekit-superforms/adapters';
 import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { loginSchema } from '$lib/modules/auth/schemas';
-import { AuthService } from '$lib/modules/auth/AuthService';
-import { authConfig } from '../../app.js';
+import { LoginRequest } from '$lib/modules/auth/LoginRequest';
+import { authConfig, authRedirect } from '../../app.js';
 
-const authService = new AuthService();
+const loginRequest = new LoginRequest();
 const throttle = new ThrottleMiddleware({
   maxAttempts: 5,
   decayMinutes: 1,
@@ -3178,17 +3274,22 @@ function throttleContext(event: any) {
   return { event, params: event.params ?? {}, locals: event.locals ?? {} };
 }
 
-export const load: PageServerLoad = async ({ locals }) => {
-  if (locals.user) throw redirect(302, '/dashboard');
+export const load: PageServerLoad = async ({ locals, url }) => {
+  if (locals.user) throw redirect(302, authRedirect(url));
 
-  const form = await superValidate(zod(loginSchema));
-  return { form, otpEnabled: authConfig.otpEnabled };
+  const form = await superValidate(zod4(loginSchema));
+  return { form, appName: authConfig.appName, otpEnabled: authConfig.otpEnabled, passwordReset: url.searchParams.get('reset') === 'success' };
 };
 
 export const actions: Actions = {
   default: async (event) => {
     const { request, locals } = event;
-    const form = await superValidate(request, zod(loginSchema));
+    const form = await superValidate(request, zod4(loginSchema));
+    const input = { ...form.data };
+    form.data.password = '';
+    if (!await loginRequest.authorize(event)) {
+      return message(form, 'Sign-in is not permitted.', { status: 403 });
+    }
     const ctx = throttleContext(event);
     const block = await throttle.check(ctx);
     if (block.blocked) {
@@ -3200,19 +3301,17 @@ export const actions: Actions = {
       return fail(400, { form });
     }
 
-    const result = await authService.login(form.data.email, form.data.password);
+    const dto = loginRequest.passedValidation(input);
+    const user = await locals.auth.attempt(dto, locals.session);
 
-    if (!result.success) {
+    if (!user) {
       await throttle.hit(ctx);
       return message(form, 'Invalid email or password', { status: 401 });
     }
 
     await throttle.clear(ctx);
-    const user = result.data!;
-    locals.session.set('auth_user_id', (user as any).id);
-    locals.session.regenerateId();
 
-    throw redirect(302, '/dashboard');
+    throw redirect(303, authRedirect(event.url));
   },
 };
 `;
@@ -3221,32 +3320,43 @@ export const actions: Actions = {
 	static loginPageSvelte(): string {
 		return `<script lang="ts">
   import { superForm } from 'sveltekit-superforms';
+  import { zod4Client } from 'sveltekit-superforms/adapters';
+  import { loginSchema } from '$lib/modules/auth/schemas';
   import { Button, Input, Label, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, Alert } from '@beeblock/svelar/ui';
 
   let { data } = $props();
 
   // svelte-ignore state_referenced_locally
-  const { form, errors, message, enhance, delayed } = superForm(data.form, {
-    onResult: ({ result }) => {
-      if (result.type === 'failure') {
+  const { form, errors, message, enhance, submitting, delayed } = superForm(data.form, {
+    validators: zod4Client(loginSchema),
+    onUpdated: ({ form: updated }) => {
+      if (!updated.valid) {
         $form.password = '';
       }
+    },
+    onError: () => {
+      $form.password = '';
+      $message = 'Unable to submit right now. Please try again.';
     },
   });
 </script>
 
 <svelte:head>
-  <title>Sign In</title>
+  <title>Sign In | {data.appName}</title>
 </svelte:head>
 
 <div class="flex items-center justify-center min-h-[calc(100vh-200px)]">
   <Card class="w-full max-w-md">
     <CardHeader>
+      <p class="text-sm font-medium break-words">{data.appName}</p>
       <CardTitle>Sign In</CardTitle>
       <CardDescription>Enter your credentials to access your account</CardDescription>
     </CardHeader>
 
     <CardContent class="space-y-4">
+      {#if data.passwordReset}
+        <Alert variant="success">Your password was reset. Sign in with your new password.</Alert>
+      {/if}
       {#if $message}
         <Alert variant="destructive">
           <span class="text-sm">{$message}</span>
@@ -3260,10 +3370,11 @@ export const actions: Actions = {
             id="email"
             name="email"
             type="email"
+            autocomplete="email"
             placeholder="you@example.com"
             bind:value={$form.email}
             aria-invalid={$errors.email ? 'true' : undefined}
-            disabled={$delayed}
+            disabled={$submitting}
           />
           {#if $errors.email}
             <p class="text-sm text-red-600">{$errors.email[0]}</p>
@@ -3276,10 +3387,11 @@ export const actions: Actions = {
             id="password"
             name="password"
             type="password"
+            autocomplete="current-password"
             placeholder="Enter your password"
             bind:value={$form.password}
             aria-invalid={$errors.password ? 'true' : undefined}
-            disabled={$delayed}
+            disabled={$submitting}
           />
           {#if $errors.password}
             <p class="text-sm text-red-600">{$errors.password[0]}</p>
@@ -3287,7 +3399,7 @@ export const actions: Actions = {
         </div>
 
         <div class="flex items-center justify-between">
-          <Button type="submit" class="w-full" disabled={$delayed}>
+          <Button type="submit" class="w-full" disabled={$submitting}>
             {$delayed ? 'Signing in...' : 'Sign In'}
           </Button>
         </div>
@@ -3319,13 +3431,15 @@ export const actions: Actions = {
 		return `import type { Actions, PageServerLoad } from './$types';
 import { fail, redirect } from '@sveltejs/kit';
 import { superValidate, message, setError } from 'sveltekit-superforms';
-import { zod } from 'sveltekit-superforms/adapters';
+import { zod4 } from 'sveltekit-superforms/adapters';
 import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { registerSchema } from '$lib/modules/auth/schemas';
-import { AuthService } from '$lib/modules/auth/AuthService';
-import { auth, authConfig } from '../../app.js';
+import { RegisterRequest } from '$lib/modules/auth/RegisterRequest';
+import { RegisterUserAction } from '$lib/modules/auth/RegisterUserAction';
+import { authConfig, authRedirect } from '../../app.js';
 
-const authService = new AuthService();
+const registerRequest = new RegisterRequest();
+const registerAction = new RegisterUserAction();
 const throttle = new ThrottleMiddleware({
   maxAttempts: 5,
   decayMinutes: 2,
@@ -3338,17 +3452,23 @@ function throttleContext(event: any) {
   return { event, params: event.params ?? {}, locals: event.locals ?? {} };
 }
 
-export const load: PageServerLoad = async ({ locals }) => {
-  if (locals.user) throw redirect(302, '/dashboard');
+export const load: PageServerLoad = async ({ locals, url }) => {
+  if (locals.user) throw redirect(302, authRedirect(url));
 
-  const form = await superValidate(zod(registerSchema));
-  return { form };
+  const form = await superValidate(zod4(registerSchema));
+  return { form, appName: authConfig.appName };
 };
 
 export const actions: Actions = {
   default: async (event) => {
     const { request, locals } = event;
-    const form = await superValidate(request, zod(registerSchema));
+    const form = await superValidate(request, zod4(registerSchema));
+    const input = { ...form.data };
+    form.data.password = '';
+    form.data.password_confirmation = '';
+    if (!await registerRequest.authorize(event)) {
+      return message(form, 'Registration is not permitted.', { status: 403 });
+    }
     const ctx = throttleContext(event);
     const block = await throttle.check(ctx);
     if (block.blocked) {
@@ -3360,11 +3480,7 @@ export const actions: Actions = {
       return fail(400, { form });
     }
 
-    const result = await authService.register({
-      name: form.data.name,
-      email: form.data.email,
-      password: form.data.password,
-    });
+    const result = await registerAction.run(registerRequest.passedValidation(input));
 
     if (!result.success) {
       await throttle.hit(ctx);
@@ -3381,10 +3497,10 @@ export const actions: Actions = {
 
     // Send verification email if required
     if (authConfig.emailVerificationRequired) {
-      await auth.sendVerificationEmail(user as any);
+      await locals.auth.sendVerificationEmail(user as any);
     }
 
-    throw redirect(302, '/dashboard');
+    throw redirect(303, authRedirect(event.url));
   },
 };
 `;
@@ -3393,21 +3509,37 @@ export const actions: Actions = {
 	static registerPageSvelte(): string {
 		return `<script lang="ts">
   import { superForm } from 'sveltekit-superforms';
+  import { zod4Client } from 'sveltekit-superforms/adapters';
+  import { registerSchema } from '$lib/modules/auth/schemas';
   import { Button, Input, Label, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, Alert } from '@beeblock/svelar/ui';
 
   let { data } = $props();
 
   // svelte-ignore state_referenced_locally
-  const { form, errors, message, enhance, delayed } = superForm(data.form);
+  const { form, errors, message, enhance, submitting, delayed } = superForm(data.form, {
+    validators: zod4Client(registerSchema),
+    onUpdated: ({ form: updated }) => {
+      if (!updated.valid) {
+        $form.password = '';
+        $form.password_confirmation = '';
+      }
+    },
+    onError: () => {
+      $form.password = '';
+      $form.password_confirmation = '';
+      $message = 'Unable to submit right now. Please try again.';
+    },
+  });
 </script>
 
 <svelte:head>
-  <title>Create Account</title>
+  <title>Create Account | {data.appName}</title>
 </svelte:head>
 
 <div class="flex items-center justify-center min-h-[calc(100vh-200px)]">
   <Card class="w-full max-w-md">
     <CardHeader>
+      <p class="text-sm font-medium break-words">{data.appName}</p>
       <CardTitle>Create Account</CardTitle>
       <CardDescription>Fill in the details below to get started</CardDescription>
     </CardHeader>
@@ -3429,7 +3561,7 @@ export const actions: Actions = {
             placeholder="Your name"
             bind:value={$form.name}
             aria-invalid={$errors.name ? 'true' : undefined}
-            disabled={$delayed}
+            disabled={$submitting}
           />
           {#if $errors.name}
             <p class="text-sm text-red-600">{$errors.name[0]}</p>
@@ -3442,10 +3574,11 @@ export const actions: Actions = {
             id="email"
             name="email"
             type="email"
+            autocomplete="email"
             placeholder="you@example.com"
             bind:value={$form.email}
             aria-invalid={$errors.email ? 'true' : undefined}
-            disabled={$delayed}
+            disabled={$submitting}
           />
           {#if $errors.email}
             <p class="text-sm text-red-600">{$errors.email[0]}</p>
@@ -3458,10 +3591,11 @@ export const actions: Actions = {
             id="password"
             name="password"
             type="password"
+            autocomplete="new-password"
             placeholder="At least 8 characters"
             bind:value={$form.password}
             aria-invalid={$errors.password ? 'true' : undefined}
-            disabled={$delayed}
+            disabled={$submitting}
           />
           {#if $errors.password}
             <p class="text-sm text-red-600">{$errors.password[0]}</p>
@@ -3474,17 +3608,18 @@ export const actions: Actions = {
             id="password_confirmation"
             name="password_confirmation"
             type="password"
+            autocomplete="new-password"
             placeholder="Repeat your password"
             bind:value={$form.password_confirmation}
             aria-invalid={$errors.password_confirmation ? 'true' : undefined}
-            disabled={$delayed}
+            disabled={$submitting}
           />
           {#if $errors.password_confirmation}
             <p class="text-sm text-red-600">{$errors.password_confirmation[0]}</p>
           {/if}
         </div>
 
-        <Button type="submit" class="w-full" disabled={$delayed}>
+        <Button type="submit" class="w-full" disabled={$submitting}>
           {$delayed ? 'Creating account...' : 'Create Account'}
         </Button>
       </form>
@@ -3507,9 +3642,8 @@ import type { Actions } from './$types.js';
 
 export const actions: Actions = {
   default: async (event) => {
-    event.locals.session.forget('auth_user_id');
-    event.locals.session.regenerateId();
-    throw redirect(302, '/');
+    await event.locals.auth.logout(event.locals.session);
+    throw redirect(303, '/');
   },
 };
 `;
@@ -3521,10 +3655,13 @@ export const actions: Actions = {
 		return `import type { Actions, PageServerLoad } from './$types';
 import { fail } from '@sveltejs/kit';
 import { superValidate, message } from 'sveltekit-superforms';
-import { zod } from 'sveltekit-superforms/adapters';
+import { zod4 } from 'sveltekit-superforms/adapters';
 import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { forgotPasswordSchema } from '$lib/modules/auth/schemas';
-import { auth } from '../../app.js';
+import { ForgotPasswordRequest } from '$lib/modules/auth/ForgotPasswordRequest';
+import { authConfig } from '../../app.js';
+
+const forgotPasswordRequest = new ForgotPasswordRequest();
 
 const throttle = new ThrottleMiddleware({
   maxAttempts: 3,
@@ -3539,18 +3676,21 @@ function throttleContext(event: any) {
 }
 
 export const load: PageServerLoad = async () => {
-  const form = await superValidate(zod(forgotPasswordSchema));
-  return { form };
+  const form = await superValidate(zod4(forgotPasswordSchema));
+  return { form, appName: authConfig.appName };
 };
 
 export const actions: Actions = {
   default: async (event) => {
     const { request } = event;
-    const form = await superValidate(request, zod(forgotPasswordSchema));
+    const form = await superValidate(request, zod4(forgotPasswordSchema));
+    if (!await forgotPasswordRequest.authorize(event)) {
+      return message(form, { kind: 'error', text: 'Password recovery is not permitted.' }, { status: 403 });
+    }
     const ctx = throttleContext(event);
     const block = await throttle.check(ctx);
     if (block.blocked) {
-      return message(form, 'Too many attempts. Please try again later.', { status: 429 });
+      return message(form, { kind: 'error', text: 'Too many attempts. Please try again later.' }, { status: 429 });
     }
 
     if (!form.valid) {
@@ -3558,10 +3698,11 @@ export const actions: Actions = {
       return fail(400, { form });
     }
 
-    await auth.sendPasswordReset(form.data.email);
     await throttle.hit(ctx);
+    const dto = forgotPasswordRequest.passedValidation(form.data);
+    await event.locals.auth.sendPasswordReset(dto.email);
 
-    return message(form, 'If that email exists, a reset link has been sent. Check your inbox.');
+    return message(form, { kind: 'success', text: 'If that email exists, a reset link has been sent. Check your inbox.' });
   },
 };
 `;
@@ -3570,32 +3711,39 @@ export const actions: Actions = {
 	static forgotPasswordPageSvelte(): string {
 		return `<script lang="ts">
   import { superForm } from 'sveltekit-superforms';
+  import { zod4Client } from 'sveltekit-superforms/adapters';
+  import { forgotPasswordSchema } from '$lib/modules/auth/schemas';
   import { Button, Input, Label, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, Alert } from '@beeblock/svelar/ui';
 
   let { data } = $props();
 
   // svelte-ignore state_referenced_locally
-  const { form, errors, message, enhance, delayed } = superForm(data.form);
+  const { form, errors, message, enhance, submitting, delayed } = superForm(data.form, {
+    validators: zod4Client(forgotPasswordSchema),
+    onError: () => {
+      $message = { kind: 'error', text: 'Unable to send a reset link right now. Please try again.' };
+    },
+  });
 
-  // Track if form was submitted successfully
-  let submitted = $derived($message && !$errors.email);
+  let submitted = $derived($message?.kind === 'success');
 </script>
 
 <svelte:head>
-  <title>Forgot Password</title>
+  <title>Forgot Password | {data.appName}</title>
 </svelte:head>
 
 <div class="flex items-center justify-center min-h-[calc(100vh-200px)]">
   <Card class="w-full max-w-md">
     <CardHeader>
+      <p class="text-sm font-medium break-words">{data.appName}</p>
       <CardTitle>Forgot Password</CardTitle>
       <CardDescription>Enter your email and we'll send you a reset link</CardDescription>
     </CardHeader>
 
     <CardContent class="space-y-4">
       {#if $message}
-        <Alert variant="default">
-          <span class="text-sm">{$message}</span>
+        <Alert variant={submitted ? 'success' : 'destructive'}>
+          <span class="text-sm">{$message.text}</span>
         </Alert>
       {/if}
 
@@ -3607,17 +3755,18 @@ export const actions: Actions = {
               id="email"
               name="email"
               type="email"
+              autocomplete="email"
               placeholder="you@example.com"
               bind:value={$form.email}
               aria-invalid={$errors.email ? 'true' : undefined}
-              disabled={$delayed}
+              disabled={$submitting}
             />
             {#if $errors.email}
               <p class="text-sm text-red-600">{$errors.email[0]}</p>
             {/if}
           </div>
 
-          <Button type="submit" class="w-full" disabled={$delayed}>
+          <Button type="submit" class="w-full" disabled={$submitting}>
             {$delayed ? 'Sending...' : 'Send Reset Link'}
           </Button>
         </form>
@@ -3641,10 +3790,13 @@ export const actions: Actions = {
 		return `import type { Actions, PageServerLoad } from './$types';
 import { fail, redirect } from '@sveltejs/kit';
 import { superValidate, message } from 'sveltekit-superforms';
-import { zod } from 'sveltekit-superforms/adapters';
+import { zod4 } from 'sveltekit-superforms/adapters';
 import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { resetPasswordSchema } from '$lib/modules/auth/schemas';
-import { auth } from '../../app.js';
+import { ResetPasswordRequest } from '$lib/modules/auth/ResetPasswordRequest';
+import { authConfig } from '../../app.js';
+
+const resetPasswordRequest = new ResetPasswordRequest();
 
 const throttle = new ThrottleMiddleware({
   maxAttempts: 5,
@@ -3666,14 +3818,20 @@ export const load: PageServerLoad = async ({ url }) => {
     throw redirect(302, '/forgot-password');
   }
 
-  const form = await superValidate({ token, email, password: '', password_confirmation: '' }, zod(resetPasswordSchema));
-  return { form };
+  const form = await superValidate({ token, email, password: '', password_confirmation: '' }, zod4(resetPasswordSchema), { errors: false });
+  return { form, appName: authConfig.appName };
 };
 
 export const actions: Actions = {
   default: async (event) => {
     const { request } = event;
-    const form = await superValidate(request, zod(resetPasswordSchema));
+    const form = await superValidate(request, zod4(resetPasswordSchema));
+    const input = { ...form.data };
+    form.data.password = '';
+    form.data.password_confirmation = '';
+    if (!await resetPasswordRequest.authorize(event)) {
+      return message(form, 'Password reset is not permitted.', { status: 403 });
+    }
     const ctx = throttleContext(event);
     const block = await throttle.check(ctx);
     if (block.blocked) {
@@ -3685,7 +3843,8 @@ export const actions: Actions = {
       return fail(400, { form });
     }
 
-    const success = await auth.resetPassword(form.data.token, form.data.email, form.data.password);
+    const dto = resetPasswordRequest.passedValidation(input);
+    const success = await event.locals.auth.resetPassword(dto.token, dto.email, dto.password);
 
     if (!success) {
       await throttle.hit(ctx);
@@ -3693,7 +3852,7 @@ export const actions: Actions = {
     }
 
     await throttle.clear(ctx);
-    throw redirect(302, '/login?reset=success');
+    throw redirect(303, '/login?reset=success');
   },
 };
 `;
@@ -3702,21 +3861,37 @@ export const actions: Actions = {
 	static resetPasswordPageSvelte(): string {
 		return `<script lang="ts">
   import { superForm } from 'sveltekit-superforms';
+  import { zod4Client } from 'sveltekit-superforms/adapters';
+  import { resetPasswordSchema } from '$lib/modules/auth/schemas';
   import { Button, Input, Label, Card, CardHeader, CardTitle, CardDescription, CardContent, Alert } from '@beeblock/svelar/ui';
 
   let { data } = $props();
 
   // svelte-ignore state_referenced_locally
-  const { form, errors, message, enhance, delayed } = superForm(data.form);
+  const { form, errors, message, enhance, submitting, delayed } = superForm(data.form, {
+    validators: zod4Client(resetPasswordSchema),
+    onUpdated: ({ form: updated }) => {
+      if (!updated.valid) {
+        $form.password = '';
+        $form.password_confirmation = '';
+      }
+    },
+    onError: () => {
+      $form.password = '';
+      $form.password_confirmation = '';
+      $message = 'Unable to submit right now. Please try again.';
+    },
+  });
 </script>
 
 <svelte:head>
-  <title>Reset Password</title>
+  <title>Reset Password | {data.appName}</title>
 </svelte:head>
 
 <div class="flex items-center justify-center min-h-[calc(100vh-200px)]">
   <Card class="w-full max-w-md">
     <CardHeader>
+      <p class="text-sm font-medium break-words">{data.appName}</p>
       <CardTitle>Reset Password</CardTitle>
       <CardDescription>Enter your new password below</CardDescription>
     </CardHeader>
@@ -3738,10 +3913,11 @@ export const actions: Actions = {
             id="password"
             name="password"
             type="password"
+            autocomplete="new-password"
             placeholder="At least 8 characters"
             bind:value={$form.password}
             aria-invalid={$errors.password ? 'true' : undefined}
-            disabled={$delayed}
+            disabled={$submitting}
           />
           {#if $errors.password}
             <p class="text-sm text-red-600">{$errors.password[0]}</p>
@@ -3754,17 +3930,18 @@ export const actions: Actions = {
             id="password_confirmation"
             name="password_confirmation"
             type="password"
+            autocomplete="new-password"
             placeholder="Repeat your password"
             bind:value={$form.password_confirmation}
             aria-invalid={$errors.password_confirmation ? 'true' : undefined}
-            disabled={$delayed}
+            disabled={$submitting}
           />
           {#if $errors.password_confirmation}
             <p class="text-sm text-red-600">{$errors.password_confirmation[0]}</p>
           {/if}
         </div>
 
-        <Button type="submit" class="w-full" disabled={$delayed}>
+        <Button type="submit" class="w-full" disabled={$submitting}>
           {$delayed ? 'Resetting...' : 'Reset Password'}
         </Button>
       </form>
@@ -3780,10 +3957,15 @@ export const actions: Actions = {
 		return `import type { Actions, PageServerLoad } from './$types';
 import { fail, redirect } from '@sveltejs/kit';
 import { superValidate, message } from 'sveltekit-superforms';
-import { zod } from 'sveltekit-superforms/adapters';
+import { zod4 } from 'sveltekit-superforms/adapters';
 import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { otpRequestSchema, otpVerifySchema } from '$lib/modules/auth/schemas';
-import { auth, authConfig } from '../../app.js';
+import { OtpSendRequest } from '$lib/modules/auth/OtpSendRequest';
+import { OtpVerifyRequest } from '$lib/modules/auth/OtpVerifyRequest';
+import { authConfig, authRedirect } from '../../app.js';
+
+const sendRequest = new OtpSendRequest();
+const verifyRequest = new OtpVerifyRequest();
 
 const sendThrottle = new ThrottleMiddleware({
   maxAttempts: 3,
@@ -3804,23 +3986,31 @@ function throttleContext(event: any) {
   return { event, params: event.params ?? {}, locals: event.locals ?? {} };
 }
 
-export const load: PageServerLoad = async ({ locals }) => {
-  if (!authConfig.otpEnabled) throw redirect(302, '/login');
-  if (locals.user) throw redirect(302, '/dashboard');
+function otpFailure(form: any, text: string, status: 401 | 403 | 429, codeSent = false) {
+  message(form, text, { status });
+  return fail(status, { [codeSent ? 'verifyForm' : 'requestForm']: form, codeSent, email: form.data.email });
+}
 
-  const requestForm = await superValidate(zod(otpRequestSchema), { id: 'otp-request' });
-  const verifyForm = await superValidate(zod(otpVerifySchema), { id: 'otp-verify' });
-  return { requestForm, verifyForm };
+export const load: PageServerLoad = async ({ locals, url }) => {
+  if (!authConfig.otpEnabled) throw redirect(302, '/login');
+  if (locals.user) throw redirect(302, authRedirect(url));
+
+  const requestForm = await superValidate(zod4(otpRequestSchema), { id: 'otp-request' });
+  const verifyForm = await superValidate(zod4(otpVerifySchema), { id: 'otp-verify' });
+  return { requestForm, verifyForm, appName: authConfig.appName };
 };
 
 export const actions: Actions = {
   send: async (event) => {
     const { request } = event;
-    const form = await superValidate(request, zod(otpRequestSchema), { id: 'otp-request' });
+    const form = await superValidate(request, zod4(otpRequestSchema), { id: 'otp-request' });
+    if (!authConfig.otpEnabled || !await sendRequest.authorize(event)) {
+      return otpFailure(form, 'Code sign-in is disabled.', 403);
+    }
     const ctx = throttleContext(event);
     const block = await sendThrottle.check(ctx);
     if (block.blocked) {
-      return message(form, 'Too many attempts. Please try again later.', { status: 429 });
+      return otpFailure(form, 'Too many attempts. Please try again later.', 429);
     }
 
     if (!form.valid) {
@@ -3828,35 +4018,43 @@ export const actions: Actions = {
       return fail(400, { requestForm: form });
     }
 
-    await auth.sendOtp(form.data.email);
     await sendThrottle.hit(ctx);
+    const dto = sendRequest.passedValidation(form.data);
+    await event.locals.auth.sendOtp(dto.email);
 
-    return { requestForm: form, codeSent: true, email: form.data.email };
+    const verifyForm = await superValidate({ email: dto.email }, zod4(otpVerifySchema), { id: 'otp-verify', errors: false });
+    return { requestForm: form, verifyForm, codeSent: true, email: dto.email };
   },
 
   verify: async (event) => {
     const { request, locals } = event;
-    const form = await superValidate(request, zod(otpVerifySchema), { id: 'otp-verify' });
+    const form = await superValidate(request, zod4(otpVerifySchema), { id: 'otp-verify' });
+    const input = { ...form.data };
+    form.data.code = '';
+    if (!authConfig.otpEnabled || !await verifyRequest.authorize(event)) {
+      return otpFailure(form, 'Code sign-in is disabled.', 403, true);
+    }
     const ctx = throttleContext(event);
     const block = await verifyThrottle.check(ctx);
     if (block.blocked) {
-      return message(form, 'Too many attempts. Please try again later.', { status: 429 });
+      return otpFailure(form, 'Too many attempts. Please try again later.', 429, true);
     }
 
     if (!form.valid) {
       await verifyThrottle.hit(ctx);
-      return fail(400, { verifyForm: form });
+      return fail(400, { verifyForm: form, codeSent: true, email: form.data.email });
     }
 
-    const user = await auth.attemptOtp(form.data.email, form.data.code, locals.session);
+    const dto = verifyRequest.passedValidation(input);
+    const user = await locals.auth.attemptOtp(dto.email, dto.code, locals.session);
 
     if (!user) {
       await verifyThrottle.hit(ctx);
-      return message(form, 'Invalid or expired code. Please try again.', { status: 401 });
+      return otpFailure(form, 'Invalid or expired code. Please try again.', 401, true);
     }
 
     await verifyThrottle.clear(ctx);
-    throw redirect(302, '/dashboard');
+    throw redirect(303, authRedirect(event.url));
   },
 };
 `;
@@ -3865,36 +4063,54 @@ export const actions: Actions = {
 	static otpLoginPageSvelte(): string {
 		return `<script lang="ts">
   import { superForm } from 'sveltekit-superforms';
+  import { zod4Client } from 'sveltekit-superforms/adapters';
+  import { otpRequestSchema, otpVerifySchema } from '$lib/modules/auth/schemas';
   import { Button, Input, Label, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, Alert } from '@beeblock/svelar/ui';
-  import { page } from '$app/state';
 
-  let { data } = $props();
+  let { data, form: actionData } = $props();
 
   // Two-step form: request code, then verify code
-  let codeSent = $state(false);
-  let email = $state('');
+  // svelte-ignore state_referenced_locally
+  let codeSent = $state(actionData?.codeSent ?? false);
+  // svelte-ignore state_referenced_locally
+  let email = $state(actionData?.email ?? '');
 
   // svelte-ignore state_referenced_locally
-  const { form: requestForm, errors: requestErrors, enhance: requestEnhance, delayed: requestDelayed } = superForm(data.requestForm, {
+  const { form: requestForm, errors: requestErrors, enhance: requestEnhance, submitting: requestSubmitting, delayed: requestDelayed, message: requestMessage } = superForm(actionData?.requestForm ?? data.requestForm, {
+    validators: zod4Client(otpRequestSchema),
     onResult: ({ result }) => {
       if (result.type === 'success' && result.data?.codeSent) {
         codeSent = true;
         email = result.data.email;
+        $verifyForm.email = email;
       }
+    },
+    onError: () => {
+      $requestMessage = 'Unable to send a code right now. Please try again.';
     },
   });
 
   // svelte-ignore state_referenced_locally
-  const { form: verifyForm, errors: verifyErrors, enhance: verifyEnhance, delayed: verifyDelayed, message: verifyMessage } = superForm(data.verifyForm);
+  const { form: verifyForm, errors: verifyErrors, enhance: verifyEnhance, submitting: verifySubmitting, delayed: verifyDelayed, message: verifyMessage } = superForm(actionData?.verifyForm ?? data.verifyForm, {
+    validators: zod4Client(otpVerifySchema),
+    onUpdated: ({ form: updated }) => {
+      if (!updated.valid) $verifyForm.code = '';
+    },
+    onError: () => {
+      $verifyForm.code = '';
+      $verifyMessage = 'Unable to verify the code right now. Please try again.';
+    },
+  });
 </script>
 
 <svelte:head>
-  <title>Sign In with Code</title>
+  <title>Sign In with Code | {data.appName}</title>
 </svelte:head>
 
 <div class="flex items-center justify-center min-h-[calc(100vh-200px)]">
   <Card class="w-full max-w-md">
     <CardHeader>
+      <p class="text-sm font-medium break-words">{data.appName}</p>
       <CardTitle>Sign In with Code</CardTitle>
       <CardDescription>
         {#if codeSent}
@@ -3906,7 +4122,13 @@ export const actions: Actions = {
     </CardHeader>
 
     <CardContent class="space-y-4">
-      {#if $verifyMessage}
+      {#if !codeSent && $requestMessage}
+        <Alert variant="destructive">
+          <span class="text-sm">{$requestMessage}</span>
+        </Alert>
+      {/if}
+
+      {#if codeSent && $verifyMessage}
         <Alert variant="destructive">
           <span class="text-sm">{$verifyMessage}</span>
         </Alert>
@@ -3920,17 +4142,18 @@ export const actions: Actions = {
               id="email"
               name="email"
               type="email"
+              autocomplete="email"
               placeholder="you@example.com"
               bind:value={$requestForm.email}
               aria-invalid={$requestErrors.email ? 'true' : undefined}
-              disabled={$requestDelayed}
+              disabled={$requestSubmitting}
             />
             {#if $requestErrors.email}
               <p class="text-sm text-red-600">{$requestErrors.email[0]}</p>
             {/if}
           </div>
 
-          <Button type="submit" class="w-full" disabled={$requestDelayed}>
+          <Button type="submit" class="w-full" disabled={$requestSubmitting}>
             {$requestDelayed ? 'Sending...' : 'Send Code'}
           </Button>
         </form>
@@ -3945,12 +4168,13 @@ export const actions: Actions = {
               name="code"
               type="text"
               inputmode="numeric"
+              autocomplete="one-time-code"
               pattern="[0-9]*"
               maxlength={6}
               placeholder="000000"
               bind:value={$verifyForm.code}
               aria-invalid={$verifyErrors.code ? 'true' : undefined}
-              disabled={$verifyDelayed}
+              disabled={$verifySubmitting}
               class="text-center text-2xl tracking-[0.5em] font-mono"
             />
             {#if $verifyErrors.code}
@@ -3958,14 +4182,14 @@ export const actions: Actions = {
             {/if}
           </div>
 
-          <Button type="submit" class="w-full" disabled={$verifyDelayed}>
+          <Button type="submit" class="w-full" disabled={$verifySubmitting}>
             {$verifyDelayed ? 'Verifying...' : 'Verify & Sign In'}
           </Button>
 
           <button
             type="button"
             class="w-full text-sm text-muted-foreground hover:text-brand hover:underline"
-            onclick={() => { codeSent = false; }}
+            onclick={() => { codeSent = false; email = ''; $verifyForm.code = ''; $verifyMessage = undefined; }}
           >
             Use a different email
           </button>
@@ -3988,23 +4212,23 @@ export const actions: Actions = {
 
 	static verifyEmailPageServer(): string {
 		return `import type { PageServerLoad } from './$types';
-import { auth } from '../../app.js';
+import { authConfig } from '../../app.js';
 
-export const load: PageServerLoad = async ({ url }) => {
+export const load: PageServerLoad = async ({ url, locals }) => {
   const token = url.searchParams.get('token');
   const id = url.searchParams.get('id');
 
   if (!token || !id) {
-    return { success: false, message: 'Invalid verification link.' };
+    return { success: false, message: 'Invalid verification link.', appName: authConfig.appName };
   }
 
-  const success = await auth.verifyEmail(token, id);
+  const success = await locals.auth.verifyEmail(token, id);
 
   if (success) {
-    return { success: true, message: 'Your email has been verified!' };
+    return { success: true, message: 'Your email has been verified!', appName: authConfig.appName };
   }
 
-  return { success: false, message: 'Invalid or expired verification link. Please request a new one.' };
+  return { success: false, message: 'Invalid or expired verification link. Please request a new one.', appName: authConfig.appName };
 };
 `;
 	}
@@ -4017,12 +4241,13 @@ export const load: PageServerLoad = async ({ url }) => {
 </script>
 
 <svelte:head>
-  <title>Verify Email</title>
+  <title>Verify Email | {data.appName}</title>
 </svelte:head>
 
 <div class="flex items-center justify-center min-h-[calc(100vh-200px)]">
   <Card class="w-full max-w-md">
     <CardHeader>
+      <p class="text-sm font-medium break-words">{data.appName}</p>
       <CardTitle>Email Verification</CardTitle>
     </CardHeader>
 
@@ -4072,7 +4297,26 @@ export const load: PageServerLoad = async ({ url }) => {
 	}
 
 	static apiKeyActions(): string {
-		return "import { Action } from '@beeblock/svelar/actions';\nimport { ApiKeys } from '@beeblock/svelar/api-keys';\nimport type { CreateApiKeyDto, RevokeApiKeyDto } from './ApiKeyDtos.js';\n\nexport class CreateApiKeyAction extends Action<{ userId: number; dto: CreateApiKeyDto }, { plainTextKey: string; record: any }> {\n  async execute(input: { userId: number; dto: CreateApiKeyDto }): Promise<{ plainTextKey: string; record: any }> {\n    return ApiKeys.create({\n      name: input.dto.name,\n      userId: input.userId,\n      permissions: input.dto.permissions,\n    });\n  }\n}\n\nexport class RevokeApiKeyAction extends Action<RevokeApiKeyDto, void> {\n  async execute(dto: RevokeApiKeyDto): Promise<void> {\n    await ApiKeys.revoke(dto.keyId);\n  }\n}\n";
+		return `import { Action } from '@beeblock/svelar/actions';
+import { ApiKeys, type ApiKeyRecord } from '@beeblock/svelar/api-keys';
+import type { CreateApiKeyDto, RevokeApiKeyDto } from './ApiKeyDtos.js';
+
+export class CreateApiKeyAction extends Action<{ userId: string | number; dto: CreateApiKeyDto }, { plainTextKey: string; record: ApiKeyRecord }> {
+  async execute(input: { userId: string | number; dto: CreateApiKeyDto }): Promise<{ plainTextKey: string; record: ApiKeyRecord }> {
+    return ApiKeys.create({
+      name: input.dto.name,
+      userId: input.userId,
+      permissions: input.dto.permissions,
+    });
+  }
+}
+
+export class RevokeApiKeyAction extends Action<{ userId: string | number; dto: RevokeApiKeyDto }, boolean> {
+  async execute(input: { userId: string | number; dto: RevokeApiKeyDto }): Promise<boolean> {
+    return ApiKeys.revokeForUser(input.dto.keyId, input.userId);
+  }
+}
+`;
 	}
 
 	static teamSchema(validation: ValidationProvider = 'zod'): string {
@@ -4162,7 +4406,7 @@ export const load = guardAuth();
     {/if}
   </aside>
 
-  <div class="flex-1 p-6 md:p-8">
+  <div class="flex-1 min-w-0 p-6 md:p-8">
     {@render children()}
   </div>
 </div>
@@ -4265,17 +4509,308 @@ export const load: PageServerLoad = async ({ locals }) => {
 	}
 
 	static apiKeysPageServer(): string {
-		return "import type { Actions, PageServerLoad } from './$types';\nimport { fail } from '@sveltejs/kit';\nimport { superValidate } from 'sveltekit-superforms';\nimport { zod } from 'sveltekit-superforms/adapters';\nimport { ApiKeys } from '@beeblock/svelar/api-keys';\nimport { CreateApiKeyAction, RevokeApiKeyAction } from '$lib/modules/api-keys/ApiKeyActions.js';\nimport { CreateApiKeyRequest, RevokeApiKeyRequest } from '$lib/modules/api-keys/ApiKeyRequests.js';\n\nconst createApiKeyRequest = new CreateApiKeyRequest();\nconst revokeApiKeyRequest = new RevokeApiKeyRequest();\nconst createApiKeyAction = new CreateApiKeyAction();\nconst revokeApiKeyAction = new RevokeApiKeyAction();\n\nasync function authorize(dto: { authorize(event: any): boolean | Promise<boolean> }, event: any) {\n  if (!await dto.authorize(event)) {\n    return fail(403, { message: 'This action is unauthorized.' });\n  }\n  return null;\n}\n\nexport const load: PageServerLoad = async ({ locals }) => {\n  const user = locals.user as any;\n  let keys: any[] = [];\n\n  try {\n    keys = await ApiKeys.listForUser(user.id);\n  } catch {}\n\n  return {\n    user: { id: user.id, name: user.name, email: user.email },\n    createKeyForm: await superValidate({ permissions: 'read' }, zod(createApiKeyRequest.rules()), { id: 'create-api-key' }),\n    revokeKeyForm: await superValidate(zod(revokeApiKeyRequest.rules()), { id: 'revoke-api-key' }),\n    apiKeys: keys.map((k: any) => ({\n      id: k.id,\n      name: k.name,\n      prefix: k.prefix,\n      permissions: k.permissions ?? [],\n      lastUsedAt: k.lastUsedAt ?? null,\n      createdAt: k.createdAt,\n    })),\n  };\n};\n\nexport const actions: Actions = {\n  create: async (event) => {\n    const unauthorized = await authorize(createApiKeyRequest, event);\n    if (unauthorized) return unauthorized;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod(createApiKeyRequest.rules()), { id: 'create-api-key' });\n    if (!validated.valid) return fail(422, { createKeyForm: validated });\n    const dto = createApiKeyRequest.passedValidation(validated.data);\n    try {\n      const { plainTextKey, record } = await createApiKeyAction.run({ userId: (event.locals.user as any).id, dto });\n      return { success: true, createKeyForm: validated, plainTextKey, keyId: record.id };\n    } catch (err: any) {\n      return fail(500, { error: err.message || 'Failed to create key' });\n    }\n  },\n\n  revoke: async (event) => {\n    const unauthorized = await authorize(revokeApiKeyRequest, event);\n    if (unauthorized) return unauthorized;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod(revokeApiKeyRequest.rules()), { id: 'revoke-api-key' });\n    if (!validated.valid) return fail(422, { revokeKeyForm: validated });\n    try {\n      await revokeApiKeyAction.run(revokeApiKeyRequest.passedValidation(validated.data));\n      return { success: true, revoked: true };\n    } catch (err: any) {\n      return fail(500, { error: err.message || 'Failed to revoke key' });\n    }\n  },\n};\n";
+		return `import type { Actions, PageServerLoad } from './$types';
+import { fail, redirect } from '@sveltejs/kit';
+import { superValidate } from 'sveltekit-superforms';
+import { zod4 } from 'sveltekit-superforms/adapters';
+import { ApiKeys, type ApiKeyRecord } from '@beeblock/svelar/api-keys';
+import { CreateApiKeyAction, RevokeApiKeyAction } from '$lib/modules/api-keys/ApiKeyActions.js';
+import { CreateApiKeyRequest, RevokeApiKeyRequest } from '$lib/modules/api-keys/ApiKeyRequests.js';
+
+const createApiKeyRequest = new CreateApiKeyRequest();
+const revokeApiKeyRequest = new RevokeApiKeyRequest();
+const createApiKeyAction = new CreateApiKeyAction();
+const revokeApiKeyAction = new RevokeApiKeyAction();
+
+export const load: PageServerLoad = async ({ locals }) => {
+  const user = locals.user;
+  if (!user) throw redirect(302, '/login');
+  let keys: ApiKeyRecord[] = [];
+  let loadError: string | null = null;
+
+  try {
+    keys = await ApiKeys.listForUser(user.id);
+  } catch {
+    loadError = 'API keys are temporarily unavailable. Please try again.';
+  }
+
+  return {
+    user: { id: user.id, name: user.name, email: user.email },
+    loadError,
+    createKeyForm: await superValidate({ permissions: 'read' }, zod4(createApiKeyRequest.rules()), { id: 'create-api-key', errors: false }),
+    revokeKeyForm: await superValidate(zod4(revokeApiKeyRequest.rules()), { id: 'revoke-api-key', errors: false }),
+    apiKeys: keys.map((key) => ({
+      id: key.id,
+      name: key.name,
+      prefix: key.prefix,
+      permissions: key.permissions ?? [],
+      lastUsedAt: key.lastUsedAt ?? null,
+      createdAt: key.createdAt,
+    })),
+  };
+};
+
+export const actions: Actions = {
+  create: async (event) => {
+    const user = event.locals.user;
+    const validated = await superValidate(event.request, zod4(createApiKeyRequest.rules()), { id: 'create-api-key' });
+    if (!user || !await createApiKeyRequest.authorize(event)) {
+      validated.message = 'This action is unauthorized.';
+      return fail(403, { data: null, meta: { message: validated.message, form: validated }, createKeyForm: validated });
+    }
+    if (!validated.valid) return fail(422, { data: null, meta: { message: null, form: validated }, createKeyForm: validated });
+    const dto = createApiKeyRequest.passedValidation(validated.data);
+    try {
+      const { plainTextKey, record } = await createApiKeyAction.run({ userId: user.id, dto });
+      return { data: { plainTextKey, keyId: record.id }, meta: { message: 'API key created.', form: validated }, createKeyForm: validated };
+    } catch {
+      validated.message = 'Unable to create an API key right now. Please try again.';
+      return fail(503, { data: null, meta: { message: validated.message, form: validated }, createKeyForm: validated });
+    }
+  },
+
+  revoke: async (event) => {
+    const user = event.locals.user;
+    const validated = await superValidate(event.request, zod4(revokeApiKeyRequest.rules()), { id: 'revoke-api-key' });
+    if (!user || !await revokeApiKeyRequest.authorize(event)) {
+      validated.message = 'This action is unauthorized.';
+      return fail(403, { data: null, meta: { message: validated.message, form: validated }, revokeKeyForm: validated });
+    }
+    if (!validated.valid) return fail(422, { data: null, meta: { message: null, form: validated }, revokeKeyForm: validated });
+    const dto = revokeApiKeyRequest.passedValidation(validated.data);
+    try {
+      const revoked = await revokeApiKeyAction.run({ userId: user.id, dto });
+      if (!revoked) {
+        validated.message = 'This API key cannot be revoked.';
+        return fail(403, { data: null, meta: { message: validated.message, form: validated }, revokeKeyForm: validated });
+      }
+      return { data: { revoked: true, keyId: dto.keyId }, meta: { message: 'API key revoked.', form: validated }, revokeKeyForm: validated };
+    } catch {
+      validated.message = 'Unable to revoke this API key right now. Please try again.';
+      return fail(503, { data: null, meta: { message: validated.message, form: validated }, revokeKeyForm: validated });
+    }
+  },
+};
+`;
 	}
 
 
 	static apiKeysPageSvelte(): string {
-		return "<script lang=\"ts\">\n  import { enhance } from '$app/forms';\n  import { superForm } from 'sveltekit-superforms';\n  import { Button, Badge, Card, CardHeader, CardTitle, CardContent, Input, Label, Alert } from '@beeblock/svelar/ui';\n\n  let { data, form: actionData } = $props();\n  let apiKeys = $state<any[]>([]);\n  let showCreateForm = $state(false);\n  let generatedKey = $state('');\n  let showCopyAlert = $state(false);\n\n  // svelte-ignore state_referenced_locally\n  const {\n    form: createKeyForm,\n    errors: createKeyErrors,\n    enhance: enhanceCreateKey,\n    delayed: creatingKey,\n  } = superForm(data.createKeyForm, {\n    resetForm: true,\n  });\n\n  $effect(() => {\n    apiKeys = data.apiKeys;\n  });\n\n  $effect(() => {\n    if (actionData?.plainTextKey) {\n      generatedKey = actionData.plainTextKey;\n      showCreateForm = false;\n    }\n  });\n\n  function copyToClipboard(text: string) {\n    navigator.clipboard.writeText(text);\n    showCopyAlert = true;\n    setTimeout(() => { showCopyAlert = false; }, 2000);\n  }\n</script>\n\n<svelte:head>\n  <title>API Keys</title>\n</svelte:head>\n\n<div class=\"space-y-8\">\n  <div>\n    <h1 class=\"text-3xl font-bold text-foreground\">API Keys</h1>\n    <p class=\"text-muted-foreground mt-1\">Manage your API keys for programmatic access</p>\n  </div>\n\n  {#if showCopyAlert}\n    <Alert variant=\"default\"><span class=\"text-sm\">Copied to clipboard!</span></Alert>\n  {/if}\n\n  {#if actionData?.error}\n    <Alert variant=\"destructive\"><span class=\"text-sm\">{actionData.error}</span></Alert>\n  {/if}\n\n  {#if generatedKey}\n    <Alert variant=\"default\">\n      <div class=\"space-y-2\">\n        <p class=\"font-medium\">API Key Created</p>\n        <p class=\"text-sm\">Copy this key now. You won't be able to see it again.</p>\n        <div class=\"flex gap-2 mt-3\">\n          <code class=\"flex-1 bg-muted px-3 py-2 rounded text-sm font-mono break-all\">{generatedKey}</code>\n          <Button size=\"sm\" variant=\"outline\" onclick={() => copyToClipboard(generatedKey)}>Copy</Button>\n        </div>\n      </div>\n    </Alert>\n  {/if}\n\n  {#if showCreateForm}\n    <Card>\n      <CardHeader><CardTitle>Create New API Key</CardTitle></CardHeader>\n      <CardContent>\n        <form method=\"POST\" action=\"?/create\" use:enhanceCreateKey novalidate class=\"space-y-4\">\n          <div class=\"space-y-2\">\n            <Label for=\"keyName\">Key Name</Label>\n            <Input\n              id=\"keyName\"\n              name=\"name\"\n              placeholder=\"My API Key\"\n              bind:value={$createKeyForm.name}\n              aria-invalid={$createKeyErrors.name ? 'true' : undefined}\n              disabled={$creatingKey}\n            />\n            {#if $createKeyErrors.name}<p class=\"text-xs text-red-600\">{$createKeyErrors.name[0]}</p>{/if}\n          </div>\n          <div class=\"space-y-2\">\n            <Label for=\"permissions\">Permissions</Label>\n            <Input\n              id=\"permissions\"\n              name=\"permissions\"\n              placeholder=\"read,write\"\n              bind:value={$createKeyForm.permissions}\n              aria-invalid={$createKeyErrors.permissions ? 'true' : undefined}\n              disabled={$creatingKey}\n            />\n            <p class=\"text-xs text-muted-foreground\">Comma-separated: read, write, admin</p>\n            {#if $createKeyErrors.permissions}<p class=\"text-xs text-red-600\">{$createKeyErrors.permissions[0]}</p>{/if}\n          </div>\n          <div class=\"flex gap-2\">\n            <Button type=\"submit\" disabled={$creatingKey}>{$creatingKey ? 'Creating...' : 'Create Key'}</Button>\n            <Button type=\"button\" variant=\"outline\" disabled={$creatingKey} onclick={() => { showCreateForm = false; }}>Cancel</Button>\n          </div>\n        </form>\n      </CardContent>\n    </Card>\n  {:else}\n    <Button onclick={() => (showCreateForm = true)}>Create New Key</Button>\n  {/if}\n\n  <div class=\"space-y-4\">\n    <h2 class=\"text-xl font-bold text-foreground\">Your Keys ({apiKeys.length})</h2>\n\n    {#if apiKeys.length === 0}\n      <Card>\n        <CardContent class=\"pt-8 text-center\">\n          <p class=\"text-muted-foreground text-sm\">No API keys yet. Create one to get started.</p>\n        </CardContent>\n      </Card>\n    {:else}\n      <div class=\"space-y-3\">\n        {#each apiKeys as key (key.id)}\n          <Card>\n            <CardContent class=\"pt-6\">\n              <div class=\"flex items-start justify-between gap-4\">\n                <div class=\"flex-1\">\n                  <div class=\"flex items-center gap-2 mb-2\">\n                    <h3 class=\"font-semibold text-foreground\">{key.name}</h3>\n                    <Badge variant=\"default\">Active</Badge>\n                  </div>\n                  <p class=\"font-mono text-xs bg-muted px-2 py-1 rounded inline-block mb-2\">{key.prefix}........</p>\n                  <div class=\"flex gap-4 text-xs text-muted-foreground\">\n                    <span>Created {new Date(key.createdAt).toLocaleDateString()}</span>\n                    <span>{key.lastUsedAt ? 'Last used ' + new Date(key.lastUsedAt).toLocaleDateString() : 'Never used'}</span>\n                  </div>\n                  {#if key.permissions.length > 0}\n                    <div class=\"flex gap-1 mt-2\">\n                      {#each key.permissions as perm}\n                        <Badge variant=\"secondary\" class=\"text-xs\">{perm}</Badge>\n                      {/each}\n                    </div>\n                  {/if}\n                </div>\n                <form method=\"POST\" action=\"?/revoke\" use:enhance novalidate>\n                  <input type=\"hidden\" name=\"keyId\" value={key.id} />\n                  <Button size=\"sm\" variant=\"destructive\" type=\"submit\"\n                    onclick={(e) => { if (!confirm('Revoke key \"' + key.name + '\"?')) e.preventDefault(); }}>\n                    Revoke\n                  </Button>\n                </form>\n              </div>\n            </CardContent>\n          </Card>\n        {/each}\n      </div>\n    {/if}\n  </div>\n\n  <Card>\n    <CardHeader><CardTitle>Usage</CardTitle></CardHeader>\n    <CardContent>\n      <h4 class=\"font-medium text-foreground mb-2\">Include your API key in the Authorization header</h4>\n      <code class=\"block bg-muted px-4 py-3 rounded text-sm font-mono overflow-x-auto\">\n        curl -H \"Authorization: Bearer sk_your_key_here\" https://your-app.com/api/v1/data\n      </code>\n    </CardContent>\n  </Card>\n</div>\n";
+		return `<script lang="ts">
+  import type { PageProps } from './$types';
+  import { superForm } from 'sveltekit-superforms';
+  import { zod4Client } from 'sveltekit-superforms/adapters';
+  import { createApiKeySchema, revokeApiKeySchema } from '$lib/modules/api-keys/api-key.schema.js';
+  import { Button, Badge, Card, CardHeader, CardTitle, CardContent, Input, Label, Alert } from '@beeblock/svelar/ui';
+
+  let { data, form: actionData }: PageProps = $props();
+  let apiKeys = $derived(data.apiKeys);
+  // svelte-ignore state_referenced_locally
+  let showCreateForm = $state(Boolean(actionData?.createKeyForm && actionData.data === null));
+  // svelte-ignore state_referenced_locally
+  let generatedKey = $state(actionData?.data && 'plainTextKey' in actionData.data ? actionData.data.plainTextKey : '');
+  // svelte-ignore state_referenced_locally
+  let feedback = $state(actionData?.meta.message ?? '');
+  // svelte-ignore state_referenced_locally
+  let failed = $state(actionData?.data === null);
+  let showCopyAlert = $state(false);
+
+  // svelte-ignore state_referenced_locally
+  const {
+    form: createKeyForm,
+    errors: createKeyErrors,
+    enhance: enhanceCreateKey,
+    submitting: creatingKey,
+  } = superForm(actionData?.createKeyForm ?? data.createKeyForm, {
+    validators: zod4Client(createApiKeySchema),
+    resetForm: true,
+    onResult: ({ result }) => {
+      if (result.type === 'success' || result.type === 'failure') {
+        feedback = result.data?.meta?.message ?? '';
+        failed = result.type === 'failure';
+        if (result.type === 'success' && typeof result.data?.data?.plainTextKey === 'string') {
+          generatedKey = result.data.data.plainTextKey;
+          showCreateForm = false;
+        }
+      }
+    },
+    onError: () => {
+      feedback = 'Unable to create an API key right now. Please try again.';
+      failed = true;
+    },
+  });
+
+  $effect(() => {
+    if (actionData?.data && 'plainTextKey' in actionData.data) {
+      generatedKey = actionData.data.plainTextKey;
+      showCreateForm = false;
+    }
+  });
+
+  // svelte-ignore state_referenced_locally
+  const { form: revokeKeyForm, errors: revokeKeyErrors, enhance: enhanceRevoke, submitting: revoking } = superForm(actionData?.revokeKeyForm ?? data.revokeKeyForm, {
+    validators: zod4Client(revokeApiKeySchema),
+    onSubmit: ({ formData }) => {
+      $revokeKeyForm.keyId = String(formData.get('keyId') ?? '');
+    },
+    onResult: ({ result }) => {
+      if (result.type === 'success' || result.type === 'failure') {
+        feedback = result.data?.meta?.message ?? '';
+        failed = result.type === 'failure';
+      }
+    },
+    onError: () => {
+      feedback = 'Unable to revoke this API key right now. Please try again.';
+      failed = true;
+    },
+  });
+
+  function copyToClipboard(text: string) {
+    navigator.clipboard.writeText(text);
+    showCopyAlert = true;
+    setTimeout(() => { showCopyAlert = false; }, 2000);
+  }
+</script>
+
+<svelte:head>
+  <title>API Keys</title>
+</svelte:head>
+
+<div class="space-y-8">
+  <div>
+    <h1 class="text-3xl font-bold text-foreground">API Keys</h1>
+    <p class="text-muted-foreground mt-1">Manage your API keys for programmatic access</p>
+  </div>
+
+  {#if showCopyAlert}
+    <Alert variant="default"><span class="text-sm">Copied to clipboard!</span></Alert>
+  {/if}
+
+  {#if feedback}
+    <Alert variant={failed ? 'destructive' : 'default'}><span class="text-sm" role="status">{feedback}</span></Alert>
+  {/if}
+  {#if $revokeKeyErrors.keyId}
+    <p class="text-xs text-red-600">{$revokeKeyErrors.keyId[0]}</p>
+  {/if}
+
+  {#if generatedKey}
+    <Alert variant="default">
+      <div class="space-y-2">
+        <p class="font-medium">API Key Created</p>
+        <p class="text-sm">Copy this key now. You won't be able to see it again.</p>
+        <div class="flex gap-2 mt-3">
+          <code class="flex-1 bg-muted px-3 py-2 rounded text-sm font-mono break-all">{generatedKey}</code>
+          <Button size="sm" variant="outline" onclick={() => copyToClipboard(generatedKey)}>Copy</Button>
+        </div>
+      </div>
+    </Alert>
+  {/if}
+
+  {#if showCreateForm}
+    <Card>
+      <CardHeader><CardTitle>Create New API Key</CardTitle></CardHeader>
+      <CardContent>
+        <form method="POST" action="?/create" use:enhanceCreateKey class="space-y-4">
+          <div class="space-y-2">
+            <Label for="keyName">Key Name</Label>
+            <Input
+              id="keyName"
+              name="name"
+              placeholder="My API Key"
+              bind:value={$createKeyForm.name}
+              aria-invalid={$createKeyErrors.name ? 'true' : undefined}
+              disabled={$creatingKey}
+            />
+            {#if $createKeyErrors.name}<p class="text-xs text-red-600">{$createKeyErrors.name[0]}</p>{/if}
+          </div>
+          <div class="space-y-2">
+            <Label for="permissions">Permissions</Label>
+            <Input
+              id="permissions"
+              name="permissions"
+              placeholder="read,write"
+              bind:value={$createKeyForm.permissions}
+              aria-invalid={$createKeyErrors.permissions ? 'true' : undefined}
+              disabled={$creatingKey}
+            />
+            <p class="text-xs text-muted-foreground">Comma-separated: read, write, admin</p>
+            {#if $createKeyErrors.permissions}<p class="text-xs text-red-600">{$createKeyErrors.permissions[0]}</p>{/if}
+          </div>
+          <div class="flex gap-2">
+            <Button type="submit" disabled={$creatingKey}>{$creatingKey ? 'Creating...' : 'Create Key'}</Button>
+            <Button type="button" variant="outline" disabled={$creatingKey} onclick={() => { showCreateForm = false; }}>Cancel</Button>
+          </div>
+        </form>
+      </CardContent>
+    </Card>
+  {:else}
+    <Button onclick={() => (showCreateForm = true)}>Create New Key</Button>
+  {/if}
+
+  <div class="space-y-4">
+    <h2 class="text-xl font-bold text-foreground">Your Keys ({apiKeys.length})</h2>
+
+    {#if apiKeys.length === 0}
+      <Card>
+        <CardContent class="pt-8 text-center">
+          <p class="text-muted-foreground text-sm">{data.loadError ?? 'No API keys yet. Create one to get started.'}</p>
+        </CardContent>
+      </Card>
+    {:else}
+      <div class="space-y-3">
+        {#each apiKeys as key (key.id)}
+          <Card>
+            <CardContent class="pt-6">
+              <div class="flex items-start justify-between gap-4">
+                <div class="flex-1">
+                  <div class="flex items-center gap-2 mb-2">
+                    <h3 class="font-semibold text-foreground">{key.name}</h3>
+                    <Badge variant="default">Active</Badge>
+                  </div>
+                  <p class="font-mono text-xs bg-muted px-2 py-1 rounded inline-block mb-2">{key.prefix}........</p>
+                  <div class="flex gap-4 text-xs text-muted-foreground">
+                    <span>Created {new Date(key.createdAt).toLocaleDateString()}</span>
+                    <span>{key.lastUsedAt ? 'Last used ' + new Date(key.lastUsedAt).toLocaleDateString() : 'Never used'}</span>
+                  </div>
+                  {#if key.permissions.length > 0}
+                    <div class="flex gap-1 mt-2">
+                      {#each key.permissions as perm}
+                        <Badge variant="secondary" class="text-xs">{perm}</Badge>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+                <form method="POST" action="?/revoke" use:enhanceRevoke>
+                  <input type="hidden" name="keyId" value={key.id} />
+                  <Button size="sm" variant="destructive" type="submit" disabled={$revoking}
+                    onclick={(e) => { if (!confirm('Revoke key "' + key.name + '"?')) e.preventDefault(); }}>
+                    {$revoking ? 'Revoking...' : 'Revoke'}
+                  </Button>
+                </form>
+              </div>
+            </CardContent>
+          </Card>
+        {/each}
+      </div>
+    {/if}
+  </div>
+
+  <Card>
+    <CardHeader><CardTitle>Usage</CardTitle></CardHeader>
+    <CardContent>
+      <h4 class="font-medium text-foreground mb-2">Include your API key in the Authorization header</h4>
+      <code class="block bg-muted px-4 py-3 rounded text-sm font-mono overflow-x-auto">
+        curl -H "Authorization: Bearer sk_your_key_here" https://your-app.com/api/v1/data
+      </code>
+    </CardContent>
+  </Card>
+</div>
+`;
 	}
 
 
 	static teamPageServer(): string {
-		return "import type { Actions, PageServerLoad } from './$types';\nimport { fail } from '@sveltejs/kit';\nimport { superValidate } from 'sveltekit-superforms';\nimport { zod } from 'sveltekit-superforms/adapters';\nimport { Teams } from '@beeblock/svelar/teams';\nimport {\n  CancelTeamInvitationAction,\n  InviteTeamMemberAction,\n  RemoveTeamMemberAction,\n  UpdateTeamAction,\n  UpdateTeamMemberRoleAction,\n} from '$lib/modules/team/TeamActions.js';\nimport {\n  CancelTeamInvitationRequest,\n  InviteTeamMemberRequest,\n  RemoveTeamMemberRequest,\n  UpdateTeamMemberRoleRequest,\n  UpdateTeamRequest,\n} from '$lib/modules/team/TeamRequests.js';\n\nconst inviteTeamMemberRequest = new InviteTeamMemberRequest();\nconst updateTeamRequest = new UpdateTeamRequest();\nconst updateTeamMemberRoleRequest = new UpdateTeamMemberRoleRequest();\nconst removeTeamMemberRequest = new RemoveTeamMemberRequest();\nconst cancelTeamInvitationRequest = new CancelTeamInvitationRequest();\nconst inviteTeamMemberAction = new InviteTeamMemberAction();\nconst updateTeamAction = new UpdateTeamAction();\nconst updateTeamMemberRoleAction = new UpdateTeamMemberRoleAction();\nconst removeTeamMemberAction = new RemoveTeamMemberAction();\nconst cancelTeamInvitationAction = new CancelTeamInvitationAction();\n\nasync function authorize(dto: { authorize(event: any): boolean | Promise<boolean> }, event: any) {\n  if (!await dto.authorize(event)) {\n    return fail(403, { message: 'This action is unauthorized.' });\n  }\n  return null;\n}\n\nexport const load: PageServerLoad = async ({ locals }) => {\n  const user = locals.user as any;\n\n  let teams: any[] = [];\n  try {\n    teams = await Teams.getUserTeams(user.id);\n  } catch {}\n\n  if (teams.length === 0) {\n    try {\n      const team = await Teams.create({\n        name: user.name + \"'s Team\",\n        ownerId: user.id,\n        personalTeam: true,\n      });\n      teams = [team];\n    } catch {}\n  }\n\n  const currentTeam = teams[0] ?? null;\n  let members: any[] = [];\n  let invitations: any[] = [];\n\n  if (currentTeam) {\n    try { members = await Teams.getMembers(currentTeam.id); } catch {}\n    try { invitations = await Teams.getPendingInvitations(currentTeam.id); } catch {}\n  }\n\n  return {\n    user: { id: user.id, name: user.name, email: user.email },\n    team: currentTeam ? { id: currentTeam.id, name: currentTeam.name, slug: currentTeam.slug } : null,\n    members: members.map((m: any) => ({ id: m.id, userId: m.userId, role: m.role, joinedAt: m.joinedAt })),\n    invitations: invitations.map((i: any) => ({ id: i.id, email: i.email, role: i.role, createdAt: i.createdAt, expiresAt: i.expiresAt })),\n    inviteForm: await superValidate({ teamId: currentTeam?.id ?? '', role: 'member' }, zod(inviteTeamMemberRequest.rules()), { id: 'invite-team-member' }),\n    updateTeamForm: await superValidate({ teamId: currentTeam?.id ?? '', name: currentTeam?.name ?? '' }, zod(updateTeamRequest.rules()), { id: 'update-team' }),\n    updateRoleForm: await superValidate(zod(updateTeamMemberRoleRequest.rules()), { id: 'update-team-role' }),\n    removeMemberForm: await superValidate(zod(removeTeamMemberRequest.rules()), { id: 'remove-team-member' }),\n    cancelInvitationForm: await superValidate(zod(cancelTeamInvitationRequest.rules()), { id: 'cancel-team-invitation' }),\n  };\n};\n\nexport const actions: Actions = {\n  invite: async (event) => {\n    const unauthorized = await authorize(inviteTeamMemberRequest, event);\n    if (unauthorized) return unauthorized;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod(inviteTeamMemberRequest.rules()), { id: 'invite-team-member' });\n    if (!validated.valid) return fail(422, { inviteForm: validated });\n    const dto = inviteTeamMemberRequest.passedValidation(validated.data);\n    try {\n      await inviteTeamMemberAction.run(dto);\n      return { success: true, inviteForm: validated, invited: dto.email };\n    } catch (err: any) {\n      return fail(500, { error: err.message || 'Failed to send invitation' });\n    }\n  },\n\n  updateRole: async (event) => {\n    const unauthorized = await authorize(updateTeamMemberRoleRequest, event);\n    if (unauthorized) return unauthorized;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod(updateTeamMemberRoleRequest.rules()), { id: 'update-team-role' });\n    if (!validated.valid) return fail(422, { updateRoleForm: validated });\n    try {\n      await updateTeamMemberRoleAction.run(updateTeamMemberRoleRequest.passedValidation(validated.data));\n      return { success: true };\n    } catch (err: any) {\n      return fail(500, { error: err.message || 'Failed to update role' });\n    }\n  },\n\n  removeMember: async (event) => {\n    const unauthorized = await authorize(removeTeamMemberRequest, event);\n    if (unauthorized) return unauthorized;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod(removeTeamMemberRequest.rules()), { id: 'remove-team-member' });\n    if (!validated.valid) return fail(422, { removeMemberForm: validated });\n    try {\n      await removeTeamMemberAction.run(removeTeamMemberRequest.passedValidation(validated.data));\n      return { success: true, removed: true };\n    } catch (err: any) {\n      return fail(500, { error: err.message || 'Failed to remove member' });\n    }\n  },\n\n  cancelInvitation: async (event) => {\n    const unauthorized = await authorize(cancelTeamInvitationRequest, event);\n    if (unauthorized) return unauthorized;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod(cancelTeamInvitationRequest.rules()), { id: 'cancel-team-invitation' });\n    if (!validated.valid) return fail(422, { cancelInvitationForm: validated });\n    try {\n      await cancelTeamInvitationAction.run(cancelTeamInvitationRequest.passedValidation(validated.data));\n      return { success: true, cancelled: true };\n    } catch (err: any) {\n      return fail(500, { error: err.message || 'Failed to cancel invitation' });\n    }\n  },\n\n  updateTeam: async (event) => {\n    const unauthorized = await authorize(updateTeamRequest, event);\n    if (unauthorized) return unauthorized;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod(updateTeamRequest.rules()), { id: 'update-team' });\n    if (!validated.valid) return fail(422, { updateTeamForm: validated });\n    try {\n      await updateTeamAction.run(updateTeamRequest.passedValidation(validated.data));\n      return { success: true, updateTeamForm: validated, updated: true };\n    } catch (err: any) {\n      return fail(500, { error: err.message || 'Failed to update team' });\n    }\n  },\n};\n";
+		return "import type { Actions, PageServerLoad } from './$types';\nimport { fail } from '@sveltejs/kit';\nimport { superValidate } from 'sveltekit-superforms';\nimport { zod4 } from 'sveltekit-superforms/adapters';\nimport { Teams } from '@beeblock/svelar/teams';\nimport {\n  CancelTeamInvitationAction,\n  InviteTeamMemberAction,\n  RemoveTeamMemberAction,\n  UpdateTeamAction,\n  UpdateTeamMemberRoleAction,\n} from '$lib/modules/team/TeamActions.js';\nimport {\n  CancelTeamInvitationRequest,\n  InviteTeamMemberRequest,\n  RemoveTeamMemberRequest,\n  UpdateTeamMemberRoleRequest,\n  UpdateTeamRequest,\n} from '$lib/modules/team/TeamRequests.js';\n\nconst inviteTeamMemberRequest = new InviteTeamMemberRequest();\nconst updateTeamRequest = new UpdateTeamRequest();\nconst updateTeamMemberRoleRequest = new UpdateTeamMemberRoleRequest();\nconst removeTeamMemberRequest = new RemoveTeamMemberRequest();\nconst cancelTeamInvitationRequest = new CancelTeamInvitationRequest();\nconst inviteTeamMemberAction = new InviteTeamMemberAction();\nconst updateTeamAction = new UpdateTeamAction();\nconst updateTeamMemberRoleAction = new UpdateTeamMemberRoleAction();\nconst removeTeamMemberAction = new RemoveTeamMemberAction();\nconst cancelTeamInvitationAction = new CancelTeamInvitationAction();\n\nasync function authorize(dto: { authorize(event: any): boolean | Promise<boolean> }, event: any) {\n  if (!await dto.authorize(event)) {\n    return fail(403, { message: 'This action is unauthorized.' });\n  }\n  return null;\n}\n\nexport const load: PageServerLoad = async ({ locals }) => {\n  const user = locals.user as any;\n\n  let teams: any[] = [];\n  try {\n    teams = await Teams.getUserTeams(user.id);\n  } catch {}\n\n  if (teams.length === 0) {\n    try {\n      const team = await Teams.create({\n        name: user.name + \"'s Team\",\n        ownerId: user.id,\n        personalTeam: true,\n      });\n      teams = [team];\n    } catch {}\n  }\n\n  const currentTeam = teams[0] ?? null;\n  let members: any[] = [];\n  let invitations: any[] = [];\n\n  if (currentTeam) {\n    try { members = await Teams.getMembers(currentTeam.id); } catch {}\n    try { invitations = await Teams.getPendingInvitations(currentTeam.id); } catch {}\n  }\n\n  return {\n    user: { id: user.id, name: user.name, email: user.email },\n    team: currentTeam ? { id: currentTeam.id, name: currentTeam.name, slug: currentTeam.slug } : null,\n    members: members.map((m: any) => ({ id: m.id, userId: m.userId, role: m.role, joinedAt: m.joinedAt })),\n    invitations: invitations.map((i: any) => ({ id: i.id, email: i.email, role: i.role, createdAt: i.createdAt, expiresAt: i.expiresAt })),\n    inviteForm: await superValidate({ teamId: currentTeam?.id ?? '', role: 'member' }, zod4(inviteTeamMemberRequest.rules()), { id: 'invite-team-member' }),\n    updateTeamForm: await superValidate({ teamId: currentTeam?.id ?? '', name: currentTeam?.name ?? '' }, zod4(updateTeamRequest.rules()), { id: 'update-team' }),\n    updateRoleForm: await superValidate(zod4(updateTeamMemberRoleRequest.rules()), { id: 'update-team-role' }),\n    removeMemberForm: await superValidate(zod4(removeTeamMemberRequest.rules()), { id: 'remove-team-member' }),\n    cancelInvitationForm: await superValidate(zod4(cancelTeamInvitationRequest.rules()), { id: 'cancel-team-invitation' }),\n  };\n};\n\nexport const actions: Actions = {\n  invite: async (event) => {\n    const unauthorized = await authorize(inviteTeamMemberRequest, event);\n    if (unauthorized) return unauthorized;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(inviteTeamMemberRequest.rules()), { id: 'invite-team-member' });\n    if (!validated.valid) return fail(422, { inviteForm: validated });\n    const dto = inviteTeamMemberRequest.passedValidation(validated.data);\n    try {\n      await inviteTeamMemberAction.run(dto);\n      return { success: true, inviteForm: validated, invited: dto.email };\n    } catch (err: any) {\n      return fail(500, { error: err.message || 'Failed to send invitation' });\n    }\n  },\n\n  updateRole: async (event) => {\n    const unauthorized = await authorize(updateTeamMemberRoleRequest, event);\n    if (unauthorized) return unauthorized;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(updateTeamMemberRoleRequest.rules()), { id: 'update-team-role' });\n    if (!validated.valid) return fail(422, { updateRoleForm: validated });\n    try {\n      await updateTeamMemberRoleAction.run(updateTeamMemberRoleRequest.passedValidation(validated.data));\n      return { success: true };\n    } catch (err: any) {\n      return fail(500, { error: err.message || 'Failed to update role' });\n    }\n  },\n\n  removeMember: async (event) => {\n    const unauthorized = await authorize(removeTeamMemberRequest, event);\n    if (unauthorized) return unauthorized;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(removeTeamMemberRequest.rules()), { id: 'remove-team-member' });\n    if (!validated.valid) return fail(422, { removeMemberForm: validated });\n    try {\n      await removeTeamMemberAction.run(removeTeamMemberRequest.passedValidation(validated.data));\n      return { success: true, removed: true };\n    } catch (err: any) {\n      return fail(500, { error: err.message || 'Failed to remove member' });\n    }\n  },\n\n  cancelInvitation: async (event) => {\n    const unauthorized = await authorize(cancelTeamInvitationRequest, event);\n    if (unauthorized) return unauthorized;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(cancelTeamInvitationRequest.rules()), { id: 'cancel-team-invitation' });\n    if (!validated.valid) return fail(422, { cancelInvitationForm: validated });\n    try {\n      await cancelTeamInvitationAction.run(cancelTeamInvitationRequest.passedValidation(validated.data));\n      return { success: true, cancelled: true };\n    } catch (err: any) {\n      return fail(500, { error: err.message || 'Failed to cancel invitation' });\n    }\n  },\n\n  updateTeam: async (event) => {\n    const unauthorized = await authorize(updateTeamRequest, event);\n    if (unauthorized) return unauthorized;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(updateTeamRequest.rules()), { id: 'update-team' });\n    if (!validated.valid) return fail(422, { updateTeamForm: validated });\n    try {\n      await updateTeamAction.run(updateTeamRequest.passedValidation(validated.data));\n      return { success: true, updateTeamForm: validated, updated: true };\n    } catch (err: any) {\n      return fail(500, { error: err.message || 'Failed to update team' });\n    }\n  },\n};\n";
 	}
 
 
@@ -4295,7 +4830,7 @@ export const load = guardAuth('/dashboard', { role: 'admin' });
 
 	static adminLayoutSvelte(): string {
 		return `<script lang="ts">
-  import { page } from '\$app/stores';
+  import { page } from '$app/stores';
   import type { Snippet } from 'svelte';
   import { Icon } from '@beeblock/svelar/ui';
   import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
@@ -4312,7 +4847,7 @@ export const load = guardAuth('/dashboard', { role: 'admin' });
     children: Snippet;
   }
 
-  let { data, children }: Props = \$props();
+  let { data, children }: Props = $props();
 
   const navItems = [
     { tab: 'overview', label: 'Overview', icon: LayoutDashboard },
@@ -4326,7 +4861,7 @@ export const load = guardAuth('/dashboard', { role: 'admin' });
 
   function isActive(tab: string, currentUrl: URL): boolean {
     const activeTab = currentUrl.searchParams.get('tab') ?? 'overview';
-    return activeTab === tab;
+    return activeTab === tab && (currentUrl.pathname === "/admin/dashboard") === ["queue", "scheduler", "logs"].includes(tab);
   }
 </script>
 
@@ -4337,9 +4872,9 @@ export const load = guardAuth('/dashboard', { role: 'admin' });
     </div>
     <nav class="p-4 space-y-1">
       {#each navItems as item}
-        {@const active = isActive(item.tab, \$page.url)}
+        {@const active = isActive(item.tab, $page.url)}
         <a
-          href="/admin?tab={item.tab}"
+          href={["queue", "scheduler", "logs"].includes(item.tab) ? \`/admin/dashboard?tab=\${item.tab}\` : \`/admin?tab=\${item.tab}\`}
           class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors {active ? 'bg-brand/10 text-brand' : 'text-foreground hover:bg-muted hover:text-foreground'}"
         >
           <Icon icon={item.icon} size={20} class={active ? 'text-brand' : 'text-muted-foreground/70'} />
@@ -4360,7 +4895,7 @@ export const load = guardAuth('/dashboard', { role: 'admin' });
     </div>
   </aside>
 
-  <div class="flex-1 p-6 md:p-8">
+  <div class="flex-1 min-w-0 p-6 md:p-8">
     {@render children()}
   </div>
 </div>
@@ -4368,12 +4903,12 @@ export const load = guardAuth('/dashboard', { role: 'admin' });
 	}
 
 	static adminPageServer(): string {
-		return "import type { Actions, PageServerLoad } from './$types';\nimport { fail } from '@sveltejs/kit';\nimport { superValidate } from 'sveltekit-superforms';\nimport { zod } from 'sveltekit-superforms/adapters';\nimport { User } from '$lib/modules/auth/User.js';\nimport { Post } from '$lib/modules/posts/Post.js';\nimport { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';\nimport { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';\nimport { LogViewer } from '@beeblock/svelar/logging/LogViewer';\nimport { Permissions } from '@beeblock/svelar/permissions';\nimport {\n  AssignUserRoleAction,\n  AttachRolePermissionAction,\n  CreatePermissionAction,\n  CreateRoleAction,\n  DeletePermissionAction,\n  DeleteRoleAction,\n  DeleteUserAction,\n  DetachRolePermissionAction,\n  GrantUserPermissionAction,\n  RemoveUserRoleAction,\n  RevokeUserPermissionAction,\n  UpdateUserRoleAction,\n} from '$lib/modules/admin/AdminActions.js';\nimport { CreatePermissionRequest } from '$lib/modules/admin/CreatePermissionRequest.js';\nimport { CreateRoleRequest } from '$lib/modules/admin/CreateRoleRequest.js';\nimport { DeletePermissionRequest } from '$lib/modules/admin/DeletePermissionRequest.js';\nimport { DeleteRoleRequest } from '$lib/modules/admin/DeleteRoleRequest.js';\nimport { DeleteUserRequest } from '$lib/modules/admin/DeleteUserRequest.js';\nimport { RolePermissionRequest } from '$lib/modules/admin/RolePermissionRequest.js';\nimport { UpdateUserRoleRequest } from '$lib/modules/admin/UpdateUserRoleRequest.js';\nimport { UserPermissionRequest } from '$lib/modules/admin/UserPermissionRequest.js';\nimport { UserRoleRequest } from '$lib/modules/admin/UserRoleRequest.js';\n\nconst createRoleRequest = new CreateRoleRequest();\nconst deleteRoleRequest = new DeleteRoleRequest();\nconst createPermissionRequest = new CreatePermissionRequest();\nconst deletePermissionRequest = new DeletePermissionRequest();\nconst rolePermissionRequest = new RolePermissionRequest();\nconst userRoleRequest = new UserRoleRequest();\nconst userPermissionRequest = new UserPermissionRequest();\nconst updateUserRoleRequest = new UpdateUserRoleRequest();\nconst deleteUserRequest = new DeleteUserRequest();\n\nconst createRoleAction = new CreateRoleAction();\nconst deleteRoleAction = new DeleteRoleAction();\nconst createPermissionAction = new CreatePermissionAction();\nconst deletePermissionAction = new DeletePermissionAction();\nconst attachRolePermissionAction = new AttachRolePermissionAction();\nconst detachRolePermissionAction = new DetachRolePermissionAction();\nconst assignUserRoleAction = new AssignUserRoleAction();\nconst removeUserRoleAction = new RemoveUserRoleAction();\nconst grantUserPermissionAction = new GrantUserPermissionAction();\nconst revokeUserPermissionAction = new RevokeUserPermissionAction();\nconst updateUserRoleAction = new UpdateUserRoleAction();\nconst deleteUserAction = new DeleteUserAction();\n\nasync function authorize(request: { authorize(event: any): boolean | Promise<boolean> }, event: any) {\n  if (!await request.authorize(event)) return fail(403, { error: 'This action is unauthorized.' });\n  return null;\n}\n\nfunction failure(result: any, status = 400) {\n  return fail(status, { error: result?.error ?? result?.message ?? 'Admin action failed' });\n}\n\nexport const load: PageServerLoad = async (event) => {\n  const user = event.locals.user;\n\n  // Fetch all users\n  const users = await User.query().get();\n\n  // Fetch stats\n  const userCount = users.length;\n  const postCount = await Post.count();\n\n  const roleDistribution = {\n    admin: users.filter((u: any) => u.role === 'admin').length,\n    user: users.filter((u: any) => u.role === 'user').length,\n  };\n\n  // Queue stats from JobMonitor\n  let queueCounts = { waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0, total: 0 };\n  try {\n    queueCounts = await JobMonitor.getCounts('default');\n  } catch { /* sync/memory driver — no counts available */ }\n\n  // Scheduler tasks from ScheduleMonitor\n  let scheduledTasks: any[] = [];\n  try {\n    scheduledTasks = await ScheduleMonitor.listTasks();\n  } catch { /* scheduler not configured */ }\n\n  // Recent logs from LogViewer\n  let recentLogs: any[] = [];\n  let logStats = { totalEntries: 0, byLevel: {} as Record<string, number>, byChannel: {} };\n  try {\n    recentLogs = LogViewer.query({ limit: 50 });\n    logStats = LogViewer.getStats();\n  } catch { /* no logs yet */ }\n\n  // System health\n  const memUsage = process.memoryUsage();\n  const health = {\n    status: 'ok',\n    uptime: process.uptime(),\n    memoryUsedMB: Math.round(memUsage.heapUsed / 1024 / 1024),\n    memoryTotalMB: Math.round(memUsage.heapTotal / 1024 / 1024),\n    memoryPercent: Math.round((memUsage.heapUsed / memUsage.heapTotal) * 100),\n  };\n\n  // Roles & Permissions\n  let roles: any[] = [];\n  let permissions: any[] = [];\n  let rolePermissionsMap: Record<number, number[]> = {};\n  let userRolesMap: Record<number, any[]> = {};\n  let userDirectPermsMap: Record<number, any[]> = {};\n  try {\n    roles = await Permissions.allRoles();\n    permissions = await Permissions.allPermissions();\n\n    // Load permissions for each role\n    for (const role of roles) {\n      const rolePerms = await Permissions.getRolePermissions(role.id);\n      rolePermissionsMap[role.id] = rolePerms.map((p: any) => p.id);\n    }\n\n    // Load roles and direct permissions for each user\n    for (const u of users) {\n      userRolesMap[u.id] = await Permissions.getModelRoles('User', u.id);\n      userDirectPermsMap[u.id] = await Permissions.getModelDirectPermissions('User', u.id);\n    }\n  } catch { /* permissions tables may not exist yet */ }\n\n  return {\n    user: {\n      id: user.id,\n      name: user.name,\n      email: user.email,\n      role: user.role,\n    },\n    users: users.map((u: any) => ({\n      id: u.id,\n      name: u.name,\n      email: u.email,\n      role: u.role,\n      created_at: u.created_at,\n    })),\n    stats: {\n      userCount,\n      postCount,\n      roleDistribution,\n    },\n    queueCounts,\n    scheduledTasks: scheduledTasks.map((t: any) => ({\n      name: t.name,\n      expression: t.expression,\n      humanReadable: t.humanReadable,\n      enabled: t.enabled,\n      isRunning: t.isRunning,\n      lastRun: t.lastRun?.toISOString() ?? null,\n      lastStatus: t.lastStatus ?? null,\n      nextRun: t.nextRun?.toISOString() ?? null,\n    })),\n    recentLogs: recentLogs.map((l: any) => ({\n      timestamp: l.timestamp,\n      level: l.level,\n      channel: l.channel,\n      message: l.message,\n    })),\n    logStats,\n    health,\n    roles: roles.map((r: any) => ({\n      id: r.id,\n      name: r.name,\n      guard: r.guard,\n      description: r.description,\n      created_at: r.created_at,\n    })),\n    permissions: permissions.map((p: any) => ({\n      id: p.id,\n      name: p.name,\n      guard: p.guard,\n      description: p.description,\n      created_at: p.created_at,\n    })),\n    rolePermissionsMap,\n    userRolesMap: Object.fromEntries(\n      Object.entries(userRolesMap).map(([uid, roles]) => [\n        uid,\n        roles.map((r: any) => ({ id: r.id, name: r.name })),\n      ]),\n    ),\n    userDirectPermsMap: Object.fromEntries(\n      Object.entries(userDirectPermsMap).map(([uid, perms]) => [\n        uid,\n        perms.map((p: any) => ({ id: p.id, name: p.name })),\n      ]),\n    ),\n    createRoleForm: await superValidate({ guard: 'web' }, zod(createRoleRequest.rules()), { id: 'admin-create-role' }),\n    createPermissionForm: await superValidate({ guard: 'web' }, zod(createPermissionRequest.rules()), { id: 'admin-create-permission' }),\n  };\n};\n\nexport const actions: Actions = {\n  createRole: async (event) => {\n    const denied = await authorize(createRoleRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod(createRoleRequest.rules()), { id: 'admin-create-role' });\n    if (!validated.valid) return fail(422, { createRoleForm: validated });\n    const result = await createRoleAction.run(createRoleRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result, 409);\n    return { message: 'Role created', createRoleForm: validated };\n  },\n\n  deleteRole: async (event) => {\n    const denied = await authorize(deleteRoleRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod(deleteRoleRequest.rules()), { id: 'admin-delete-role' });\n    if (!validated.valid) return fail(422, { error: 'Role name is required' });\n    const result = await deleteRoleAction.run(deleteRoleRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'Role deleted' };\n  },\n\n  createPermission: async (event) => {\n    const denied = await authorize(createPermissionRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod(createPermissionRequest.rules()), { id: 'admin-create-permission' });\n    if (!validated.valid) return fail(422, { createPermissionForm: validated });\n    const result = await createPermissionAction.run(createPermissionRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result, 409);\n    return { message: 'Permission created', createPermissionForm: validated };\n  },\n\n  deletePermission: async (event) => {\n    const denied = await authorize(deletePermissionRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod(deletePermissionRequest.rules()), { id: 'admin-delete-permission' });\n    if (!validated.valid) return fail(422, { error: 'Permission name is required' });\n    const result = await deletePermissionAction.run(deletePermissionRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'Permission deleted' };\n  },\n\n  attachRolePermission: async (event) => {\n    const denied = await authorize(rolePermissionRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod(rolePermissionRequest.rules()), { id: 'admin-role-permission' });\n    if (!validated.valid) return fail(422, { error: 'Role and permission are required' });\n    const result = await attachRolePermissionAction.run(rolePermissionRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'Permission attached to role' };\n  },\n\n  detachRolePermission: async (event) => {\n    const denied = await authorize(rolePermissionRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod(rolePermissionRequest.rules()), { id: 'admin-role-permission' });\n    if (!validated.valid) return fail(422, { error: 'Role and permission are required' });\n    const result = await detachRolePermissionAction.run(rolePermissionRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'Permission detached from role' };\n  },\n\n  assignUserRole: async (event) => {\n    const denied = await authorize(userRoleRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod(userRoleRequest.rules()), { id: 'admin-user-role' });\n    if (!validated.valid) return fail(422, { error: 'User and role are required' });\n    const result = await assignUserRoleAction.run(userRoleRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'Role assigned' };\n  },\n\n  removeUserRole: async (event) => {\n    const denied = await authorize(userRoleRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod(userRoleRequest.rules()), { id: 'admin-user-role' });\n    if (!validated.valid) return fail(422, { error: 'User and role are required' });\n    const result = await removeUserRoleAction.run(userRoleRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'Role removed' };\n  },\n\n  grantUserPermission: async (event) => {\n    const denied = await authorize(userPermissionRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod(userPermissionRequest.rules()), { id: 'admin-user-permission' });\n    if (!validated.valid) return fail(422, { error: 'User and permission are required' });\n    const result = await grantUserPermissionAction.run(userPermissionRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'Permission granted' };\n  },\n\n  revokeUserPermission: async (event) => {\n    const denied = await authorize(userPermissionRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod(userPermissionRequest.rules()), { id: 'admin-user-permission' });\n    if (!validated.valid) return fail(422, { error: 'User and permission are required' });\n    const result = await revokeUserPermissionAction.run(userPermissionRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'Permission revoked' };\n  },\n\n  updateUserRole: async (event) => {\n    const denied = await authorize(updateUserRoleRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod(updateUserRoleRequest.rules()), { id: 'admin-update-user-role' });\n    if (!validated.valid) return fail(422, { error: 'User and role are required' });\n    const result = await updateUserRoleAction.run(updateUserRoleRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'User role updated' };\n  },\n\n  deleteUser: async (event) => {\n    const denied = await authorize(deleteUserRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod(deleteUserRequest.rules()), { id: 'admin-delete-user' });\n    if (!validated.valid) return fail(422, { error: 'User is required' });\n    const result = await deleteUserAction.run({ dto: deleteUserRequest.passedValidation(validated.data), currentUserId: event.locals.user.id }) as any;\n    if (!result.success) return failure(result);\n    return { message: 'User deleted' };\n  },\n};\n";
+		return "import type { Actions, PageServerLoad } from './$types';\nimport { fail, redirect } from '@sveltejs/kit';\nimport { superValidate } from 'sveltekit-superforms';\nimport { zod4 } from 'sveltekit-superforms/adapters';\nimport { User } from '$lib/modules/auth/User.js';\nimport { Post } from '$lib/modules/posts/Post.js';\nimport { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';\nimport { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';\nimport { LogViewer } from '@beeblock/svelar/logging/LogViewer';\nimport { Permissions } from '@beeblock/svelar/permissions';\nimport {\n  AssignUserRoleAction,\n  AttachRolePermissionAction,\n  CreatePermissionAction,\n  CreateRoleAction,\n  DeletePermissionAction,\n  DeleteRoleAction,\n  DeleteUserAction,\n  DetachRolePermissionAction,\n  GrantUserPermissionAction,\n  RemoveUserRoleAction,\n  RevokeUserPermissionAction,\n  UpdateUserRoleAction,\n} from '$lib/modules/admin/AdminActions.js';\nimport { CreatePermissionRequest } from '$lib/modules/admin/CreatePermissionRequest.js';\nimport { CreateRoleRequest } from '$lib/modules/admin/CreateRoleRequest.js';\nimport { DeletePermissionRequest } from '$lib/modules/admin/DeletePermissionRequest.js';\nimport { DeleteRoleRequest } from '$lib/modules/admin/DeleteRoleRequest.js';\nimport { DeleteUserRequest } from '$lib/modules/admin/DeleteUserRequest.js';\nimport { RolePermissionRequest } from '$lib/modules/admin/RolePermissionRequest.js';\nimport { UpdateUserRoleRequest } from '$lib/modules/admin/UpdateUserRoleRequest.js';\nimport { UserPermissionRequest } from '$lib/modules/admin/UserPermissionRequest.js';\nimport { UserRoleRequest } from '$lib/modules/admin/UserRoleRequest.js';\n\nconst createRoleRequest = new CreateRoleRequest();\nconst deleteRoleRequest = new DeleteRoleRequest();\nconst createPermissionRequest = new CreatePermissionRequest();\nconst deletePermissionRequest = new DeletePermissionRequest();\nconst rolePermissionRequest = new RolePermissionRequest();\nconst userRoleRequest = new UserRoleRequest();\nconst userPermissionRequest = new UserPermissionRequest();\nconst updateUserRoleRequest = new UpdateUserRoleRequest();\nconst deleteUserRequest = new DeleteUserRequest();\n\nconst createRoleAction = new CreateRoleAction();\nconst deleteRoleAction = new DeleteRoleAction();\nconst createPermissionAction = new CreatePermissionAction();\nconst deletePermissionAction = new DeletePermissionAction();\nconst attachRolePermissionAction = new AttachRolePermissionAction();\nconst detachRolePermissionAction = new DetachRolePermissionAction();\nconst assignUserRoleAction = new AssignUserRoleAction();\nconst removeUserRoleAction = new RemoveUserRoleAction();\nconst grantUserPermissionAction = new GrantUserPermissionAction();\nconst revokeUserPermissionAction = new RevokeUserPermissionAction();\nconst updateUserRoleAction = new UpdateUserRoleAction();\nconst deleteUserAction = new DeleteUserAction();\n\nasync function authorize(request: { authorize(event: any): boolean | Promise<boolean> }, event: any) {\n  if (!await request.authorize(event)) return fail(403, { error: 'This action is unauthorized.' });\n  return null;\n}\n\nfunction failure(result: any, status = 400) {\n  return fail(status, { error: result?.error ?? result?.message ?? 'Admin action failed' });\n}\n\nexport const load: PageServerLoad = async (event) => {\n  const user = event.locals.user;\n  if (!user) throw redirect(302, '/login');\n\n  // Fetch all users\n  const users = await User.query().get();\n\n  // Fetch stats\n  const userCount = users.length;\n  const postCount = await Post.count();\n\n  const roleDistribution = {\n    admin: users.filter((u: any) => u.role === 'admin').length,\n    user: users.filter((u: any) => u.role === 'user').length,\n  };\n\n  // Queue stats from JobMonitor\n  let queueCounts = { waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0, total: 0 };\n  try {\n    queueCounts = await JobMonitor.getCounts('default');\n  } catch { /* sync/memory driver — no counts available */ }\n\n  // Scheduler tasks from ScheduleMonitor\n  let scheduledTasks: any[] = [];\n  try {\n    scheduledTasks = await ScheduleMonitor.listTasks();\n  } catch { /* scheduler not configured */ }\n\n  // Recent logs from LogViewer\n  let recentLogs: any[] = [];\n  let logStats = { totalEntries: 0, byLevel: {} as Record<string, number>, byChannel: {} };\n  try {\n    recentLogs = LogViewer.query({ limit: 50 });\n    logStats = LogViewer.getStats();\n  } catch { /* no logs yet */ }\n\n  // System health\n  const memUsage = process.memoryUsage();\n  const health = {\n    status: 'ok',\n    uptime: process.uptime(),\n    memoryUsedMB: Math.round(memUsage.heapUsed / 1024 / 1024),\n    memoryTotalMB: Math.round(memUsage.heapTotal / 1024 / 1024),\n    memoryPercent: Math.round((memUsage.heapUsed / memUsage.heapTotal) * 100),\n  };\n\n  // Roles & Permissions\n  let roles: any[] = [];\n  let permissions: any[] = [];\n  let rolePermissionsMap: Record<number, number[]> = {};\n  let userRolesMap: Record<number, any[]> = {};\n  let userDirectPermsMap: Record<number, any[]> = {};\n  try {\n    roles = await Permissions.allRoles();\n    permissions = await Permissions.allPermissions();\n\n    // Load permissions for each role\n    for (const role of roles) {\n      const rolePerms = await Permissions.getRolePermissions(role.id);\n      rolePermissionsMap[role.id] = rolePerms.map((p: any) => p.id);\n    }\n\n    // Load roles and direct permissions for each user\n    for (const u of users) {\n      userRolesMap[u.id] = await Permissions.getModelRoles('User', u.id);\n      userDirectPermsMap[u.id] = await Permissions.getModelDirectPermissions('User', u.id);\n    }\n  } catch { /* permissions tables may not exist yet */ }\n\n  return {\n    user: {\n      id: user.id,\n      name: user.name,\n      email: user.email,\n      role: user.role,\n    },\n    users: users.map((u: any) => ({\n      id: u.id,\n      name: u.name,\n      email: u.email,\n      role: u.role,\n      created_at: u.created_at,\n    })),\n    stats: {\n      userCount,\n      postCount,\n      roleDistribution,\n    },\n    queueCounts,\n    scheduledTasks: scheduledTasks.map((t: any) => ({\n      name: t.name,\n      expression: t.expression,\n      humanReadable: t.humanReadable,\n      enabled: t.enabled,\n      isRunning: t.isRunning,\n      lastRun: t.lastRun?.toISOString() ?? null,\n      lastStatus: t.lastStatus ?? null,\n      nextRun: t.nextRun?.toISOString() ?? null,\n    })),\n    recentLogs: recentLogs.map((l: any) => ({\n      timestamp: l.timestamp,\n      level: l.level,\n      channel: l.channel,\n      message: l.message,\n    })),\n    logStats,\n    health,\n    roles: roles.map((r: any) => ({\n      id: r.id,\n      name: r.name,\n      guard: r.guard,\n      description: r.description,\n      created_at: r.created_at,\n    })),\n    permissions: permissions.map((p: any) => ({\n      id: p.id,\n      name: p.name,\n      guard: p.guard,\n      description: p.description,\n      created_at: p.created_at,\n    })),\n    rolePermissionsMap,\n    userRolesMap: Object.fromEntries(\n      Object.entries(userRolesMap).map(([uid, roles]) => [\n        uid,\n        roles.map((r: any) => ({ id: r.id, name: r.name })),\n      ]),\n    ),\n    userDirectPermsMap: Object.fromEntries(\n      Object.entries(userDirectPermsMap).map(([uid, perms]) => [\n        uid,\n        perms.map((p: any) => ({ id: p.id, name: p.name })),\n      ]),\n    ),\n    createRoleForm: await superValidate({ guard: 'web' }, zod4(createRoleRequest.rules()), { id: 'admin-create-role' }),\n    createPermissionForm: await superValidate({ guard: 'web' }, zod4(createPermissionRequest.rules()), { id: 'admin-create-permission' }),\n  };\n};\n\nexport const actions: Actions = {\n  createRole: async (event) => {\n    const denied = await authorize(createRoleRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(createRoleRequest.rules()), { id: 'admin-create-role' });\n    if (!validated.valid) return fail(422, { createRoleForm: validated });\n    const result = await createRoleAction.run(createRoleRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result, 409);\n    return { message: 'Role created', createRoleForm: validated };\n  },\n\n  deleteRole: async (event) => {\n    const denied = await authorize(deleteRoleRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(deleteRoleRequest.rules()), { id: 'admin-delete-role' });\n    if (!validated.valid) return fail(422, { error: 'Role name is required' });\n    const result = await deleteRoleAction.run(deleteRoleRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'Role deleted' };\n  },\n\n  createPermission: async (event) => {\n    const denied = await authorize(createPermissionRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(createPermissionRequest.rules()), { id: 'admin-create-permission' });\n    if (!validated.valid) return fail(422, { createPermissionForm: validated });\n    const result = await createPermissionAction.run(createPermissionRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result, 409);\n    return { message: 'Permission created', createPermissionForm: validated };\n  },\n\n  deletePermission: async (event) => {\n    const denied = await authorize(deletePermissionRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(deletePermissionRequest.rules()), { id: 'admin-delete-permission' });\n    if (!validated.valid) return fail(422, { error: 'Permission name is required' });\n    const result = await deletePermissionAction.run(deletePermissionRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'Permission deleted' };\n  },\n\n  attachRolePermission: async (event) => {\n    const denied = await authorize(rolePermissionRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(rolePermissionRequest.rules()), { id: 'admin-role-permission' });\n    if (!validated.valid) return fail(422, { error: 'Role and permission are required' });\n    const result = await attachRolePermissionAction.run(rolePermissionRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'Permission attached to role' };\n  },\n\n  detachRolePermission: async (event) => {\n    const denied = await authorize(rolePermissionRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(rolePermissionRequest.rules()), { id: 'admin-role-permission' });\n    if (!validated.valid) return fail(422, { error: 'Role and permission are required' });\n    const result = await detachRolePermissionAction.run(rolePermissionRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'Permission detached from role' };\n  },\n\n  assignUserRole: async (event) => {\n    const denied = await authorize(userRoleRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(userRoleRequest.rules()), { id: 'admin-user-role' });\n    if (!validated.valid) return fail(422, { error: 'User and role are required' });\n    const result = await assignUserRoleAction.run(userRoleRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'Role assigned' };\n  },\n\n  removeUserRole: async (event) => {\n    const denied = await authorize(userRoleRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(userRoleRequest.rules()), { id: 'admin-user-role' });\n    if (!validated.valid) return fail(422, { error: 'User and role are required' });\n    const result = await removeUserRoleAction.run(userRoleRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'Role removed' };\n  },\n\n  grantUserPermission: async (event) => {\n    const denied = await authorize(userPermissionRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(userPermissionRequest.rules()), { id: 'admin-user-permission' });\n    if (!validated.valid) return fail(422, { error: 'User and permission are required' });\n    const result = await grantUserPermissionAction.run(userPermissionRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'Permission granted' };\n  },\n\n  revokeUserPermission: async (event) => {\n    const denied = await authorize(userPermissionRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(userPermissionRequest.rules()), { id: 'admin-user-permission' });\n    if (!validated.valid) return fail(422, { error: 'User and permission are required' });\n    const result = await revokeUserPermissionAction.run(userPermissionRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'Permission revoked' };\n  },\n\n  updateUserRole: async (event) => {\n    const denied = await authorize(updateUserRoleRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(updateUserRoleRequest.rules()), { id: 'admin-update-user-role' });\n    if (!validated.valid) return fail(422, { error: 'User and role are required' });\n    const result = await updateUserRoleAction.run(updateUserRoleRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'User role updated' };\n  },\n\n  deleteUser: async (event) => {\n    const user = event.locals.user;\n    if (!user) return fail(401, { error: \"Authentication required.\" });\n    const denied = await authorize(deleteUserRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(deleteUserRequest.rules()), { id: 'admin-delete-user' });\n    if (!validated.valid) return fail(422, { error: 'User is required' });\n    const result = await deleteUserAction.run({ dto: deleteUserRequest.passedValidation(validated.data), currentUserId: user.id }) as any;\n    if (!result.success) return failure(result);\n    return { message: 'User deleted' };\n  },\n};\n";
 	}
 
 
 	static adminPageSvelte(): string {
-		return "<script lang=\"ts\">\n  import { page } from '$app/stores';\n  import { superForm } from 'sveltekit-superforms';\n  import { Button, Badge, Card, CardHeader, CardTitle, CardDescription, CardContent, Alert, Input, Label } from '@beeblock/svelar/ui';\n\n  let { data, form: actionData }: { data: any; form?: any } = $props();\n  let users = $state<any[]>([]);\n  let message = $state('');\n  let messageType = $state<'success' | 'error'>('success');\n\n  // Real data from server\n  let queueCounts = $state({ waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0, total: 0 });\n  let scheduledTasks = $state<any[]>([]);\n  let recentLogs = $state<any[]>([]);\n  let logStats = $state<{\n    totalEntries: number;\n    byLevel: Record<string, number>;\n    byChannel: Record<string, number>;\n  }>({ totalEntries: 0, byLevel: {}, byChannel: {} });\n  let health = $state({ status: 'ok', uptime: 0, memoryUsedMB: 0, memoryTotalMB: 0, memoryPercent: 0 });\n\n  // Roles & Permissions\n  let roles = $state<any[]>([]);\n  let permissions = $state<any[]>([]);\n  let rolePermissionsMap = $state<Record<number, number[]>>({});\n  let userRolesMap = $state<Record<number, { id: number; name: string }[]>>({});\n  let userDirectPermsMap = $state<Record<number, { id: number; name: string }[]>>({});\n\n  let showRoleForm = $state(false);\n  let showPermForm = $state(false);\n\n  let logFilter = $state<'all' | 'info' | 'warn' | 'error'>('all');\n\n  const activeTab = $derived($page.url.searchParams.get('tab') ?? 'overview');\n\n  const filteredLogs = $derived(\n    logFilter === 'all' ? recentLogs : recentLogs.filter((log: any) => log.level === logFilter)\n  );\n\n  // svelte-ignore state_referenced_locally\n  const {\n    form: createRoleForm,\n    errors: createRoleErrors,\n    enhance: enhanceCreateRole,\n    delayed: creatingRole,\n  } = superForm(data.createRoleForm, {\n    resetForm: true,\n  });\n\n  // svelte-ignore state_referenced_locally\n  const {\n    form: createPermissionForm,\n    errors: createPermissionErrors,\n    enhance: enhanceCreatePermission,\n    delayed: creatingPermission,\n  } = superForm(data.createPermissionForm, {\n    resetForm: true,\n  });\n\n  $effect(() => {\n    users = data.users;\n    queueCounts = data.queueCounts;\n    scheduledTasks = data.scheduledTasks;\n    recentLogs = data.recentLogs;\n    logStats = data.logStats;\n    health = data.health;\n    roles = data.roles ?? [];\n    permissions = data.permissions ?? [];\n    rolePermissionsMap = data.rolePermissionsMap ?? {};\n    userRolesMap = data.userRolesMap ?? {};\n    userDirectPermsMap = data.userDirectPermsMap ?? {};\n  });\n\n  $effect(() => {\n    if (actionData?.message) {\n      flash(actionData.message);\n      showRoleForm = false;\n      showPermForm = false;\n    }\n    if (actionData?.error) {\n      flash(actionData.error, 'error');\n    }\n  });\n\n  function flash(msg: string, type: 'success' | 'error' = 'success') {\n    message = msg;\n    messageType = type;\n  }\n\n  function getCookie(name: string): string | null {\n    const escaped = name.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\n    const match = document.cookie.match(new RegExp(`(?:^|;\\\\s*)${escaped}=([^;]*)`));\n    return match ? decodeURIComponent(match[1]) : null;\n  }\n\n  function csrfHeaders(extra: Record<string, string> = {}): HeadersInit {\n    const token = getCookie('XSRF-TOKEN');\n    return token ? { ...extra, 'X-CSRF-Token': token } : extra;\n  }\n\n  async function apiError(res: Response, fallback: string): Promise<string> {\n    try {\n      const body = await res.json();\n      return body.error || body.message || fallback;\n    } catch {\n      return fallback;\n    }\n  }\n\n  function submitAdminAction(action: string, fields: Record<string, string | number>) {\n    const form = document.createElement('form');\n    form.method = 'POST';\n    form.action = action;\n    form.hidden = true;\n    for (const [name, value] of Object.entries(fields)) {\n      const input = document.createElement('input');\n      input.type = 'hidden';\n      input.name = name;\n      input.value = String(value);\n      form.append(input);\n    }\n    document.body.append(form);\n    form.requestSubmit();\n  }\n\n  async function refreshDashboard() {\n    try {\n      const res = await fetch('/api/admin/stats');\n      if (res.ok) {\n        const stats = await res.json();\n        if (stats.queue) {\n          queueCounts = stats.queue.queues?.default ?? queueCounts;\n        }\n      }\n    } catch { /* ignore refresh errors */ }\n  }\n\n  function updateUserRole(userId: number, newRole: string) {\n    submitAdminAction('?/updateUserRole', { userId, role: newRole });\n  }\n\n  function deleteUser(userId: number, userName: string) {\n    if (!confirm(`Are you sure you want to delete ${userName}? This cannot be undone.`)) {\n      return;\n    }\n    submitAdminAction('?/deleteUser', { userId });\n  }\n\n  async function retryJob(jobId: string) {\n    try {\n      const res = await fetch(`/api/admin/queue/${jobId}/retry`, {\n        method: 'POST',\n        headers: csrfHeaders(),\n      });\n      if (res.ok) {\n        flash('Job queued for retry');\n        await refreshQueue();\n      } else {\n        flash(await apiError(res, 'Failed to retry job'), 'error');\n      }\n    } catch {\n      flash('Failed to retry job', 'error');\n    }\n  }\n\n  async function refreshQueue() {\n    try {\n      const res = await fetch('/api/admin/queue');\n      if (res.ok) {\n        const data = await res.json();\n        queueCounts = data.counts;\n      }\n    } catch { /* ignore */ }\n  }\n\n  async function runTask(taskName: string) {\n    try {\n      const res = await fetch(`/api/admin/scheduler/${taskName}/run`, {\n        method: 'POST',\n        headers: csrfHeaders(),\n      });\n      if (res.ok) {\n        flash(`Task '${taskName}' completed`);\n        await refreshScheduler();\n      } else {\n        flash(await apiError(res, 'Failed to run task'), 'error');\n      }\n    } catch {\n      flash('Failed to run task', 'error');\n    }\n  }\n\n  async function refreshScheduler() {\n    try {\n      const res = await fetch('/api/admin/scheduler');\n      if (res.ok) {\n        const data = await res.json();\n        scheduledTasks = data.tasks ?? scheduledTasks;\n      }\n    } catch { /* ignore */ }\n  }\n\n  async function toggleTask(taskName: string, enabled: boolean) {\n    try {\n      const res = await fetch(`/api/admin/scheduler/${taskName}/toggle`, {\n        method: 'POST',\n        headers: csrfHeaders({ 'Content-Type': 'application/json' }),\n        body: JSON.stringify({ enabled }),\n      });\n      if (res.ok) {\n        scheduledTasks = scheduledTasks.map((t: any) =>\n          t.name === taskName ? { ...t, enabled } : t\n        );\n        flash(`Task '${taskName}' ${enabled ? 'enabled' : 'disabled'}`);\n      } else {\n        flash(await apiError(res, 'Failed to toggle task'), 'error');\n      }\n    } catch {\n      flash('Failed to toggle task', 'error');\n    }\n  }\n\n  // -- Roles CRUD --\n\n  function deleteRole(name: string) {\n    if (!confirm(`Delete role \"${name}\"? This will remove it from all users.`)) return;\n    submitAdminAction('?/deleteRole', { name });\n  }\n\n  // -- Permissions CRUD --\n\n  function deletePermission(name: string) {\n    if (!confirm(`Delete permission \"${name}\"? This will revoke it from all roles and users.`)) return;\n    submitAdminAction('?/deletePermission', { name });\n  }\n\n  // -- Role <-> Permission --\n\n  function toggleRolePermission(roleId: number, permissionId: number) {\n    const current = rolePermissionsMap[roleId] ?? [];\n    const has = current.includes(permissionId);\n    submitAdminAction(has ? '?/detachRolePermission' : '?/attachRolePermission', { roleId, permissionId });\n  }\n\n  // -- User <-> Role --\n\n  function assignRoleToUser(userId: number, roleId: number) {\n    submitAdminAction('?/assignUserRole', { userId, roleId });\n  }\n\n  function removeRoleFromUser(userId: number, roleId: number) {\n    submitAdminAction('?/removeUserRole', { userId, roleId });\n  }\n\n  // -- User <-> Direct Permission --\n\n  function grantPermToUser(userId: number, permissionId: number) {\n    submitAdminAction('?/grantUserPermission', { userId, permissionId });\n  }\n\n  function revokePermFromUser(userId: number, permissionId: number) {\n    submitAdminAction('?/revokeUserPermission', { userId, permissionId });\n  }\n\n  function formatDate(date: string | null): string {\n    if (!date) return 'Never';\n    try {\n      return new Date(date).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });\n    } catch {\n      return date;\n    }\n  }\n\n  function formatUptime(seconds: number): string {\n    const h = Math.floor(seconds / 3600);\n    const m = Math.floor((seconds % 3600) / 60);\n    return h > 0 ? `${h}h ${m}m` : `${m}m`;\n  }\n\n  function getLogBadgeVariant(level: string): 'default' | 'secondary' | 'destructive' {\n    return level === 'error' || level === 'fatal' ? 'destructive' : level === 'warn' ? 'secondary' : 'default';\n  }\n\n\n</script>\n\n<svelte:head>\n  <title>Admin Dashboard</title>\n</svelte:head>\n\n<div class=\"space-y-8\">\n  <div class=\"flex justify-between items-center\">\n    <div>\n      <h1 class=\"text-3xl font-bold text-foreground\">Admin Dashboard</h1>\n      <p class=\"text-muted-foreground mt-1\">System health, queue monitoring, and task management</p>\n    </div>\n    <Button variant=\"outline\" onclick={refreshDashboard}>Refresh</Button>\n  </div>\n\n  {#if message}\n    <Alert variant={messageType === 'error' ? 'destructive' : 'success'}>\n      <span class=\"text-sm\">{message}</span>\n    </Alert>\n  {/if}\n\n  <!-- Overview -->\n  {#if activeTab === 'overview'}\n    <div class=\"space-y-6\">\n      <div class=\"grid grid-cols-1 md:grid-cols-4 gap-4\">\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Total Users</p>\n              <p class=\"text-3xl font-bold text-[var(--color-brand)] mt-2\">{data.stats.userCount}</p>\n            </div>\n          </CardContent>\n        </Card>\n\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Total Posts</p>\n              <p class=\"text-3xl font-bold text-[var(--color-brand)] mt-2\">{data.stats.postCount}</p>\n            </div>\n          </CardContent>\n        </Card>\n\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Queue Pending</p>\n              <p class=\"text-3xl font-bold text-yellow-600 mt-2\">{queueCounts.waiting}</p>\n            </div>\n          </CardContent>\n        </Card>\n\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Failed Jobs</p>\n              <p class=\"text-3xl font-bold text-red-600 mt-2\">{queueCounts.failed}</p>\n            </div>\n          </CardContent>\n        </Card>\n      </div>\n\n      <Card>\n        <CardHeader>\n          <CardTitle>System Health</CardTitle>\n        </CardHeader>\n        <CardContent class=\"space-y-4\">\n          <div class=\"flex justify-between text-sm\">\n            <span>Status</span>\n            <Badge variant=\"default\">{health.status}</Badge>\n          </div>\n          <div class=\"flex justify-between text-sm\">\n            <span>Uptime</span>\n            <span class=\"font-medium\">{formatUptime(health.uptime)}</span>\n          </div>\n          <div class=\"space-y-2\">\n            <div class=\"flex justify-between text-sm\">\n              <span>Memory Usage</span>\n              <Badge variant={health.memoryPercent > 90 ? 'destructive' : health.memoryPercent > 70 ? 'secondary' : 'default'}>\n                {health.memoryUsedMB} MB / {health.memoryTotalMB} MB ({health.memoryPercent}%)\n              </Badge>\n            </div>\n            <div class=\"h-2 bg-muted rounded-full overflow-hidden\">\n              <div\n                class=\"h-full transition-all\"\n                class:bg-green-500={health.memoryPercent <= 70}\n                class:bg-yellow-500={health.memoryPercent > 70 && health.memoryPercent <= 90}\n                class:bg-red-500={health.memoryPercent > 90}\n                style=\"width: {health.memoryPercent}%\"\n              ></div>\n            </div>\n          </div>\n          <div class=\"flex justify-between text-sm\">\n            <span>Queue Throughput</span>\n            <span class=\"font-medium\">{queueCounts.total} total jobs</span>\n          </div>\n          <div class=\"flex justify-between text-sm\">\n            <span>Log Entries</span>\n            <span class=\"font-medium\">{logStats.totalEntries} entries ({logStats.byLevel?.error ?? 0} errors)</span>\n          </div>\n        </CardContent>\n      </Card>\n    </div>\n  {/if}\n\n  <!-- Users -->\n  {#if activeTab === 'users'}\n    <Card>\n      <CardHeader>\n        <CardTitle>User Management</CardTitle>\n        <CardDescription>Manage user roles and permissions ({data.stats.userCount} users)</CardDescription>\n      </CardHeader>\n      <CardContent>\n        <div class=\"overflow-x-auto\">\n          <table class=\"w-full text-sm\">\n            <thead>\n              <tr class=\"border-b border-border\">\n                <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Name</th>\n                <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Email</th>\n                <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Column Role</th>\n                <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Assigned Roles</th>\n                <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Direct Permissions</th>\n                <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Actions</th>\n              </tr>\n            </thead>\n            <tbody>\n              {#each users as user (user.id)}\n                <tr class=\"border-b border-border hover:bg-muted/50\">\n                  <td class=\"py-3 px-4 font-medium text-foreground\">{user.name}</td>\n                  <td class=\"py-3 px-4 text-muted-foreground\">{user.email}</td>\n                  <td class=\"py-3 px-4\">\n                    <Badge variant={user.role === 'admin' ? 'default' : 'secondary'}>\n                      {user.role}\n                    </Badge>\n                  </td>\n                  <td class=\"py-3 px-4\">\n                    <div class=\"flex flex-wrap gap-1\">\n                      {#each (userRolesMap[user.id] ?? []) as role (role.id)}\n                        <span class=\"inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-800\">\n                          {role.name}\n                          <button\n                            type=\"button\"\n                            class=\"hover:text-red-600 font-bold\"\n                            onclick={() => removeRoleFromUser(user.id, role.id)}\n                          >&times;</button>\n                        </span>\n                      {/each}\n                      {#if roles.length > 0}\n                        <select\n                          class=\"text-xs border border-border rounded px-1 py-0.5\"\n                          onchange={(e) => {\n                            const val = Number((e.target as HTMLSelectElement).value);\n                            if (val) { assignRoleToUser(user.id, val); (e.target as HTMLSelectElement).value = ''; }\n                          }}\n                        >\n                          <option value=\"\">+ role</option>\n                          {#each roles.filter((r) => !(userRolesMap[user.id] ?? []).some((ur) => ur.id === r.id)) as role (role.id)}\n                            <option value={role.id}>{role.name}</option>\n                          {/each}\n                        </select>\n                      {/if}\n                    </div>\n                  </td>\n                  <td class=\"py-3 px-4\">\n                    <div class=\"flex flex-wrap gap-1\">\n                      {#each (userDirectPermsMap[user.id] ?? []) as perm (perm.id)}\n                        <span class=\"inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-purple-100 text-purple-800\">\n                          {perm.name}\n                          <button\n                            type=\"button\"\n                            class=\"hover:text-red-600 font-bold\"\n                            onclick={() => revokePermFromUser(user.id, perm.id)}\n                          >&times;</button>\n                        </span>\n                      {/each}\n                      {#if permissions.length > 0}\n                        <select\n                          class=\"text-xs border border-border rounded px-1 py-0.5\"\n                          onchange={(e) => {\n                            const val = Number((e.target as HTMLSelectElement).value);\n                            if (val) { grantPermToUser(user.id, val); (e.target as HTMLSelectElement).value = ''; }\n                          }}\n                        >\n                          <option value=\"\">+ perm</option>\n                          {#each permissions.filter((p) => !(userDirectPermsMap[user.id] ?? []).some((up) => up.id === p.id)) as perm (perm.id)}\n                            <option value={perm.id}>{perm.name}</option>\n                          {/each}\n                        </select>\n                      {/if}\n                    </div>\n                  </td>\n                  <td class=\"py-3 px-4\">\n                    <div class=\"flex gap-2\">\n                      {#if user.role === 'user'}\n                        <Button size=\"sm\" variant=\"outline\" onclick={() => updateUserRole(user.id, 'admin')}>\n                          Make Admin\n                        </Button>\n                      {:else if data.stats.roleDistribution.admin > 1}\n                        <Button size=\"sm\" variant=\"outline\" onclick={() => updateUserRole(user.id, 'user')}>\n                          Demote\n                        </Button>\n                      {/if}\n                      {#if user.id !== data.user.id}\n                        <Button size=\"sm\" variant=\"destructive\" onclick={() => deleteUser(user.id, user.name)}>\n                          Delete\n                        </Button>\n                      {/if}\n                    </div>\n                  </td>\n                </tr>\n              {/each}\n            </tbody>\n          </table>\n        </div>\n      </CardContent>\n    </Card>\n  {/if}\n\n  <!-- Roles -->\n  {#if activeTab === 'roles'}\n    <div class=\"space-y-6\">\n      <Card>\n        <CardHeader>\n          <div class=\"flex justify-between items-start\">\n            <div>\n              <CardTitle>Roles</CardTitle>\n              <CardDescription>{roles.length} roles defined</CardDescription>\n            </div>\n            <Button size=\"sm\" onclick={() => (showRoleForm = !showRoleForm)}>\n              {showRoleForm ? 'Cancel' : 'Create Role'}\n            </Button>\n          </div>\n        </CardHeader>\n        {#if showRoleForm}\n          <CardContent>\n            <form\n              method=\"POST\"\n              action=\"?/createRole\"\n              use:enhanceCreateRole\n              novalidate\n              class=\"flex flex-wrap gap-3 items-end border-b border-border pb-4 mb-4\"\n            >\n              <div class=\"flex-1 min-w-[200px]\">\n                <Label for=\"role-name\">Name</Label>\n                <Input\n                  id=\"role-name\"\n                  name=\"name\"\n                  bind:value={$createRoleForm.name}\n                  placeholder=\"e.g. editor\"\n                  aria-invalid={$createRoleErrors.name ? 'true' : undefined}\n                  disabled={$creatingRole}\n                />\n                {#if $createRoleErrors.name}<p class=\"mt-1 text-xs text-red-600\">{$createRoleErrors.name[0]}</p>{/if}\n              </div>\n              <div class=\"flex-1 min-w-[140px]\">\n                <Label for=\"role-guard\">Guard</Label>\n                <Input\n                  id=\"role-guard\"\n                  name=\"guard\"\n                  bind:value={$createRoleForm.guard}\n                  placeholder=\"web\"\n                  disabled={$creatingRole}\n                />\n              </div>\n              <div class=\"flex-1 min-w-[200px]\">\n                <Label for=\"role-desc\">Description (optional)</Label>\n                <Input\n                  id=\"role-desc\"\n                  name=\"description\"\n                  bind:value={$createRoleForm.description}\n                  placeholder=\"Can edit content\"\n                  aria-invalid={$createRoleErrors.description ? 'true' : undefined}\n                  disabled={$creatingRole}\n                />\n                {#if $createRoleErrors.description}<p class=\"mt-1 text-xs text-red-600\">{$createRoleErrors.description[0]}</p>{/if}\n              </div>\n              <Button type=\"submit\" size=\"sm\" disabled={$creatingRole}>{$creatingRole ? 'Creating...' : 'Create'}</Button>\n            </form>\n          </CardContent>\n        {/if}\n        <CardContent>\n          {#if roles.length > 0}\n            <div class=\"space-y-4\">\n              {#each roles as role (role.id)}\n                <div class=\"border border-border rounded-lg p-4\">\n                  <div class=\"flex items-center justify-between mb-3\">\n                    <div>\n                      <span class=\"font-medium text-foreground\">{role.name}</span>\n                      <Badge variant=\"secondary\" class=\"ml-2\">{role.guard}</Badge>\n                      {#if role.description}\n                        <p class=\"text-xs text-muted-foreground mt-1\">{role.description}</p>\n                      {/if}\n                    </div>\n                    <Button size=\"sm\" variant=\"destructive\" onclick={() => deleteRole(role.name)}>Delete</Button>\n                  </div>\n                  <div>\n                    <p class=\"text-xs font-semibold text-muted-foreground uppercase mb-2\">Permissions</p>\n                    <div class=\"flex flex-wrap gap-2\">\n                      {#each permissions as perm (perm.id)}\n                        {@const has = (rolePermissionsMap[role.id] ?? []).includes(perm.id)}\n                        <button\n                          type=\"button\"\n                          class=\"px-2 py-1 rounded text-xs border transition-colors {has\n                            ? 'bg-[var(--color-brand)] text-white border-[var(--color-brand)]'\n                            : 'bg-background text-muted-foreground border-border hover:border-foreground/30'}\"\n                          onclick={() => toggleRolePermission(role.id, perm.id)}\n                        >\n                          {perm.name}\n                        </button>\n                      {/each}\n                      {#if permissions.length === 0}\n                        <span class=\"text-xs text-muted-foreground/70\">No permissions defined yet</span>\n                      {/if}\n                    </div>\n                  </div>\n                </div>\n              {/each}\n            </div>\n          {:else}\n            <p class=\"text-sm text-muted-foreground py-4 text-center\">\n              No roles defined. Create one to start assigning permissions.\n            </p>\n          {/if}\n        </CardContent>\n      </Card>\n    </div>\n  {/if}\n\n  <!-- Permissions -->\n  {#if activeTab === 'permissions'}\n    <div class=\"space-y-6\">\n      <Card>\n        <CardHeader>\n          <div class=\"flex justify-between items-start\">\n            <div>\n              <CardTitle>Permissions</CardTitle>\n              <CardDescription>{permissions.length} permissions defined</CardDescription>\n            </div>\n            <Button size=\"sm\" onclick={() => (showPermForm = !showPermForm)}>\n              {showPermForm ? 'Cancel' : 'Create Permission'}\n            </Button>\n          </div>\n        </CardHeader>\n        {#if showPermForm}\n          <CardContent>\n            <form\n              method=\"POST\"\n              action=\"?/createPermission\"\n              use:enhanceCreatePermission\n              novalidate\n              class=\"flex flex-wrap gap-3 items-end border-b border-border pb-4 mb-4\"\n            >\n              <div class=\"flex-1 min-w-[200px]\">\n                <Label for=\"perm-name\">Name</Label>\n                <Input\n                  id=\"perm-name\"\n                  name=\"name\"\n                  bind:value={$createPermissionForm.name}\n                  placeholder=\"e.g. manage-users\"\n                  aria-invalid={$createPermissionErrors.name ? 'true' : undefined}\n                  disabled={$creatingPermission}\n                />\n                {#if $createPermissionErrors.name}<p class=\"mt-1 text-xs text-red-600\">{$createPermissionErrors.name[0]}</p>{/if}\n              </div>\n              <div class=\"flex-1 min-w-[140px]\">\n                <Label for=\"perm-guard\">Guard</Label>\n                <Input\n                  id=\"perm-guard\"\n                  name=\"guard\"\n                  bind:value={$createPermissionForm.guard}\n                  placeholder=\"web\"\n                  disabled={$creatingPermission}\n                />\n              </div>\n              <div class=\"flex-1 min-w-[200px]\">\n                <Label for=\"perm-desc\">Description (optional)</Label>\n                <Input\n                  id=\"perm-desc\"\n                  name=\"description\"\n                  bind:value={$createPermissionForm.description}\n                  placeholder=\"Can manage user accounts\"\n                  aria-invalid={$createPermissionErrors.description ? 'true' : undefined}\n                  disabled={$creatingPermission}\n                />\n                {#if $createPermissionErrors.description}<p class=\"mt-1 text-xs text-red-600\">{$createPermissionErrors.description[0]}</p>{/if}\n              </div>\n              <Button type=\"submit\" size=\"sm\" disabled={$creatingPermission}>{$creatingPermission ? 'Creating...' : 'Create'}</Button>\n            </form>\n          </CardContent>\n        {/if}\n        <CardContent>\n          {#if permissions.length > 0}\n            <div class=\"overflow-x-auto\">\n              <table class=\"w-full text-sm\">\n                <thead>\n                  <tr class=\"border-b border-border\">\n                    <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Name</th>\n                    <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Guard</th>\n                    <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Description</th>\n                    <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Used by Roles</th>\n                    <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Actions</th>\n                  </tr>\n                </thead>\n                <tbody>\n                  {#each permissions as perm (perm.id)}\n                    {@const usedBy = roles.filter((r) => (rolePermissionsMap[r.id] ?? []).includes(perm.id))}\n                    <tr class=\"border-b border-border hover:bg-muted/50\">\n                      <td class=\"py-3 px-4 font-medium text-foreground\">{perm.name}</td>\n                      <td class=\"py-3 px-4\">\n                        <Badge variant=\"secondary\">{perm.guard}</Badge>\n                      </td>\n                      <td class=\"py-3 px-4 text-muted-foreground\">{perm.description || '---'}</td>\n                      <td class=\"py-3 px-4\">\n                        <div class=\"flex flex-wrap gap-1\">\n                          {#each usedBy as role (role.id)}\n                            <Badge variant=\"outline\">{role.name}</Badge>\n                          {/each}\n                          {#if usedBy.length === 0}\n                            <span class=\"text-xs text-muted-foreground/70\">None</span>\n                          {/if}\n                        </div>\n                      </td>\n                      <td class=\"py-3 px-4\">\n                        <Button size=\"sm\" variant=\"destructive\" onclick={() => deletePermission(perm.name)}>Delete</Button>\n                      </td>\n                    </tr>\n                  {/each}\n                </tbody>\n              </table>\n            </div>\n          {:else}\n            <p class=\"text-sm text-muted-foreground py-4 text-center\">\n              No permissions defined. Create one to start building your authorization system.\n            </p>\n          {/if}\n        </CardContent>\n      </Card>\n    </div>\n  {/if}\n\n  <!-- Queue -->\n  {#if activeTab === 'queue'}\n    <div class=\"space-y-6\">\n      <div class=\"grid grid-cols-1 md:grid-cols-5 gap-4\">\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Waiting</p>\n              <p class=\"text-3xl font-bold text-yellow-600 mt-2\">{queueCounts.waiting}</p>\n            </div>\n          </CardContent>\n        </Card>\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Active</p>\n              <p class=\"text-3xl font-bold text-blue-600 mt-2\">{queueCounts.active}</p>\n            </div>\n          </CardContent>\n        </Card>\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Failed</p>\n              <p class=\"text-3xl font-bold text-red-600 mt-2\">{queueCounts.failed}</p>\n            </div>\n          </CardContent>\n        </Card>\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Completed</p>\n              <p class=\"text-3xl font-bold text-green-600 mt-2\">{queueCounts.completed}</p>\n            </div>\n          </CardContent>\n        </Card>\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Delayed</p>\n              <p class=\"text-3xl font-bold text-muted-foreground mt-2\">{queueCounts.delayed}</p>\n            </div>\n          </CardContent>\n        </Card>\n      </div>\n      <Card>\n        <CardHeader>\n          <CardTitle>Queue Actions</CardTitle>\n          <CardDescription>Manage job queue</CardDescription>\n        </CardHeader>\n        <CardContent class=\"flex gap-3\">\n          <Button variant=\"outline\" onclick={refreshQueue}>Refresh Counts</Button>\n        </CardContent>\n      </Card>\n    </div>\n  {/if}\n\n  <!-- Scheduler -->\n  {#if activeTab === 'scheduler'}\n    <Card>\n      <CardHeader>\n        <CardTitle>Scheduled Tasks</CardTitle>\n        <CardDescription>\n          {scheduledTasks.length > 0\n            ? `${scheduledTasks.length} registered tasks`\n            : 'No tasks registered. Configure your scheduler to see tasks here.'}\n        </CardDescription>\n      </CardHeader>\n      <CardContent>\n        {#if scheduledTasks.length > 0}\n          <div class=\"space-y-3\">\n            {#each scheduledTasks as task (task.name)}\n              <div class=\"flex items-center justify-between p-4 border border-border rounded-lg hover:bg-muted/50\">\n                <div class=\"flex-1\">\n                  <p class=\"font-medium text-foreground\">{task.name}</p>\n                  <p class=\"text-sm text-muted-foreground\">Schedule: {task.humanReadable}</p>\n                  <p class=\"text-xs text-muted-foreground mt-1\">Last run: {formatDate(task.lastRun)}</p>\n                  <p class=\"text-xs text-muted-foreground\">Next run: {formatDate(task.nextRun)}</p>\n                </div>\n                <div class=\"flex items-center gap-3\">\n                  {#if task.lastStatus}\n                    <Badge variant={task.lastStatus === 'success' ? 'default' : 'destructive'}>\n                      {task.lastStatus}\n                    </Badge>\n                  {/if}\n                  <Badge variant={task.enabled ? 'default' : 'secondary'}>\n                    {task.enabled ? 'enabled' : 'disabled'}\n                  </Badge>\n                  <Button size=\"sm\" variant=\"outline\" onclick={() => runTask(task.name)}>Run Now</Button>\n                  <Button size=\"sm\" variant=\"outline\" onclick={() => toggleTask(task.name, !task.enabled)}>\n                    {task.enabled ? 'Disable' : 'Enable'}\n                  </Button>\n                </div>\n              </div>\n            {/each}\n          </div>\n        {:else}\n          <p class=\"text-sm text-muted-foreground py-4 text-center\">\n            No scheduled tasks found. Configure the Scheduler in your app.ts to register tasks.\n          </p>\n        {/if}\n      </CardContent>\n    </Card>\n  {/if}\n\n  <!-- Logs -->\n  {#if activeTab === 'logs'}\n    <Card>\n      <CardHeader>\n        <CardTitle>Application Logs</CardTitle>\n        <CardDescription>\n          {logStats.totalEntries} total entries\n          {#if logStats.byLevel?.error}\n            ({logStats.byLevel.error} errors)\n          {/if}\n        </CardDescription>\n      </CardHeader>\n      <CardContent>\n        <div class=\"flex gap-2 mb-4\">\n          <Button size=\"sm\" variant={logFilter === 'all' ? 'default' : 'outline'} onclick={() => (logFilter = 'all')}>\n            All ({logStats.totalEntries})\n          </Button>\n          <Button size=\"sm\" variant={logFilter === 'info' ? 'default' : 'outline'} onclick={() => (logFilter = 'info')}>\n            Info ({logStats.byLevel?.info ?? 0})\n          </Button>\n          <Button size=\"sm\" variant={logFilter === 'warn' ? 'default' : 'outline'} onclick={() => (logFilter = 'warn')}>\n            Warning ({logStats.byLevel?.warn ?? 0})\n          </Button>\n          <Button size=\"sm\" variant={logFilter === 'error' ? 'default' : 'outline'} onclick={() => (logFilter = 'error')}>\n            Error ({logStats.byLevel?.error ?? 0})\n          </Button>\n        </div>\n\n        {#if filteredLogs.length > 0}\n          <div class=\"space-y-2 max-h-96 overflow-y-auto\">\n            {#each filteredLogs as log, i (i)}\n              <div class=\"flex items-start gap-3 p-3 border border-border rounded bg-muted/50 text-sm\">\n                <Badge variant={getLogBadgeVariant(log.level)} class=\"mt-0.5\">\n                  {log.level.toUpperCase()}\n                </Badge>\n                <div class=\"flex-1\">\n                  <p class=\"text-foreground\">{log.message}</p>\n                  <p class=\"text-xs text-muted-foreground mt-1\">\n                    {formatDate(log.timestamp)}\n                    {#if log.channel && log.channel !== 'default'}\n                      <span class=\"ml-2 text-muted-foreground/70\">[{log.channel}]</span>\n                    {/if}\n                  </p>\n                </div>\n              </div>\n            {/each}\n          </div>\n        {:else}\n          <p class=\"text-sm text-muted-foreground py-4 text-center\">\n            No log entries found. Logs appear here as your application runs.\n          </p>\n        {/if}\n      </CardContent>\n    </Card>\n  {/if}\n</div>\n";
+return "<script lang=\"ts\">\n  import { page } from '$app/stores';\n  import { superForm } from 'sveltekit-superforms';\n  import { Button, Badge, Card, CardHeader, CardTitle, CardDescription, CardContent, Alert, Input, Label } from '@beeblock/svelar/ui';\n\n  let { data, form: actionData }: { data: any; form?: any } = $props();\n  let users = $state<any[]>([]);\n  let message = $state('');\n  let messageType = $state<'success' | 'error'>('success');\n\n  // Real data from server\n  let queueCounts = $state({ waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0, total: 0 });\n  let scheduledTasks = $state<any[]>([]);\n  let recentLogs = $state<any[]>([]);\n  let logStats = $state<{\n    totalEntries: number;\n    byLevel: Record<string, number>;\n    byChannel: Record<string, number>;\n  }>({ totalEntries: 0, byLevel: {}, byChannel: {} });\n  let health = $state({ status: 'ok', uptime: 0, memoryUsedMB: 0, memoryTotalMB: 0, memoryPercent: 0 });\n\n  // Roles & Permissions\n  let roles = $state<any[]>([]);\n  let permissions = $state<any[]>([]);\n  let rolePermissionsMap = $state<Record<number, number[]>>({});\n  let userRolesMap = $state<Record<number, { id: number; name: string }[]>>({});\n  let userDirectPermsMap = $state<Record<number, { id: number; name: string }[]>>({});\n\n  let showRoleForm = $state(false);\n  let showPermForm = $state(false);\n\n  let logFilter = $state<'all' | 'info' | 'warn' | 'error'>('all');\n\n  const activeTab = $derived($page.url.searchParams.get('tab') ?? 'overview');\n\n  const filteredLogs = $derived(\n    logFilter === 'all' ? recentLogs : recentLogs.filter((log: any) => log.level === logFilter)\n  );\n\n  // svelte-ignore state_referenced_locally\n  const {\n    form: createRoleForm,\n    errors: createRoleErrors,\n    enhance: enhanceCreateRole,\n    delayed: creatingRole,\n  } = superForm(data.createRoleForm, {\n    resetForm: true,\n  });\n\n  // svelte-ignore state_referenced_locally\n  const {\n    form: createPermissionForm,\n    errors: createPermissionErrors,\n    enhance: enhanceCreatePermission,\n    delayed: creatingPermission,\n  } = superForm(data.createPermissionForm, {\n    resetForm: true,\n  });\n\n  $effect(() => {\n    users = data.users;\n    queueCounts = data.queueCounts;\n    scheduledTasks = data.scheduledTasks;\n    recentLogs = data.recentLogs;\n    logStats = data.logStats;\n    health = data.health;\n    roles = data.roles ?? [];\n    permissions = data.permissions ?? [];\n    rolePermissionsMap = data.rolePermissionsMap ?? {};\n    userRolesMap = data.userRolesMap ?? {};\n    userDirectPermsMap = data.userDirectPermsMap ?? {};\n  });\n\n  $effect(() => {\n    if (actionData?.message) {\n      flash(actionData.message);\n      showRoleForm = false;\n      showPermForm = false;\n    }\n    if (actionData?.error) {\n      flash(actionData.error, 'error');\n    }\n  });\n\n  function flash(msg: string, type: 'success' | 'error' = 'success') {\n    message = msg;\n    messageType = type;\n  }\n\n  function getCookie(name: string): string | null {\n    const escaped = name.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\n    const match = document.cookie.match(new RegExp(`(?:^|;\\\\s*)${escaped}=([^;]*)`));\n    return match ? decodeURIComponent(match[1]) : null;\n  }\n\n  function csrfHeaders(extra: Record<string, string> = {}): HeadersInit {\n    const token = getCookie('XSRF-TOKEN');\n    return token ? { ...extra, 'X-CSRF-Token': token } : extra;\n  }\n\n  async function apiError(res: Response, fallback: string): Promise<string> {\n    try {\n      const body = await res.json();\n      return body.meta?.message || body.error || body.message || fallback;\n    } catch {\n      return fallback;\n    }\n  }\n\n  function submitAdminAction(action: string, fields: Record<string, string | number>) {\n    const form = document.createElement('form');\n    form.method = 'POST';\n    form.action = action;\n    form.hidden = true;\n    for (const [name, value] of Object.entries(fields)) {\n      const input = document.createElement('input');\n      input.type = 'hidden';\n      input.name = name;\n      input.value = String(value);\n      form.append(input);\n    }\n    document.body.append(form);\n    form.requestSubmit();\n  }\n\n  async function refreshDashboard() {\n    try {\n      const res = await fetch('/api/admin/stats');\n      if (res.ok) {\n        const { data: stats } = await res.json();\n        if (stats.queue) {\n          queueCounts = stats.queue.queues?.default ?? queueCounts;\n        }\n      }\n    } catch { /* ignore refresh errors */ }\n  }\n\n  function updateUserRole(userId: number, newRole: string) {\n    submitAdminAction('?/updateUserRole', { userId, role: newRole });\n  }\n\n  function deleteUser(userId: number, userName: string) {\n    if (!confirm(`Are you sure you want to delete ${userName}? This cannot be undone.`)) {\n      return;\n    }\n    submitAdminAction('?/deleteUser', { userId });\n  }\n\n  async function retryJob(jobId: string) {\n    try {\n      const res = await fetch(`/api/admin/queue/${jobId}/retry`, {\n        method: 'POST',\n        headers: csrfHeaders(),\n      });\n      if (res.ok) {\n        flash('Job queued for retry');\n        await refreshQueue();\n      } else {\n        flash(await apiError(res, 'Failed to retry job'), 'error');\n      }\n    } catch {\n      flash('Failed to retry job', 'error');\n    }\n  }\n\n  async function refreshQueue() {\n    try {\n      const res = await fetch('/api/admin/queue');\n      if (res.ok) {\n        const data = await res.json();\n        queueCounts = data.data.counts;\n      }\n    } catch { /* ignore */ }\n  }\n\n  async function runTask(taskName: string) {\n    try {\n      const res = await fetch(`/api/admin/scheduler/${taskName}/run`, {\n        method: 'POST',\n        headers: csrfHeaders(),\n      });\n      if (res.ok) {\n        flash(`Task '${taskName}' completed`);\n        await refreshScheduler();\n      } else {\n        flash(await apiError(res, 'Failed to run task'), 'error');\n      }\n    } catch {\n      flash('Failed to run task', 'error');\n    }\n  }\n\n  async function refreshScheduler() {\n    try {\n      const res = await fetch('/api/admin/scheduler');\n      if (res.ok) {\n        const data = await res.json();\n        scheduledTasks = data.data.tasks ?? scheduledTasks;\n      }\n    } catch { /* ignore */ }\n  }\n\n  async function toggleTask(taskName: string, enabled: boolean) {\n    try {\n      const res = await fetch(`/api/admin/scheduler/${taskName}/toggle`, {\n        method: 'POST',\n        headers: csrfHeaders({ 'Content-Type': 'application/json' }),\n        body: JSON.stringify({ enabled }),\n      });\n      if (res.ok) {\n        scheduledTasks = scheduledTasks.map((t: any) =>\n          t.name === taskName ? { ...t, enabled } : t\n        );\n        flash(`Task '${taskName}' ${enabled ? 'enabled' : 'disabled'}`);\n      } else {\n        flash(await apiError(res, 'Failed to toggle task'), 'error');\n      }\n    } catch {\n      flash('Failed to toggle task', 'error');\n    }\n  }\n\n  // -- Roles CRUD --\n\n  function deleteRole(name: string) {\n    if (!confirm(`Delete role \"${name}\"? This will remove it from all users.`)) return;\n    submitAdminAction('?/deleteRole', { name });\n  }\n\n  // -- Permissions CRUD --\n\n  function deletePermission(name: string) {\n    if (!confirm(`Delete permission \"${name}\"? This will revoke it from all roles and users.`)) return;\n    submitAdminAction('?/deletePermission', { name });\n  }\n\n  // -- Role <-> Permission --\n\n  function toggleRolePermission(roleId: number, permissionId: number) {\n    const current = rolePermissionsMap[roleId] ?? [];\n    const has = current.includes(permissionId);\n    submitAdminAction(has ? '?/detachRolePermission' : '?/attachRolePermission', { roleId, permissionId });\n  }\n\n  // -- User <-> Role --\n\n  function assignRoleToUser(userId: number, roleId: number) {\n    submitAdminAction('?/assignUserRole', { userId, roleId });\n  }\n\n  function removeRoleFromUser(userId: number, roleId: number) {\n    submitAdminAction('?/removeUserRole', { userId, roleId });\n  }\n\n  // -- User <-> Direct Permission --\n\n  function grantPermToUser(userId: number, permissionId: number) {\n    submitAdminAction('?/grantUserPermission', { userId, permissionId });\n  }\n\n  function revokePermFromUser(userId: number, permissionId: number) {\n    submitAdminAction('?/revokeUserPermission', { userId, permissionId });\n  }\n\n  function formatDate(date: string | null): string {\n    if (!date) return 'Never';\n    try {\n      return new Date(date).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });\n    } catch {\n      return date;\n    }\n  }\n\n  function formatUptime(seconds: number): string {\n    const h = Math.floor(seconds / 3600);\n    const m = Math.floor((seconds % 3600) / 60);\n    return h > 0 ? `${h}h ${m}m` : `${m}m`;\n  }\n\n  function getLogBadgeVariant(level: string): 'default' | 'secondary' | 'destructive' {\n    return level === 'error' || level === 'fatal' ? 'destructive' : level === 'warn' ? 'secondary' : 'default';\n  }\n\n\n</script>\n\n<svelte:head>\n  <title>Admin Dashboard</title>\n</svelte:head>\n\n<div class=\"space-y-8\">\n  <div class=\"flex justify-between items-center\">\n    <div>\n      <h1 class=\"text-3xl font-bold text-foreground\">Admin Dashboard</h1>\n      <p class=\"text-muted-foreground mt-1\">System health, queue monitoring, and task management</p>\n    </div>\n    <Button variant=\"outline\" onclick={refreshDashboard}>Refresh</Button>\n  </div>\n\n  {#if message}\n    <Alert variant={messageType === 'error' ? 'destructive' : 'success'}>\n      <span class=\"text-sm\">{message}</span>\n    </Alert>\n  {/if}\n\n  <!-- Overview -->\n  {#if activeTab === 'overview'}\n    <div class=\"space-y-6\">\n      <div class=\"grid grid-cols-1 md:grid-cols-4 gap-4\">\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Total Users</p>\n              <p class=\"text-3xl font-bold text-[var(--color-brand)] mt-2\">{data.stats.userCount}</p>\n            </div>\n          </CardContent>\n        </Card>\n\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Total Posts</p>\n              <p class=\"text-3xl font-bold text-[var(--color-brand)] mt-2\">{data.stats.postCount}</p>\n            </div>\n          </CardContent>\n        </Card>\n\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Queue Pending</p>\n              <p class=\"text-3xl font-bold text-yellow-600 mt-2\">{queueCounts.waiting}</p>\n            </div>\n          </CardContent>\n        </Card>\n\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Failed Jobs</p>\n              <p class=\"text-3xl font-bold text-red-600 mt-2\">{queueCounts.failed}</p>\n            </div>\n          </CardContent>\n        </Card>\n      </div>\n\n      <Card>\n        <CardHeader>\n          <CardTitle>System Health</CardTitle>\n        </CardHeader>\n        <CardContent class=\"space-y-4\">\n          <div class=\"flex justify-between text-sm\">\n            <span>Status</span>\n            <Badge variant=\"default\">{health.status}</Badge>\n          </div>\n          <div class=\"flex justify-between text-sm\">\n            <span>Uptime</span>\n            <span class=\"font-medium\">{formatUptime(health.uptime)}</span>\n          </div>\n          <div class=\"space-y-2\">\n            <div class=\"flex justify-between text-sm\">\n              <span>Memory Usage</span>\n              <Badge variant={health.memoryPercent > 90 ? 'destructive' : health.memoryPercent > 70 ? 'secondary' : 'default'}>\n                {health.memoryUsedMB} MB / {health.memoryTotalMB} MB ({health.memoryPercent}%)\n              </Badge>\n            </div>\n            <div class=\"h-2 bg-muted rounded-full overflow-hidden\">\n              <div\n                class=\"h-full transition-all\"\n                class:bg-green-500={health.memoryPercent <= 70}\n                class:bg-yellow-500={health.memoryPercent > 70 && health.memoryPercent <= 90}\n                class:bg-red-500={health.memoryPercent > 90}\n                style=\"width: {health.memoryPercent}%\"\n              ></div>\n            </div>\n          </div>\n          <div class=\"flex justify-between text-sm\">\n            <span>Queue Throughput</span>\n            <span class=\"font-medium\">{queueCounts.total} total jobs</span>\n          </div>\n          <div class=\"flex justify-between text-sm\">\n            <span>Log Entries</span>\n            <span class=\"font-medium\">{logStats.totalEntries} entries ({logStats.byLevel?.error ?? 0} errors)</span>\n          </div>\n        </CardContent>\n      </Card>\n    </div>\n  {/if}\n\n  <!-- Users -->\n  {#if activeTab === 'users'}\n    <Card>\n      <CardHeader>\n        <CardTitle>User Management</CardTitle>\n        <CardDescription>Manage user roles and permissions ({data.stats.userCount} users)</CardDescription>\n      </CardHeader>\n      <CardContent>\n        <div class=\"overflow-x-auto\">\n          <table class=\"w-full text-sm\">\n            <thead>\n              <tr class=\"border-b border-border\">\n                <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Name</th>\n                <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Email</th>\n                <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Column Role</th>\n                <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Assigned Roles</th>\n                <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Direct Permissions</th>\n                <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Actions</th>\n              </tr>\n            </thead>\n            <tbody>\n              {#each users as user (user.id)}\n                <tr class=\"border-b border-border hover:bg-muted/50\">\n                  <td class=\"py-3 px-4 font-medium text-foreground\">{user.name}</td>\n                  <td class=\"py-3 px-4 text-muted-foreground\">{user.email}</td>\n                  <td class=\"py-3 px-4\">\n                    <Badge variant={user.role === 'admin' ? 'default' : 'secondary'}>\n                      {user.role}\n                    </Badge>\n                  </td>\n                  <td class=\"py-3 px-4\">\n                    <div class=\"flex flex-wrap gap-1\">\n                      {#each (userRolesMap[user.id] ?? []) as role (role.id)}\n                        <span class=\"inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-800\">\n                          {role.name}\n                          <button\n                            type=\"button\"\n                            class=\"hover:text-red-600 font-bold\"\n                            onclick={() => removeRoleFromUser(user.id, role.id)}\n                          >&times;</button>\n                        </span>\n                      {/each}\n                      {#if roles.length > 0}\n                        <select\n                          class=\"text-xs border border-border rounded px-1 py-0.5\"\n                          onchange={(e) => {\n                            const val = Number((e.target as HTMLSelectElement).value);\n                            if (val) { assignRoleToUser(user.id, val); (e.target as HTMLSelectElement).value = ''; }\n                          }}\n                        >\n                          <option value=\"\">+ role</option>\n                          {#each roles.filter((r) => !(userRolesMap[user.id] ?? []).some((ur) => ur.id === r.id)) as role (role.id)}\n                            <option value={role.id}>{role.name}</option>\n                          {/each}\n                        </select>\n                      {/if}\n                    </div>\n                  </td>\n                  <td class=\"py-3 px-4\">\n                    <div class=\"flex flex-wrap gap-1\">\n                      {#each (userDirectPermsMap[user.id] ?? []) as perm (perm.id)}\n                        <span class=\"inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-purple-100 text-purple-800\">\n                          {perm.name}\n                          <button\n                            type=\"button\"\n                            class=\"hover:text-red-600 font-bold\"\n                            onclick={() => revokePermFromUser(user.id, perm.id)}\n                          >&times;</button>\n                        </span>\n                      {/each}\n                      {#if permissions.length > 0}\n                        <select\n                          class=\"text-xs border border-border rounded px-1 py-0.5\"\n                          onchange={(e) => {\n                            const val = Number((e.target as HTMLSelectElement).value);\n                            if (val) { grantPermToUser(user.id, val); (e.target as HTMLSelectElement).value = ''; }\n                          }}\n                        >\n                          <option value=\"\">+ perm</option>\n                          {#each permissions.filter((p) => !(userDirectPermsMap[user.id] ?? []).some((up) => up.id === p.id)) as perm (perm.id)}\n                            <option value={perm.id}>{perm.name}</option>\n                          {/each}\n                        </select>\n                      {/if}\n                    </div>\n                  </td>\n                  <td class=\"py-3 px-4\">\n                    <div class=\"flex gap-2\">\n                      {#if user.role === 'user'}\n                        <Button size=\"sm\" variant=\"outline\" onclick={() => updateUserRole(user.id, 'admin')}>\n                          Make Admin\n                        </Button>\n                      {:else if data.stats.roleDistribution.admin > 1}\n                        <Button size=\"sm\" variant=\"outline\" onclick={() => updateUserRole(user.id, 'user')}>\n                          Demote\n                        </Button>\n                      {/if}\n                      {#if user.id !== data.user.id}\n                        <Button size=\"sm\" variant=\"destructive\" onclick={() => deleteUser(user.id, user.name)}>\n                          Delete\n                        </Button>\n                      {/if}\n                    </div>\n                  </td>\n                </tr>\n              {/each}\n            </tbody>\n          </table>\n        </div>\n      </CardContent>\n    </Card>\n  {/if}\n\n  <!-- Roles -->\n  {#if activeTab === 'roles'}\n    <div class=\"space-y-6\">\n      <Card>\n        <CardHeader>\n          <div class=\"flex justify-between items-start\">\n            <div>\n              <CardTitle>Roles</CardTitle>\n              <CardDescription>{roles.length} roles defined</CardDescription>\n            </div>\n            <Button size=\"sm\" onclick={() => (showRoleForm = !showRoleForm)}>\n              {showRoleForm ? 'Cancel' : 'Create Role'}\n            </Button>\n          </div>\n        </CardHeader>\n        {#if showRoleForm}\n          <CardContent>\n            <form\n              method=\"POST\"\n              action=\"?/createRole\"\n              use:enhanceCreateRole\n              novalidate\n              class=\"flex flex-wrap gap-3 items-end border-b border-border pb-4 mb-4\"\n            >\n              <div class=\"flex-1 min-w-[200px]\">\n                <Label for=\"role-name\">Name</Label>\n                <Input\n                  id=\"role-name\"\n                  name=\"name\"\n                  bind:value={$createRoleForm.name}\n                  placeholder=\"e.g. editor\"\n                  aria-invalid={$createRoleErrors.name ? 'true' : undefined}\n                  disabled={$creatingRole}\n                />\n                {#if $createRoleErrors.name}<p class=\"mt-1 text-xs text-red-600\">{$createRoleErrors.name[0]}</p>{/if}\n              </div>\n              <div class=\"flex-1 min-w-[140px]\">\n                <Label for=\"role-guard\">Guard</Label>\n                <Input\n                  id=\"role-guard\"\n                  name=\"guard\"\n                  bind:value={$createRoleForm.guard}\n                  placeholder=\"web\"\n                  disabled={$creatingRole}\n                />\n              </div>\n              <div class=\"flex-1 min-w-[200px]\">\n                <Label for=\"role-desc\">Description (optional)</Label>\n                <Input\n                  id=\"role-desc\"\n                  name=\"description\"\n                  bind:value={$createRoleForm.description}\n                  placeholder=\"Can edit content\"\n                  aria-invalid={$createRoleErrors.description ? 'true' : undefined}\n                  disabled={$creatingRole}\n                />\n                {#if $createRoleErrors.description}<p class=\"mt-1 text-xs text-red-600\">{$createRoleErrors.description[0]}</p>{/if}\n              </div>\n              <Button type=\"submit\" size=\"sm\" disabled={$creatingRole}>{$creatingRole ? 'Creating...' : 'Create'}</Button>\n            </form>\n          </CardContent>\n        {/if}\n        <CardContent>\n          {#if roles.length > 0}\n            <div class=\"space-y-4\">\n              {#each roles as role (role.id)}\n                <div class=\"border border-border rounded-lg p-4\">\n                  <div class=\"flex items-center justify-between mb-3\">\n                    <div>\n                      <span class=\"font-medium text-foreground\">{role.name}</span>\n                      <Badge variant=\"secondary\" class=\"ml-2\">{role.guard}</Badge>\n                      {#if role.description}\n                        <p class=\"text-xs text-muted-foreground mt-1\">{role.description}</p>\n                      {/if}\n                    </div>\n                    <Button size=\"sm\" variant=\"destructive\" onclick={() => deleteRole(role.name)}>Delete</Button>\n                  </div>\n                  <div>\n                    <p class=\"text-xs font-semibold text-muted-foreground uppercase mb-2\">Permissions</p>\n                    <div class=\"flex flex-wrap gap-2\">\n                      {#each permissions as perm (perm.id)}\n                        {@const has = (rolePermissionsMap[role.id] ?? []).includes(perm.id)}\n                        <button\n                          type=\"button\"\n                          class=\"px-2 py-1 rounded text-xs border transition-colors {has\n                            ? 'bg-[var(--color-brand)] text-white border-[var(--color-brand)]'\n                            : 'bg-background text-muted-foreground border-border hover:border-foreground/30'}\"\n                          onclick={() => toggleRolePermission(role.id, perm.id)}\n                        >\n                          {perm.name}\n                        </button>\n                      {/each}\n                      {#if permissions.length === 0}\n                        <span class=\"text-xs text-muted-foreground/70\">No permissions defined yet</span>\n                      {/if}\n                    </div>\n                  </div>\n                </div>\n              {/each}\n            </div>\n          {:else}\n            <p class=\"text-sm text-muted-foreground py-4 text-center\">\n              No roles defined. Create one to start assigning permissions.\n            </p>\n          {/if}\n        </CardContent>\n      </Card>\n    </div>\n  {/if}\n\n  <!-- Permissions -->\n  {#if activeTab === 'permissions'}\n    <div class=\"space-y-6\">\n      <Card>\n        <CardHeader>\n          <div class=\"flex justify-between items-start\">\n            <div>\n              <CardTitle>Permissions</CardTitle>\n              <CardDescription>{permissions.length} permissions defined</CardDescription>\n            </div>\n            <Button size=\"sm\" onclick={() => (showPermForm = !showPermForm)}>\n              {showPermForm ? 'Cancel' : 'Create Permission'}\n            </Button>\n          </div>\n        </CardHeader>\n        {#if showPermForm}\n          <CardContent>\n            <form\n              method=\"POST\"\n              action=\"?/createPermission\"\n              use:enhanceCreatePermission\n              novalidate\n              class=\"flex flex-wrap gap-3 items-end border-b border-border pb-4 mb-4\"\n            >\n              <div class=\"flex-1 min-w-[200px]\">\n                <Label for=\"perm-name\">Name</Label>\n                <Input\n                  id=\"perm-name\"\n                  name=\"name\"\n                  bind:value={$createPermissionForm.name}\n                  placeholder=\"e.g. manage-users\"\n                  aria-invalid={$createPermissionErrors.name ? 'true' : undefined}\n                  disabled={$creatingPermission}\n                />\n                {#if $createPermissionErrors.name}<p class=\"mt-1 text-xs text-red-600\">{$createPermissionErrors.name[0]}</p>{/if}\n              </div>\n              <div class=\"flex-1 min-w-[140px]\">\n                <Label for=\"perm-guard\">Guard</Label>\n                <Input\n                  id=\"perm-guard\"\n                  name=\"guard\"\n                  bind:value={$createPermissionForm.guard}\n                  placeholder=\"web\"\n                  disabled={$creatingPermission}\n                />\n              </div>\n              <div class=\"flex-1 min-w-[200px]\">\n                <Label for=\"perm-desc\">Description (optional)</Label>\n                <Input\n                  id=\"perm-desc\"\n                  name=\"description\"\n                  bind:value={$createPermissionForm.description}\n                  placeholder=\"Can manage user accounts\"\n                  aria-invalid={$createPermissionErrors.description ? 'true' : undefined}\n                  disabled={$creatingPermission}\n                />\n                {#if $createPermissionErrors.description}<p class=\"mt-1 text-xs text-red-600\">{$createPermissionErrors.description[0]}</p>{/if}\n              </div>\n              <Button type=\"submit\" size=\"sm\" disabled={$creatingPermission}>{$creatingPermission ? 'Creating...' : 'Create'}</Button>\n            </form>\n          </CardContent>\n        {/if}\n        <CardContent>\n          {#if permissions.length > 0}\n            <div class=\"overflow-x-auto\">\n              <table class=\"w-full text-sm\">\n                <thead>\n                  <tr class=\"border-b border-border\">\n                    <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Name</th>\n                    <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Guard</th>\n                    <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Description</th>\n                    <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Used by Roles</th>\n                    <th class=\"text-left py-3 px-4 font-semibold text-foreground\">Actions</th>\n                  </tr>\n                </thead>\n                <tbody>\n                  {#each permissions as perm (perm.id)}\n                    {@const usedBy = roles.filter((r) => (rolePermissionsMap[r.id] ?? []).includes(perm.id))}\n                    <tr class=\"border-b border-border hover:bg-muted/50\">\n                      <td class=\"py-3 px-4 font-medium text-foreground\">{perm.name}</td>\n                      <td class=\"py-3 px-4\">\n                        <Badge variant=\"secondary\">{perm.guard}</Badge>\n                      </td>\n                      <td class=\"py-3 px-4 text-muted-foreground\">{perm.description || '---'}</td>\n                      <td class=\"py-3 px-4\">\n                        <div class=\"flex flex-wrap gap-1\">\n                          {#each usedBy as role (role.id)}\n                            <Badge variant=\"outline\">{role.name}</Badge>\n                          {/each}\n                          {#if usedBy.length === 0}\n                            <span class=\"text-xs text-muted-foreground/70\">None</span>\n                          {/if}\n                        </div>\n                      </td>\n                      <td class=\"py-3 px-4\">\n                        <Button size=\"sm\" variant=\"destructive\" onclick={() => deletePermission(perm.name)}>Delete</Button>\n                      </td>\n                    </tr>\n                  {/each}\n                </tbody>\n              </table>\n            </div>\n          {:else}\n            <p class=\"text-sm text-muted-foreground py-4 text-center\">\n              No permissions defined. Create one to start building your authorization system.\n            </p>\n          {/if}\n        </CardContent>\n      </Card>\n    </div>\n  {/if}\n\n  <!-- Queue -->\n  {#if activeTab === 'queue'}\n    <div class=\"space-y-6\">\n      <div class=\"grid grid-cols-1 md:grid-cols-5 gap-4\">\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Waiting</p>\n              <p class=\"text-3xl font-bold text-yellow-600 mt-2\">{queueCounts.waiting}</p>\n            </div>\n          </CardContent>\n        </Card>\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Active</p>\n              <p class=\"text-3xl font-bold text-blue-600 mt-2\">{queueCounts.active}</p>\n            </div>\n          </CardContent>\n        </Card>\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Failed</p>\n              <p class=\"text-3xl font-bold text-red-600 mt-2\">{queueCounts.failed}</p>\n            </div>\n          </CardContent>\n        </Card>\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Completed</p>\n              <p class=\"text-3xl font-bold text-green-600 mt-2\">{queueCounts.completed}</p>\n            </div>\n          </CardContent>\n        </Card>\n        <Card>\n          <CardContent class=\"pt-6\">\n            <div>\n              <p class=\"text-sm text-muted-foreground\">Delayed</p>\n              <p class=\"text-3xl font-bold text-muted-foreground mt-2\">{queueCounts.delayed}</p>\n            </div>\n          </CardContent>\n        </Card>\n      </div>\n      <Card>\n        <CardHeader>\n          <CardTitle>Queue Actions</CardTitle>\n          <CardDescription>Manage job queue</CardDescription>\n        </CardHeader>\n        <CardContent class=\"flex gap-3\">\n          <Button variant=\"outline\" onclick={refreshQueue}>Refresh Counts</Button>\n        </CardContent>\n      </Card>\n    </div>\n  {/if}\n\n  <!-- Scheduler -->\n  {#if activeTab === 'scheduler'}\n    <Card>\n      <CardHeader>\n        <CardTitle>Scheduled Tasks</CardTitle>\n        <CardDescription>\n          {scheduledTasks.length > 0\n            ? `${scheduledTasks.length} registered tasks`\n            : 'No tasks registered. Configure your scheduler to see tasks here.'}\n        </CardDescription>\n      </CardHeader>\n      <CardContent>\n        {#if scheduledTasks.length > 0}\n          <div class=\"space-y-3\">\n            {#each scheduledTasks as task (task.name)}\n              <div class=\"flex items-center justify-between p-4 border border-border rounded-lg hover:bg-muted/50\">\n                <div class=\"flex-1\">\n                  <p class=\"font-medium text-foreground\">{task.name}</p>\n                  <p class=\"text-sm text-muted-foreground\">Schedule: {task.humanReadable}</p>\n                  <p class=\"text-xs text-muted-foreground mt-1\">Last run: {formatDate(task.lastRun)}</p>\n                  <p class=\"text-xs text-muted-foreground\">Next run: {formatDate(task.nextRun)}</p>\n                </div>\n                <div class=\"flex items-center gap-3\">\n                  {#if task.lastStatus}\n                    <Badge variant={task.lastStatus === 'success' ? 'default' : 'destructive'}>\n                      {task.lastStatus}\n                    </Badge>\n                  {/if}\n                  <Badge variant={task.enabled ? 'default' : 'secondary'}>\n                    {task.enabled ? 'enabled' : 'disabled'}\n                  </Badge>\n                  <Button size=\"sm\" variant=\"outline\" onclick={() => runTask(task.name)}>Run Now</Button>\n                  <Button size=\"sm\" variant=\"outline\" onclick={() => toggleTask(task.name, !task.enabled)}>\n                    {task.enabled ? 'Disable' : 'Enable'}\n                  </Button>\n                </div>\n              </div>\n            {/each}\n          </div>\n        {:else}\n          <p class=\"text-sm text-muted-foreground py-4 text-center\">\n            No scheduled tasks found. Configure the Scheduler in your app.ts to register tasks.\n          </p>\n        {/if}\n      </CardContent>\n    </Card>\n  {/if}\n\n  <!-- Logs -->\n  {#if activeTab === 'logs'}\n    <Card>\n      <CardHeader>\n        <CardTitle>Application Logs</CardTitle>\n        <CardDescription>\n          {logStats.totalEntries} total entries\n          {#if logStats.byLevel?.error}\n            ({logStats.byLevel.error} errors)\n          {/if}\n        </CardDescription>\n      </CardHeader>\n      <CardContent>\n        <div class=\"flex gap-2 mb-4\">\n          <Button size=\"sm\" variant={logFilter === 'all' ? 'default' : 'outline'} onclick={() => (logFilter = 'all')}>\n            All ({logStats.totalEntries})\n          </Button>\n          <Button size=\"sm\" variant={logFilter === 'info' ? 'default' : 'outline'} onclick={() => (logFilter = 'info')}>\n            Info ({logStats.byLevel?.info ?? 0})\n          </Button>\n          <Button size=\"sm\" variant={logFilter === 'warn' ? 'default' : 'outline'} onclick={() => (logFilter = 'warn')}>\n            Warning ({logStats.byLevel?.warn ?? 0})\n          </Button>\n          <Button size=\"sm\" variant={logFilter === 'error' ? 'default' : 'outline'} onclick={() => (logFilter = 'error')}>\n            Error ({logStats.byLevel?.error ?? 0})\n          </Button>\n        </div>\n\n        {#if filteredLogs.length > 0}\n          <div class=\"space-y-2 max-h-96 overflow-y-auto\">\n            {#each filteredLogs as log, i (i)}\n              <div class=\"flex items-start gap-3 p-3 border border-border rounded bg-muted/50 text-sm\">\n                <Badge variant={getLogBadgeVariant(log.level)} class=\"mt-0.5\">\n                  {log.level.toUpperCase()}\n                </Badge>\n                <div class=\"flex-1\">\n                  <p class=\"text-foreground\">{log.message}</p>\n                  <p class=\"text-xs text-muted-foreground mt-1\">\n                    {formatDate(log.timestamp)}\n                    {#if log.channel && log.channel !== 'default'}\n                      <span class=\"ml-2 text-muted-foreground/70\">[{log.channel}]</span>\n                    {/if}\n                  </p>\n                </div>\n              </div>\n            {/each}\n          </div>\n        {:else}\n          <p class=\"text-sm text-muted-foreground py-4 text-center\">\n            No log entries found. Logs appear here as your application runs.\n          </p>\n        {/if}\n      </CardContent>\n    </Card>\n  {/if}\n</div>\n";
 	}
 
 
@@ -4694,203 +5229,14 @@ export const POST = ctrl.handle('exportData');
 
 	// ─── Admin Dashboard API Routes ──────────────────────────
 
-	static apiAdminHealth(): string {
-		return `import { json } from '@sveltejs/kit';
-import type { RequestHandler } from '@sveltejs/kit';
 
-export const GET: RequestHandler = async () => {
-  const health = {
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    memory: process.memoryUsage(),
-    version: '0.1.0',
-  };
 
-  return json(health);
-};
-`;
-	}
 
-	static apiAdminQueue(): string {
-		return `import { json } from '@sveltejs/kit';
-import type { RequestHandler } from '@sveltejs/kit';
-import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
 
-export const GET: RequestHandler = async (event) => {
-  const { searchParams } = event.url;
-  const status = searchParams.get('status') || 'all';
-  const queueName = searchParams.get('queue') || 'default';
-  const limit = parseInt(searchParams.get('limit') || '50');
-  const offset = parseInt(searchParams.get('offset') || '0');
 
-  try {
-    const jobs = await JobMonitor.listJobs({
-      queue: queueName,
-      status: status === 'all' ? undefined : status as any,
-      limit,
-      offset,
-    });
-    const counts = await JobMonitor.getCounts(queueName);
-    return json({ jobs, counts, queueName });
-  } catch (error: any) {
-    return json({ error: error.message || 'Failed to fetch queue jobs' }, { status: 500 });
-  }
-};
-`;
-	}
 
-	static apiAdminQueueRetry(): string {
-		return `import { json } from '@sveltejs/kit';
-import type { RequestHandler } from '@sveltejs/kit';
-import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
 
-export const POST: RequestHandler = async (event) => {
-  const { id } = event.params;
-  try {
-    await JobMonitor.retryJob(id);
-    return json({ success: true, message: 'Job queued for retry' });
-  } catch (error: any) {
-    return json({ error: error.message || 'Failed to retry job' }, { status: 500 });
-  }
-};
-`;
-	}
 
-	static apiAdminQueueDelete(): string {
-		return `import { json } from '@sveltejs/kit';
-import type { RequestHandler } from '@sveltejs/kit';
-import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
-
-export const DELETE: RequestHandler = async (event) => {
-  const { id } = event.params;
-  try {
-    await JobMonitor.deleteJob(id);
-    return json({ success: true, message: 'Job removed' });
-  } catch (error: any) {
-    return json({ error: error.message || 'Failed to remove job' }, { status: 500 });
-  }
-};
-`;
-	}
-
-	static apiAdminScheduler(): string {
-		return `import { json } from '@sveltejs/kit';
-import type { RequestHandler } from '@sveltejs/kit';
-import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
-
-export const GET: RequestHandler = async () => {
-  try {
-    const tasks = await ScheduleMonitor.listTasks();
-    const health = await ScheduleMonitor.getHealth();
-    return json({ tasks, health });
-  } catch (error: any) {
-    return json({ error: error.message || 'Failed to fetch scheduled tasks' }, { status: 500 });
-  }
-};
-`;
-	}
-
-	static apiAdminSchedulerRun(): string {
-		return `import { json } from '@sveltejs/kit';
-import type { RequestHandler } from '@sveltejs/kit';
-import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
-
-export const POST: RequestHandler = async (event) => {
-  const { name } = event.params;
-  try {
-    await ScheduleMonitor.runTask(name);
-    return json({ success: true, message: \`Task '\${name}' triggered\` });
-  } catch (error: any) {
-    return json({ error: error.message || 'Failed to run task' }, { status: 500 });
-  }
-};
-`;
-	}
-
-	static apiAdminSchedulerToggle(): string {
-		return `import { json } from '@sveltejs/kit';
-import type { RequestHandler } from '@sveltejs/kit';
-import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
-
-export const POST: RequestHandler = async (event) => {
-  const { name } = event.params;
-  const body = await event.request.json();
-  const enabled = body.enabled ?? true;
-
-  try {
-    if (enabled) {
-      await ScheduleMonitor.enableTask(name);
-    } else {
-      await ScheduleMonitor.disableTask(name);
-    }
-    return json({ success: true, message: \`Task '\${name}' \${enabled ? 'enabled' : 'disabled'}\` });
-  } catch (error: any) {
-    return json({ error: error.message || 'Failed to toggle task' }, { status: 500 });
-  }
-};
-`;
-	}
-
-	static apiAdminLogs(): string {
-		return `import { json } from '@sveltejs/kit';
-import type { RequestHandler } from '@sveltejs/kit';
-import { LogViewer } from '@beeblock/svelar/logging/LogViewer';
-
-export const GET: RequestHandler = async (event) => {
-  const { searchParams } = event.url;
-  const level = searchParams.get('level');
-  const channel = searchParams.get('channel');
-  const search = searchParams.get('search');
-  const limit = parseInt(searchParams.get('limit') || '100');
-  const offset = parseInt(searchParams.get('offset') || '0');
-
-  try {
-    const logs = LogViewer.query({
-      level: level as any,
-      channel: channel ?? undefined,
-      search: search ?? undefined,
-      limit,
-      offset,
-    });
-    const stats = LogViewer.getStats();
-    return json({ logs, total: stats.totalEntries, limit, offset });
-  } catch (error: any) {
-    return json({ error: error.message || 'Failed to fetch logs' }, { status: 500 });
-  }
-};
-`;
-	}
-
-	static apiAdminStats(): string {
-		return `import { json } from '@sveltejs/kit';
-import type { RequestHandler } from '@sveltejs/kit';
-import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
-import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
-import { LogViewer } from '@beeblock/svelar/logging/LogViewer';
-
-export const GET: RequestHandler = async () => {
-  try {
-    const [queueHealth, recentErrors] = await Promise.all([
-      JobMonitor.getHealth(),
-      Promise.resolve(LogViewer.getRecentErrors(10)),
-    ]);
-    const schedulerHealth = await ScheduleMonitor.getHealth();
-    const logStats = LogViewer.getStats();
-
-    return json({
-      queue: queueHealth,
-      scheduler: schedulerHealth,
-      logs: logStats,
-      recentErrors,
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error: any) {
-    return json({ error: error.message || 'Failed to fetch stats' }, { status: 500 });
-  }
-};
-`;
-	}
 
 	// ─── Jobs ─────────────────────────────────────────────────
 
@@ -5226,8 +5572,8 @@ export default class QueueHealthCheck extends ScheduledTask {
   }
 
   async handle(): Promise<void> {
-    const stats = await Queue.stats();
-    const { pending, failed } = stats;
+    const pending = await Queue.size();
+    const failed = (await Queue.failed()).length;
 
     if (failed > 0) {
       console.warn(\`[QueueHealthCheck] \${failed} failed jobs in queue\`);
@@ -5431,18 +5777,19 @@ export class SendWelcomeEmailListener {
 	}
 
 	static welcomeNotification(): string {
-		return `import { Notification } from '@beeblock/svelar/notifications';
+		return `import { Notification, type NotificationChannel } from '@beeblock/svelar/notifications';
+import type { User } from '$lib/modules/auth/User.js';
 
 export class WelcomeNotification extends Notification {
-  user: any;
+  user: User;
 
-  constructor(user: any) {
+  constructor(user: User) {
     super();
     this.user = user;
   }
 
-  channels() {
-    return ['database'] as const;
+  channels(): NotificationChannel[] {
+    return ['database'];
   }
 
   toDatabase() {
@@ -5598,6 +5945,7 @@ export default defineConfig({
       '@beeblock/svelar/teams': resolve(svelarRoot, 'dist/teams/index.js'),
       '@beeblock/svelar/testing': resolve(svelarRoot, 'dist/testing/index.js'),
       '@beeblock/svelar/uploads': resolve(svelarRoot, 'dist/uploads/index.js'),
+      '@beeblock/svelar/validation/valibot': resolve(svelarRoot, 'dist/validation/valibot.js'),
       '@beeblock/svelar/validation': resolve(svelarRoot, 'dist/validation/index.js'),
       '@beeblock/svelar/webhooks': resolve(svelarRoot, 'dist/webhooks/index.js'),
       '@beeblock/svelar': resolve(svelarRoot, 'dist/index.js'),

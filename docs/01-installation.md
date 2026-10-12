@@ -200,6 +200,8 @@ npm run dev
 
 Visit `http://localhost:5173`. Your app is running.
 
+Generated `App.Locals` types live in `src/svelar.d.ts`. Keep them separate from the `src/app.ts` bootstrap: TypeScript ignores a same-name `src/app.d.ts` when discovering source files. Anonymous users remain nullable, so protected loaders and actions must narrow authentication before reading user fields.
+
 ## Docker Deployment
 
 When you're ready for production, scaffold Docker files:

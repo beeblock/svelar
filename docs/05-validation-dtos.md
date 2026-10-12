@@ -13,6 +13,58 @@ npx svelar new my-app --validation=valibot
 
 The choice is stored in `svelar.validation.json`. Generators such as `make:schema`, `make:dto`, `make:request`, `make:action --schema`, and `make:entity` read that file so new artifacts stay consistent with the app. FormRequest, controller body validation, and the forms helpers support both providers.
 
+## Migrating To Zod 4
+
+The 0.8.0 candidate uses native Zod 4. `@beeblock/svelar/validation` exports Zod 4 schemas and rules; generated Zod apps install `zod@^4.6.7`. Valibot apps keep their existing provider. This changes the public schema contract for existing Zod 3 consumers, even though the candidate framework version remains 0.8.0.
+
+After installing a compatible Svelar release in an existing Zod app, explicitly inspect and approve the migration:
+
+```bash
+npx svelar update --migrate-zod4 --dry-run
+npx svelar update --migrate-zod4 --force
+npm install
+```
+
+The migration uses the app's installed TypeScript compiler (`npm install -D typescript` if missing) and Svelte compiler for component scripts. It changes only selected dependency versions and named Superforms adapter import tokens: `zod` becomes `zod4 as zod`, and `zodClient` becomes `zod4Client as zodClient`; existing aliases stay unchanged. Each edited file receives an exact-original `.zod4.bak` backup (numbered if a backup already exists). `--dry-run` writes nothing; applying requires `--force` or interactive confirmation. Unsupported namespace/dynamic imports, custom dependency specs and conflicting overrides block the entire migration before writes. Valibot projects are skipped. Ordinary `update` does not run this migration or replace app-owned source.
+
+For older apps missing the framework's ambient locals types, use the separate missing-only manifest mode:
+
+```bash
+npx svelar update --add-missing-user-files --category=config --dry-run
+npx svelar update --add-missing-user-files --category=config --force
+```
+
+This adds missing user-owned config files, including `src/svelar.d.ts`, but never overwrites existing files or refreshes framework files. It is separate from `--include-user-files`, which is a reviewed replacement workflow, and cannot be combined with that flag or `--migrate-zod4`. Review the dry-run list before approving additions. The migration does not automatically rewrite custom Zod APIs; complete the semantic checks below before deploying.
+
+1. Upgrade the app's Zod dependency to the same native Zod 4 line as core. Do not mix Zod 3 schemas with native Zod 4 adapters.
+2. Import shared schemas from `@beeblock/svelar/validation` and replace Superforms `zod`/`zodClient` adapters with `zod4`/`zod4Client`. The forms helpers select native Zod 4 by default; their older `adapter: 'zod'` option name is an alias for the native adapter, not a Zod 3 shim.
+3. Review app-owned schemas, requests, and pages, then run `svelte-kit sync`, `svelte-check`, the app build, and validation/authorization tests. Keep field types inferred from the shared schema, rather than masking failures with casts; do not blanket-replace customized source.
+4. Verify the installed dependency graph with `npm ls zod sveltekit-superforms`. A broad Superforms peer range alone does not guarantee compatible schemas: Superforms 2.31.0 also installs native Zod 4 as an optional dependency. Svelar externalizes Zod in its build so schemas and consuming adapters use normal package resolution rather than a private bundled validator.
+
+```typescript
+import { z } from '@beeblock/svelar/validation';
+import { superValidate } from 'sveltekit-superforms';
+import { zod4 } from 'sveltekit-superforms/adapters';
+
+export const profileSchema = z.object({
+  email: z.email(),
+  age: z.coerce.number().int().nonnegative(),
+});
+
+const form = await superValidate(zod4(profileSchema));
+// form.data.email is string; form.data.age is number.
+```
+
+Review these behavioral changes before deploying:
+
+- `.default()` now supplies an output value and skips parsing when input is missing. Use `.prefault()` for an input fallback that must still run through validation/transforms. For example, `z.string().transform(Number).prefault('25')` preserves a numeric parsed fallback; `.default(25)` returns 25 directly.
+- Defaults inside optional object properties are applied when the property is absent. Check partial-update schemas that depend on a missing key meaning "leave unchanged".
+- `z.coerce.*` input types are now `unknown`; derive DTOs from `z.output`/`z.infer`, not the raw input type. Coercion is not validation of form intent: `z.coerce.boolean().parse('false')` is true and `z.coerce.number().parse('')` is 0. Use explicit normalization for checkbox and blank numeric inputs.
+- Error customization uses Zod 4 issue codes, such as `invalid_format` instead of the Zod 3 `invalid_string` format code. Prefer `z.flattenError(error)`/`z.treeifyError(error)` to deprecated instance helpers. `.issues` remains the source for Svelar's normalized field errors.
+- Use `z.ZodType` instead of `ZodTypeAny`, and review changed generics, records, refinements, and stricter number/UUID checks. Schema type changes can affect app-owned wrappers even when runtime inputs look unchanged.
+
+See the [official Zod 4 migration guide](https://zod.dev/v4/changelog) and [Superforms Zod 4 tutorial](https://superforms.rocks/get-started/zod4). Existing plugins are not migrated implicitly by this core change.
+
 ## Contract Schemas — Single Source of Truth
 
 Instead of defining validation schemas inline in FormRequests and types separately on the frontend, define them once in a **contract schema** file. Every layer imports from it.
@@ -322,7 +374,7 @@ export class RegisterRequest extends FormRequest {
   messages() {
     return {
       'name.too_small': m.validation_name_min(),
-      'email.invalid_string': m.validation_email_invalid(),
+      'email.invalid_format': m.validation_email_invalid(),
       'password.too_small': m.validation_password_min(),
       'password_confirmation': m.validation_passwords_must_match(),
     };

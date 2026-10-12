@@ -88,7 +88,7 @@ npx svelar make:channel TeamChannel
 npx svelar make:broadcasting
 npx svelar make:dashboard
 npx svelar make:docker
-npx svelar make:test InvoiceService --type=unit
+npx svelar make:test InvoiceService --unit
 ```
 
 Runtime commands:
@@ -169,7 +169,7 @@ For page forms, the page action may call the FormRequest/action directly, but it
 
 ## Validation And Superforms
 
-Zod schema:
+Native Zod 4 schema (do not pass Zod 3 schemas to the native adapters):
 
 ```ts
 import { z, rules } from '@beeblock/svelar/validation';
@@ -179,8 +179,10 @@ export const createPostSchema = z.object({
   body: rules.string(10, 5000),
 });
 
-export type CreatePostInput = z.infer<typeof createPostSchema>;
+export type CreatePostInput = z.output<typeof createPostSchema>;
 ```
+
+Use `zod4`/`zod4Client` from `sveltekit-superforms/adapters` for this schema; retain `valibot` for Valibot apps. Zod 4 `.default()` supplies output without parsing; use `.prefault()` for validated/transformed input fallbacks. Derive DTOs from the output type because coerced input types may be `unknown`.
 
 Valibot schema:
 
@@ -305,6 +307,8 @@ Use `.default(value)`, not `.defaultTo(value)`. Use `addColumn` and `dropColumn`
 - Use policies for model/resource decisions.
 - Use `Permissions`/roles for RBAC.
 - Use `Teams` for team-scoped membership, invitations, and resource access.
+- Team RBAC uses an explicit immutable `Permissions.forTeam(team.id)` facade after membership authorization. Global `Permissions`/`HasRoles` checks do not inherit team grants. Use `Permissions.global()` for platform gates.
+- Register application capabilities in code and sync them in a seeder with `Permissions.syncCapabilities()`; UI-created permission names alone do not create backend gates.
 - Unauthorized page actions should surface a toast/alert/modal or inline message where the user can continue, not crash into a generic 500.
 - API routes should return 401/403 resource responses, not unhandled exceptions.
 
@@ -339,6 +343,9 @@ For request/response reads across modules, do not import another module's model/
 - Use database-backed scheduler locks for no-overlap tasks.
 - Run `npm run dev:worker` and `npm run dev:scheduler` when testing local runtime behavior.
 - Expose queue/scheduler status through the Svelar dashboard when relevant.
+- Pass the queue name to `JobMonitor.getJob/retryJob/deleteJob` so job IDs cannot resolve in another queue. Runtime metrics can be unknown; do not replace null with a false healthy value.
+- Inspect `ScheduleMonitor.runTask()` results: `skipped` means overlap prevented execution and `success: false` means execution failed. An awaited promise alone is not success.
+- Use callback-scoped `fakeQueue`, `fakeEvents`, `fakeNotifications`, `fakeHttp`, and `fakeMail` from `@beeblock/svelar/testing`; await all work inside the callback so interception is restored reliably.
 
 ## Storage, Uploads, PDF, Mail, Search
 
@@ -416,6 +423,10 @@ A dogfood app must expose user workflows that prove Svelar features, not only se
 - Validate browser UX: loading states, empty states, inline validation errors without duplicate toasts, toast/alert feedback, realtime updates, and no stale form state.
 
 ## Verification
+
+Generated apps keep ambient `App.Locals` types in `src/svelar.d.ts`. Do not name this file `src/app.d.ts`: the `src/app.ts` bootstrap shadows that declaration during TypeScript glob discovery. Preserve nullable anonymous users and narrow authentication before accessing their IDs.
+
+Run `npm run smoke:cli` for installed CLI execution and artifact type checks in DDD/flat apps with Zod/Valibot, and `npm run smoke:upgrade` for an exact published baseline. Help screens, source-only tests and a green build alone do not prove these contracts. Review `svelar update --dry-run` first; do not force-overwrite app-owned source or migrations. Native Zod 4 adapter migration is explicitly opt-in, uses exact-original backups, and still requires semantic schema review.
 
 Before release-impacting work, prefer:
 

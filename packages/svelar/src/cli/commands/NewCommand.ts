@@ -9,6 +9,7 @@
 
 import { Command } from '../Command.js';
 import { NewCommandTemplates as T, type ValidationProvider } from './NewCommandTemplates.js';
+import { MakeDashboardCommand } from './MakeDashboardCommand.js';
 
 async function chooseValidationProvider(raw: unknown): Promise<ValidationProvider> {
   const value = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
@@ -79,9 +80,8 @@ export class NewCommand extends Command {
     // Templates always use DDD paths internally. When --flat is set,
     // both the file path and import paths are transformed automatically.
     const write = (dddPath: string, content: string) => {
-      const relativePath = flat ? toFlatPath(dddPath) : toLayeredDddPath(dddPath);
       const validationContent = T.applyValidationProvider(content, validationProvider);
-      const transformedContent = flat ? toFlatImports(validationContent, dddPath) : toLayeredDddImports(validationContent, dddPath, relativePath);
+      const { path: relativePath, content: transformedContent } = transformScaffoldFile(dddPath, validationContent, flat);
       const fullPath = join(projectDir, relativePath);
       mkdirSync(join(fullPath, '..'), { recursive: true });
       writeFileSync(fullPath, transformedContent);
@@ -142,7 +142,10 @@ export class NewCommand extends Command {
     const { fileURLToPath: ftu } = await import('node:url');
     const ownPkgPath = join(dn(dn(dn(ftu(import.meta.url)))), 'package.json');
     const ownPkg = JSON.parse((await import('node:fs')).readFileSync(ownPkgPath, 'utf-8'));
-    const svelarVersion = ownPkg.version ?? '0.4.0';
+    if (typeof ownPkg.version !== 'string' || !ownPkg.version.trim()) {
+      throw new Error('Cannot scaffold an app without the installed Svelar package version.');
+    }
+    const svelarVersion = ownPkg.version;
 
     write('package.json', T.packageJson(projectName, svelarVersion, validationProvider));
     write('svelte.config.js', T.svelteConfig());
@@ -152,6 +155,7 @@ export class NewCommand extends Command {
     write('static/favicon.svg', T.faviconSvg());
     write('src/app.css', T.appCss());
     write('src/app.ts', T.appTs());
+    write('src/svelar.d.ts', T.appDts());
     write('src/hooks.server.ts', T.hooksServerTs());
     write('.env.example', T.envExample());
     write('scripts/svelar-dev-runtime.mjs', T.svelarDevRuntimeScript());
@@ -316,15 +320,7 @@ export class NewCommand extends Command {
     write('src/routes/api/admin/user-roles/+server.ts', T.apiAdminUserRoles());
     write('src/routes/api/admin/user-permissions/+server.ts', T.apiAdminUserPermissions());
     write('src/routes/api/admin/export/+server.ts', T.apiAdminExport());
-    write('src/routes/api/admin/health/+server.ts', T.apiAdminHealth());
-    write('src/routes/api/admin/queue/+server.ts', T.apiAdminQueue());
-    write('src/routes/api/admin/queue/[id]/retry/+server.ts', T.apiAdminQueueRetry());
-    write('src/routes/api/admin/queue/[id]/+server.ts', T.apiAdminQueueDelete());
-    write('src/routes/api/admin/scheduler/+server.ts', T.apiAdminScheduler());
-    write('src/routes/api/admin/scheduler/[name]/run/+server.ts', T.apiAdminSchedulerRun());
-    write('src/routes/api/admin/scheduler/[name]/toggle/+server.ts', T.apiAdminSchedulerToggle());
-    write('src/routes/api/admin/logs/+server.ts', T.apiAdminLogs());
-    write('src/routes/api/admin/stats/+server.ts', T.apiAdminStats());
+    for (const file of new MakeDashboardCommand().files()) write(file.path, file.content);
 
 
     // ── 10. Jobs ──────────────────────────────────────────
@@ -446,6 +442,14 @@ export class NewCommand extends Command {
  * Determines the flat category folder for a given file name.
  * E.g. "AuthService.ts" → "services", "User.ts" → "models"
  */
+export function transformScaffoldFile(dddPath: string, content: string, flat: boolean): { path: string; content: string } {
+  const path = flat ? toFlatPath(dddPath) : toLayeredDddPath(dddPath);
+  return {
+    path,
+    content: flat ? toFlatImports(content, dddPath) : toLayeredDddImports(content, dddPath, path),
+  };
+}
+
 function fileCategory(name: string): string {
   if (/\.schema\.ts$/.test(name)) return 'schemas';
   if (/Service\./.test(name)) return 'services';

@@ -22,6 +22,37 @@ export { AuthManager };
 
 The `appUrl` and `appName` are used for generating email links (password reset, email verification) and email template content.
 
+## Generated Auth Pages
+
+New scaffolds use the same Zod or Valibot contract schemas for Superforms and FormRequests. Page actions authorize through the FormRequest and pass narrowed, typed DTO payloads to the existing registration action or auth APIs. Login/logout and recovery/OTP handlers use the request-local `event.locals.auth`; do not use the bootstrap auth manager as mutable user state.
+
+Auth page headings and titles read `config.get('app.name', process.env.APP_NAME ?? 'Svelar')`. Only the public app name and relevant feature flags are returned to the page, not the full auth configuration or secrets. The scaffold does not render nonfunctional OAuth/provider buttons.
+
+Optional `config/auth.ts` settings override the corresponding environment flags:
+
+```typescript
+export default {
+  otp: { enabled: false },
+  emailVerification: { required: true },
+  redirectTo: '/workspace',
+};
+```
+
+OTP is disabled unless `AUTH_OTP_ENABLED=true` or `auth.otp.enabled` is the boolean `true`. Configure real mail delivery before enabling it. Disabled OTP hides the login link, redirects the OTP page to password login, and denies direct send/verify POSTs and API requests with 403. Codes must be six numeric digits. A failed verification preserves the email and retry step, but clears the submitted code; ordinary non-enhanced form posts preserve that step too.
+
+Invalid credentials produce inline, generic feedback without identifying whether the email exists. Login, registration, and password-reset action responses redact password fields on credential, validation, authorization, and rate-limit failures. Enhanced forms clear passwords after failed updates and unexpected errors. Registration/reset also clear password confirmation. Inputs and submit buttons are disabled immediately while submitting; password and OTP inputs expose appropriate autocomplete hints.
+
+Password-recovery success uses the same message for existing and unknown accounts. A rate-limit error is a failure state and keeps the retry form visible. A completed reset redirects to login with visible confirmation. Mail/backend failures are not represented as successful delivery.
+
+Post-auth redirects use an internal path from `?redirectTo=/path`, falling back to `auth.redirectTo` and then `/dashboard`. Both request and configured destinations are validated: external/protocol-relative URLs, backslashes, control characters, malformed encoding, and normalized protocol-relative paths are rejected. Successful POSTs redirect with 303. This redirect policy does not replace authorization on the destination route.
+
+### Session Persistence
+
+There is no functional "remember me" checkbox in the generated scaffold. The existing auth/session APIs do not provide a per-login persistence switch; the signed session cookie uses the configured session lifetime. Configure `SESSION_LIFETIME`, `SESSION_ABSOLUTE_LIFETIME`, `SESSION_TOUCH_ON_ACTIVITY`, and `SESSION_TOUCH_THROTTLE` for app-wide expiry. Do not promise browser-close logout or extended remembered sessions by storing an unused form flag.
+
+These template fixes do not replace existing apps' customized auth pages automatically. When upgrading an app, reconcile its auth page/controller/request/schema code and auth settings with the scaffold behavior, retaining application-specific policies and branding.
+
+
 ## Session-Based Authentication
 
 Session-based auth is the default and recommended approach for web apps. Users log in once and receive a signed session cookie.
