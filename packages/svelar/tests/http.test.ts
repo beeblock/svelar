@@ -1,12 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   Http,
+  HttpCircuitOpenError,
   HttpRequestError,
   apiFetch,
   apiFetchJson,
   buildUrl,
   getCsrfToken,
   registerToast,
+  redactHttpHeaders,
+  redactHttpPayload,
   signedFetch,
 } from '../src/http';
 
@@ -234,5 +237,114 @@ describe('HTTP utilities', () => {
     }) as any;
 
     await expect(Http.baseUrl('https://api.example.com').timeout(1).get('/slow')).rejects.toBeInstanceOf(HttpRequestError);
+  });
+
+  it('supports retry policies for 429 Retry-After and exponential jitter-free backoff', async () => {
+    let attempts = 0;
+    const delays: number[] = [];
+    globalThis.fetch = vi.fn(async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        return new Response('limited', {
+          status: 429,
+          headers: { 'Retry-After': '2' },
+        });
+      }
+      if (attempts === 2) {
+        return new Response('temporary', { status: 503 });
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as any;
+
+    await expect(Http
+      .baseUrl('https://api.example.com')
+      .retry({
+        times: 2,
+        delay: 100,
+        backoff: 'exponential',
+        jitter: 'none',
+        sleep: async (ms) => {
+          delays.push(ms);
+        },
+      })
+      .get('/quota')).resolves.toMatchObject({
+      data: { ok: true },
+      status: 200,
+    });
+
+    expect(attempts).toBe(3);
+    expect(delays).toEqual([2000, 200]);
+  });
+
+  it('adds idempotency keys to mutation requests and exposes request/response/error hooks', async () => {
+    const events: string[] = [];
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init: init ?? {} });
+      return new Response(JSON.stringify({ id: 1 }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as any;
+
+    const response = await Http
+      .baseUrl('https://api.example.com')
+      .withIdempotencyKey('idem-123')
+      .beforeRequest((request) => {
+        events.push(`before:${request.attempt}`);
+        request.headers['X-Trace'] = 'trace-1';
+      })
+      .afterResponse(({ response }) => {
+        events.push(`after:${response.status}`);
+      })
+      .onError(() => {
+        events.push('error');
+      })
+      .post('/payments', { amount: 100 });
+
+    expect(response.status).toBe(201);
+    const headers = new Headers(calls[0].init.headers);
+    expect(headers.get('Idempotency-Key')).toBe('idem-123');
+    expect(headers.get('X-Trace')).toBe('trace-1');
+    expect(events).toEqual(['before:0', 'after:201']);
+  });
+
+  it('opens circuit breakers after configured failures', async () => {
+    globalThis.fetch = vi.fn(async () => new Response('down', { status: 503 })) as any;
+
+    const client = Http
+      .baseUrl('https://circuit.example.com')
+      .retry(0)
+      .circuitBreaker({ key: 'test-circuit', failureThreshold: 1, cooldown: 60_000 });
+
+    await expect(client.get('/health')).rejects.toMatchObject({
+      name: 'HttpRequestError',
+      status: 503,
+    });
+
+    await expect(client.get('/health')).rejects.toBeInstanceOf(HttpCircuitOpenError);
+  });
+
+  it('redacts sensitive HTTP telemetry data', () => {
+    expect(redactHttpHeaders({
+      Authorization: 'Bearer secret',
+      'X-API-Key': 'secret',
+      Accept: 'application/json',
+    })).toEqual({
+      Authorization: '[redacted]',
+      'X-API-Key': '[redacted]',
+      Accept: 'application/json',
+    });
+
+    expect(redactHttpPayload({
+      email: 'user@example.com',
+      nested: { refreshToken: 'secret' },
+    })).toEqual({
+      email: 'user@example.com',
+      nested: { refreshToken: '[redacted]' },
+    });
   });
 });

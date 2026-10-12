@@ -14,7 +14,7 @@
  *
  * // Server-side (third-party APIs)
  * import { Http } from '@beeblock/svelar/http';
- * const response = await Http.withToken(POSTMARK_TOKEN)
+ * const response = await Http.withHeaders({ 'X-Postmark-Server-Token': POSTMARK_TOKEN })
  *   .baseUrl('https://api.postmarkapp.com')
  *   .post('/email', { From: 'hi@example.com', To: 'user@example.com', Subject: 'Hello' });
  * ```
@@ -360,28 +360,121 @@ export interface HttpClientResponse<T = any> {
   ok: boolean;
 }
 
+export type HttpRetryBackoff = 'linear' | 'exponential';
+export type HttpRetryJitter = 'none' | 'full';
+
+export interface HttpRetryContext {
+  method: string;
+  url: string;
+  attempt: number;
+  maxAttempts: number;
+  status?: number;
+  error?: unknown;
+  response?: Response;
+  body?: unknown;
+}
+
+export interface HttpRetryConfig {
+  times?: number;
+  delay?: number;
+  maxDelay?: number;
+  backoff?: HttpRetryBackoff;
+  jitter?: HttpRetryJitter;
+  statuses?: number[];
+  methods?: string[];
+  retryNetworkErrors?: boolean;
+  retryTimeouts?: boolean;
+  respectRetryAfter?: boolean;
+  when?: (context: HttpRetryContext) => boolean | Promise<boolean>;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+export interface HttpPreparedRequest {
+  method: string;
+  url: string;
+  attempt: number;
+  maxAttempts: number;
+  headers: Record<string, string>;
+  body?: string;
+  init: RequestInit;
+}
+
+export interface HttpResponseContext<T = any> {
+  request: HttpPreparedRequest;
+  response: Response;
+  data: T;
+}
+
+export interface HttpErrorContext {
+  request: HttpPreparedRequest;
+  error: unknown;
+}
+
+export type HttpBeforeRequestHook = (request: HttpPreparedRequest) => void | Promise<void>;
+export type HttpAfterResponseHook = (context: HttpResponseContext) => void | Promise<void>;
+export type HttpErrorHook = (context: HttpErrorContext) => void | Promise<void>;
+
+export interface HttpCircuitBreakerConfig {
+  key?: string;
+  failureThreshold?: number;
+  cooldown?: number;
+  statuses?: number[];
+}
+
 export interface HttpClientConfig {
   baseUrl?: string;
   headers?: Record<string, string>;
   timeout?: number;
   retries?: number;
   retryDelay?: number;
+  retry?: HttpRetryConfig;
+  idempotencyKey?: string;
+  circuitBreaker?: HttpCircuitBreakerConfig;
 }
+
+interface CircuitBreakerState {
+  failures: number;
+  openedUntil: number;
+}
+
+const DEFAULT_RETRY_STATUSES = [408, 409, 425, 429, 500, 502, 503, 504];
+const DEFAULT_RETRY_METHODS = ['GET', 'HEAD', 'OPTIONS', 'PUT', 'PATCH', 'POST', 'DELETE'];
+const DEFAULT_CIRCUIT_STATUSES = [429, 500, 502, 503, 504];
+const circuitBreakerStates = new Map<string, CircuitBreakerState>();
 
 export class HttpClient {
   private _baseUrl = '';
   private _headers: Record<string, string> = {};
   private _timeout = 30_000;
-  private _retries = 0;
-  private _retryDelay = 1000;
+  private _retry: Required<Pick<HttpRetryConfig, 'times' | 'delay' | 'maxDelay' | 'backoff' | 'jitter' | 'statuses' | 'methods' | 'retryNetworkErrors' | 'retryTimeouts' | 'respectRetryAfter' | 'sleep'>> & Pick<HttpRetryConfig, 'when'> = {
+    times: 0,
+    delay: 1000,
+    maxDelay: 30_000,
+    backoff: 'linear',
+    jitter: 'none',
+    statuses: DEFAULT_RETRY_STATUSES,
+    methods: DEFAULT_RETRY_METHODS,
+    retryNetworkErrors: true,
+    retryTimeouts: true,
+    respectRetryAfter: true,
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  };
   private _query: Record<string, string> = {};
+  private _beforeRequestHooks: HttpBeforeRequestHook[] = [];
+  private _afterResponseHooks: HttpAfterResponseHook[] = [];
+  private _errorHooks: HttpErrorHook[] = [];
+  private _idempotencyKey?: string;
+  private _circuitBreaker?: Required<Omit<HttpCircuitBreakerConfig, 'key'>> & { key?: string };
 
   constructor(config?: HttpClientConfig) {
     if (config?.baseUrl) this._baseUrl = config.baseUrl;
     if (config?.headers) this._headers = { ...config.headers };
     if (config?.timeout) this._timeout = config.timeout;
-    if (config?.retries) this._retries = config.retries;
-    if (config?.retryDelay) this._retryDelay = config.retryDelay;
+    if (config?.retries) this._retry.times = config.retries;
+    if (config?.retryDelay !== undefined) this._retry.delay = config.retryDelay;
+    if (config?.retry) this._retry = this.normalizeRetry(config.retry);
+    if (config?.idempotencyKey) this._idempotencyKey = config.idempotencyKey;
+    if (config?.circuitBreaker) this._circuitBreaker = this.normalizeCircuitBreaker(config.circuitBreaker);
   }
 
   private clone(): HttpClient {
@@ -389,9 +482,13 @@ export class HttpClient {
     c._baseUrl = this._baseUrl;
     c._headers = { ...this._headers };
     c._timeout = this._timeout;
-    c._retries = this._retries;
-    c._retryDelay = this._retryDelay;
+    c._retry = { ...this._retry };
     c._query = { ...this._query };
+    c._beforeRequestHooks = [...this._beforeRequestHooks];
+    c._afterResponseHooks = [...this._afterResponseHooks];
+    c._errorHooks = [...this._errorHooks];
+    c._idempotencyKey = this._idempotencyKey;
+    c._circuitBreaker = this._circuitBreaker ? { ...this._circuitBreaker } : undefined;
     return c;
   }
 
@@ -430,10 +527,44 @@ export class HttpClient {
     return c;
   }
 
-  retry(times: number, delayMs = 1000): HttpClient {
+  retry(times: number, delayMs?: number, options?: Omit<HttpRetryConfig, 'times' | 'delay'>): HttpClient;
+  retry(options: HttpRetryConfig): HttpClient;
+  retry(timesOrOptions: number | HttpRetryConfig, delayMs = 1000, options: Omit<HttpRetryConfig, 'times' | 'delay'> = {}): HttpClient {
     const c = this.clone();
-    c._retries = times;
-    c._retryDelay = delayMs;
+    const config = typeof timesOrOptions === 'number'
+      ? { ...options, times: timesOrOptions, delay: delayMs }
+      : timesOrOptions;
+    c._retry = c.normalizeRetry(config);
+    return c;
+  }
+
+  beforeRequest(hook: HttpBeforeRequestHook): HttpClient {
+    const c = this.clone();
+    c._beforeRequestHooks.push(hook);
+    return c;
+  }
+
+  afterResponse(hook: HttpAfterResponseHook): HttpClient {
+    const c = this.clone();
+    c._afterResponseHooks.push(hook);
+    return c;
+  }
+
+  onError(hook: HttpErrorHook): HttpClient {
+    const c = this.clone();
+    c._errorHooks.push(hook);
+    return c;
+  }
+
+  withIdempotencyKey(key = generateIdempotencyKey()): HttpClient {
+    const c = this.clone();
+    c._idempotencyKey = key;
+    return c;
+  }
+
+  circuitBreaker(config: HttpCircuitBreakerConfig = {}): HttpClient {
+    const c = this.clone();
+    c._circuitBreaker = c.normalizeCircuitBreaker(config);
     return c;
   }
 
@@ -483,40 +614,38 @@ export class HttpClient {
       headers['Accept'] = 'application/json';
     }
 
+    if (this._idempotencyKey && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+      headers['Idempotency-Key'] = this._idempotencyKey;
+    }
+
+    this.assertCircuitClosed(url);
+
     let lastError: Error | null = null;
-    const maxAttempts = 1 + this._retries;
+    const maxAttempts = 1 + this._retry.times;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       if (attempt > 0) {
-        await new Promise((r) => setTimeout(r, this._retryDelay * attempt));
+        await this._retry.sleep(this.computeRetryDelay(attempt, lastError));
       }
 
+      const prepared = this.prepareRequest(method, url, headers, fetchBody, attempt, maxAttempts);
+
       try {
+        for (const hook of this._beforeRequestHooks) {
+          await hook(prepared);
+        }
+
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), this._timeout);
 
-        const response = await fetch(url, {
-          method,
-          headers,
-          body: fetchBody,
-          signal: controller.signal,
-        });
-
-        clearTimeout(timer);
-
-        // Don't retry client errors (4xx)
-        if (!response.ok && response.status < 500 && attempt < maxAttempts - 1) {
-          // Still return — client errors aren't retryable
-        }
-
-        // Retry server errors (5xx)
-        if (!response.ok && response.status >= 500 && attempt < maxAttempts - 1) {
-          lastError = new HttpRequestError(
-            `HTTP ${response.status}: ${response.statusText}`,
-            response.status,
-            await response.text(),
-          );
-          continue;
+        let response: Response;
+        try {
+          response = await fetch(prepared.url, {
+            ...prepared.init,
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timer);
         }
 
         const contentType = response.headers.get('content-type') ?? '';
@@ -528,37 +657,191 @@ export class HttpClient {
           data = await response.text() as T;
         }
 
+        for (const hook of this._afterResponseHooks) {
+          await hook({ request: prepared, response, data });
+        }
+
         if (!response.ok) {
-          throw new HttpRequestError(
+          const error = new HttpRequestError(
             `HTTP ${response.status}: ${typeof data === 'string' ? data : JSON.stringify(data)}`,
             response.status,
             data,
+            response.headers,
           );
+          lastError = error;
+          if (attempt < maxAttempts - 1 && await this.shouldRetry({ method, url: prepared.url, attempt, maxAttempts, status: response.status, response, body: data })) {
+            continue;
+          }
+          throw error;
         }
 
+        this.recordCircuitSuccess(url);
         return { data, status: response.status, headers: response.headers, ok: true };
       } catch (err: any) {
-        if (err instanceof HttpRequestError) throw err;
+        if (err instanceof HttpRequestError) {
+          this.recordCircuitFailure(url, err.status);
+          await this.runErrorHooks(prepared, err);
+          throw err;
+        }
+
         lastError = err;
         if (err.name === 'AbortError') {
           lastError = new HttpRequestError('Request timed out', 0, null);
         }
-        if (attempt >= maxAttempts - 1) break;
+        if (attempt >= maxAttempts - 1 || !await this.shouldRetry({ method, url: prepared.url, attempt, maxAttempts, error: lastError })) {
+          this.recordCircuitFailure(url, lastError instanceof HttpRequestError ? lastError.status : undefined);
+          await this.runErrorHooks(prepared, lastError);
+          break;
+        }
       }
     }
 
     throw lastError ?? new Error('HTTP request failed');
   }
 
+  private prepareRequest(
+    method: string,
+    url: string,
+    headers: Record<string, string>,
+    body: string | undefined,
+    attempt: number,
+    maxAttempts: number,
+  ): HttpPreparedRequest {
+    const requestHeaders = { ...headers };
+    const init: RequestInit = {
+      method,
+      headers: requestHeaders,
+      body,
+    };
+    return {
+      method,
+      url,
+      attempt,
+      maxAttempts,
+      headers: requestHeaders,
+      body,
+      init,
+    };
+  }
+
+  private normalizeRetry(config: HttpRetryConfig) {
+    return {
+      ...this._retry,
+      ...config,
+      times: Math.max(0, config.times ?? this._retry.times),
+      delay: Math.max(0, config.delay ?? this._retry.delay),
+      maxDelay: Math.max(0, config.maxDelay ?? this._retry.maxDelay),
+      backoff: config.backoff ?? this._retry.backoff,
+      jitter: config.jitter ?? this._retry.jitter,
+      statuses: config.statuses ?? this._retry.statuses,
+      methods: (config.methods ?? this._retry.methods).map((m) => m.toUpperCase()),
+      retryNetworkErrors: config.retryNetworkErrors ?? this._retry.retryNetworkErrors,
+      retryTimeouts: config.retryTimeouts ?? this._retry.retryTimeouts,
+      respectRetryAfter: config.respectRetryAfter ?? this._retry.respectRetryAfter,
+      sleep: config.sleep ?? this._retry.sleep,
+      when: config.when ?? this._retry.when,
+    };
+  }
+
+  private normalizeCircuitBreaker(config: HttpCircuitBreakerConfig) {
+    return {
+      key: config.key,
+      failureThreshold: Math.max(1, config.failureThreshold ?? 5),
+      cooldown: Math.max(1, config.cooldown ?? 30_000),
+      statuses: config.statuses ?? DEFAULT_CIRCUIT_STATUSES,
+    };
+  }
+
+  private async shouldRetry(context: HttpRetryContext): Promise<boolean> {
+    if (!this._retry.methods.includes(context.method.toUpperCase())) {
+      return false;
+    }
+
+    let retryable = false;
+    if (context.status !== undefined) {
+      retryable = this._retry.statuses.includes(context.status);
+    } else if (context.error instanceof HttpRequestError && context.error.status === 0) {
+      retryable = this._retry.retryTimeouts;
+    } else {
+      retryable = this._retry.retryNetworkErrors;
+    }
+
+    if (!retryable) return false;
+    if (this._retry.when) {
+      return Boolean(await this._retry.when(context));
+    }
+    return true;
+  }
+
+  private computeRetryDelay(attempt: number, lastError: Error | null): number {
+    const retryAfter = this._retry.respectRetryAfter && lastError instanceof HttpRequestError
+      ? retryAfterDelay(lastError.headers)
+      : null;
+    if (retryAfter !== null) {
+      return Math.min(retryAfter, this._retry.maxDelay);
+    }
+
+    const base = this._retry.backoff === 'exponential'
+      ? this._retry.delay * Math.pow(2, attempt - 1)
+      : this._retry.delay * attempt;
+    const capped = Math.min(base, this._retry.maxDelay);
+    if (this._retry.jitter === 'full' && capped > 0) {
+      return Math.floor(Math.random() * capped);
+    }
+    return capped;
+  }
+
+  private circuitKey(url: string): string {
+    if (this._circuitBreaker?.key) return this._circuitBreaker.key;
+    try {
+      const parsed = new URL(url);
+      return parsed.origin;
+    } catch {
+      return this._baseUrl || url;
+    }
+  }
+
+  private assertCircuitClosed(url: string) {
+    if (!this._circuitBreaker) return;
+    const state = circuitBreakerStates.get(this.circuitKey(url));
+    if (state && state.openedUntil > Date.now()) {
+      throw new HttpCircuitOpenError('HTTP circuit breaker is open', state.openedUntil);
+    }
+  }
+
+  private recordCircuitSuccess(url: string) {
+    if (!this._circuitBreaker) return;
+    circuitBreakerStates.delete(this.circuitKey(url));
+  }
+
+  private recordCircuitFailure(url: string, status?: number) {
+    if (!this._circuitBreaker) return;
+    if (status !== undefined && status !== 0 && !this._circuitBreaker.statuses.includes(status)) return;
+
+    const key = this.circuitKey(url);
+    const state = circuitBreakerStates.get(key) ?? { failures: 0, openedUntil: 0 };
+    state.failures += 1;
+    if (state.failures >= this._circuitBreaker.failureThreshold) {
+      state.openedUntil = Date.now() + this._circuitBreaker.cooldown;
+    }
+    circuitBreakerStates.set(key, state);
+  }
+
+  private async runErrorHooks(request: HttpPreparedRequest, error: unknown) {
+    for (const hook of this._errorHooks) {
+      await hook({ request, error });
+    }
+  }
+
   private buildFullUrl(path: string): string {
     let url = this._baseUrl ? `${this._baseUrl.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}` : path;
     const queryEntries = Object.entries(this._query);
     if (queryEntries.length > 0) {
-      const parsed = new URL(url);
+      const parsed = new URL(url, 'http://localhost');
       for (const [k, v] of queryEntries) {
         parsed.searchParams.set(k, v);
       }
-      url = parsed.toString();
+      url = this._baseUrl || /^https?:\/\//.test(path) ? parsed.toString() : parsed.pathname + parsed.search;
     }
     return url;
   }
@@ -569,10 +852,71 @@ export class HttpRequestError extends Error {
     message: string,
     public readonly status: number,
     public readonly body: any,
+    public readonly headers: Headers = new Headers(),
   ) {
     super(message);
     this.name = 'HttpRequestError';
   }
+}
+
+export class HttpCircuitOpenError extends HttpRequestError {
+  constructor(message: string, public readonly retryAt: number) {
+    super(message, 0, null);
+    this.name = 'HttpCircuitOpenError';
+  }
+}
+
+export function redactHttpHeaders(headers: Record<string, string> | Headers): Record<string, string> {
+  const redacted: Record<string, string> = {};
+  const assign = (key: string, value: string) => {
+    redacted[key] = /authorization|cookie|token|secret|key|signature/i.test(key) ? '[redacted]' : value;
+  };
+
+  if (headers instanceof Headers) {
+    headers.forEach((value, key) => assign(key, value));
+  } else {
+    for (const [key, value] of Object.entries(headers)) {
+      assign(key, value);
+    }
+  }
+
+  return redacted;
+}
+
+export function redactHttpPayload(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => redactHttpPayload(item));
+  }
+  if (value && typeof value === 'object') {
+    const result: Record<string, unknown> = {};
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      result[key] = /password|token|secret|key|authorization|cookie|signature/i.test(key)
+        ? '[redacted]'
+        : redactHttpPayload(nested);
+    }
+    return result;
+  }
+  return value;
+}
+
+function retryAfterDelay(headers: Headers): number | null {
+  const value = headers.get('retry-after');
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) {
+    return Math.max(0, seconds * 1000);
+  }
+  const date = Date.parse(value);
+  if (!Number.isNaN(date)) {
+    return Math.max(0, date - Date.now());
+  }
+  return null;
+}
+
+function generateIdempotencyKey(): string {
+  const random = globalThis.crypto?.randomUUID?.();
+  if (random) return random;
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
 /**
@@ -584,7 +928,7 @@ export class HttpRequestError extends Error {
  * import { Http } from '@beeblock/svelar/http';
  *
  * // Postmark
- * const res = await Http.withToken(POSTMARK_TOKEN, 'X-Postmark-Server-Token')
+ * const res = await Http.withHeaders({ 'X-Postmark-Server-Token': POSTMARK_TOKEN })
  *   .baseUrl('https://api.postmarkapp.com')
  *   .post('/email', { From: 'hi@example.com', To: 'user@example.com' });
  *

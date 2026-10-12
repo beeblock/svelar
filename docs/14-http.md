@@ -129,10 +129,10 @@ const github = Http
 const repos = await github.get('/user/repos');
 ```
 
-### Retry & Timeout
+### Retry, Idempotency & Resilience
 
 ```typescript
-// Retry up to 3 times on 5xx errors (1s, 2s, 3s delays)
+// Retry up to 3 times on transient errors
 const response = await Http
   .withToken(token)
   .baseUrl('https://api.example.com')
@@ -141,7 +141,83 @@ const response = await Http
   .get('/data');
 ```
 
-Only 5xx server errors are retried. Client errors (4xx) fail immediately.
+By default, retries cover common transient statuses: `408`, `409`, `425`, `429`, `500`, `502`, `503`, and `504`, plus network errors and timeouts. Client errors such as `400`, `401`, `403`, `404`, and `422` fail immediately unless you explicitly include them in the retry policy.
+
+Use the object form for production integrations that need backoff, jitter, `Retry-After`, or provider-specific classification:
+
+```typescript
+const response = await Http
+  .baseUrl('https://api.example.com')
+  .withToken(token)
+  .retry({
+    times: 5,
+    delay: 250,
+    maxDelay: 10_000,
+    backoff: 'exponential',
+    jitter: 'full',
+    statuses: [429, 500, 502, 503, 504],
+    methods: ['GET', 'POST'],
+    respectRetryAfter: true,
+    when: ({ status }) => status !== 501,
+  })
+  .get('/reports');
+```
+
+For mutating third-party requests that may be retried, send an idempotency key supported by the provider:
+
+```typescript
+await Http
+  .baseUrl('https://api.stripe.com/v1')
+  .withToken(process.env.STRIPE_SECRET!)
+  .withIdempotencyKey(order.public_id)
+  .post('/payment_intents', body);
+```
+
+Circuit breakers prevent repeated calls to an integration that is already failing:
+
+```typescript
+const client = Http
+  .baseUrl('https://api.example.com')
+  .circuitBreaker({
+    key: 'billing-api',
+    failureThreshold: 5,
+    cooldown: 30_000,
+  });
+```
+
+The circuit is process-local and is meant as a fast safety primitive. If an app needs a distributed circuit or quota budget per credential/account, put that logic in a service using Svelar cache/locks and the HTTP request hooks.
+
+### Hooks & Telemetry
+
+Use hooks to add integration-level telemetry, credential budgets, or provider headers without scattering code across services:
+
+```typescript
+import { Http, redactHttpHeaders, redactHttpPayload } from '@beeblock/svelar/http';
+import { Log } from '@beeblock/svelar/logging';
+
+const client = Http
+  .baseUrl('https://api.example.com')
+  .beforeRequest((request) => {
+    request.headers['X-Request-Source'] = 'svelar';
+  })
+  .afterResponse(({ request, response, data }) => {
+    Log.info('External HTTP request completed', {
+      method: request.method,
+      url: request.url,
+      status: response.status,
+      headers: redactHttpHeaders(request.headers),
+      body: redactHttpPayload(data),
+    });
+  })
+  .onError(({ request, error }) => {
+    Log.warning('External HTTP request failed', {
+      method: request.method,
+      url: request.url,
+      headers: redactHttpHeaders(request.headers),
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+```
 
 ### Error Handling
 
@@ -206,7 +282,13 @@ await postmarkClient.post('/email', {
 | `Http.accept(type)` | Set `Accept` header |
 | `Http.contentType(type)` | Set `Content-Type` header |
 | `Http.timeout(ms)` | Set request timeout (default: 30s) |
-| `Http.retry(times, delayMs?)` | Retry on 5xx errors |
+| `Http.retry(times, delayMs?)` | Retry transient errors with linear delay |
+| `Http.retry(options)` | Configure status/method retry policy, exponential backoff, full jitter, `Retry-After`, and custom classifiers |
+| `Http.withIdempotencyKey(key?)` | Add an `Idempotency-Key` header to mutation requests |
+| `Http.circuitBreaker(options?)` | Enable a process-local circuit breaker for failing integrations |
+| `Http.beforeRequest(fn)` | Register a request hook |
+| `Http.afterResponse(fn)` | Register a response hook |
+| `Http.onError(fn)` | Register an error hook |
 | `Http.query(params)` | Add URL query parameters |
 | `Http.get(path)` | Send GET request |
 | `Http.post(path, body?)` | Send POST request |

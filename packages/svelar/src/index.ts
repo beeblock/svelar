@@ -155,8 +155,36 @@ export { Excel, Spreadsheet, SheetBuilder } from './excel/index.js';
 export type { ColumnDef, SheetDef, ExportOptions, ImportOptions, ImportStreamOptions } from './excel/index.js';
 
 // HTTP (client-side utilities)
-export { apiFetch, getCsrfToken, buildUrl, registerToast, Http, HttpClient, HttpRequestError } from './http/index.js';
-export type { ApiFetchOptions, ApiResponse, ApiError, HttpClientResponse, HttpClientConfig } from './http/index.js';
+export {
+  apiFetch,
+  getCsrfToken,
+  buildUrl,
+  registerToast,
+  Http,
+  HttpClient,
+  HttpRequestError,
+  HttpCircuitOpenError,
+  redactHttpHeaders,
+  redactHttpPayload,
+} from './http/index.js';
+export type {
+  ApiFetchOptions,
+  ApiResponse,
+  ApiError,
+  HttpClientResponse,
+  HttpClientConfig,
+  HttpRetryConfig,
+  HttpRetryContext,
+  HttpRetryBackoff,
+  HttpRetryJitter,
+  HttpPreparedRequest,
+  HttpResponseContext,
+  HttpErrorContext,
+  HttpBeforeRequestHook,
+  HttpAfterResponseHook,
+  HttpErrorHook,
+  HttpCircuitBreakerConfig,
+} from './http/index.js';
 
 // i18n
 export { createI18nHandle, createReroute } from './i18n/index.js';
