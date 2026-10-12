@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiKeyRateLimitError, ApiKeys } from '../src/api-keys/index.js';
 import { AuthManager, AuthenticateMiddleware } from '../src/auth/Auth.js';
 import { Cache } from '../src/cache/index.js';
@@ -48,6 +48,7 @@ describe.sequential('ApiKeys', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     ApiKeys.configure({ driver: 'memory', prefix: 'sk_' });
     await Cache.flush();
     ApplicationContext.clear();
@@ -143,6 +144,243 @@ describe.sequential('ApiKeys', () => {
 
     const active = await ApiKeys.listForUser(user.getAttribute('id'));
     expect(active.map((key) => key.id)).toEqual([rotated!.record.id]);
+  });
+
+  it.each(['snake', 'camel', 'folded'] as const)('normalizes PG BIGINT string timestamps without changing IDs (%s aliases)', async (alias) => {
+    const fields = {
+      createdAt: 'created_at', lastUsedAt: 'last_used_at', expiresAt: 'expires_at',
+      revokedAt: 'revoked_at', disabledAt: 'disabled_at',
+    };
+    const timestamps = {
+      createdAt: 1_700_000_000_000, lastUsedAt: 1_700_000_001_000, expiresAt: 1_700_000_100_000,
+      revokedAt: 1_700_000_002_000, disabledAt: 1_700_000_003_000,
+    };
+    const row: Record<string, unknown> = { id: 'pg-key', user_id: '9007199254740993', name: 'PG key', key: 'hash', prefix: 'sk_' };
+    for (const [field, column] of Object.entries(fields)) {
+      row[alias === 'snake' ? column : alias === 'camel' ? field : field.toLowerCase()] = String(timestamps[field as keyof typeof timestamps]);
+    }
+    vi.spyOn(QueryBuilder.prototype, 'get').mockResolvedValueOnce([row]);
+    const [record] = await ApiKeys.listForUser('9007199254740993');
+    expect(record).toMatchObject({ id: 'pg-key', userId: '9007199254740993', ...timestamps });
+    for (const field of Object.keys(timestamps)) expect(record[field as keyof typeof timestamps]).toBeTypeOf('number');
+  });
+
+  it('preserves zero timestamps, handles BIGINT values, and keeps nullable timestamps absent', async () => {
+    vi.spyOn(QueryBuilder.prototype, 'get').mockResolvedValueOnce([{
+      id: 'pg-key', user_id: root, name: 'PG key', key: 'hash', prefix: 'sk_',
+      created_at: 0n, last_used_at: null, expires_at: 1_700_000_100_000n,
+      revoked_at: null, disabled_at: null,
+    }]);
+    const [record] = await ApiKeys.listForUser(root);
+    expect(record.createdAt).toBe(0);
+    expect(record.expiresAt).toBe(1_700_000_100_000);
+    expect(record.lastUsedAt).toBeUndefined();
+    expect(record.revokedAt).toBeUndefined();
+    expect(record.disabledAt).toBeUndefined();
+  });
+
+  it.each([NaN, Infinity, '', ' ', 'not-a-timestamp', true, '1.5', '1e3', '9007199254740993', 9_007_199_254_740_993n])(
+    'rejects malformed or lossy database expiration %s', async (expiresAt) => {
+      vi.spyOn(QueryBuilder.prototype, 'get').mockResolvedValueOnce([{
+        id: 'pg-key', user_id: root, name: 'PG key', key: 'hash', prefix: 'sk_',
+        created_at: '1700000000000', expires_at: expiresAt,
+      }]);
+      await expect(ApiKeys.listForUser(root)).rejects.toThrow('Invalid API key expires_at timestamp.');
+    },
+  );
+
+  it('rejects database records with a missing required creation timestamp', async () => {
+    vi.spyOn(QueryBuilder.prototype, 'get').mockResolvedValueOnce([{
+      id: 'pg-key', user_id: root, name: 'PG key', key: 'hash', prefix: 'sk_', created_at: null,
+    }]);
+    await expect(ApiKeys.listForUser(root)).rejects.toThrow('Missing API key created_at timestamp.');
+  });
+
+  it('preserves exact numeric expiry and disabled state when rotation reads PG-shaped string timestamps', async () => {
+    const original = await ApiKeys.createServiceAccount({
+      name: 'PG rotation', userId: root, teamId: 'pg-team', serviceAccountId: 'pg-service', expiresIn: 3600,
+    });
+    await ApiKeys.disable(original.record.id);
+    const stored = await new QueryBuilder('api_keys').where('id', original.record.id).first();
+    const first = QueryBuilder.prototype.first;
+    const spy = vi.spyOn(QueryBuilder.prototype, 'first').mockImplementation(async function (this: QueryBuilder) {
+      const row = await first.call(this);
+      if (!row) return row;
+      return Object.fromEntries(Object.entries(row).map(([column, value]) => [
+        column, column.endsWith('_at') && value != null ? String(value) : value,
+      ]));
+    });
+    const rotated = await ApiKeys.rotate(original.record.id);
+    expect(rotated!.record.expiresAt).toBe(original.record.expiresAt);
+    expect(rotated!.record.disabledAt).toBe(Number(stored.disabled_at));
+    expect(rotated!.record.createdAt).toBeTypeOf('number');
+    await expect(ApiKeys.validate(rotated!.plainTextKey)).resolves.toBeNull();
+    spy.mockRestore();
+    const replacement = await new QueryBuilder('api_keys').where('id', rotated!.record.id).first();
+    expect(replacement.expires_at).toBe(original.record.expiresAt);
+    expect(replacement.disabled_at).toBe(stored.disabled_at);
+  });
+
+  it('rolls back rotation if a stored timestamp cannot be safely normalized', async () => {
+    const original = await ApiKeys.create({ name: 'Malformed PG row', userId: root, expiresIn: 3600 });
+    const first = QueryBuilder.prototype.first;
+    const spy = vi.spyOn(QueryBuilder.prototype, 'first').mockImplementationOnce(async function (this: QueryBuilder) {
+      return { ...await first.call(this), expires_at: 'invalid-expiry' };
+    });
+    await expect(ApiKeys.rotate(original.record.id)).rejects.toThrow('Invalid API key expires_at timestamp.');
+    spy.mockRestore();
+    expect(await new QueryBuilder('api_keys').count()).toBe(1);
+    await expect(ApiKeys.validate(original.plainTextKey)).resolves.toMatchObject({ id: original.record.id });
+  });
+
+  it.each(['expires_at', 'disabled_at'] as const)('does not discard a zero-valued database security timestamp during validation or rotation (%s)', async (column) => {
+    const original = await ApiKeys.create({ name: 'Epoch control', userId: root });
+    await new QueryBuilder('api_keys').where('id', original.record.id).update({ [column]: 0 });
+    await expect(ApiKeys.validate(original.plainTextKey)).resolves.toBeNull();
+    const rotated = await ApiKeys.rotate(original.record.id);
+    expect(rotated!.record[column === 'expires_at' ? 'expiresAt' : 'disabledAt']).toBe(0);
+    await expect(ApiKeys.validate(rotated!.plainTextKey)).resolves.toBeNull();
+  });
+
+  it.each(['database', 'memory'] as const)('treats epoch-zero revocation as present across validation and controls (%s)', async (driver) => {
+    ApiKeys.configure({ driver });
+    const original = await ApiKeys.create({ name: 'Epoch revocation', userId: root });
+    vi.spyOn(Date, 'now').mockReturnValue(0);
+    const rotated = await ApiKeys.rotate(original.record.id);
+    await expect(ApiKeys.validate(original.plainTextKey)).resolves.toBeNull();
+    await expect(ApiKeys.rotate(original.record.id)).resolves.toBeNull();
+    await expect(ApiKeys.enable(original.record.id)).resolves.toBe(false);
+    await expect(ApiKeys.disable(original.record.id)).resolves.toBe(false);
+    await expect(ApiKeys.revokeForUser(original.record.id, root)).resolves.toBe(false);
+    expect(await ApiKeys.listForUser(root)).toEqual([expect.objectContaining({ id: rotated!.record.id })]);
+  });
+
+  it.each(['database', 'memory'] as const)('preserves absolute expiry and every service account control during rotation (%s)', async (driver) => {
+    ApiKeys.configure({ driver, prefix: 'sk_test_' });
+    const original = await ApiKeys.createServiceAccount({
+      name: 'ERP', userId: root, teamId: 'team-rotation', actorId: 'erp-actor',
+      serviceAccountId: 'erp-account', prefix: 'erp_', expiresIn: 3600,
+      permissions: ['orders:sync'], allowedIps: ['10.0.0.10'],
+      rateLimit: { limit: 2, window: 60 }, metadata: { provider: 'erp' },
+    });
+    await ApiKeys.validate(original.plainTextKey, { ip: '10.0.0.10' });
+    ApiKeys.configure({ driver, prefix: 'different_' });
+    const rotated = await ApiKeys.rotate(original.record.id);
+    expect(rotated).not.toBeNull();
+    expect(rotated!.record).toMatchObject({
+      userId: root, teamId: 'team-rotation', actorType: 'service_account', actorId: 'erp-actor',
+      serviceAccountId: 'erp-account', prefix: 'erp_', expiresAt: original.record.expiresAt,
+      permissions: ['orders:sync'], allowedIps: ['10.0.0.10'],
+      rateLimit: { limit: 2, window: 60 }, metadata: { provider: 'erp' },
+    });
+    expect(rotated!.record.id).not.toBe(original.record.id);
+    expect(rotated!.record.key).not.toBe(rotated!.plainTextKey);
+    expect(rotated!.record.lastUsedAt).toBeUndefined();
+    expect(rotated!.record.lastUsedIp).toBeUndefined();
+    expect(rotated!.plainTextKey).toMatch(/^erp_/);
+    await expect(ApiKeys.validate(original.plainTextKey, { ip: '10.0.0.10' })).resolves.toBeNull();
+    const deniedIp = ApiKeys.validate(rotated!.plainTextKey, { ip: '10.0.0.11' });
+    if (driver === 'database') await expect(deniedIp).rejects.toMatchObject({ name: 'ApiKeyAccessDeniedError' });
+    else await expect(deniedIp).resolves.toBeNull();
+    await expect(ApiKeys.validate(rotated!.plainTextKey, { ip: '10.0.0.10' })).resolves.toMatchObject({
+      id: rotated!.record.id, expiresAt: original.record.expiresAt,
+    });
+    await expect(ApiKeys.validate(rotated!.plainTextKey, { ip: '10.0.0.10' })).resolves.not.toBeNull();
+    const deniedQuota = ApiKeys.validate(rotated!.plainTextKey, { ip: '10.0.0.10' });
+    if (driver === 'database') await expect(deniedQuota).rejects.toBeInstanceOf(ApiKeyRateLimitError);
+    else await expect(deniedQuota).resolves.toBeNull();
+    await expect(ApiKeys.validate(rotated!.plainTextKey, {
+      ip: '10.0.0.10', now: original.record.expiresAt! + 1,
+    })).resolves.toBeNull();
+  });
+
+  it.each(['database', 'memory'] as const)('rotates a disabled key without re-enabling it (%s)', async (driver) => {
+    ApiKeys.configure({ driver, prefix: 'sk_test_' });
+    const original = await ApiKeys.create({ name: 'Disabled rotation', userId: root, expiresIn: 3600 });
+    await ApiKeys.disable(original.record.id);
+    const [disabled] = await ApiKeys.listForUser(root);
+    expect(disabled.disabledAt).toBeTypeOf('number');
+    const rotated = await ApiKeys.rotate(original.record.id);
+    expect(rotated!.record.disabledAt).toBe(disabled.disabledAt);
+    expect(rotated!.record.expiresAt).toBe(disabled.expiresAt);
+    expect(await ApiKeys.listForUser(root)).toEqual([expect.objectContaining({
+      id: rotated!.record.id, disabledAt: disabled.disabledAt, expiresAt: disabled.expiresAt,
+    })]);
+    await expect(ApiKeys.validate(original.plainTextKey)).resolves.toBeNull();
+    await expect(ApiKeys.validate(rotated!.plainTextKey)).resolves.toBeNull();
+  });
+
+  it.each(['database', 'memory'] as const)('does not revive expired keys during rotation (%s)', async (driver) => {
+    ApiKeys.configure({ driver, prefix: 'sk_test_' });
+    const original = await ApiKeys.create({ name: 'Expired rotation', userId: root, expiresIn: -1 });
+    const rotated = await ApiKeys.rotate(original.record.id);
+    expect(rotated!.record.expiresAt).toBe(original.record.expiresAt);
+    await expect(ApiKeys.validate(rotated!.plainTextKey)).resolves.toBeNull();
+  });
+
+  it.each(['database', 'memory'] as const)('allows exactly one concurrent rotation and rejects missing or revoked keys (%s)', async (driver) => {
+    ApiKeys.configure({ driver, prefix: 'sk_test_' });
+    const original = await ApiKeys.create({ name: 'Concurrent rotation', userId: root });
+    const results = await Promise.all(Array.from({ length: 8 }, () => ApiKeys.rotate(original.record.id)));
+    const winners = results.filter((result) => result !== null);
+    expect(winners).toHaveLength(1);
+    expect(results.filter((result) => result === null)).toHaveLength(7);
+    expect(winners[0]!.record.expiresAt).toBeUndefined();
+    expect(await ApiKeys.listForUser(root)).toEqual([expect.objectContaining({ id: winners[0]!.record.id })]);
+    await expect(ApiKeys.validate(original.plainTextKey)).resolves.toBeNull();
+    await expect(ApiKeys.validate(winners[0]!.plainTextKey)).resolves.not.toBeNull();
+    await expect(ApiKeys.rotate(original.record.id)).resolves.toBeNull();
+    await expect(ApiKeys.rotate('missing-rotation-key')).resolves.toBeNull();
+    if (driver === 'database') expect(await new QueryBuilder('api_keys').count()).toBe(2);
+  });
+
+  it.each(['database', 'memory'] as const)('keeps the old key usable after generation failure and permits a later rotation (%s)', async (driver) => {
+    ApiKeys.configure({ driver, prefix: 'sk_test_' });
+    const original = await ApiKeys.create({ name: 'Generation failure', userId: root });
+    ApiKeys.configure({ driver, hashAlgorithm: 'invalid-rotation-hash' });
+    await expect(ApiKeys.rotate(original.record.id)).rejects.toThrow();
+    ApiKeys.configure({ driver, prefix: 'sk_test_' });
+    await expect(ApiKeys.validate(original.plainTextKey)).resolves.toMatchObject({ id: original.record.id });
+    const keys = await ApiKeys.listForUser(root);
+    expect(keys).toEqual([expect.objectContaining({ id: original.record.id })]);
+    expect(keys[0].revokedAt).toBeUndefined();
+    if (driver === 'database') expect(await new QueryBuilder('api_keys').count()).toBe(1);
+    await expect(ApiKeys.rotate(original.record.id)).resolves.not.toBeNull();
+  });
+
+  it.each([false, true])('rolls back revocation and replacement creation when insertion fails (after write: %s)', async (afterWrite) => {
+    const original = await ApiKeys.create({ name: 'Insert failure', userId: root });
+    const insert = QueryBuilder.prototype.insert;
+    const failure = new Error('replacement insert failed');
+    const spy = vi.spyOn(QueryBuilder.prototype, 'insert').mockImplementationOnce(async function (this: QueryBuilder, data) {
+      if (afterWrite) await insert.call(this, data);
+      throw failure;
+    });
+    await expect(ApiKeys.rotate(original.record.id)).rejects.toBe(failure);
+    spy.mockRestore();
+    expect(await new QueryBuilder('api_keys').count()).toBe(1);
+    const stored = await new QueryBuilder('api_keys').where('id', original.record.id).first();
+    expect(stored.revoked_at).toBeNull();
+    await expect(ApiKeys.validate(original.plainTextKey)).resolves.not.toBeNull();
+    await expect(ApiKeys.rotate(original.record.id)).resolves.not.toBeNull();
+  });
+
+  it.each([false, true])('rolls back a failed revocation without creating an orphan key (after write: %s)', async (afterWrite) => {
+    const original = await ApiKeys.create({ name: 'Revoke failure', userId: root });
+    const update = QueryBuilder.prototype.update;
+    const failure = new Error('old key revocation failed');
+    const insert = vi.spyOn(QueryBuilder.prototype, 'insert');
+    const spy = vi.spyOn(QueryBuilder.prototype, 'update').mockImplementationOnce(async function (this: QueryBuilder, data) {
+      if (afterWrite) await update.call(this, data);
+      throw failure;
+    });
+    await expect(ApiKeys.rotate(original.record.id)).rejects.toBe(failure);
+    expect(insert).not.toHaveBeenCalled();
+    spy.mockRestore();
+    insert.mockRestore();
+    expect(await new QueryBuilder('api_keys').count()).toBe(1);
+    await expect(ApiKeys.validate(original.plainTextKey)).resolves.not.toBeNull();
+    await expect(ApiKeys.rotate(original.record.id)).resolves.not.toBeNull();
   });
 
   it('uses ApiKeys for AuthManager API token generation and middleware fallback', async () => {

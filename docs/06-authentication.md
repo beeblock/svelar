@@ -524,6 +524,10 @@ await ApiKeys.revoke(record.id);
 
 If a request exceeds its API key rate limit, `AuthenticateMiddleware` returns `429` with a `Retry-After` header. If a key is used from an IP outside `allowedIps`, it returns `403`.
 
+`await ApiKeys.rotate(record.id)` returns a replacement record and its one-time plain text key, or `null` if the original is missing or already revoked. It preserves the original absolute `expiresAt` and `disabledAt`, tenant/actor/service-account identity, permissions, IP allowlist, rate-limit configuration, and metadata. Rotation does not extend expiration or re-enable a disabled key; an expired or disabled replacement remains unusable.
+
+For database storage, replacement insertion and conditional revocation run in one transaction. Memory storage commits both changes synchronously. Failure leaves the original key and its controls unchanged, with no orphan replacement. Concurrent rotations produce at most one replacement. Successful rotation revokes the original immediately; no overlap window is provided. The replacement has a new ID and fresh usage timestamps, so its per-key rate-limit counter starts a new credential bucket.
+
 Clients send the token in the Authorization header:
 
 ```bash

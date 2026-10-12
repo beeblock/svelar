@@ -81,6 +81,8 @@ All drivers use safe defaults (salt generation, appropriate work factors). Never
 - API keys are hashed before storage (only the prefix is stored in plain text for lookup)
 - Tokens can be scoped to specific permissions
 - Tokens can have expiration dates
+- `ApiKeys.rotate()` preserves the absolute expiration, disabled state, tenant/actor identity, permissions, IP allowlist, and rate-limit configuration
+- Rotation commits replacement and revocation atomically; failures leave the original key unchanged, and concurrent rotations produce at most one replacement
 - Use `Authorization: Bearer <token>` header
 
 ---

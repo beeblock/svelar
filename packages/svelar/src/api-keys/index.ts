@@ -6,7 +6,7 @@
 import { randomBytes, createHash, timingSafeEqual } from 'crypto';
 import { randomUUID } from 'crypto';
 import { singleton } from '../support/singleton.js';
-import { assertSqlIdentifier } from '../database/Connection.js';
+import { assertSqlIdentifier, Connection } from '../database/Connection.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
 import { Cache } from '../cache/index.js';
 import { ApplicationContext } from '../support/Context.js';
@@ -95,6 +95,7 @@ export class ApiKeyAccessDeniedError extends Error {
 class ApiKeyManager {
   private config: ApiKeyConfig = { driver: 'memory', prefix: 'sk_' };
   private keys: ApiKeyRecord[] = []; // memory driver
+  private sqliteRotationTail: Promise<void> = Promise.resolve();
 
   configure(config: ApiKeyConfig): void {
     this.config = config;
@@ -116,7 +117,20 @@ class ApiKeyManager {
     return new QueryBuilder(this.table());
   }
 
+  private databaseTimestamp(value: unknown, field: string): number | undefined {
+    if (value == null) return undefined;
+    if (typeof value !== 'number' && typeof value !== 'bigint' &&
+      (typeof value !== 'string' || !/^-?\d+$/.test(value))) {
+      throw new Error(`Invalid API key ${field} timestamp.`);
+    }
+    const timestamp = Number(value);
+    if (!Number.isSafeInteger(timestamp)) throw new Error(`Invalid API key ${field} timestamp.`);
+    return timestamp;
+  }
+
   private rowToRecord(row: any): ApiKeyRecord {
+    const createdAt = this.databaseTimestamp(row.created_at ?? row.createdAt ?? row.createdat, 'created_at');
+    if (createdAt === undefined) throw new Error('Missing API key created_at timestamp.');
     return {
       id: row.id,
       userId: (row.user_id ?? row.userId ?? row.userid) || undefined,
@@ -127,16 +141,16 @@ class ApiKeyManager {
       name: row.name,
       key: row.key,
       prefix: row.prefix,
-      lastUsedAt: row.last_used_at ?? row.lastUsedAt ?? row.lastusedat ?? undefined,
+      lastUsedAt: this.databaseTimestamp(row.last_used_at ?? row.lastUsedAt ?? row.lastusedat, 'last_used_at'),
       lastUsedIp: row.last_used_ip ?? row.lastUsedIp ?? row.lastusedip ?? undefined,
-      expiresAt: row.expires_at ?? row.expiresAt ?? row.expiresat ?? undefined,
+      expiresAt: this.databaseTimestamp(row.expires_at ?? row.expiresAt ?? row.expiresat, 'expires_at'),
       permissions: row.permissions ? JSON.parse(row.permissions) : [],
       allowedIps: row.allowed_ips ? JSON.parse(row.allowed_ips) : [],
       rateLimit: row.rate_limit ? JSON.parse(row.rate_limit) : undefined,
       metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
-      createdAt: row.created_at ?? row.createdAt ?? row.createdat,
-      revokedAt: row.revoked_at ?? row.revokedAt ?? row.revokedat ?? undefined,
-      disabledAt: row.disabled_at ?? row.disabledAt ?? row.disabledat ?? undefined,
+      createdAt,
+      revokedAt: this.databaseTimestamp(row.revoked_at ?? row.revokedAt ?? row.revokedat, 'revoked_at'),
+      disabledAt: this.databaseTimestamp(row.disabled_at ?? row.disabledAt ?? row.disabledat, 'disabled_at'),
     };
   }
 
@@ -153,6 +167,12 @@ class ApiKeyManager {
   async create(
     options: CreateKeyOptions
   ): Promise<{ record: ApiKeyRecord; plainTextKey: string }> {
+    const generated = this.generateKey(options);
+    await this.persistKey(generated.record);
+    return generated;
+  }
+
+  private generateKey(options: CreateKeyOptions): { record: ApiKeyRecord; plainTextKey: string } {
     if (options.actorType !== 'service_account' && options.userId === undefined) {
       throw new Error('API keys require userId unless actorType is service_account.');
     }
@@ -185,6 +205,10 @@ class ApiKeyManager {
         : undefined,
     };
 
+    return { record, plainTextKey };
+  }
+
+  private async persistKey(record: ApiKeyRecord): Promise<void> {
     if (this.config.driver === 'memory') {
       this.keys.push(record);
     } else if (this.config.driver === 'database') {
@@ -210,8 +234,6 @@ class ApiKeyManager {
         disabled_at: record.disabledAt ?? null,
       });
     }
-
-    return { record, plainTextKey };
   }
 
   /** Generate a tenant-bound service account API key. */
@@ -248,7 +270,7 @@ class ApiKeyManager {
     }
 
     for (const record of this.keys) {
-      if (record.revokedAt) continue;
+      if (record.revokedAt != null) continue;
 
       // Use timing-safe comparison to prevent timing attacks
       try {
@@ -280,7 +302,7 @@ class ApiKeyManager {
   async revoke(keyId: string): Promise<boolean> {
     if (this.config.driver === 'database') {
       const existing = await this.findById(keyId);
-      if (!existing || existing.revokedAt) return false;
+      if (!existing || existing.revokedAt != null) return false;
 
       await this.query().where('id', keyId).whereNull('revoked_at').update({ revoked_at: Date.now() });
       return true;
@@ -302,7 +324,7 @@ class ApiKeyManager {
       return affected > 0;
     }
 
-    const key = this.keys.find((record) => record.id === keyId && String(record.userId) === String(userId) && !record.revokedAt);
+    const key = this.keys.find((record) => record.id === keyId && String(record.userId) === String(userId) && record.revokedAt == null);
     if (!key) return false;
     key.revokedAt = Date.now();
     return true;
@@ -320,22 +342,45 @@ class ApiKeyManager {
     }
 
     return this.keys
-      .filter((k) => k.userId === userId && !k.revokedAt)
+      .filter((k) => k.userId === userId && k.revokedAt == null)
       .map((k) => ({ ...k })); // Return copies without plaintext
   }
 
-  /** Rotate a key (revoke old, create new with same settings) */
+  /** Atomically replace a key without extending expiry or clearing disabled state. */
   async rotate(
     keyId: string
   ): Promise<{ record: ApiKeyRecord; plainTextKey: string } | null> {
-    const oldKey = await this.findById(keyId);
-    if (!oldKey || oldKey.revokedAt) return null;
+    if (this.config.driver === 'memory') {
+      const oldKey = this.keys.find((key) => key.id === keyId);
+      if (!oldKey || oldKey.revokedAt != null) return null;
+      const generated = this.generateRotation(oldKey);
+      // Prepare both changes before publishing a new memory snapshot, with no await in between.
+      this.keys = this.keys.map((key) => key === oldKey ? { ...key, revokedAt: Date.now() } : key)
+        .concat(generated.record);
+      return generated;
+    }
 
-    // Revoke old key
-    await this.revoke(keyId);
+    const replace = () => Connection.transaction(async () => {
+      // The conditional write locks/claims the old row before reading its current controls.
+      const claimed = await this.query().where('id', keyId).whereNull('revoked_at')
+        .update({ revoked_at: Date.now() });
+      if (claimed === 0) return null;
+      const oldKey = await this.findById(keyId);
+      if (!oldKey) throw new Error('API key disappeared during rotation.');
+      const generated = this.generateRotation(oldKey);
+      await this.persistKey(generated.record);
+      return generated;
+    });
 
-    // Create new key with same settings
-    return this.create({
+    if (Connection.getDriver() !== 'sqlite') return replace();
+    // SQLite uses one connection; overlapping BEGIN statements must not share a transaction.
+    const pending = this.sqliteRotationTail.then(replace);
+    this.sqliteRotationTail = pending.then(() => {}, () => {});
+    return pending;
+  }
+
+  private generateRotation(oldKey: ApiKeyRecord): { record: ApiKeyRecord; plainTextKey: string } {
+    const generated = this.generateKey({
       name: `${oldKey.name} (rotated)`,
       userId: oldKey.userId,
       teamId: oldKey.teamId,
@@ -348,6 +393,9 @@ class ApiKeyManager {
       rateLimit: oldKey.rateLimit,
       metadata: oldKey.metadata,
     });
+    generated.record.expiresAt = oldKey.expiresAt;
+    generated.record.disabledAt = oldKey.disabledAt;
+    return generated;
   }
 
   /** Check if a key has a specific permission */
@@ -369,13 +417,13 @@ class ApiKeyManager {
     const disabledAt = Date.now();
     if (this.config.driver === 'database') {
       const existing = await this.findById(keyId);
-      if (!existing || existing.disabledAt || existing.revokedAt) return false;
+      if (!existing || existing.disabledAt != null || existing.revokedAt != null) return false;
       await this.query().where('id', keyId).whereNull('revoked_at').update({ disabled_at: disabledAt });
       return true;
     }
 
     const key = this.keys.find((k) => k.id === keyId);
-    if (!key || key.disabledAt || key.revokedAt) return false;
+    if (!key || key.disabledAt != null || key.revokedAt != null) return false;
     key.disabledAt = disabledAt;
     return true;
   }
@@ -384,21 +432,21 @@ class ApiKeyManager {
   async enable(keyId: string): Promise<boolean> {
     if (this.config.driver === 'database') {
       const existing = await this.findById(keyId);
-      if (!existing || existing.revokedAt) return false;
+      if (!existing || existing.revokedAt != null) return false;
       await this.query().where('id', keyId).whereNull('revoked_at').update({ disabled_at: null });
       return true;
     }
 
     const key = this.keys.find((k) => k.id === keyId);
-    if (!key || key.revokedAt) return false;
+    if (!key || key.revokedAt != null) return false;
     key.disabledAt = undefined;
     return true;
   }
 
   private async isUsable(record: ApiKeyRecord, context: ApiKeyValidationContext): Promise<boolean> {
     const now = context.now ?? Date.now();
-    if (record.disabledAt) return false;
-    if (record.expiresAt && record.expiresAt < now) return false;
+    if (record.disabledAt != null) return false;
+    if (record.expiresAt != null && record.expiresAt < now) return false;
 
     if (record.allowedIps?.length) {
       if (!context.ip || !record.allowedIps.includes(context.ip)) {
