@@ -5,6 +5,7 @@ import { join } from 'node:path';
 // We can't import the abstract Command directly, so we create a concrete subclass
 import { Command, type CommandFlag } from '../src/cli/Command.js';
 import { Cli } from '../src/cli/Cli.js';
+import { BUILTIN_COMMANDS, builtinCommandNames } from '../src/cli/BuiltinCommands.js';
 
 class TestCommand extends Command {
   name = 'test:cmd';
@@ -204,6 +205,40 @@ describe('Command Base Class', () => {
         soketi: true,
         name: 'demo',
       });
+    });
+  });
+
+  describe('built-in command registry', () => {
+    it('registers every built-in command with a unique name', () => {
+      const names = builtinCommandNames();
+      const unique = new Set(names);
+
+      expect(unique.size).toBe(names.length);
+      expect(names).toContain('new');
+      expect(names).toContain('update');
+      expect(names).toContain('search:setup');
+      expect(names).toContain('queue:work');
+      expect(names).toContain('prod:deploy');
+    });
+
+    it('prints help for every built-in command without executing side effects', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const cli = new Cli('test');
+
+      for (const CommandClass of BUILTIN_COMMANDS) {
+        cli.register(CommandClass);
+      }
+
+      for (const commandName of builtinCommandNames()) {
+        await cli.run([commandName, '--help']);
+        expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Usage:'));
+        expect(errorSpy).not.toHaveBeenCalled();
+        logSpy.mockClear();
+      }
+
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
     });
   });
 

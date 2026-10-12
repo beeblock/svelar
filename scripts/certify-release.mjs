@@ -1,71 +1,23 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const args = new Set(process.argv.slice(2));
 const fast = args.has('--fast');
 const inventoryOnly = args.has('--inventory') || args.has('--list');
 
-const cliCommands = [
-	'new',
-	'update',
-	'key:generate',
-	'make:model',
-	'make:migration',
-	'make:controller',
-	'make:middleware',
-	'make:provider',
-	'make:seeder',
-	'make:service',
-	'make:repository',
-	'make:action',
-	'make:request',
-	'make:resource',
-	'make:schema',
-	'make:plugin',
-	'make:task',
-	'make:job',
-	'make:command',
-	'make:config',
-	'make:channel',
-	'make:docker',
-	'make:ci',
-	'make:infra',
-	'infra:setup',
-	'make:deploy',
-	'make:broadcasting',
-	'make:dashboard',
-	'make:test',
-	'make:factory',
-	'make:observer',
-	'make:event',
-	'make:listener',
-	'make:route',
-	'routes:list',
-	'migrate',
-	'seed:run',
-	'schedule:run',
-	'queue:work',
-	'queue:failed',
-	'queue:retry',
-	'queue:flush',
-	'tinker',
-	'plugin:list',
-	'plugin:publish',
-	'plugin:install',
-	'dev:up',
-	'dev:down',
-	'dev:logs',
-	'dev:restart',
-	'prod:up',
-	'prod:down',
-	'prod:logs',
-	'prod:restart',
-	'prod:deploy',
-];
+const scriptDir = dirname(fileURLToPath(import.meta.url));
+const repoRoot = resolve(scriptDir, '..');
+const cliCommands = readBuiltinCommandNames();
 
 const featureGates = [
 	['CLI command parser/help', 'packages/svelar/tests/cli-command.test.ts'],
+	['Every built-in CLI command is registered and has help output', 'packages/svelar/tests/cli-command.test.ts + npm run certify:inventory'],
 	['CLI generators', 'packages/svelar/tests/cli-make-commands.test.ts + generated-app certification'],
+	['Fresh app creation from packed package', 'npm run smoke:ddd + npm run smoke:flat'],
+	['Existing app scaffold upgrade safety', 'npm run smoke:ddd + npx svelar update --dry-run/--force certification'],
 	['Migrations/seeders/schema builder', 'packages/svelar/tests/database.test.ts + npm run smoke:db'],
 	['SQLite/PostgreSQL/MySQL portability', 'npm run smoke:db'],
 	['Production adapter-node browser flow', 'npm run smoke:db:prod'],
@@ -153,4 +105,31 @@ function run(command, commandArgs) {
 	if (result.status !== 0) {
 		process.exit(result.status ?? 1);
 	}
+}
+
+function readBuiltinCommandNames() {
+	const registryPath = join(repoRoot, 'packages/svelar/src/cli/BuiltinCommands.ts');
+	const source = readFileSync(registryPath, 'utf8');
+	const match = source.match(/export const BUILTIN_COMMANDS[\s\S]*?=\s*\[([\s\S]*?)\];/);
+	if (!match) {
+		throw new Error(`Could not read built-in command registry from ${registryPath}`);
+	}
+
+	const commandClasses = [...match[1].matchAll(/\b([A-Z]\w+Command)\b/g)].map((item) => item[1]);
+	const names = commandClasses.map((className) => {
+		const commandPath = join(repoRoot, 'packages/svelar/src/cli/commands', `${className}.ts`);
+		const commandSource = readFileSync(commandPath, 'utf8');
+		const name = commandSource.match(/\bname\s*=\s*['"]([^'"]+)['"]/);
+		if (!name) {
+			throw new Error(`Could not read CLI command name from ${commandPath}`);
+		}
+		return name[1];
+	});
+
+	const duplicates = names.filter((name, index) => names.indexOf(name) !== index);
+	if (duplicates.length > 0) {
+		throw new Error(`Duplicate CLI command names in registry: ${[...new Set(duplicates)].join(', ')}`);
+	}
+
+	return names;
 }

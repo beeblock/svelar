@@ -22,6 +22,7 @@ const skipMigrate = args.has('--skip-migrate');
 const skipTests = args.has('--skip-tests');
 const skipBuild = args.has('--skip-build');
 const skipCertification = args.has('--skip-certification');
+const skipCliHelp = args.has('--skip-cli-help');
 const runBrowser = args.has('--browser');
 const productionServer = args.has('--prod') || args.has('--production');
 const headed = args.has('--headed');
@@ -53,6 +54,7 @@ Options:
   --skip-tests           Skip generated app tests.
   --skip-build           Skip generated app production build.
   --skip-certification   Skip injected generated-app certification tests.
+  --skip-cli-help        Skip checking every generated app svelar command help screen.
   --browser              Run real browser smoke after app checks.
   --prod                 When used with --browser, test the adapter-node production server.
   --headed               Open a visible Chromium window for browser smoke.
@@ -504,6 +506,14 @@ function smokeApp(target, tarballPath) {
 		run('npm', ['run', 'ui:install'], { cwd: appDir });
 	}
 
+	if (!skipCliHelp) {
+		section(`Checking CLI command help for ${target.name}`);
+		certifyCliCommandHelp(appDir);
+	}
+
+	section(`Checking scaffold update workflow for ${target.name}`);
+	certifyScaffoldUpdate(appDir);
+
 	if (!skipMigrate) {
 		section(`Migrating ${target.name}`);
 		run('npx', ['svelar', 'migrate'], { cwd: appDir, env });
@@ -539,6 +549,26 @@ function smokeApp(target, tarballPath) {
 		if (headed) browserArgs.push('--headed');
 		if (slowMo) browserArgs.push('--slow-mo', slowMo);
 		run(process.execPath, browserArgs, { env });
+	}
+}
+
+function certifyCliCommandHelp(appDir) {
+	for (const commandName of readBuiltinCommandNames()) {
+		run('npx', ['svelar', commandName, '--help'], { cwd: appDir });
+	}
+}
+
+function certifyScaffoldUpdate(appDir) {
+	run('npx', ['svelar', 'update', '--list'], { cwd: appDir });
+	run('npx', ['svelar', 'update', '--dry-run'], { cwd: appDir });
+
+	const envExamplePath = join(appDir, '.env.example');
+	const original = readFileSync(envExamplePath, 'utf8');
+	writeFileSync(envExamplePath, `${original}\n# stale smoke marker\n`);
+	run('npx', ['svelar', 'update', '--force', '--category=config'], { cwd: appDir });
+	const updated = readFileSync(envExamplePath, 'utf8');
+	if (updated.includes('stale smoke marker')) {
+		fail('svelar update --force did not refresh framework-owned config files.');
 	}
 }
 
@@ -618,6 +648,25 @@ function packLocalCore() {
 	);
 	renameSync(tarballPath, uniqueTarballPath);
 	return uniqueTarballPath;
+}
+
+function readBuiltinCommandNames() {
+	const registryPath = join(repoRoot, 'packages/svelar/src/cli/BuiltinCommands.ts');
+	const source = readFileSync(registryPath, 'utf8');
+	const match = source.match(/export const BUILTIN_COMMANDS[\s\S]*?=\s*\[([\s\S]*?)\];/);
+	if (!match) fail(`Could not read built-in command registry from ${registryPath}`);
+
+	const names = [...match[1].matchAll(/\b([A-Z]\w+Command)\b/g)].map((item) => {
+		const commandPath = join(repoRoot, 'packages/svelar/src/cli/commands', `${item[1]}.ts`);
+		const commandSource = readFileSync(commandPath, 'utf8');
+		const name = commandSource.match(/\bname\s*=\s*['"]([^'"]+)['"]/);
+		if (!name) fail(`Could not read CLI command name from ${commandPath}`);
+		return name[1];
+	});
+
+	const duplicates = names.filter((name, index) => names.indexOf(name) !== index);
+	if (duplicates.length > 0) fail(`Duplicate CLI command names in registry: ${[...new Set(duplicates)].join(', ')}`);
+	return names;
 }
 
 function patchAppPackage(appDir, tarballPath, port) {

@@ -29,6 +29,7 @@ npm run certify:fast
 `npm run certify` runs:
 
 - the core package test suite
+- the generated CLI command inventory, derived from the same built-in command registry used by the `svelar` binary
 - package publish dry-run checks for `@beeblock/svelar`, including its bundled `svelar` binary
 - Redis cache, Redis session, and BullMQ queue smoke checks with Docker-managed random ports
 - PDFKit, queued PDF job, and Gotenberg smoke checks with Docker-managed random ports
@@ -39,7 +40,9 @@ npm run certify:fast
 - SQLite, PostgreSQL, and MySQL smoke checks with Docker-managed random ports
 - production `adapter-node` browser smoke across the database matrix
 
-The core package test suite includes direct gates for feature flags, outgoing webhooks, audit logging, Excel import/export/streaming, HTTP helpers and the fluent HTTP client, forms, i18n, UI/SEO/pagination component compilation, toast state, testing helpers, deployment CLI file generation, Docker compose command construction, and package-level utility commands.
+The core package test suite includes direct gates for every built-in CLI command help screen, CLI registration drift, feature flags, outgoing webhooks, audit logging, Excel import/export/streaming, HTTP helpers and the fluent HTTP client, forms, i18n, UI/SEO/pagination component compilation, toast state, testing helpers, deployment CLI file generation, Docker compose command construction, and package-level utility commands.
+
+Each generated smoke app also checks `npx svelar <command> --help` for every built-in command after installing the packed package. The same smoke run verifies existing-app upgrade safety with `npx svelar update --list`, `--dry-run`, and a forced framework-owned config refresh.
 
 Generated DDD smoke apps receive an injected `tests/feature/svelar-certification.test.ts` file. It validates the intended Svelar flow:
 
