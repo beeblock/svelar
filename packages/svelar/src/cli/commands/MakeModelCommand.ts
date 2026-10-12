@@ -3,6 +3,7 @@
  */
 
 import { Command } from '../Command.js';
+import { MakeEntityCommand } from './MakeEntityCommand.js';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -29,6 +30,16 @@ export class MakeModelCommand extends Command {
     const moduleName = flags.module || this.toSnakeCase(this.pluralize(name));
     if (!flags.module && this.isDDD()) {
       this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
+    }
+
+    if (flags.controller || flags.resource || flags.all) {
+      const command = new MakeEntityCommand();
+      await command.handle([name], {
+        module: moduleName, crud: Boolean(flags.resource || flags.all),
+        'no-migration': !Boolean(flags.migration || flags.all),
+      });
+      this.exitCode = command.exitCode;
+      return;
     }
 
     const modelsDir = this.moduleDir(moduleName, 'models', 'model');
@@ -93,82 +104,6 @@ export default class Create${name}sTable extends Migration {
       this.success(`Migration created: src/lib/database/migrations/${migrationName}.ts`);
     }
 
-    // Create controller if requested
-    if (flags.controller || flags.resource || flags.all) {
-      const controllerName = `${name}Controller`;
-      const controllerDir = this.moduleDir(moduleName, 'controllers', 'controller');
-      mkdirSync(controllerDir, { recursive: true });
-
-      const isResource = flags.resource || flags.all;
-      const modelImportPath = this.moduleImportPath(moduleName, 'controller', 'model', name);
-      const controllerContent = isResource
-        ? this.generateResourceController(name, controllerName, modelImportPath)
-        : this.generateBasicController(name, controllerName, modelImportPath);
-
-      writeFileSync(join(controllerDir, `${controllerName}.ts`), controllerContent);
-      const ctrlRelDir = this.moduleRelDir(moduleName, 'controllers', 'controller');
-      this.success(`Controller created: ${ctrlRelDir}/${controllerName}.ts`);
-    }
-  }
-
-  private generateResourceController(modelName: string, controllerName: string, modelImportPath: string = `./${modelName}.js`): string {
-    return `import { Controller, type RequestEvent } from '@beeblock/svelar/routing';
-import { z } from '@beeblock/svelar/validation';
-import { ${modelName} } from '${modelImportPath}';
-
-export class ${controllerName} extends Controller {
-  /** GET /api/${this.toSnakeCase(this.pluralize(modelName))} */
-  async index(event: RequestEvent) {
-    const ${this.pluralize(modelName.toLowerCase())} = await ${modelName}.all();
-    return this.json(${this.pluralize(modelName.toLowerCase())});
-  }
-
-  /** POST /api/${this.toSnakeCase(this.pluralize(modelName))} */
-  async store(event: RequestEvent) {
-    const data = await this.validate(event, z.object({
-      // Define validation rules
-    }));
-    const ${modelName.toLowerCase()} = await ${modelName}.create(data);
-    return this.created(${modelName.toLowerCase()});
-  }
-
-  /** GET /api/${this.toSnakeCase(this.pluralize(modelName))}/[id] */
-  async show(event: RequestEvent) {
-    const ${modelName.toLowerCase()} = await ${modelName}.findOrFail(event.params.id);
-    return this.json(${modelName.toLowerCase()});
-  }
-
-  /** PUT /api/${this.toSnakeCase(this.pluralize(modelName))}/[id] */
-  async update(event: RequestEvent) {
-    const ${modelName.toLowerCase()} = await ${modelName}.findOrFail(event.params.id);
-    const data = await this.validate(event, z.object({
-      // Define validation rules
-    }));
-    await ${modelName.toLowerCase()}.update(data);
-    return this.json(${modelName.toLowerCase()});
-  }
-
-  /** DELETE /api/${this.toSnakeCase(this.pluralize(modelName))}/[id] */
-  async destroy(event: RequestEvent) {
-    const ${modelName.toLowerCase()} = await ${modelName}.findOrFail(event.params.id);
-    await ${modelName.toLowerCase()}.delete();
-    return this.noContent();
-  }
-}
-`;
-  }
-
-  private generateBasicController(modelName: string, controllerName: string, modelImportPath: string = `./${modelName}.js`): string {
-    return `import { Controller, type RequestEvent } from '@beeblock/svelar/routing';
-import { ${modelName} } from '${modelImportPath}';
-
-export class ${controllerName} extends Controller {
-  async index(event: RequestEvent) {
-    const items = await ${modelName}.all();
-    return this.json(items);
-  }
-}
-`;
   }
 
   private toSnakeCase(str: string): string {

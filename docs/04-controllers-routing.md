@@ -12,6 +12,8 @@ Controllers accept HTTP requests and return responses. They're the glue between 
 npx svelar make:controller AuthController
 ```
 
+For a complete write workflow, use `npx svelar make:entity Invoice --module=billing --fields "title:string,total:number" --crud`. `make:controller InvoiceController --resource --model=Invoice --module=billing` also creates the supporting shared schema, FormRequests, DTOs, actions, service, repository, and resource; it skips migration generation. Existing files are preserved. The generated resource controller delegates writes through that flow instead of validating and persisting directly in the controller.
+
 This creates `src/lib/controllers/AuthController.ts`:
 
 ```typescript

@@ -3,6 +3,7 @@
  */
 
 import { Command } from '../Command.js';
+import { MakeEntityCommand } from './MakeEntityCommand.js';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -30,6 +31,15 @@ export class MakeControllerCommand extends Command {
       this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
     }
 
+    if (flags.resource) {
+      const command = new MakeEntityCommand();
+      await command.handle([flags.model ?? baseName], {
+        module: moduleName, crud: true, 'no-migration': true, controller: controllerName,
+      });
+      this.exitCode = command.exitCode;
+      return;
+    }
+
     const moduleDir = this.moduleDir(moduleName, 'controllers', 'controller');
     mkdirSync(moduleDir, { recursive: true });
 
@@ -39,64 +49,12 @@ export class MakeControllerCommand extends Command {
       return;
     }
 
-    const modelImportPath = flags.model
-      ? this.moduleImportPath(moduleName, 'controller', 'model', flags.model)
-      : undefined;
-    const content = flags.resource
-      ? this.generateResourceController(controllerName, flags.model, modelImportPath)
-      : this.generateBasicController(controllerName);
+    const content = this.generateBasicController(controllerName);
 
     writeFileSync(filePath, content);
     const relDir = this.moduleRelDir(moduleName, 'controllers', 'controller');
     this.success(`Controller created: ${relDir}/${controllerName}.ts`);
   }
-
-  private generateResourceController(name: string, model?: string, modelPath?: string): string {
-    const modelImport = model && modelPath
-      ? `import { ${model} } from '${modelPath}';\n`
-      : '';
-
-    return `import { Controller, type RequestEvent } from '@beeblock/svelar/routing';
-import { z } from '@beeblock/svelar/validation';
-${modelImport}
-export class ${name} extends Controller {
-  async index(event: RequestEvent) {
-    // List all resources
-    return this.json([]);
-  }
-
-  async store(event: RequestEvent) {
-    const data = await this.validate(event, z.object({
-      // Define validation rules
-    }));
-    // Create resource
-    return this.created(data);
-  }
-
-  async show(event: RequestEvent) {
-    const { id } = event.params;
-    // Find and return resource
-    return this.json({ id });
-  }
-
-  async update(event: RequestEvent) {
-    const { id } = event.params;
-    const data = await this.validate(event, z.object({
-      // Define validation rules
-    }));
-    // Update resource
-    return this.json({ id, ...data });
-  }
-
-  async destroy(event: RequestEvent) {
-    const { id } = event.params;
-    // Delete resource
-    return this.noContent();
-  }
-}
-`;
-  }
-
   private generateBasicController(name: string): string {
     return `import { Controller, type RequestEvent } from '@beeblock/svelar/routing';
 

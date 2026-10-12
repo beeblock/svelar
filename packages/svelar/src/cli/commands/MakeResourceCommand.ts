@@ -114,8 +114,7 @@ export class ${resourceName} extends Resource<${modelName}, ${shapeName}> {
   }
 
   private generateCollectionResource(collectionName: string, resourceName: string, modelName: string, modelPath: string = `./${modelName}.js`): string {
-    return `import { Resource } from '@beeblock/svelar/routing';
-import { ${resourceName} } from './${resourceName}.js';
+    return `import { ${resourceName} } from './${resourceName}.js';
 import type { ${modelName} } from '${modelPath}';
 
 /**
@@ -127,20 +126,20 @@ import type { ${modelName} } from '${modelPath}';
 export class ${collectionName} {
   constructor(
     private items: ${modelName}[],
-    private meta: Record<string, any> = {}
+    private meta: Record<string, unknown> = {}
   ) {}
 
-  static make(items: ${modelName}[], meta?: Record<string, any>) {
+  static make(items: ${modelName}[], meta?: Record<string, unknown>) {
     return new ${collectionName}(items, meta ?? {});
   }
 
-  toResponse(): Response {
+  toResponse(): Promise<Response> {
     return ${resourceName}.collection(this.items)
       .additional(this.meta)
       .toResponse();
   }
 
-  toObject() {
+  toObject(): Promise<Record<string, unknown>> {
     return ${resourceName}.collection(this.items)
       .additional(this.meta)
       .toObject();

@@ -3,7 +3,7 @@
  */
 
 import { Command, type ModuleArtifactKind } from '../Command.js';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 type Field = {
@@ -22,6 +22,7 @@ export class MakeEntityCommand extends Command {
     { name: 'fields', description: 'Comma-separated fields, e.g. "name:string,description:text?,status:enum(draft,published)"', type: 'string' as const },
     { name: 'crud', description: 'Generate update/delete actions and controller methods', type: 'boolean' as const },
     { name: 'no-migration', description: 'Skip migration generation', type: 'boolean' as const },
+    { name: 'controller', description: 'Controller class name (defaults to the entity name)', type: 'string' as const },
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
@@ -43,11 +44,11 @@ export class MakeEntityCommand extends Command {
     this.writeSchema(moduleName, name, fields);
     this.writeDtos(moduleName, name, fields, Boolean(flags.crud));
     this.writeRepository(moduleName, name);
-    this.writeService(moduleName, name);
+    this.writeService(moduleName, name, fields, Boolean(flags.crud));
     this.writeActions(moduleName, name, Boolean(flags.crud));
     this.writeRequests(moduleName, name, Boolean(flags.crud));
     this.writeResource(moduleName, name, fields);
-    this.writeController(moduleName, name, Boolean(flags.crud));
+    this.writeController(moduleName, name, Boolean(flags.crud), flags.controller);
 
     if (!flags['no-migration']) {
       this.writeMigration(name, fields);
@@ -57,15 +58,25 @@ export class MakeEntityCommand extends Command {
   private writeModel(moduleName: string, name: string, fields: Field[]): void {
     const tableName = this.toSnakeCase(this.pluralize(name));
     const fillable = fields.map((field) => `'${field.name}'`).join(', ');
+    const casts = fields.filter((field) => ['number', 'integer', 'boolean', 'date'].includes(field.kind))
+      .map((field) => `    ${field.name}: '${field.kind === 'integer' ? 'number' : field.kind}',`);
     this.writeModuleFile(moduleName, 'models', 'model', `${name}.ts`, `import { Model } from '@beeblock/svelar/orm';
 
 export class ${name} extends Model {
   static table = '${tableName}';
   static timestamps = true;
   static fillable = [${fillable}];
+  static casts = {
+    id: 'number',
+${casts.join('\n')}
+    created_at: 'date',
+    updated_at: 'date',
+  } as const;
 
   declare id: number;
-${fields.map((field) => `  declare ${field.name}${field.optional ? '?' : ''}: ${this.tsType(field)};`).join('\n')}
+${fields.map((field) => `  declare ${field.name}: ${this.tsType(field)};`).join('\n')}
+  declare created_at: Date;
+  declare updated_at: Date;
 }
 `);
   }
@@ -75,24 +86,34 @@ ${fields.map((field) => `  declare ${field.name}${field.optional ? '?' : ''}: ${
     const fileName = `${this.toKebabCase(name)}.schema.ts`;
     const validation = this.validationProvider();
     const fieldLines = fields.map((field) => `  ${field.name}: ${validation === 'valibot' ? this.valibotFor(field) : this.zodFor(field)},`);
+    const dataLines = fields.map((field) => `  ${field.name}: ${validation === 'valibot' ? this.valibotFor(field, true) : this.zodFor(field, true)},`);
+    const numberNormalizer = "const normalizeNumber = (input: unknown) => typeof input === 'string' && input.trim() !== '' ? Number(input) : input;";
+    const booleanNormalizer = `const normalizeBoolean = (input: unknown) => {
+  if (input === true || input === 1 || input === 'true' || input === 'on' || input === '1') return true;
+  if (input === false || input === 0 || input === 'false' || input === 'off' || input === '0') return false;
+  return input;
+};`;
+    const dateNormalizer = "const normalizeDate = (input: unknown) => typeof input === 'string' && input.trim() !== '' ? new Date(input) : input;";
+    const needsBoolean = fields.some((field) => field.kind === 'boolean');
+    const needsDate = fields.some((field) => field.kind === 'date');
 
     if (validation === 'valibot') {
-      const needsNumber = fields.some((field) => field.kind === 'number' || field.kind === 'integer');
-      const needsBoolean = fields.some((field) => field.kind === 'boolean');
-      const needsDate = fields.some((field) => field.kind === 'date');
       const helpers = [
-        needsNumber ? "const numberInput = () => v.pipe(v.unknown(), v.transform((input) => Number(input)), v.number());" : '',
-        needsBoolean ? "const booleanInput = () => v.pipe(v.unknown(), v.transform((input) => input === true || input === 'true' || input === 'on' || input === '1'), v.boolean());" : '',
-        needsDate ? "const dateInput = () => v.pipe(v.unknown(), v.transform((input) => input instanceof Date ? input : new Date(String(input))), v.date());" : '',
+        numberNormalizer,
+        "const numberInput = () => v.pipe(v.unknown(), v.transform(normalizeNumber), v.number(), v.finite());",
+        needsBoolean ? `${booleanNormalizer}\nconst booleanInput = () => v.pipe(v.unknown(), v.transform(normalizeBoolean), v.boolean());` : '',
+        needsDate ? `${dateNormalizer}\nconst dateInput = () => v.pipe(v.unknown(), v.transform(normalizeDate), v.date());` : '',
       ].filter(Boolean).join('\n');
 
-      this.writeModuleFile(moduleName, 'schemas', 'schema', fileName, `import * as v from 'valibot';
+      this.writeModuleFile(moduleName, 'schemas', 'schema', fileName, `import { v } from '@beeblock/svelar/validation/valibot';
 ${helpers ? `\n${helpers}\n` : ''}
+export const ${lower}IdSchema = v.pipe(numberInput(), v.integer(), v.minValue(1));
+
 export const ${lower}Schema = v.object({
-  id: v.number(),
-${fieldLines.join('\n')}
-  created_at: v.optional(v.string()),
-  updated_at: v.optional(v.string()),
+  id: v.pipe(v.number(), v.integer(), v.minValue(1)),
+${dataLines.join('\n')}
+  created_at: v.pipe(v.string(), v.isoTimestamp()),
+  updated_at: v.pipe(v.string(), v.isoTimestamp()),
 });
 
 export const create${name}Schema = v.object({
@@ -110,11 +131,16 @@ export type Update${name}Input = v.InferOutput<typeof update${name}Schema>;
 
     this.writeModuleFile(moduleName, 'schemas', 'schema', fileName, `import { z } from '@beeblock/svelar/validation';
 
+${numberNormalizer}
+const numberInput = (schema: z.ZodNumber = z.number().finite()) => z.preprocess(normalizeNumber, schema);
+${needsBoolean ? `${booleanNormalizer}\nconst booleanInput = () => z.preprocess(normalizeBoolean, z.boolean());\n` : ''}${needsDate ? `${dateNormalizer}\nconst dateInput = () => z.preprocess(normalizeDate, z.date());\n` : ''}
+export const ${lower}IdSchema = numberInput(z.number().int().positive());
+
 export const ${lower}Schema = z.object({
-  id: z.number(),
-${fieldLines.join('\n')}
-  created_at: z.string().optional(),
-  updated_at: z.string().optional(),
+  id: z.number().int().positive(),
+${dataLines.join('\n')}
+  created_at: z.string().datetime(),
+  updated_at: z.string().datetime(),
 });
 
 export const create${name}Schema = z.object({
@@ -187,12 +213,12 @@ export class ${name}Repository extends Repository<${name}> {
 `);
   }
 
-  private writeService(moduleName: string, name: string): void {
+  private writeService(moduleName: string, name: string, fields: Field[], crud: boolean): void {
     const repoPath = this.moduleImportPath(moduleName, 'service', 'repository', `${name}Repository`);
     const dtoPath = this.moduleImportPath(moduleName, 'service', 'dto', `${name}Dtos`);
     this.writeModuleFile(moduleName, 'services', 'service', `${name}Service.ts`, `import { Service } from '@beeblock/svelar/services';
 import { ${name}Repository } from '${repoPath}';
-import type { Create${name}Dto, Update${name}Dto } from '${dtoPath}';
+import type { Create${name}Dto${crud ? `, Update${name}Dto` : ''} } from '${dtoPath}';
 
 const repository = new ${name}Repository();
 
@@ -202,21 +228,25 @@ export class ${name}Service extends Service {
   }
 
   async create(dto: Create${name}Dto) {
-    return repository.create({ ...dto });
+    return repository.create({
+${fields.map((field) => `      ${field.name}: dto.${field.name}${field.optional ? ' ?? null' : ''},`).join('\n')}
+    });
   }
 
   async find(id: number) {
     return repository.findByIdOrFail(id);
   }
 
-  async update(dto: Update${name}Dto) {
+${crud ? `  async update(dto: Update${name}Dto) {
     const { id, ...attributes } = dto;
-    return repository.update(id, attributes);
+    const changes = Object.fromEntries(Object.entries(attributes).filter(([, value]) => value !== undefined));
+    return repository.update(id, changes);
   }
 
   async delete(id: number) {
     await repository.delete(id);
   }
+` : ''}
 }
 `);
   }
@@ -224,14 +254,16 @@ export class ${name}Service extends Service {
   private writeActions(moduleName: string, name: string, crud: boolean): void {
     const servicePath = this.moduleImportPath(moduleName, 'action', 'service', `${name}Service`);
     const dtoPath = this.moduleImportPath(moduleName, 'action', 'dto', `${name}Dtos`);
+    const modelPath = this.moduleImportPath(moduleName, 'action', 'model', name);
     let content = `import { Action } from '@beeblock/svelar/actions';
 import { ${name}Service } from '${servicePath}';
 import type { Create${name}Dto${crud ? `, Delete${name}Dto, Update${name}Dto` : ''} } from '${dtoPath}';
+import type { ${name} } from '${modelPath}';
 
 const service = new ${name}Service();
 
-export class Create${name}Action extends Action<Create${name}Dto, unknown> {
-  async execute(dto: Create${name}Dto): Promise<unknown> {
+export class Create${name}Action extends Action<Create${name}Dto, ${name}> {
+  async execute(dto: Create${name}Dto): Promise<${name}> {
     return service.create(dto);
   }
 }
@@ -239,8 +271,8 @@ export class Create${name}Action extends Action<Create${name}Dto, unknown> {
 
     if (crud) {
       content += `
-export class Update${name}Action extends Action<Update${name}Dto, unknown> {
-  async execute(dto: Update${name}Dto): Promise<unknown> {
+export class Update${name}Action extends Action<Update${name}Dto, ${name}> {
+  async execute(dto: Update${name}Dto): Promise<${name}> {
     return service.update(dto);
   }
 }
@@ -260,20 +292,15 @@ export class Delete${name}Action extends Action<Delete${name}Dto, void> {
     const dtoPath = this.moduleImportPath(moduleName, 'request', 'dto', `${name}Dtos`);
     const schemaPath = this.moduleImportPath(moduleName, 'request', 'schema', `${this.toKebabCase(name)}.schema`);
     const validation = this.validationProvider();
+    const idSchema = `${this.toCamelCase(name)}IdSchema`;
     let content = validation === 'valibot'
       ? `import { FormRequest } from '@beeblock/svelar/forms';
-import * as v from 'valibot';
+import { v } from '@beeblock/svelar/validation/valibot';
+import type { RequestEvent } from '@beeblock/svelar/routing';
 import { Create${name}Dto${crud ? `, Delete${name}Dto, Update${name}Dto` : ''} } from '${dtoPath}';
-import { create${name}Schema${crud ? `, update${name}Schema` : ''} } from '${schemaPath}';
+import { create${name}Schema${crud ? `, update${name}Schema, ${idSchema} as idSchema` : ''} } from '${schemaPath}';
 import type { Create${name}Input${crud ? `, Update${name}Input` : ''} } from '${schemaPath}';
 
-const idSchema = v.pipe(
-  v.unknown(),
-  v.transform((input) => Number(input)),
-  v.number(),
-  v.integer(),
-  v.minValue(1)
-);
 ${crud ? `
 const update${name}WithIdSchema = v.intersect([update${name}Schema, v.object({ id: idSchema })]);
 const delete${name}Schema = v.object({ id: idSchema });
@@ -284,7 +311,7 @@ export class Create${name}Request extends FormRequest<typeof create${name}Schema
     return create${name}Schema;
   }
 
-  authorize(event: any): boolean {
+  authorize(event: RequestEvent): boolean {
     return !!event.locals.user;
   }
 
@@ -295,12 +322,13 @@ export class Create${name}Request extends FormRequest<typeof create${name}Schema
 `
       : `import { FormRequest } from '@beeblock/svelar/forms';
 import { z } from '@beeblock/svelar/validation';
+import type { RequestEvent } from '@beeblock/svelar/routing';
 import { Create${name}Dto${crud ? `, Delete${name}Dto, Update${name}Dto` : ''} } from '${dtoPath}';
-import { create${name}Schema${crud ? `, update${name}Schema` : ''} } from '${schemaPath}';
+import { create${name}Schema${crud ? `, update${name}Schema, ${idSchema} as idSchema` : ''} } from '${schemaPath}';
 import type { Create${name}Input${crud ? `, Update${name}Input` : ''} } from '${schemaPath}';
 ${crud ? `
-const update${name}WithIdSchema = update${name}Schema.extend({ id: z.coerce.number() });
-const delete${name}Schema = z.object({ id: z.coerce.number() });
+const update${name}WithIdSchema = update${name}Schema.extend({ id: idSchema });
+const delete${name}Schema = z.object({ id: idSchema });
 ` : ''}
 
 export class Create${name}Request extends FormRequest<typeof create${name}Schema, Create${name}Dto> {
@@ -308,7 +336,7 @@ export class Create${name}Request extends FormRequest<typeof create${name}Schema
     return create${name}Schema;
   }
 
-  authorize(event: any): boolean {
+  authorize(event: RequestEvent): boolean {
     return !!event.locals.user;
   }
 
@@ -326,7 +354,7 @@ export class Update${name}Request extends FormRequest<typeof update${name}WithId
     return update${name}WithIdSchema;
   }
 
-  authorize(event: any): boolean {
+  authorize(event: RequestEvent): boolean {
     return !!event.locals.user;
   }
 
@@ -340,7 +368,7 @@ export class Delete${name}Request extends FormRequest<typeof delete${name}Schema
     return delete${name}Schema;
   }
 
-  authorize(event: any): boolean {
+  authorize(event: RequestEvent): boolean {
     return !!event.locals.user;
   }
 
@@ -355,7 +383,7 @@ export class Update${name}Request extends FormRequest<typeof update${name}WithId
     return update${name}WithIdSchema;
   }
 
-  authorize(event: any): boolean {
+  authorize(event: RequestEvent): boolean {
     return !!event.locals.user;
   }
 
@@ -369,7 +397,7 @@ export class Delete${name}Request extends FormRequest<typeof delete${name}Schema
     return delete${name}Schema;
   }
 
-  authorize(event: any): boolean {
+  authorize(event: RequestEvent): boolean {
     return !!event.locals.user;
   }
 
@@ -394,16 +422,17 @@ export class ${name}Resource extends Resource<${name}, ${name}Data> {
   toJSON(): ${name}Data {
     return {
       id: Number(this.data.id),
-${fields.map((field) => `      ${field.name}: this.data.${field.name},`).join('\n')}
-      created_at: this.data.created_at?.toISOString?.() ?? this.data.created_at,
-      updated_at: this.data.updated_at?.toISOString?.() ?? this.data.updated_at,
+${fields.map((field) => `      ${field.name}: this.data.${field.name}${field.kind === 'date' ? `${field.optional ? '?' : ''}.toISOString()` : ''}${field.optional ? ' ?? null' : ''},`).join('\n')}
+      created_at: this.data.created_at.toISOString(),
+      updated_at: this.data.updated_at.toISOString(),
     };
   }
 }
 `);
   }
 
-  private writeController(moduleName: string, name: string, crud: boolean): void {
+  private writeController(moduleName: string, name: string, crud: boolean, requestedController?: string): void {
+    const controllerName = requestedController ? this.toPascalCase(requestedController).replace(/Controller$/, '') + 'Controller' : `${name}Controller`;
     const servicePath = this.moduleImportPath(moduleName, 'controller', 'service', `${name}Service`);
     const resourcePath = this.moduleImportPath(moduleName, 'controller', 'resource', `${name}Resource`);
     const actionsPath = this.moduleImportPath(moduleName, 'controller', 'action', `${name}Actions`);
@@ -419,7 +448,7 @@ const createAction = new Create${name}Action();
 ${crud ? `const updateAction = new Update${name}Action();
 const deleteAction = new Delete${name}Action();
 ` : ''}
-export class ${name}Controller extends Controller {
+export class ${controllerName} extends Controller {
   async index(event: RequestEvent) {
     const items = await service.list();
     return ${name}Resource.collection(items).toResponse();
@@ -428,7 +457,7 @@ export class ${name}Controller extends Controller {
   async store(event: RequestEvent) {
     const dto = await Create${name}Request.validate(event);
     const item = await createAction.run(dto);
-    return ${name}Resource.make(item as any).status(201).toResponse();
+    return ${name}Resource.make(item).status(201).toResponse();
   }
 
   async show(event: RequestEvent) {
@@ -442,7 +471,7 @@ export class ${name}Controller extends Controller {
   async update(event: RequestEvent) {
     const dto = await Update${name}Request.validate(event);
     const item = await updateAction.run(dto);
-    return ${name}Resource.make(item as any).toResponse();
+    return ${name}Resource.make(item).toResponse();
   }
 
   async destroy(event: RequestEvent) {
@@ -455,7 +484,7 @@ export class ${name}Controller extends Controller {
 
     content += `}
 `;
-    this.writeModuleFile(moduleName, 'controllers', 'controller', `${name}Controller.ts`, content);
+    this.writeModuleFile(moduleName, 'controllers', 'controller', `${controllerName}.ts`, content);
   }
 
   private writeMigration(name: string, fields: Field[]): void {
@@ -466,7 +495,7 @@ export class ${name}Controller extends Controller {
     mkdirSync(migrationsDir, { recursive: true });
     const fileName = `${timestamp}_create_${tableName}_table.ts`;
     const filePath = join(migrationsDir, fileName);
-    if (existsSync(filePath)) return;
+    if (readdirSync(migrationsDir).some((file) => file.endsWith(`_create_${tableName}_table.ts`) || file.endsWith(`_create_${tableName}_table.js`))) return;
     writeFileSync(filePath, `import { Migration } from '@beeblock/svelar/database';
 
 export default class ${className} extends Migration {
@@ -532,47 +561,51 @@ ${fields.map((field) => `      ${this.migrationColumn(field)};`).join('\n')}
     return parts;
   }
 
-  private zodFor(field: Field): string {
-    const base = field.kind === 'number' || field.kind === 'integer'
-      ? 'z.coerce.number()'
+  private zodFor(field: Field, serialized = false): string {
+    const base = field.kind === 'number'
+      ? serialized ? 'z.number().finite()' : 'numberInput()'
+      : field.kind === 'integer'
+        ? serialized ? 'z.number().int().finite()' : 'numberInput(z.number().int().finite())'
       : field.kind === 'boolean'
-        ? 'z.coerce.boolean()'
+        ? serialized ? 'z.boolean()' : 'booleanInput()'
         : field.kind === 'date'
-          ? 'z.coerce.date()'
+          ? serialized ? 'z.string().datetime()' : 'dateInput()'
           : field.kind === 'enum'
             ? `z.enum([${field.enumValues.map((value) => `'${value}'`).join(', ')}] as const)`
             : 'z.string().trim()';
-    return field.optional ? `${base}.optional()` : base;
+    return field.optional ? `${base}.${serialized ? 'nullable' : 'nullish'}()` : base;
   }
 
-  private valibotFor(field: Field): string {
-    const base = field.kind === 'number' || field.kind === 'integer'
-      ? 'numberInput()'
+  private valibotFor(field: Field, serialized = false): string {
+    const base = field.kind === 'number'
+      ? serialized ? 'v.pipe(v.number(), v.finite())' : 'numberInput()'
+      : field.kind === 'integer'
+        ? serialized ? 'v.pipe(v.number(), v.finite(), v.integer())' : 'v.pipe(numberInput(), v.integer())'
       : field.kind === 'boolean'
-        ? 'booleanInput()'
+        ? serialized ? 'v.boolean()' : 'booleanInput()'
         : field.kind === 'date'
-          ? 'dateInput()'
+          ? serialized ? 'v.pipe(v.string(), v.isoTimestamp())' : 'dateInput()'
           : field.kind === 'enum'
             ? `v.picklist([${field.enumValues.map((value) => `'${value}'`).join(', ')}])`
             : 'v.pipe(v.string(), v.trim())';
-    return field.optional ? `v.optional(${base})` : base;
+    return field.optional ? `v.${serialized ? 'nullable' : 'nullish'}(${base})` : base;
   }
 
   private tsType(field: Field): string {
-    if (field.kind === 'number' || field.kind === 'integer') return 'number';
-    if (field.kind === 'boolean') return 'boolean';
-    if (field.kind === 'date') return 'Date';
-    if (field.kind === 'enum' && field.enumValues.length > 0) {
-      return field.enumValues.map((value) => `'${value}'`).join(' | ');
-    }
-    return 'string';
+    const type = field.kind === 'number' || field.kind === 'integer' ? 'number'
+      : field.kind === 'boolean' ? 'boolean'
+        : field.kind === 'date' ? 'Date'
+          : field.kind === 'enum' && field.enumValues.length > 0
+            ? field.enumValues.map((value) => `'${value}'`).join(' | ')
+            : 'string';
+    return `${type}${field.optional ? ' | null' : ''}`;
   }
 
   private migrationColumn(field: Field): string {
     const nullable = field.optional ? '.nullable()' : '';
     if (field.kind === 'number') return `table.decimal('${field.name}')${nullable}`;
     if (field.kind === 'integer') return `table.integer('${field.name}')${nullable}`;
-    if (field.kind === 'boolean') return `table.boolean('${field.name}').default(false)`;
+    if (field.kind === 'boolean') return `table.boolean('${field.name}')${nullable}.default(false)`;
     if (field.kind === 'date') return `table.timestamp('${field.name}')${nullable}`;
     if (field.kind === 'text') return `table.text('${field.name}')${nullable}`;
     return `table.string('${field.name}')${nullable}`;

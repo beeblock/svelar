@@ -8,6 +8,8 @@ Svelar's Eloquent-like ORM provides an expressive, fluent interface for working 
 npx svelar make:model Post
 ```
 
+`make:model Post --all` generates a complete CRUD workflow and a focused table migration. `--controller` generates the supporting create/read workflow; `--resource` includes update/delete. Add `--migration` when those focused options should also generate the table migration. For field-driven scaffolding, use `make:entity Post --fields "title:string,body:text" --crud`.
+
 This generates `src/lib/models/Post.ts`:
 
 ```typescript
