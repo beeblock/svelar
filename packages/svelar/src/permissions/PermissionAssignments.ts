@@ -15,7 +15,8 @@ export class PermissionAssignments {
   }
 
   private pivot(name: string): QueryBuilder<any> {
-    return this.scoped(new QueryBuilder(this.table(name)));
+    const query = new QueryBuilder(this.table(name));
+    return this.teamId === null ? query : query.forTenant(this.teamId);
   }
 
   private grant(data: Record<string, any>): Record<string, any> {

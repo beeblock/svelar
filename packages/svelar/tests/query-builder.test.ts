@@ -737,7 +737,7 @@ describe('QueryBuilder - database mutations', () => {
     }
   });
 
-  it('generates driver-specific upsert-ignore SQL when no update columns are supplied', async () => {
+  it('generates driver-specific duplicate-only SQL when no update columns are supplied', async () => {
     const cases = [
       {
         driver: 'sqlite',
@@ -752,7 +752,7 @@ describe('QueryBuilder - database mutations', () => {
       {
         driver: 'mysql',
         expected:
-          'INSERT IGNORE INTO `role_has_permissions` (`role_id`, `permission_id`) VALUES (?, ?)',
+          'INSERT INTO `role_has_permissions` (`role_id`, `permission_id`) VALUES (?, ?) ON DUPLICATE KEY UPDATE `role_id` = `role_id`',
       },
     ] as const;
 

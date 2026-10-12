@@ -243,8 +243,7 @@ export class Model {
   }
 
   static forTenant<T extends Model>(this: new () => T, teamId: string | number): QueryBuilder<T> {
-    const ctor = this as unknown as typeof Model;
-    return (this as any).query().withoutTenantScope().where(ctor.tenantColumn, teamId);
+    return (this as any).query().forTenant(teamId);
   }
 
   static withTrashed<T extends Model>(this: new () => T): QueryBuilder<T> {

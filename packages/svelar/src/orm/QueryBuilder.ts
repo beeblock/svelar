@@ -87,6 +87,7 @@ export class QueryBuilder<TModel = any> {
   private forceDeleting = false;
   private tenantScopeDisabled = false;
   private tenantScopeApplied = false;
+  private explicitTenantScope = false;
   private lockMode: 'update' | null = null;
   private useSkipLocked = false;
   private returningColumns: string[] = [];
@@ -116,7 +117,7 @@ export class QueryBuilder<TModel = any> {
   }
 
   private get tenantScoped(): boolean {
-    return Boolean(this.modelClass?.tenantScoped);
+    return this.explicitTenantScope || Boolean(this.modelClass?.tenantScoped);
   }
 
   private get tenantColumn(): string {
@@ -299,6 +300,22 @@ export class QueryBuilder<TModel = any> {
     this.tenantScopeDisabled = true;
     this.whereClauses = this.whereClauses.filter((clause) => !clause.tenantScope);
     this.tenantScopeApplied = false;
+    return this;
+  }
+
+  forTenant(teamId: string | number): this {
+    if ((typeof teamId !== 'string' && typeof teamId !== 'number') || teamId === '' ||
+        (typeof teamId === 'number' && !Number.isSafeInteger(teamId))) {
+      throw new Error('Tenant scope requires a nonempty string or safe integer.');
+    }
+    this.explicitTenantScope = true;
+    this.tenantScopeDisabled = false;
+    this.whereClauses = this.whereClauses.filter((clause) => !clause.tenantScope);
+    this.whereClauses.push({
+      type: 'basic', column: this.qualifyTableColumn(this.tenantColumn), operator: '=',
+      value: teamId, boolean: 'AND', tenantScope: true,
+    });
+    this.tenantScopeApplied = true;
     return this;
   }
 
@@ -704,10 +721,22 @@ export class QueryBuilder<TModel = any> {
   ): Promise<any> {
     const rows = (Array.isArray(data) ? data : [data]).map((row) => this.applyTenantInsertAttributes(row));
     if (rows.length === 0) return;
+    this.assertSingleTableWrite();
+    if (this.whereClauses.some((clause) => !clause.tenantScope)) {
+      throw new Error('Upsert cannot apply row filters or soft-delete scopes. Use model helpers, or explicitly remove those filters.');
+    }
 
     const driver = Connection.getDriver(this.connectionName);
     const columns = Object.keys(rows[0]);
     const conflict = Array.isArray(conflictColumns) ? conflictColumns : [conflictColumns];
+    if (conflict.length === 0) throw new Error('Upsert requires at least one conflict column.');
+    if (rows.some((row) => Object.keys(row).length !== columns.length || columns.some((column) => !(column in row)))) {
+      throw new Error('Upsert rows must contain the same columns.');
+    }
+    const tenantProtected = this.tenantScoped && !this.tenantScopeDisabled;
+    if (tenantProtected && (!columns.includes(this.tenantColumn) || !conflict.includes(this.tenantColumn))) {
+      throw new Error(`Tenant-scoped upsert requires "${this.tenantColumn}" in the conflict columns.`);
+    }
     const toUpdate = updateColumns ?? columns.filter((c) => !conflict.includes(c));
     const rowPlaceholders = rows.map(() => `(${columns.map(() => '?').join(', ')})`).join(', ');
     const values = rows.flatMap((row) => columns.map((column) => row[column]));
@@ -716,19 +745,25 @@ export class QueryBuilder<TModel = any> {
     const table = this.quoteIdentifier(this.tableName, 'Table name');
     const quotedColumns = columns.map((column) => this.quoteIdentifier(column, 'Column name'));
     const quotedConflict = conflict.map((column) => this.quoteIdentifier(column, 'Conflict column'));
+    const quotedTenant = tenantProtected ? this.quoteIdentifier(this.tenantColumn, 'Tenant column') : '';
 
     if (driver === 'postgres') {
       const updateSet = toUpdate.map((c) => `${this.quoteIdentifier(c, 'Update column')} = EXCLUDED.${this.quoteIdentifier(c, 'Update column')}`).join(', ');
-      sql = `INSERT INTO ${table} (${quotedColumns.join(', ')}) VALUES ${rowPlaceholders} ON CONFLICT (${quotedConflict.join(', ')}) ${updateSet ? `DO UPDATE SET ${updateSet}` : 'DO NOTHING'}`;
+      const tenantGuard = tenantProtected ? ` WHERE ${table}.${quotedTenant} = EXCLUDED.${quotedTenant}` : '';
+      sql = `INSERT INTO ${table} (${quotedColumns.join(', ')}) VALUES ${rowPlaceholders} ON CONFLICT (${quotedConflict.join(', ')}) ${updateSet ? `DO UPDATE SET ${updateSet}${tenantGuard}` : 'DO NOTHING'}`;
     } else if (driver === 'mysql') {
-      const updateSet = toUpdate.map((c) => `${this.quoteIdentifier(c, 'Update column')} = VALUES(${this.quoteIdentifier(c, 'Update column')})`).join(', ');
+      const updateSet = toUpdate.map((c) => {
+        const column = this.quoteIdentifier(c, 'Update column');
+        return `${column} = ${tenantProtected ? `IF(${quotedTenant} = VALUES(${quotedTenant}), VALUES(${column}), ${column})` : `VALUES(${column})`}`;
+      }).join(', ');
       sql = updateSet
         ? `INSERT INTO ${table} (${quotedColumns.join(', ')}) VALUES ${rowPlaceholders} ON DUPLICATE KEY UPDATE ${updateSet}`
-        : `INSERT IGNORE INTO ${table} (${quotedColumns.join(', ')}) VALUES ${rowPlaceholders}`;
+        : `INSERT INTO ${table} (${quotedColumns.join(', ')}) VALUES ${rowPlaceholders} ON DUPLICATE KEY UPDATE ${quotedConflict[0]} = ${quotedConflict[0]}`;
     } else {
       // SQLite
       const updateSet = toUpdate.map((c) => `${this.quoteIdentifier(c, 'Update column')} = excluded.${this.quoteIdentifier(c, 'Update column')}`).join(', ');
-      sql = `INSERT INTO ${table} (${quotedColumns.join(', ')}) VALUES ${rowPlaceholders} ON CONFLICT (${quotedConflict.join(', ')}) ${updateSet ? `DO UPDATE SET ${updateSet}` : 'DO NOTHING'}`;
+      const tenantGuard = tenantProtected ? ` WHERE ${table}.${quotedTenant} = excluded.${quotedTenant}` : '';
+      sql = `INSERT INTO ${table} (${quotedColumns.join(', ')}) VALUES ${rowPlaceholders} ON CONFLICT (${quotedConflict.join(', ')}) ${updateSet ? `DO UPDATE SET ${updateSet}${tenantGuard}` : 'DO NOTHING'}`;
     }
 
     return Connection.raw(sql, values, this.connectionName);
@@ -785,12 +820,7 @@ export class QueryBuilder<TModel = any> {
     this.ensureTenantScope();
     this.assertTenantAttributes(search);
     this.assertTenantAttributes(create);
-    if (this.joinClauses.length || this.groupByColumns.length || this.havingClauses.length ||
-        this.cteClauses.length || this.unionClauses.length ||
-        this.tableReferenceForColumn() !== this.tableName ||
-        (this.modelClass && this.tableName !== this.modelClass.table)) {
-      throw new Error('Find-or-create helpers require a single, unaliased model/table query.');
-    }
+    this.assertSingleTableWrite();
 
     const query = this.cloneForHelper().select('*');
     query.rawSelectColumns.clear();
@@ -857,7 +887,16 @@ export class QueryBuilder<TModel = any> {
     const scope = this.whereClauses.find((clause) => clause.tenantScope);
     const tenant = attributes[this.tenantColumn];
     if (scope && ((typeof tenant !== 'string' && typeof tenant !== 'number') || String(tenant) !== String(scope.value))) {
-      throw new Error(`Cannot write a different tenant through model "${this.modelClass.name}".`);
+      throw new Error(`Cannot write a different tenant through model "${this.modelClass?.name ?? this.tableName}".`);
+    }
+  }
+
+  private assertSingleTableWrite(): void {
+    if (this.joinClauses.length || this.groupByColumns.length || this.havingClauses.length ||
+        this.cteClauses.length || this.unionClauses.length ||
+        this.tableReferenceForColumn() !== this.tableName ||
+        (this.modelClass && this.tableName !== this.modelClass.table)) {
+      throw new Error('Write helpers require a single, unaliased model/table query.');
     }
   }
 
@@ -1227,6 +1266,7 @@ export class QueryBuilder<TModel = any> {
     cloned.forceDeleting = this.forceDeleting;
     cloned.tenantScopeDisabled = this.tenantScopeDisabled;
     cloned.tenantScopeApplied = this.tenantScopeApplied;
+    cloned.explicitTenantScope = this.explicitTenantScope;
     cloned.lockMode = this.lockMode;
     cloned.useSkipLocked = this.useSkipLocked;
     cloned.returningColumns = [...this.returningColumns];

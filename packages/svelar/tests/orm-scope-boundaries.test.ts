@@ -27,6 +27,7 @@ describe('ORM predicate boundaries', () => {
       table.string('title');
       table.string('status');
       table.softDeletes();
+      table.uniqueIndex(['team_id', 'slug']);
     });
     Teams.configure({ driver: 'memory' });
     await Teams.runWithTeam('a', async () => {
@@ -98,5 +99,36 @@ describe('ORM predicate boundaries', () => {
     const model = await Teams.runWithTeam('b', () => query.firstOrCreate({ slug: 'captured' }, { title: 'Captured', status: 'todo' }));
     expect(model.getAttribute('team_id')).toBe('a');
     expect((await ScopedRecord.withoutTenantScope().where('slug', 'captured').first())?.getAttribute('team_id')).toBe('a');
+  });
+
+  it('requires tenant-qualified upsert identity and never updates a conflicting foreign row', async () => {
+    await Teams.runWithTeam('a', async () => {
+      await expect(ScopedRecord.withTrashed().upsert({ slug: 'b-only', title: 'Attack', status: 'doing' }, ['slug'], ['title']))
+        .rejects.toThrow('conflict columns');
+      await expect(ScopedRecord.withTrashed().upsert({ slug: 'b-only', title: 'Attack', status: 'doing' }, ['team_id', 'slug'], ['title']))
+        .rejects.toMatchObject({ code: 'SQLITE_CONSTRAINT_UNIQUE' });
+      await ScopedRecord.withTrashed().upsert({ slug: 'a-first', title: 'Own update', status: 'todo' }, ['team_id', 'slug'], ['title']);
+    });
+    expect((await ScopedRecord.withoutTenantScope().where('slug', 'b-only').first())?.getAttribute('title')).toBe('Foreign');
+    expect((await ScopedRecord.withoutTenantScope().where('slug', 'a-first').first())?.getAttribute('title')).toBe('Own update');
+  });
+
+  it('preserves explicit forTenant ownership on helpers and bulk writes without ambient context', async () => {
+    const created = await ScopedRecord.forTenant('a').firstOrCreate({ slug: 'explicit' }, { title: 'Explicit', status: 'todo' });
+    expect(created.getAttribute('team_id')).toBe('a');
+    await expect(ScopedRecord.forTenant('a').withTrashed().upsert({ team_id: 'a', slug: 'b-only', title: 'Attack', status: 'doing' }, ['slug'], ['title']))
+      .rejects.toThrow('conflict columns');
+    await expect(ScopedRecord.forTenant('a').updateOrCreate({ slug: 'a-first' }, { team_id: 'b' }))
+      .rejects.toThrow('different tenant');
+    expect((await ScopedRecord.withoutTenantScope().where('slug', 'b-only').first())?.getAttribute('title')).toBe('Foreign');
+  });
+
+  it('rejects bulk row and soft-delete filters rather than silently discarding them', async () => {
+    await Teams.runWithTeam('a', async () => {
+      const row = { slug: 'a-first', title: 'Bulk', status: 'todo' };
+      await expect(ScopedRecord.query().upsert(row, ['team_id', 'slug'], ['title'])).rejects.toThrow('row filters or soft-delete scopes');
+      await expect(ScopedRecord.withTrashed().where('status', 'doing').upsert(row, ['team_id', 'slug'], ['title']))
+        .rejects.toThrow('row filters or soft-delete scopes');
+    });
   });
 });
