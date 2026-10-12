@@ -532,6 +532,34 @@ await Webhooks.dispatch('user:created', { id: user.id, email: user.email });
 
 Events are signed with HMAC and retried automatically.
 
+## Incoming Webhook Inbox
+
+Use `WebhookInbox` when your app receives webhooks from payment providers, marketplaces, Gotenberg callbacks, or other external systems. It stores the raw payload, redacted headers, digest, status, tenant/actor context, and an idempotency key before any slow processing happens.
+
+```typescript
+import { WebhookInbox } from '@beeblock/svelar/webhooks';
+
+export const POST = async ({ request }) => {
+  const result = await WebhookInbox.receiveRequest('stripe', request, {
+    event: request.headers.get('stripe-event') ?? undefined,
+    idempotencyKey: request.headers.get('stripe-event-id') ?? undefined,
+    verifier: WebhookInbox.hmacVerifier(process.env.STRIPE_WEBHOOK_SECRET!, {
+      header: 'stripe-signature',
+      prefix: 'sha256',
+    }),
+  });
+
+  if (!result.duplicate) {
+    await WebhookInbox.markQueued(result.entry.id);
+    // Dispatch a queue job from here if processing is slow or retryable.
+  }
+
+  return new Response(null, { status: 202 });
+};
+```
+
+The inbox supports memory and database drivers. Run Svelar core migrations to create `webhook_inbox_entries`, then use `markProcessing()`, `markProcessed()`, `markFailed()`, and `replay()` from workers or admin tooling. Invalid HMAC signatures throw `WebhookSignatureError` before the entry is stored.
+
 ## Teams & Workspaces
 
 Multi-tenant team management:

@@ -2959,6 +2959,8 @@ export type PostResponse = z.infer<typeof postResponseSchema>;
 			['00000000_000025_create_scheduled_task_runs_table.ts', 'CreateScheduledTaskRunsTable', 'Scheduled task runs table'],
 			['00000000_000026_create_svelar_jobs_table.ts', 'CreateSvelarJobsTable', 'Queue jobs table'],
 			['00000000_000027_create_svelar_failed_jobs_table.ts', 'CreateSvelarFailedJobsTable', 'Failed jobs table'],
+			['00000000_000028_create_scheduled_task_settings_table.ts', 'CreateScheduledTaskSettingsTable', 'Scheduled task settings table'],
+			['00000000_000029_create_webhook_inbox_entries_table.ts', 'CreateWebhookInboxEntriesTable', 'Webhook inbox entries table'],
 		] as const;
 
 		return migrations.map(([file, className, label]) => ({

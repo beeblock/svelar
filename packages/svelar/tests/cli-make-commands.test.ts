@@ -30,6 +30,7 @@ import { MakeDashboardCommand } from '../src/cli/commands/MakeDashboardCommand.j
 import { MakeRouteCommand } from '../src/cli/commands/MakeRouteCommand.js';
 import { MakeMigrationCommand } from '../src/cli/commands/MakeMigrationCommand.js';
 import { NewCommandTemplates } from '../src/cli/commands/NewCommandTemplates.js';
+import { svelarCoreMigrations } from '../src/database/CoreMigrations.js';
 
 let originalCwd: string;
 let tmpDir: string;
@@ -620,6 +621,16 @@ describe('New project templates', () => {
     expect(pkg.scripts['dev:worker']).toBe('node scripts/svelar-dev-runtime.mjs queue:work --queue=default');
     expect(pkg.scripts['dev:scheduler']).toBe('node scripts/svelar-dev-runtime.mjs schedule:run');
     expect(NewCommandTemplates.schedulerIndex()).toContain('.persistTaskSettings()');
+  });
+
+  it('ships every core framework migration wrapper in new apps', () => {
+    const templateMigrations = NewCommandTemplates.svelarCoreMigrations();
+    const templateNames = templateMigrations.map((migration) => migration.path.split('/').at(-1)?.replace(/\.ts$/, ''));
+    const coreNames = svelarCoreMigrations().map((migration) => migration.name);
+
+    expect(templateNames).toEqual(coreNames);
+    expect(templateNames).toContain('00000000_000028_create_scheduled_task_settings_table');
+    expect(templateNames).toContain('00000000_000029_create_webhook_inbox_entries_table');
   });
 
   it('uses npm exec for generated shadcn-svelte installation', () => {
