@@ -79,6 +79,9 @@ export abstract class Command {
   /** Available flags */
   flags: CommandFlag[] = [];
 
+  /** Nonzero when a command reports an error without throwing. */
+  exitCode = 0;
+
   /** Execute the command */
   abstract handle(args: string[], flags: Record<string, any>): Promise<void>;
 
@@ -195,6 +198,7 @@ export abstract class Command {
   }
 
   protected error(message: string): void {
+    this.exitCode = 1;
     console.error(`\x1b[31mERROR\x1b[0m ${message}`);
   }
 

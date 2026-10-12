@@ -64,9 +64,9 @@ export default new ${factoryName}();
   private resolveModelImport(modelName: string, moduleName?: string): string {
     if (this.isDDD()) {
       const mod = moduleName ?? this.findModelModule(modelName) ?? this.defaultModelModule(modelName);
-      return `$lib/modules/${mod}/${modelName}`;
+      return this.moduleImportPath(mod, 'model', 'model', modelName);
     }
-    return `$lib/models/${modelName}`;
+    return this.moduleImportPath('', 'model', 'model', modelName);
   }
 
   private findModelModule(modelName: string): string | null {
@@ -77,8 +77,8 @@ export default new ${factoryName}();
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
       .filter((moduleName) =>
-        existsSync(join(modulesDir, moduleName, `${modelName}.ts`)) ||
-        existsSync(join(modulesDir, moduleName, `${modelName}.js`))
+        existsSync(join(modulesDir, moduleName, 'domain', 'models', `${modelName}.ts`)) ||
+        existsSync(join(modulesDir, moduleName, 'domain', 'models', `${modelName}.js`))
       );
 
     if (matches.length === 1) {
@@ -86,8 +86,7 @@ export default new ${factoryName}();
     }
 
     if (matches.length > 1) {
-      this.warn(`Model ${modelName} exists in multiple modules. Use --module to choose one.`);
-      return matches[0];
+      throw new Error(`Model ${modelName} exists in multiple modules. Use --module to choose one.`);
     }
 
     return null;

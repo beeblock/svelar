@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 // We can't import the abstract Command directly, so we create a concrete subclass
@@ -69,8 +69,7 @@ describe('Command Base Class', () => {
   beforeEach(() => {
     cmd = new TestCommand();
     originalCwd = process.cwd();
-    tmpDir = join(originalCwd, '.test-cli-tmp-' + Date.now());
-    mkdirSync(tmpDir, { recursive: true });
+    tmpDir = mkdtempSync(join(originalCwd, '.test-cli-tmp-'));
     process.chdir(tmpDir);
   });
 
@@ -192,6 +191,57 @@ describe('Command Base Class', () => {
   });
 
   describe('Cli argument parsing', () => {
+    it('parses explicit false booleans and preserves positional arguments after --', async () => {
+      const command = new CaptureCommand();
+      const cli = new Cli().add(command);
+
+      await cli.run(['capture', '--redis=false', '--soketi=true', '--', '--name', 'literal']);
+
+      expect(command.capturedFlags.redis).toBe(false);
+      expect(command.capturedFlags.soketi).toBe(true);
+      expect(command.capturedArgs).toEqual(['--name', 'literal']);
+    });
+
+    it.each([
+      ['--redis=no'],
+      ['--unknown'],
+      ['--name'],
+    ])('rejects invalid options before executing the command: %s', async (option) => {
+      const command = new CaptureCommand();
+      const handle = vi.spyOn(command, 'handle');
+      const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      try {
+        await new Cli().add(command).run(['capture', option]);
+        expect(handle).not.toHaveBeenCalled();
+        expect(exit).toHaveBeenCalledWith(1);
+        expect(error).toHaveBeenCalled();
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
+    it('returns a failure exit status for reported command errors and resets it between runs', async () => {
+      const command = new CaptureCommand();
+      const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.spyOn(command, 'handle').mockImplementationOnce(async () => {
+        (command as any).error('Operation failed');
+      });
+
+      try {
+        const cli = new Cli().add(command);
+        await cli.run(['capture']);
+        expect(exit).toHaveBeenCalledWith(1);
+        exit.mockClear();
+        await cli.run(['capture']);
+        expect(exit).not.toHaveBeenCalled();
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
     it('supports --no-* syntax for boolean flags', async () => {
       const cli = new Cli();
       const command = new CaptureCommand();

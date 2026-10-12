@@ -111,4 +111,8 @@ async function discoverUserCommands(): Promise<void> {
 // command has completed and Cli teardown has run.
 discoverUserCommands()
   .then(() => cli.run())
-  .then(() => process.exit(0));
+  .then(() => process.exit(process.exitCode ?? 0))
+  .catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });

@@ -7,11 +7,13 @@ vi.mock('node:child_process', async (importOriginal) => {
   return {
     ...actual,
     execSync: vi.fn(),
+    execFileSync: vi.fn(),
   };
 });
 
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
 import { DevLogsCommand } from '../src/cli/commands/DevLogsCommand';
+import { DevDownCommand } from '../src/cli/commands/DevDownCommand';
 import { DevRestartCommand } from '../src/cli/commands/DevRestartCommand';
 import { DevUpCommand } from '../src/cli/commands/DevUpCommand';
 import { KeyGenerateCommand } from '../src/cli/commands/KeyGenerateCommand';
@@ -22,6 +24,10 @@ import { MakeInfraCommand } from '../src/cli/commands/MakeInfraCommand';
 import { MakeSeederCommand } from '../src/cli/commands/MakeSeederCommand';
 import { MakeTestCommand } from '../src/cli/commands/MakeTestCommand';
 import { ProdDeployCommand } from '../src/cli/commands/ProdDeployCommand';
+import { ProdDownCommand } from '../src/cli/commands/ProdDownCommand';
+import { ProdLogsCommand } from '../src/cli/commands/ProdLogsCommand';
+import { ProdUpCommand } from '../src/cli/commands/ProdUpCommand';
+import { InfraSetupCommand } from '../src/cli/commands/InfraSetupCommand';
 import { ProdRestartCommand } from '../src/cli/commands/ProdRestartCommand';
 
 let originalCwd: string;
@@ -44,6 +50,7 @@ describe('CLI deployment and utility commands', () => {
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.mocked(execSync).mockReset();
+    vi.mocked(execFileSync).mockReset();
   });
 
   afterEach(() => {
@@ -215,6 +222,54 @@ describe('CLI deployment and utility commands', () => {
     await new ProdDeployCommand().handle([], {});
 
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('docker-compose.prod.yml not found'));
+    expect(vi.mocked(execSync)).not.toHaveBeenCalled();
+  });
+
+  it('executes the remaining dev/prod commands with the appropriate compose override', async () => {
+    prepareComposeFiles();
+    await new DevDownCommand().handle([], {});
+    await new ProdDownCommand().handle([], {});
+    await new ProdUpCommand().handle([], { service: 'worker' });
+    await new ProdLogsCommand().handle([], { service: 'scheduler' });
+
+    expect(vi.mocked(execSync).mock.calls.map(([command]) => command)).toEqual([
+      'docker compose -f docker-compose.yml -f docker-compose.dev.yml down',
+      'docker compose -f docker-compose.yml -f docker-compose.prod.yml down',
+      'docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d worker',
+      'docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f scheduler',
+    ]);
+  });
+
+  it('validates infrastructure flags and reports failed provisioning with a failure status', async () => {
+    await new MakeInfraCommand().handle([], {});
+    const command = new InfraSetupCommand();
+    await command.handle([], { ip: '127.0.0.1' });
+    expect(command.exitCode).toBe(1);
+    expect(vi.mocked(execFileSync)).not.toHaveBeenCalled();
+
+    const valid = new InfraSetupCommand();
+    await valid.handle([], { ip: '127.0.0.1', key: '/tmp/test-key', 'deploy-user': 'deploy' });
+    expect(vi.mocked(execFileSync)).toHaveBeenCalledTimes(1);
+    const options = vi.mocked(execFileSync).mock.calls[0][2] as any;
+    expect(options.env.DROPLET_IP).toBe('127.0.0.1');
+    expect(options.env.SSH_KEY_PATH).toBe('/tmp/test-key');
+
+    vi.mocked(execFileSync).mockImplementationOnce(() => { throw new Error('SSH failed'); });
+    const failed = new InfraSetupCommand();
+    await failed.handle([], { ip: '127.0.0.1', key: '/tmp/test-key' });
+    expect(failed.exitCode).toBe(1);
+  });
+
+  it('passes infrastructure config paths literally without shell expansion', async () => {
+    await new MakeInfraCommand().handle([], {});
+    const config = join(tmpDir, 'config-$(touch unwanted).env');
+    writeFileSync(config, 'DROPLET_IP=127.0.0.1\nSSH_KEY_PATH=/tmp/test-key\n');
+
+    await new InfraSetupCommand().handle([], { config });
+
+    expect(vi.mocked(execFileSync)).toHaveBeenCalledWith('bash', [
+      join(tmpDir, 'infra/setup-droplet.sh'), '--config', config,
+    ], expect.objectContaining({ cwd: tmpDir }));
     expect(vi.mocked(execSync)).not.toHaveBeenCalled();
   });
 

@@ -50,6 +50,7 @@ export class Cli {
       console.error(`\x1b[31mUnknown command:\x1b[0m ${commandName}`);
       console.log(`Run \x1b[36msvelar --help\x1b[0m for available commands.`);
       process.exit(1);
+      return;
     }
 
     // Show per-command help
@@ -58,12 +59,12 @@ export class Cli {
       return;
     }
 
-    // Parse flags and args
-    const { args, flags } = this.parseArgs(rest, command);
-
     let exitCode = 0;
+    command.exitCode = 0;
     try {
+      const { args, flags } = this.parseArgs(rest, command);
       await command.handle(args, flags);
+      exitCode = command.exitCode;
     } catch (error: any) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error(`\x1b[31mError:\x1b[0m ${msg}`);
@@ -126,6 +127,11 @@ export class Cli {
     for (let i = 0; i < argv.length; i++) {
       const arg = argv[i];
 
+      if (arg === '--') {
+        args.push(...argv.slice(i + 1));
+        break;
+      }
+
       if (arg.startsWith('--')) {
         const raw = arg.slice(2);
 
@@ -133,7 +139,17 @@ export class Cli {
         const eqIdx = raw.indexOf('=');
         if (eqIdx !== -1) {
           const key = raw.slice(0, eqIdx);
-          flags[key] = raw.slice(eqIdx + 1);
+          const flagDef = command.flags.find((f) => f.name === key);
+          if (!flagDef) throw new Error(`Unknown option --${key} for ${command.name}.`);
+          const value = raw.slice(eqIdx + 1);
+          if (flagDef.type === 'boolean') {
+            if (value !== 'true' && value !== 'false') {
+              throw new Error(`Option --${key} expects true or false.`);
+            }
+            flags[key] = value === 'true';
+          } else {
+            flags[key] = value;
+          }
           continue;
         }
 
@@ -148,24 +164,26 @@ export class Cli {
 
         const key = raw;
         const flagDef = command.flags.find((f) => f.name === key);
+        if (!flagDef) throw new Error(`Unknown option --${key} for ${command.name}.`);
 
         if (flagDef?.type === 'boolean') {
           flags[key] = true;
         } else if (i + 1 < argv.length && !argv[i + 1].startsWith('-')) {
           flags[key] = argv[++i];
         } else {
-          flags[key] = true;
+          throw new Error(`Option --${key} requires a value.`);
         }
       } else if (arg.startsWith('-') && arg.length === 2) {
         const alias = arg.slice(1);
         const flagDef = command.flags.find((f) => f.alias === alias);
 
-        if (flagDef) {
-          if (flagDef.type === 'boolean') {
-            flags[flagDef.name] = true;
-          } else if (i + 1 < argv.length) {
-            flags[flagDef.name] = argv[++i];
-          }
+        if (!flagDef) throw new Error(`Unknown option -${alias} for ${command.name}.`);
+        if (flagDef.type === 'boolean') {
+          flags[flagDef.name] = true;
+        } else if (i + 1 < argv.length && !argv[i + 1].startsWith('-')) {
+          flags[flagDef.name] = argv[++i];
+        } else {
+          throw new Error(`Option -${alias} requires a value.`);
         }
       } else {
         args.push(arg);

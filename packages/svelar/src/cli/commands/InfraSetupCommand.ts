@@ -14,7 +14,7 @@
 import { Command } from '../Command.js';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 
 export class InfraSetupCommand extends Command {
   name = 'infra:setup';
@@ -84,12 +84,11 @@ export class InfraSetupCommand extends Command {
       this.newLine();
 
       try {
-        execSync(
-          `bash "${setupScript}"`,
+        execFileSync(
+          'bash', [setupScript],
           {
             stdio: 'inherit',
             cwd,
-            shell: 'bash',
             env: {
               ...process.env,
               DROPLET_IP: flagValues.ip,
@@ -148,8 +147,8 @@ export class InfraSetupCommand extends Command {
       this.newLine();
 
       try {
-        execSync(
-          `bash "${setupScript}" --config "${configPath}"`,
+        execFileSync(
+          'bash', [setupScript, '--config', configPath],
           { stdio: 'inherit', cwd },
         );
       } catch {
