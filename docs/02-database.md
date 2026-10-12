@@ -121,22 +121,33 @@ await this.schema.createTable('posts', (table) => {
   table.increments('id');                    // Auto-incrementing primary key
   table.string('title', 255);                // VARCHAR(255)
   table.text('body');                        // TEXT
-  table.string('slug').unique();             // VARCHAR with unique constraint
+  table.string('slug');                      // VARCHAR, unique index below
   table.boolean('published').default(false); // BOOLEAN with default
-  table.integer('user_id');                  // INTEGER
   table.timestamps();                        // created_at, updated_at timestamps
   table.softDeletes();                       // deleted_at timestamp for soft deletes
 
   // Indexes
-  table.index(['slug']);
-  table.uniqueIndex(['email']);
-  table.primary(['id']);
+  table.index('user_id', 'posts_user_id_index');
+  table.uniqueIndex('slug', 'posts_slug_unique');
 
   // Foreign keys
   table.integer('user_id').references('id', 'users');
   table.integer('category_id').references('id', 'categories').onDelete('CASCADE');
 });
 ```
+
+### Altering Indexes
+
+Declare index changes inside a focused migration, not application runtime code:
+
+```typescript
+await this.schema.table('posts', (table) => {
+  table.dropUnique('posts_slug_unique');
+  table.uniqueIndex(['user_id', 'slug'], 'posts_user_slug_unique');
+});
+```
+
+`index()` and `uniqueIndex()` work when creating or altering tables. `dropIndex(name)` and `dropUnique(name)` require the explicit existing index name. Svelar validates all identifiers before issuing the alteration statements and uses driver-specific index-removal SQL for SQLite, PostgreSQL and MySQL. Indexes are dropped before column changes and created afterward. Validation preflight is not a transaction guarantee: data/schema failures and MySQL's implicit DDL commits still require migration review and backups.
 
 ### Adding Columns
 

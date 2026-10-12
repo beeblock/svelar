@@ -89,6 +89,7 @@ export class TableBuilder {
   private droppedColumns: string[] = [];
   private renamedColumns: { from: string; to: string }[] = [];
   private indices: { columns: string[]; unique: boolean; name?: string }[] = [];
+  private droppedIndices: string[] = [];
   private compositePrimary: string[] | null = null;
 
   private addColumn(name: string, type: string): ColumnBuilder {
@@ -232,6 +233,14 @@ export class TableBuilder {
     this.indices.push({ columns: cols, unique: true, name });
   }
 
+  dropIndex(name: string): void {
+    this.droppedIndices.push(assertSqlIdentifier(name, 'Index name'));
+  }
+
+  dropUnique(name: string): void {
+    this.dropIndex(name);
+  }
+
   foreign(column: string): ColumnBuilder {
     // Find existing column and return its builder for chaining .references()
     const existing = this.columns.find(c => c.name === column);
@@ -253,6 +262,7 @@ export class TableBuilder {
 
   /** @internal */
   toSQL(tableName: string, driver: DatabaseDriver): string[] {
+    if (this.droppedIndices.length) throw new Error('Index removal requires Schema.table(), not createTable().');
     const table = this.quoteIdentifier(tableName, driver);
     const statements: string[] = [];
     const columnDefs: string[] = [];
@@ -280,8 +290,17 @@ export class TableBuilder {
 
     statements.push(`CREATE TABLE ${table} (\n  ${columnDefs.join(',\n  ')}\n)`);
 
-    // Create indices
+    statements.push(...this.toIndexSQL(tableName, driver));
+
+    return statements;
+  }
+
+  /** @internal */
+  toIndexSQL(tableName: string, driver: DatabaseDriver): string[] {
+    const table = this.quoteIdentifier(tableName, driver);
+    const statements: string[] = [];
     for (const idx of this.indices) {
+      if (!idx.columns.length) throw new Error('An index must include at least one column.');
       const idxName = idx.name ?? `idx_${tableName}_${idx.columns.join('_')}`;
       const uniqueStr = idx.unique ? 'UNIQUE ' : '';
       statements.push(
@@ -290,6 +309,12 @@ export class TableBuilder {
     }
 
     return statements;
+  }
+
+  /** @internal */
+  toDropIndexSQL(tableName: string, driver: DatabaseDriver): string[] {
+    const table = this.quoteIdentifier(tableName, driver);
+    return this.droppedIndices.map((name) => `DROP INDEX ${this.quoteIdentifier(name, driver)}${driver === 'mysql' ? ` ON ${table}` : ''}`);
   }
 
   /** @internal */
@@ -480,30 +505,24 @@ export class Schema {
 
     const driver = Connection.getDriver(this.connectionName);
     const tableName = this.quoteIdentifier(name, 'Table name');
+    const statements = builder.toDropIndexSQL(name, driver);
 
     for (const col of builder.getColumns()) {
       const colSQL = builder.columnToSQL(col, driver);
-      await Connection.raw(
-        `ALTER TABLE ${tableName} ADD COLUMN ${colSQL}`,
-        [],
-        this.connectionName
-      );
+      statements.push(`ALTER TABLE ${tableName} ADD COLUMN ${colSQL}`);
     }
 
     for (const rename of builder.getRenamedColumns()) {
-      await Connection.raw(
-        `ALTER TABLE ${tableName} RENAME COLUMN ${this.quoteIdentifier(rename.from, 'Column name')} TO ${this.quoteIdentifier(rename.to, 'Column name')}`,
-        [],
-        this.connectionName
-      );
+      statements.push(`ALTER TABLE ${tableName} RENAME COLUMN ${this.quoteIdentifier(rename.from, 'Column name')} TO ${this.quoteIdentifier(rename.to, 'Column name')}`);
     }
 
     for (const column of builder.getDroppedColumns()) {
-      await Connection.raw(
-        `ALTER TABLE ${tableName} DROP COLUMN ${this.quoteIdentifier(column, 'Column name')}`,
-        [],
-        this.connectionName
-      );
+      statements.push(`ALTER TABLE ${tableName} DROP COLUMN ${this.quoteIdentifier(column, 'Column name')}`);
+    }
+
+    statements.push(...builder.toIndexSQL(name, driver));
+    for (const sql of statements) {
+      await Connection.raw(sql, [], this.connectionName);
     }
   }
 
