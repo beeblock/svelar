@@ -293,6 +293,21 @@ class ApiKeyManager {
     return true;
   }
 
+  /** Revoke an active key only when it belongs to the authenticated user. */
+  async revokeForUser(keyId: string, userId: string | number): Promise<boolean> {
+    if (this.config.driver === 'database') {
+      const affected = await this.query().where('id', keyId)
+        .where('user_id', String(userId)).whereNull('revoked_at')
+        .update({ revoked_at: Date.now() });
+      return affected > 0;
+    }
+
+    const key = this.keys.find((record) => record.id === keyId && String(record.userId) === String(userId) && !record.revokedAt);
+    if (!key) return false;
+    key.revokedAt = Date.now();
+    return true;
+  }
+
   /** List keys for a user */
   async listForUser(userId: string | number): Promise<ApiKeyRecord[]> {
     if (this.config.driver === 'database') {

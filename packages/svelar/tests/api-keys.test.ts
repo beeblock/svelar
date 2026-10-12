@@ -110,6 +110,20 @@ describe.sequential('ApiKeys', () => {
     await expect(ApiKeys.validate(expired.plainTextKey)).resolves.toBeNull();
   });
 
+  it.each(['database', 'memory'] as const)('restricts owner revocation without exposing foreign keys (%s)', async (driver) => {
+    ApiKeys.configure({ driver, prefix: 'sk_test_' });
+    const ownerId = user.getAttribute('id');
+    const other = await User.create({ email: 'other@example.com', name: 'Other' });
+    const key = await ApiKeys.create({ name: 'Owner key', userId: ownerId });
+
+    await expect(ApiKeys.revokeForUser(key.record.id, other.getAttribute('id'))).resolves.toBe(false);
+    await expect(ApiKeys.revokeForUser('missing-key', ownerId)).resolves.toBe(false);
+    await expect(ApiKeys.validate(key.plainTextKey)).resolves.toMatchObject({ id: key.record.id });
+    await expect(ApiKeys.revokeForUser(key.record.id, String(ownerId))).resolves.toBe(true);
+    await expect(ApiKeys.validate(key.plainTextKey)).resolves.toBeNull();
+    await expect(ApiKeys.revokeForUser(key.record.id, ownerId)).resolves.toBe(false);
+  });
+
   it('rotates keys and keeps only active keys visible for the user', async () => {
     const original = await ApiKeys.create({
       name: 'Deploy',

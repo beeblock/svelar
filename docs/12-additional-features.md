@@ -200,14 +200,14 @@ Notifier.configure({
 ### Notification Classes
 
 ```typescript
-import { Notification } from '@beeblock/svelar/notifications';
+import { Notification, type NotificationChannel } from '@beeblock/svelar/notifications';
 
 export class OrderShippedNotification extends Notification {
   constructor(private order: Order) {
     super();
   }
 
-  channels() {
+  channels(): NotificationChannel[] {
     return ['email', 'database'];
   }
 
@@ -537,6 +537,8 @@ const { plainTextKey, record } = await ApiKeys.create({
 ```
 
 Keys are hashed and can be revoked at any time. Permissions are deny-by-default: an empty permission list authenticates the key owner but does not pass permission checks. Use `'*'` only for deliberately unrestricted keys.
+
+User-facing revocation must use `await ApiKeys.revokeForUser(keyId, authenticatedUser.id)`. It atomically checks ownership and returns `false` for missing, foreign or already revoked keys. Never accept the owner ID from submitted data. `ApiKeys.revoke(keyId)` is an unrestricted infrastructure operation for already authorized administrative code, not a substitute for ownership authorization. Generated API-key actions use the owner-scoped operation and return an inline 403 failure instead of a 500 for unauthorized revocation.
 
 ## Outgoing Webhooks
 
