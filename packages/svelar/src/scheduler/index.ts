@@ -129,6 +129,8 @@ export interface TaskResult {
   duration: number;
   error?: string;
   timestamp: Date;
+  /** The task did not execute because an overlap lock was already held. */
+  skipped?: boolean;
 }
 
 export interface SchedulerRuntimeStatus {
@@ -339,7 +341,7 @@ export abstract class ScheduledTask {
   async executeTask(): Promise<TaskResult> {
     // Fast-path: local in-memory overlap check
     if (this.withoutOverlapping && this._running) {
-      return { task: this.name, success: true, duration: 0, timestamp: new Date() };
+      return { task: this.name, success: true, skipped: true, duration: 0, timestamp: new Date() };
     }
 
     const start = Date.now();
@@ -356,7 +358,7 @@ export abstract class ScheduledTask {
           const { SchedulerLock } = await import('./SchedulerLock.js');
           lockAcquired = await SchedulerLock.acquire(this.name, this._lockTtlMinutes);
           if (!lockAcquired) {
-            return { task: this.name, success: true, duration: 0, timestamp: new Date() };
+            return { task: this.name, success: true, skipped: true, duration: 0, timestamp: new Date() };
           }
         } catch (error: any) {
           await this.onFailure(error);
@@ -472,7 +474,7 @@ export class Scheduler {
       if (cronMatches(expression, date) && await this.isTaskEnabled(task.name)) {
         const result = await task.executeTask();
         results.push(result);
-        await this.addToHistory(result);
+        if (!result.skipped) await this.addToHistory(result);
       }
     }
 

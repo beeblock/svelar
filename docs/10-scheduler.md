@@ -521,13 +521,20 @@ const tasks = await ScheduleMonitor.listTasks();
 // Get health metrics (total tasks, errors, uptime)
 const health = await ScheduleMonitor.getHealth();
 
-// Manually trigger a task from the admin panel
-await ScheduleMonitor.runTask('cleanup-expired-sessions');
+// Manually trigger a task and inspect its actual outcome
+const result = await ScheduleMonitor.runTask('cleanup-expired-sessions');
+if (result.skipped) {
+  // An overlap lock was held; the task did not execute.
+} else if (!result.success) {
+  // Report result.error through safe server-side logging/feedback.
+}
 
 // Enable/disable tasks
 await ScheduleMonitor.disableTask('daily-report');
 await ScheduleMonitor.enableTask('daily-report');
 ```
+
+`runTask()` returns a `TaskResult`; completion of its promise alone does not mean the task succeeded. Overlap-skipped executions set `skipped: true` and do not add a successful run to persisted history. Tasks with no history have an undefined `lastStatus`, rather than a false failure. Persisted task settings take precedence over stale process-local settings, including in health metrics, and enable/disable writes use an atomic upsert.
 
 ## Best Practices
 

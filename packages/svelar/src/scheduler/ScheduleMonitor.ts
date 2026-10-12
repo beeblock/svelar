@@ -27,7 +27,7 @@
  */
 
 import { cronMatches } from './index.js';
-import type { Scheduler, ScheduledTask } from './index.js';
+import type { Scheduler, ScheduledTask, TaskResult } from './index.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
 import { singleton } from '../support/singleton.js';
 
@@ -145,33 +145,29 @@ class ScheduleMonitorService {
    * Enable a task
    */
   async enableTask(name: string): Promise<void> {
-    this.taskEnabled.set(name, true);
     await this.persistTaskSetting(name, true);
+    this.taskEnabled.set(name, true);
   }
 
   /**
    * Disable a task
    */
   async disableTask(name: string): Promise<void> {
-    this.taskEnabled.set(name, false);
     await this.persistTaskSetting(name, false);
+    this.taskEnabled.set(name, false);
   }
 
   /**
    * Manually trigger a task to run (if not disabled).
    * Persists the result to the database.
    */
-  async runTask(name: string): Promise<void> {
+  async runTask(name: string): Promise<TaskResult> {
     if (!this.scheduler) {
       throw new Error('Scheduler not configured');
     }
 
-    if (this.taskEnabled.has(name) && !this.taskEnabled.get(name)) {
-      throw new Error(`Task "${name}" is disabled`);
-    }
-
     const settings = await this.loadSettingsFromDb([name]);
-    if (settings.get(name)?.enabled === false) {
+    if ((settings.get(name)?.enabled ?? this.taskEnabled.get(name)) === false) {
       throw new Error(`Task "${name}" is disabled`);
     }
 
@@ -183,7 +179,8 @@ class ScheduleMonitorService {
     const result = await task.executeTask();
 
     // Persist to database
-    await this.persistResult(result);
+    if (!result.skipped) await this.persistResult(result);
+    return result;
   }
 
   /**
@@ -209,8 +206,9 @@ class ScheduleMonitorService {
     }
 
     const tasks = this.scheduler.getTasks();
+    const settings = await this.loadSettingsFromDb(tasks.map((task) => task.name));
     const enabledTasks = tasks.filter(
-      (t) => !this.taskEnabled.has(t.name) || this.taskEnabled.get(t.name),
+      (t) => settings.get(t.name)?.enabled ?? this.taskEnabled.get(t.name) ?? true,
     ).length;
 
     const runningTasks = tasks.filter((t) => t.isRunning()).length;
@@ -331,18 +329,7 @@ class ScheduleMonitorService {
       updated_at: new Date().toISOString(),
     };
 
-    const existing = await new QueryBuilder('scheduled_task_settings')
-      .where('task', name)
-      .first();
-
-    if (existing) {
-      await new QueryBuilder('scheduled_task_settings')
-        .where('task', name)
-        .update(payload);
-      return;
-    }
-
-    await new QueryBuilder('scheduled_task_settings').insert(payload);
+    await new QueryBuilder('scheduled_task_settings').upsert(payload, ['task'], ['enabled', 'updated_at']);
   }
 
   /**
@@ -362,7 +349,7 @@ class ScheduleMonitorService {
       nextRun: this.getNextRun(expression),
       lastRun: lastRecord?.timestamp,
       lastDuration: lastRecord?.duration,
-      lastStatus: lastRecord?.success ? 'success' : 'failed',
+      lastStatus: lastRecord ? (lastRecord.success ? 'success' : 'failed') : undefined,
       enabled,
       isRunning: task.isRunning(),
       history: history.slice(0, 5),
