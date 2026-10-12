@@ -3,7 +3,16 @@
   "version": "0.1.0",
   "description": "Stripe billing plugin for Svelar — subscriptions, one-time payments, checkout, invoices, webhooks, and polymorphic Billable mixin",
   "type": "module",
-  "keywords": ["svelar-plugin", "stripe", "billing", "subscriptions", "payments", "svelte", "sveltekit", "polymorphic"],
+  "keywords": [
+    "svelar-plugin",
+    "stripe",
+    "billing",
+    "subscriptions",
+    "payments",
+    "svelte",
+    "sveltekit",
+    "polymorphic"
+  ],
   "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -27,7 +36,12 @@
       "default": "./dist/types.js"
     }
   },
-  "files": ["dist", "src/publishable", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "src/publishable",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsup && tsc --emitDeclarationOnly",
     "dev": "tsup --watch",
@@ -40,14 +54,18 @@
     "stripe": ">=14.0.0"
   },
   "peerDependenciesMeta": {
-    "@beeblock/svelar": { "optional": false },
-    "stripe": { "optional": false }
+    "@beeblock/svelar": {
+      "optional": false
+    },
+    "stripe": {
+      "optional": false
+    }
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "stripe": "^21.0.1",
+    "@types/node": "^22.20.5",
+    "stripe": "^23.0.0",
     "tsup": "^8.5.0",
     "typescript": "^5.7.0",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.11"
   }
 }

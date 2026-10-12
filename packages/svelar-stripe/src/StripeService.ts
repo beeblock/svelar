@@ -164,7 +164,6 @@ export class StripeService {
     const mode = opts.mode || 'subscription';
     const params: Stripe.Checkout.SessionCreateParams = {
       customer: customerId,
-      payment_method_types: ['card'],
       line_items: items.map((i) => ({ price: i.price, quantity: i.quantity ?? 1 })),
       mode,
       success_url: opts.successUrl,

@@ -5,6 +5,9 @@ import { join } from 'node:path';
 import { Audit, auditable } from '../src/audit';
 import { Connection } from '../src/database/Connection';
 import { CreateAuditLogsTable } from '../src/database/CoreMigrations';
+import { Schema } from '../src/database/SchemaBuilder.js';
+import { Model } from '../src/orm/index.js';
+import { ApplicationContext } from '../src/support/Context.js';
 
 let tempRoot: string | null = null;
 let sequence = 0;
@@ -186,5 +189,53 @@ describe('Audit', () => {
         expect.objectContaining({ action: 'deleted' }),
       ]),
     );
+  });
+
+  it('audits model instance lifecycle events with changes and context metadata', async () => {
+    tempRoot = await mkdtemp(join(tmpdir(), 'svelar-audit-model-'));
+    await Connection.disconnect();
+    Connection.configure({
+      default: 'sqlite',
+      connections: {
+        sqlite: { driver: 'sqlite', filename: join(tempRoot, 'database.sqlite') },
+      },
+    });
+    await new Schema().createTable('audit_model_posts', (table) => {
+      table.increments('id');
+      table.string('title');
+      table.string('password');
+      table.timestamps();
+    });
+
+    class AuditModelPost extends Model {
+      static table = 'audit_model_posts';
+      static fillable = ['title', 'password'];
+    }
+
+    Audit.configure({ driver: 'memory', enabled: true });
+    auditable(AuditModelPost);
+
+    await ApplicationContext.run({ userId: 99, teamId: 'team-a', correlationId: 'req-1' }, async () => {
+      const post = await AuditModelPost.create({ title: 'Draft', password: 'secret' });
+      post.setAttribute('title', 'Published');
+      await post.save();
+      await post.delete();
+    });
+
+    const entries = await Audit.query({ modelType: 'AuditModelPost', limit: 10 });
+    expect(entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        action: 'created',
+        userId: 99,
+        newValues: expect.objectContaining({ title: 'Draft', password: '[redacted]' }),
+        metadata: expect.objectContaining({ teamId: 'team-a', correlationId: 'req-1' }),
+      }),
+      expect.objectContaining({
+        action: 'updated',
+        oldValues: expect.objectContaining({ title: 'Draft' }),
+        newValues: expect.objectContaining({ title: 'Published' }),
+      }),
+      expect.objectContaining({ action: 'deleted' }),
+    ]));
   });
 });

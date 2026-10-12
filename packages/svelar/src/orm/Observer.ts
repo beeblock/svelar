@@ -26,13 +26,17 @@ export type ModelEventName =
   | 'creating' | 'created'
   | 'updating' | 'updated'
   | 'saving' | 'saved'
-  | 'deleting' | 'deleted';
+  | 'deleting' | 'deleted'
+  | 'restoring' | 'restored'
+  | 'forceDeleting' | 'forceDeleted';
 
 export const MODEL_EVENTS: ModelEventName[] = [
   'creating', 'created',
   'updating', 'updated',
   'saving', 'saved',
   'deleting', 'deleted',
+  'restoring', 'restored',
+  'forceDeleting', 'forceDeleted',
 ];
 
 export abstract class ModelObserver {
@@ -44,4 +48,8 @@ export abstract class ModelObserver {
   saved?(model: Model): Promise<void> | void;
   deleting?(model: Model): Promise<void> | void;
   deleted?(model: Model): Promise<void> | void;
+  restoring?(model: Model): Promise<void> | void;
+  restored?(model: Model): Promise<void> | void;
+  forceDeleting?(model: Model): Promise<void> | void;
+  forceDeleted?(model: Model): Promise<void> | void;
 }

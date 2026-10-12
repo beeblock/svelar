@@ -296,7 +296,7 @@ export class MakeDockerCommand extends Command {
 
     this.appendRuntimeService(lines, {
       name: 'worker',
-      command: '["npx", "svelar", "queue:work", "--max-time=3600", "--queue=default"]',
+      command: '["npx", "svelar", "queue:work", "--queue=default", "--concurrency=${QUEUE_WORKER_CONCURRENCY:-1}"]',
       memoryLimit: '${WORKER_MEMORY_LIMIT:-512M}',
       db,
       redis,

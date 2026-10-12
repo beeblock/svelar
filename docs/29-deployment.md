@@ -233,7 +233,7 @@ The generated Dockerfile has **5 stages**: `base`, `deps`, `builder`, `productio
 
 ```dockerfile
 # ── Base ──────────────────────────────────────────────────
-FROM node:20-alpine AS base
+FROM node:22-alpine AS base
 RUN apk add --no-cache dumb-init
 RUN addgroup -g 1001 sveltekit && adduser -u 1001 -G sveltekit -s /bin/sh -D sveltekit
 
@@ -746,7 +746,7 @@ Generated Docker apps run long-lived daemons as separate Compose services:
 | Service | Command | Purpose |
 |---------|---------|---------|
 | `app` | `node build/index.js` | SvelteKit production server |
-| `worker` | `npx svelar queue:work --max-time=3600 --queue=default` | Queue job processor |
+| `worker` | `npx svelar queue:work --queue=default --concurrency=${QUEUE_WORKER_CONCURRENCY:-1}` | Queue job processor |
 | `scheduler` | `npx svelar schedule:run` | Cron task runner |
 
 The scheduler should run as exactly one service per deployment. Svelar still uses `SchedulerLock` to prevent duplicate task execution if a second scheduler starts accidentally, but the generated topology keeps the intended process model explicit.
@@ -758,7 +758,7 @@ worker-emails:
   build:
     context: .
     target: production
-  command: ["npx", "svelar", "queue:work", "--max-time=3600", "--queue=emails"]
+  command: ["npx", "svelar", "queue:work", "--queue=emails", "--concurrency=${QUEUE_WORKER_CONCURRENCY:-1}"]
   env_file: .env
   depends_on:
     app:

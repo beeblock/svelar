@@ -7,6 +7,7 @@ import { randomUUID } from 'crypto';
 import { singleton } from '../support/singleton.js';
 import { assertSqlIdentifier } from '../database/Connection.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
+import { ApplicationContext, type ApplicationContextSnapshot } from '../support/Context.js';
 
 export interface Team {
   id: string | number;
@@ -63,8 +64,6 @@ class TeamManager {
   private memTeams: Team[] = [];
   private memMembers: TeamMember[] = [];
   private memInvitations: TeamInvitation[] = [];
-
-  private currentTeamId: string | number | null = null;
 
   configure(config: TeamsConfig): void {
     this.config = {
@@ -589,11 +588,27 @@ class TeamManager {
   // ── Context ──────────────────────────────────────────────
 
   setCurrentTeam(teamId: string | number): void {
-    this.currentTeamId = teamId;
+    ApplicationContext.set('teamId', teamId);
+  }
+
+  clearCurrentTeam(): void {
+    ApplicationContext.set('teamId', null);
   }
 
   getCurrentTeam(): string | number | null {
-    return this.currentTeamId;
+    return ApplicationContext.get<string | number | null>('teamId') ?? null;
+  }
+
+  runWithTeam<T>(teamId: string | number, callback: () => T | Promise<T>): T | Promise<T> {
+    return ApplicationContext.run({ teamId }, callback);
+  }
+
+  runWithContext<T>(context: ApplicationContextSnapshot, callback: () => T | Promise<T>): T | Promise<T> {
+    return ApplicationContext.run(context, callback);
+  }
+
+  getContext(): ApplicationContextSnapshot {
+    return ApplicationContext.snapshot();
   }
 
   // ── Helpers ──────────────────────────────────────────────

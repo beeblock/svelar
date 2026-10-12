@@ -11,7 +11,7 @@ npx svelar new my-app --validation=zod
 npx svelar new my-app --validation=valibot
 ```
 
-The choice is stored in `svelar.validation.json`. Generators such as `make:schema`, `make:request`, `make:action --schema`, and `make:entity` read that file so new artifacts stay consistent with the app. FormRequest, controller body validation, and the forms helpers support both providers.
+The choice is stored in `svelar.validation.json`. Generators such as `make:schema`, `make:dto`, `make:request`, `make:action --schema`, and `make:entity` read that file so new artifacts stay consistent with the app. FormRequest, controller body validation, and the forms helpers support both providers.
 
 ## Contract Schemas — Single Source of Truth
 
@@ -74,6 +74,10 @@ FormRequest classes encapsulate validation logic and authorization checks. They 
 
 DTOs carry validated data into services and actions. Services should accept DTOs instead of raw `FormData`, request bodies, or unvalidated objects.
 
+```bash
+npx svelar make:dto CreatePost --module=posts --input=CreatePostInput --schema=post
+```
+
 ```typescript
 // src/lib/modules/posts/application/dto/CreatePostDto.ts
 import type { CreatePostInput } from '../../contracts/schemas/post.schema.js';
@@ -104,9 +108,9 @@ Wire it to the contract schema:
 // src/lib/modules/posts/interface/http/requests/CreatePostRequest.ts
 import { FormRequest } from '@beeblock/svelar/forms';
 import { CreatePostDto } from '../../../application/dto/CreatePostDto.js';
-import { createPostSchema } from '../../../contracts/schemas/post.schema.js';
+import { createPostSchema, type CreatePostInput } from '../../../contracts/schemas/post.schema.js';
 
-export class CreatePostRequest extends FormRequest {
+export class CreatePostRequest extends FormRequest<typeof createPostSchema, CreatePostDto> {
   rules() {
     return createPostSchema;
   }
@@ -115,7 +119,7 @@ export class CreatePostRequest extends FormRequest {
     return !!event.locals.user;
   }
 
-  passedValidation(data: any): CreatePostDto {
+  passedValidation(data: CreatePostInput): CreatePostDto {
     if (!data.slug) {
       data.slug = data.title
         .toLowerCase()
@@ -187,6 +191,22 @@ const { data } = await apiFetchJson<{ data: PostData }>('/api/posts', {
 ```
 
 ## FormRequest Methods
+
+`FormRequest` accepts generics so the schema output and DTO output stay connected:
+
+```typescript
+export class CreatePostRequest extends FormRequest<typeof createPostSchema, CreatePostDto> {
+  rules() {
+    return createPostSchema;
+  }
+
+  passedValidation(data: CreatePostInput): CreatePostDto {
+    return CreatePostDto.from(data);
+  }
+}
+
+const dto = await CreatePostRequest.validate(event); // CreatePostDto
+```
 
 ### rules()
 

@@ -46,9 +46,17 @@
     "security:audit:all": "npm audit --workspaces"
   },
   "devDependencies": {
+    "better-sqlite3": "^12.11.1",
+    "esbuild": "^0.28.2",
     "typescript": "^5.7.0"
   },
+  "overrides": {
+    "esbuild": "$esbuild",
+    "tsup": {
+      "esbuild": "$esbuild"
+    }
+  },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   }
 }

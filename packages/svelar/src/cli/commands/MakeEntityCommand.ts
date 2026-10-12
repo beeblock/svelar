@@ -265,6 +265,7 @@ export class Delete${name}Action extends Action<Delete${name}Dto, void> {
 import * as v from 'valibot';
 import { Create${name}Dto${crud ? `, Delete${name}Dto, Update${name}Dto` : ''} } from '${dtoPath}';
 import { create${name}Schema${crud ? `, update${name}Schema` : ''} } from '${schemaPath}';
+import type { Create${name}Input${crud ? `, Update${name}Input` : ''} } from '${schemaPath}';
 
 const idSchema = v.pipe(
   v.unknown(),
@@ -273,8 +274,12 @@ const idSchema = v.pipe(
   v.integer(),
   v.minValue(1)
 );
+${crud ? `
+const update${name}WithIdSchema = v.intersect([update${name}Schema, v.object({ id: idSchema })]);
+const delete${name}Schema = v.object({ id: idSchema });
+` : ''}
 
-export class Create${name}Request extends FormRequest {
+export class Create${name}Request extends FormRequest<typeof create${name}Schema, Create${name}Dto> {
   rules() {
     return create${name}Schema;
   }
@@ -283,7 +288,7 @@ export class Create${name}Request extends FormRequest {
     return !!event.locals.user;
   }
 
-  passedValidation(data: any): Create${name}Dto {
+  passedValidation(data: Create${name}Input): Create${name}Dto {
     return Create${name}Dto.from(data);
   }
 }
@@ -292,8 +297,13 @@ export class Create${name}Request extends FormRequest {
 import { z } from '@beeblock/svelar/validation';
 import { Create${name}Dto${crud ? `, Delete${name}Dto, Update${name}Dto` : ''} } from '${dtoPath}';
 import { create${name}Schema${crud ? `, update${name}Schema` : ''} } from '${schemaPath}';
+import type { Create${name}Input${crud ? `, Update${name}Input` : ''} } from '${schemaPath}';
+${crud ? `
+const update${name}WithIdSchema = update${name}Schema.extend({ id: z.coerce.number() });
+const delete${name}Schema = z.object({ id: z.coerce.number() });
+` : ''}
 
-export class Create${name}Request extends FormRequest {
+export class Create${name}Request extends FormRequest<typeof create${name}Schema, Create${name}Dto> {
   rules() {
     return create${name}Schema;
   }
@@ -302,7 +312,7 @@ export class Create${name}Request extends FormRequest {
     return !!event.locals.user;
   }
 
-  passedValidation(data: any): Create${name}Dto {
+  passedValidation(data: Create${name}Input): Create${name}Dto {
     return Create${name}Dto.from(data);
   }
 }
@@ -310,60 +320,60 @@ export class Create${name}Request extends FormRequest {
 
     if (crud) {
       content += validation === 'valibot'
-        ? `
-export class Update${name}Request extends FormRequest {
+? `
+export class Update${name}Request extends FormRequest<typeof update${name}WithIdSchema, Update${name}Dto> {
   rules() {
-    return v.intersect([update${name}Schema, v.object({ id: idSchema })]);
+    return update${name}WithIdSchema;
   }
 
   authorize(event: any): boolean {
     return !!event.locals.user;
   }
 
-  passedValidation(data: any): Update${name}Dto {
+  passedValidation(data: Update${name}Input & { id: number }): Update${name}Dto {
     return Update${name}Dto.from(Number(data.id), data);
   }
 }
 
-export class Delete${name}Request extends FormRequest {
+export class Delete${name}Request extends FormRequest<typeof delete${name}Schema, Delete${name}Dto> {
   rules() {
-    return v.object({ id: idSchema });
+    return delete${name}Schema;
   }
 
   authorize(event: any): boolean {
     return !!event.locals.user;
   }
 
-  passedValidation(data: any): Delete${name}Dto {
+  passedValidation(data: { id: number }): Delete${name}Dto {
     return new Delete${name}Dto(Number(data.id));
   }
 }
 `
         : `
-export class Update${name}Request extends FormRequest {
+export class Update${name}Request extends FormRequest<typeof update${name}WithIdSchema, Update${name}Dto> {
   rules() {
-    return update${name}Schema.extend({ id: z.coerce.number() });
+    return update${name}WithIdSchema;
   }
 
   authorize(event: any): boolean {
     return !!event.locals.user;
   }
 
-  passedValidation(data: any): Update${name}Dto {
+  passedValidation(data: Update${name}Input & { id: number }): Update${name}Dto {
     return Update${name}Dto.from(Number(data.id), data);
   }
 }
 
-export class Delete${name}Request extends FormRequest {
+export class Delete${name}Request extends FormRequest<typeof delete${name}Schema, Delete${name}Dto> {
   rules() {
-    return z.object({ id: z.coerce.number() });
+    return delete${name}Schema;
   }
 
   authorize(event: any): boolean {
     return !!event.locals.user;
   }
 
-  passedValidation(data: any): Delete${name}Dto {
+  passedValidation(data: { id: number }): Delete${name}Dto {
     return new Delete${name}Dto(Number(data.id));
   }
 }

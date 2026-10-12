@@ -341,6 +341,56 @@ describe('RateLimitMiddleware', () => {
     expect((await first.handle(ctx, async () => new Response('ok')) as Response).status).toBe(200);
     expect((await second.handle(ctx, async () => new Response('ok')) as Response).status).toBe(429);
   });
+
+  it('should use atomic cache increments for cache-backed limits', async () => {
+    const store = Cache.store();
+    const increment = vi.spyOn(store, 'incrementWithTtl');
+    const limiter = new RateLimitMiddleware({
+      maxRequests: 5,
+      windowMs: 60000,
+      store: 'cache',
+      prefix: 'test-rate-limit-atomic',
+    });
+
+    await limiter.handle(createCtx(), async () => new Response('ok'));
+
+    expect(increment).toHaveBeenCalledWith('test-rate-limit-atomic:127.0.0.1', 60, 1);
+  });
+
+  it('should not trust X-Forwarded-For by default', async () => {
+    const limiter = new RateLimitMiddleware({ maxRequests: 1, windowMs: 60000 });
+    const first = createCtx({
+      headers: { 'x-forwarded-for': '198.51.100.1' },
+      getClientAddress: () => '10.0.0.10',
+    });
+    const second = createCtx({
+      headers: { 'x-forwarded-for': '198.51.100.2' },
+      getClientAddress: () => '10.0.0.10',
+    });
+
+    expect((await limiter.handle(first, async () => new Response('ok')) as Response).status).toBe(200);
+    expect((await limiter.handle(second, async () => new Response('ok')) as Response).status).toBe(429);
+  });
+
+  it('should trust X-Forwarded-For only for configured proxies', async () => {
+    const limiter = new RateLimitMiddleware({
+      maxRequests: 1,
+      windowMs: 60000,
+      trustedProxy: ['10.0.0.10'],
+    });
+    const first = createCtx({
+      headers: { 'x-forwarded-for': '198.51.100.1, 10.0.0.10' },
+      getClientAddress: () => '10.0.0.10',
+    });
+    const second = createCtx({
+      headers: { 'x-forwarded-for': '198.51.100.2, 10.0.0.10' },
+      getClientAddress: () => '10.0.0.10',
+    });
+
+    expect((await limiter.handle(first, async () => new Response('ok')) as Response).status).toBe(200);
+    expect((await limiter.handle(second, async () => new Response('ok')) as Response).status).toBe(200);
+    expect((await limiter.handle(second, async () => new Response('ok')) as Response).status).toBe(429);
+  });
 });
 
 describe('ThrottleMiddleware', () => {
@@ -420,6 +470,22 @@ describe('ThrottleMiddleware', () => {
 
     expect((await first.handle(ctx, async () => new Response('fail', { status: 401 })) as Response).status).toBe(401);
     expect((await second.handle(ctx, async () => new Response('ok')) as Response).status).toBe(429);
+  });
+
+  it('should use atomic cache increments for cache-backed attempts', async () => {
+    const store = Cache.store();
+    const increment = vi.spyOn(store, 'incrementWithTtl');
+    const throttle = new ThrottleMiddleware({
+      maxAttempts: 2,
+      decayMinutes: 1,
+      store: 'cache',
+      prefix: 'test-throttle-atomic',
+    });
+    const ctx = createCtx({ method: 'POST', pathname: '/login' });
+
+    await throttle.hit(ctx);
+
+    expect(increment).toHaveBeenCalledWith('test-throttle-atomic:attempts:127.0.0.1:/login', 60, 1);
   });
 
   it('should expose check, hit, and clear for SvelteKit form actions', async () => {

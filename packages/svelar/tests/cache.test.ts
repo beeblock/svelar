@@ -262,6 +262,17 @@ describe('CacheManager (Memory Store)', () => {
       // And still be cached (not expired immediately)
       expect(await Cache.has('counter')).toBe(true);
     });
+
+    it('should increment and apply a TTL atomically through incrementWithTtl', async () => {
+      const first = await Cache.incrementWithTtl('limited-counter', 60);
+      const second = await Cache.incrementWithTtl('limited-counter', 60, 2);
+
+      expect(first.value).toBe(1);
+      expect(first.expiresAt).toBeGreaterThan(Date.now());
+      expect(second.value).toBe(3);
+      expect(second.expiresAt).toBe(first.expiresAt);
+      expect(await Cache.get('limited-counter')).toBe(3);
+    });
   });
 
   describe('decrement', () => {

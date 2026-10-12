@@ -18,15 +18,16 @@ export class MakeActionCommand extends Command {
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
-    const name = args[0];
-    if (!name) {
+    const rawName = args[0];
+    if (!rawName) {
       this.error('Please provide an action name.');
       return;
     }
 
+    const name = this.toPascalCase(rawName);
     const actionName = name.endsWith('Action') ? name : `${name}Action`;
     const baseName = actionName.replace(/Action$/, '');
-    const moduleName = flags.module || baseName.toLowerCase();
+    const moduleName = flags.module || this.toKebabCase(baseName);
     if (!flags.module && this.isDDD()) {
       this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
     }
@@ -167,13 +168,27 @@ export type ${baseName}Input = z.infer<typeof ${schemaName}>;
   }
 
   private toCamelCase(str: string): string {
-    return str.charAt(0).toLowerCase() + str.slice(1);
+    const pascal = this.toPascalCase(str);
+    return pascal.charAt(0).toLowerCase() + pascal.slice(1);
   }
 
   private toKebabCase(str: string): string {
     return str
       .replace(/([a-z])([A-Z])/g, '$1-$2')
       .replace(/([A-Z]+)([A-Z][a-z])/g, '$1-$2')
+      .replace(/[^a-zA-Z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
       .toLowerCase();
+  }
+
+  private toPascalCase(str: string): string {
+    return str
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .replace(/[^a-zA-Z0-9]+/g, ' ')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join('');
   }
 }

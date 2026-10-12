@@ -48,6 +48,7 @@
 
 import { assertSqlIdentifier } from '../database/Connection.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
+import { ApplicationContext, type ApplicationContextSnapshot } from '../support/Context.js';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -106,9 +107,10 @@ interface QueuedJob {
   availableAt: number;
   createdAt: number;
   job: Job;
+  context?: ApplicationContextSnapshot;
 }
 
-function parseDatabaseJobPayload(row: { id: string; payload: string }, table: string): { jobClass: string; payload: string } {
+function parseDatabaseJobPayload(row: { id: string; payload: string }, table: string): { jobClass: string; payload: string; context?: ApplicationContextSnapshot } {
   try {
     const data = JSON.parse(row.payload);
     if (!data || typeof data.jobClass !== 'string' || typeof data.payload !== 'string') {
@@ -120,6 +122,10 @@ function parseDatabaseJobPayload(row: { id: string; payload: string }, table: st
       `Failed to parse queued job payload for job "${row.id}" in table "${table}": ${error.message ?? error}`
     );
   }
+}
+
+async function handleQueuedJob(queuedJob: QueuedJob): Promise<void> {
+  await ApplicationContext.run(queuedJob.context ?? {}, () => queuedJob.job.handle());
 }
 
 // ── Job Base Class ─────────────────────────────────────────
@@ -210,7 +216,7 @@ class SyncDriver implements QueueDriverInterface {
       queuedJob.job.attempts = attempt;
 
       try {
-        await queuedJob.job.handle();
+        await handleQueuedJob(queuedJob);
         return;
       } catch (error) {
         lastError = error as Error;
@@ -286,6 +292,7 @@ class DatabaseDriver implements QueueDriverInterface {
       payload: JSON.stringify({
         jobClass: job.jobClass,
         payload: job.payload,
+        context: job.context,
       }),
       attempts: job.attempts,
       max_attempts: job.maxAttempts,
@@ -326,6 +333,7 @@ class DatabaseDriver implements QueueDriverInterface {
       availableAt: row.available_at * 1000,
       createdAt: row.created_at * 1000,
       job: jobInstance,
+      context: data.context,
     };
   }
 
@@ -436,6 +444,7 @@ class RedisDriver implements QueueDriverInterface {
       {
         jobClass: job.jobClass,
         payload: job.payload,
+        context: job.context,
       },
       {
         jobId: job.id,
@@ -489,7 +498,12 @@ class RedisDriver implements QueueDriverInterface {
     queueName: string,
     registry: JobRegistry,
     failedStore: FailedJobStore,
-    options?: { concurrency?: number; autorun?: boolean },
+    options?: {
+      concurrency?: number;
+      autorun?: boolean;
+      lockDuration?: number;
+      stalledInterval?: number;
+    },
   ): Promise<any> {
     const bullmq = await this.getBullMQ();
     const connection = this.getRedisConnection();
@@ -501,13 +515,15 @@ class RedisDriver implements QueueDriverInterface {
         const data = bullJob.data;
         const jobInstance = registry.resolve(data.jobClass, data.payload);
         jobInstance.attempts = bullJob.attemptsMade + 1;
-        await jobInstance.handle();
+        await ApplicationContext.run(data.context ?? {}, () => jobInstance.handle());
       },
       {
         connection,
         prefix,
         concurrency: options?.concurrency ?? 1,
         autorun: options?.autorun ?? true,
+        lockDuration: options?.lockDuration,
+        stalledInterval: options?.stalledInterval,
       },
     );
 
@@ -809,6 +825,7 @@ class QueueManager {
       availableAt: Date.now() + (options?.delay ?? 0) * 1000,
       createdAt: Date.now(),
       job,
+      context: ApplicationContext.snapshot(),
     };
 
     await driver.push(queuedJob);
@@ -842,6 +859,7 @@ class QueueManager {
       availableAt: Date.now(),
       createdAt: Date.now(),
       job,
+      context: ApplicationContext.snapshot(),
     };
 
     await syncDriver.push(queuedJob);
@@ -897,6 +915,10 @@ class QueueManager {
     sleep?: number;
     /** BullMQ concurrency (redis driver only, default: 1) */
     concurrency?: number;
+    /** BullMQ lock duration in milliseconds (redis driver only) */
+    lockDuration?: number;
+    /** BullMQ stalled check interval in milliseconds (redis driver only) */
+    stalledInterval?: number;
   }): Promise<number> {
     const connName = this.config.default;
     const driver = this.resolveDriver(connName);
@@ -916,6 +938,8 @@ class QueueManager {
         const worker = await driver.createWorker(queue, this.jobRegistry, this.failedStore, {
           concurrency: 1,
           autorun: false,
+          lockDuration: options?.lockDuration,
+          stalledInterval: options?.stalledInterval,
         });
 
         this.processing = true;
@@ -962,6 +986,8 @@ class QueueManager {
 
       const worker = await driver.createWorker(queue, this.jobRegistry, this.failedStore, {
         concurrency: options?.concurrency ?? 1,
+        lockDuration: options?.lockDuration,
+        stalledInterval: options?.stalledInterval,
       });
 
       this.processing = true;
@@ -1054,7 +1080,7 @@ class QueueManager {
       queuedJob.job.attempts = queuedJob.attempts;
 
       try {
-        await queuedJob.job.handle();
+        await handleQueuedJob(queuedJob);
         processed++;
 
         // If database driver, delete the completed job

@@ -6,6 +6,7 @@
  */
 
 import { assertSqlIdentifier, Connection, type DatabaseDriver } from '../database/Connection.js';
+import { ApplicationContext } from '../support/Context.js';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -25,6 +26,7 @@ interface WhereClause {
   subSQL?: string;
   subBindings?: any[];
   softDeleteScope?: boolean;
+  tenantScope?: boolean;
 }
 
 interface CTEClause {
@@ -81,6 +83,8 @@ export class QueryBuilder<TModel = any> {
   private unionClauses: UnionClause[] = [];
   private rawSelectColumns = new Set<string>();
   private forceDeleting = false;
+  private tenantScopeDisabled = false;
+  private tenantScopeApplied = false;
 
   // Model class reference for hydrating results
   private modelClass?: any;
@@ -90,6 +94,7 @@ export class QueryBuilder<TModel = any> {
     this.modelClass = modelClass;
     this.connectionName = connectionName;
     this.applySoftDeleteScope('without');
+    this.applyTenantScope();
   }
 
   private get softDeletes(): boolean {
@@ -98,6 +103,50 @@ export class QueryBuilder<TModel = any> {
 
   private get deletedAtColumn(): string {
     return this.modelClass?.deletedAt ?? 'deleted_at';
+  }
+
+  private get tenantScoped(): boolean {
+    return Boolean(this.modelClass?.tenantScoped);
+  }
+
+  private get tenantColumn(): string {
+    return this.modelClass?.tenantColumn ?? 'team_id';
+  }
+
+  private get requireTenantContext(): boolean {
+    return this.modelClass?.requireTenantContext !== false;
+  }
+
+  private applyTenantScope(): void {
+    this.whereClauses = this.whereClauses.filter((clause) => !clause.tenantScope);
+    this.tenantScopeApplied = false;
+
+    if (!this.tenantScoped || this.tenantScopeDisabled) return;
+
+    const teamId = ApplicationContext.get<string | number | null>('teamId');
+    if (teamId === undefined || teamId === null || teamId === '') return;
+
+    this.whereClauses.push({
+      type: 'basic',
+      column: this.qualifyTableColumn(this.tenantColumn),
+      operator: '=',
+      value: teamId,
+      boolean: 'AND',
+      tenantScope: true,
+    });
+    this.tenantScopeApplied = true;
+  }
+
+  private ensureTenantScope(): void {
+    if (!this.tenantScoped || this.tenantScopeDisabled) return;
+    if (!this.tenantScopeApplied) this.applyTenantScope();
+
+    if (!this.tenantScopeApplied && this.requireTenantContext) {
+      throw new Error(
+        `Tenant context is required for model "${this.modelClass?.name ?? this.tableName}". ` +
+        'Wrap the operation in Teams.runWithTeam(...) or call withoutTenantScope() explicitly.',
+      );
+    }
   }
 
   private applySoftDeleteScope(mode: 'without' | 'with' | 'only'): void {
@@ -233,6 +282,13 @@ export class QueryBuilder<TModel = any> {
 
   onlyTrashed(): this {
     this.applySoftDeleteScope('only');
+    return this;
+  }
+
+  withoutTenantScope(): this {
+    this.tenantScopeDisabled = true;
+    this.whereClauses = this.whereClauses.filter((clause) => !clause.tenantScope);
+    this.tenantScopeApplied = false;
     return this;
   }
 
@@ -600,7 +656,7 @@ export class QueryBuilder<TModel = any> {
     conflictColumns: string | string[],
     updateColumns?: string[]
   ): Promise<any> {
-    const rows = Array.isArray(data) ? data : [data];
+    const rows = (Array.isArray(data) ? data : [data]).map((row) => this.applyTenantInsertAttributes(row));
     if (rows.length === 0) return;
 
     const driver = Connection.getDriver(this.connectionName);
@@ -633,6 +689,7 @@ export class QueryBuilder<TModel = any> {
   }
 
   async insertMany(rows: Record<string, any>[]): Promise<any> {
+    rows = rows.map((row) => this.applyTenantInsertAttributes(row));
     if (rows.length === 0) return;
     const columns = Object.keys(rows[0]);
     const bindings: any[] = [];
@@ -768,6 +825,7 @@ export class QueryBuilder<TModel = any> {
   // ── INSERT / UPDATE / DELETE ─────────────────────────────
 
   async insert(data: Record<string, any>): Promise<any> {
+    data = this.applyTenantInsertAttributes(data);
     const columns = Object.keys(data);
     const values = Object.values(data);
     const placeholders = values.map(() => '?').join(', ');
@@ -777,6 +835,7 @@ export class QueryBuilder<TModel = any> {
   }
 
   async insertGetId(data: Record<string, any>, primaryKey: string = 'id'): Promise<number> {
+    data = this.applyTenantInsertAttributes(data);
     const driver = Connection.getDriver(this.connectionName);
     const columns = Object.keys(data);
     const values = Object.values(data);
@@ -806,6 +865,7 @@ export class QueryBuilder<TModel = any> {
   }
 
   async update(data: Record<string, any>): Promise<number> {
+    this.ensureTenantScope();
     const columns = Object.keys(data);
     const values = Object.values(data);
     const setClause = columns.map((c) => `${this.quoteIdentifier(c, 'Column name')} = ?`).join(', ');
@@ -822,6 +882,7 @@ export class QueryBuilder<TModel = any> {
       return this.update({ [this.deletedAtColumn]: new Date().toISOString() });
     }
 
+    this.ensureTenantScope();
     const { whereSQL, whereBindings } = this.buildWhere();
     const sql = `DELETE FROM ${this.quoteIdentifier(this.tableName, 'Table name')}${whereSQL ? ` ${whereSQL}` : ''}`;
     const result = await Connection.raw(sql, whereBindings, this.connectionName);
@@ -846,6 +907,7 @@ export class QueryBuilder<TModel = any> {
   }
 
   async increment(column: string, amount: number = 1): Promise<void> {
+    this.ensureTenantScope();
     const { whereSQL, whereBindings } = this.buildWhere();
     const quotedColumn = this.quoteIdentifier(column, 'Column name');
     const sql = `UPDATE ${this.quoteIdentifier(this.tableName, 'Table name')} SET ${quotedColumn} = ${quotedColumn} + ?${whereSQL ? ` ${whereSQL}` : ''}`;
@@ -868,6 +930,7 @@ export class QueryBuilder<TModel = any> {
   // ── SQL COMPILATION ──────────────────────────────────────
 
   toSQL(): { sql: string; bindings: any[] } {
+    this.ensureTenantScope();
     const parts: string[] = [];
     const bindings: any[] = [];
 
@@ -979,6 +1042,8 @@ export class QueryBuilder<TModel = any> {
     cloned.rawSelectColumns = new Set(this.rawSelectColumns);
     cloned._selectBindings = this._selectBindings ? [...this._selectBindings] : undefined;
     cloned.forceDeleting = this.forceDeleting;
+    cloned.tenantScopeDisabled = this.tenantScopeDisabled;
+    cloned.tenantScopeApplied = this.tenantScopeApplied;
     return cloned;
   }
 
@@ -1058,6 +1123,23 @@ export class QueryBuilder<TModel = any> {
     }
 
     return { whereSQL: parts.join(' '), whereBindings: bindings };
+  }
+
+  private applyTenantInsertAttributes(data: Record<string, any>): Record<string, any> {
+    if (!this.tenantScoped || this.tenantScopeDisabled || this.tenantColumn in data) {
+      return data;
+    }
+
+    const teamId = ApplicationContext.get<string | number | null>('teamId');
+    if (teamId === undefined || teamId === null || teamId === '') {
+      if (!this.requireTenantContext) return data;
+      throw new Error(
+        `Tenant context is required for model "${this.modelClass?.name ?? this.tableName}". ` +
+        'Wrap the operation in Teams.runWithTeam(...) or call withoutTenantScope() explicitly.',
+      );
+    }
+
+    return { ...data, [this.tenantColumn]: teamId };
   }
 
   private buildAggregate(fn: string, column: string): { sql: string; bindings: any[] } {

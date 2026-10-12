@@ -186,7 +186,7 @@ Model (ORM, database interaction)
 
 **FormRequests**: Validate incoming data with Zod or Valibot schemas and authorize requests before processing.
 
-**DTOs**: Carry validated data from FormRequests into services and actions.
+**DTOs**: Carry validated data from FormRequests into services and actions. Use `npx svelar make:dto CreatePost --module=posts --input=CreatePostInput --schema=post` for focused DTO scaffolding.
 
 **Services**: Orchestrate multiple operations, compose repositories, emit events. Return `ServiceResult<T>` (ok/fail).
 

@@ -12,6 +12,10 @@ class UserObserver extends ModelObserver {
   saved(model: any) { this.log.push(`saved:${model.id}`); }
   deleting(model: any) { this.log.push(`deleting:${model.id}`); }
   deleted(model: any) { this.log.push(`deleted:${model.id}`); }
+  restoring(model: any) { this.log.push(`restoring:${model.id}`); }
+  restored(model: any) { this.log.push(`restored:${model.id}`); }
+  forceDeleting(model: any) { this.log.push(`forceDeleting:${model.id}`); }
+  forceDeleted(model: any) { this.log.push(`forceDeleted:${model.id}`); }
 }
 
 class PartialObserver extends ModelObserver {
@@ -26,6 +30,8 @@ describe('ModelObserver', () => {
       'updating', 'updated',
       'saving', 'saved',
       'deleting', 'deleted',
+      'restoring', 'restored',
+      'forceDeleting', 'forceDeleted',
     ]);
   });
 
@@ -42,6 +48,8 @@ describe('ModelObserver', () => {
       'updating:1', 'updated:1',
       'saving:1', 'saved:1',
       'deleting:1', 'deleted:1',
+      'restoring:1', 'restored:1',
+      'forceDeleting:1', 'forceDeleted:1',
     ]);
   });
 

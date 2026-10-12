@@ -34,6 +34,7 @@ import {
   MiddlewareStack,
   type MiddlewareContext,
   type MiddlewareHandler,
+  type TrustedProxy,
   CsrfMiddleware,
   OriginMiddleware,
   RateLimitMiddleware,
@@ -84,6 +85,9 @@ export interface SvelarAppConfig {
 
   /** Cache store name when rateLimitStore is "cache" */
   rateLimitCacheStore?: string;
+
+  /** Trusted proxies allowed to supply X-Forwarded-For. Defaults to false. */
+  trustedProxy?: TrustedProxy;
 
   /** CSRF: paths to protect (default: ['/api/']) */
   csrfPaths?: string[];
@@ -164,6 +168,7 @@ export function createSvelarApp(appConfig: SvelarAppConfig = {}) {
     rateLimitWindow = 60_000,
     rateLimitStore = 'memory',
     rateLimitCacheStore,
+    trustedProxy = false,
     csrfPaths = ['/api/'],
     csrfExcludePaths = ['/api/webhooks', '/api/internal/'],
     authThrottleAttempts = 5,
@@ -185,6 +190,7 @@ export function createSvelarApp(appConfig: SvelarAppConfig = {}) {
       windowMs: rateLimitWindow,
       store: rateLimitStore,
       cacheStore: rateLimitCacheStore,
+      trustedProxy,
     }),
     new CsrfMiddleware({ onlyPaths: csrfPaths, excludePaths: csrfExcludePaths }),
     new SessionMiddleware({
@@ -209,6 +215,7 @@ export function createSvelarApp(appConfig: SvelarAppConfig = {}) {
       decayMinutes: authThrottleDecay,
       store: authThrottleStore,
       cacheStore: authThrottleCacheStore,
+      trustedProxy,
     }),
     ...extraNamedMiddleware as any,
   };

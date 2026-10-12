@@ -69,6 +69,18 @@ describe('ORM soft deletes', () => {
     expect(trashed.trashed()).toBe(false);
   });
 
+  it('keeps last-save changes available after original attributes are synced', async () => {
+    const post = await SoftDeletePost.create({ title: 'Draft' });
+    post.setAttribute('title', 'Published');
+
+    await post.save();
+
+    expect(post.isDirty()).toBe(false);
+    expect(post.wasChanged('title')).toBe(true);
+    expect(post.getChanges()).toMatchObject({ title: 'Published' });
+    expect(post.getPreviousOriginal('title')).toBe('Draft');
+  });
+
   it('supports query-level soft delete, restore, and force delete', async () => {
     await SoftDeletePost.create({ title: 'One' });
     await SoftDeletePost.create({ title: 'Two' });

@@ -65,7 +65,7 @@ export default defineConfig({
   clean: true,
   sourcemap: false,
   minify: true,
-  target: 'node20',
+  target: 'node22',
   splitting: false,
   external: [
     '@sveltejs/kit',

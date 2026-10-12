@@ -103,10 +103,11 @@ new RateLimitMiddleware({
   windowMs: 60_000, // 100 requests per minute
   store: 'cache',   // use Redis via Cache for multi-instance production apps
   cacheStore: 'redis',
+  trustedProxy: ['10.0.0.10'], // only these proxies may provide X-Forwarded-For
 })
 ```
 
-For single-process development the default in-memory limiter is fine. In production, configure `CACHE_DRIVER=redis` and set `RATE_LIMIT_STORE=cache` in scaffolded apps so global rate limits and auth throttles are shared across all Node instances.
+For single-process development the default in-memory limiter is fine. In production, configure `CACHE_DRIVER=redis` and set `RATE_LIMIT_STORE=cache` in scaffolded apps so global rate limits and auth throttles are shared across all Node instances. Redis-backed limits use atomic increments with TTLs. Svelar ignores `X-Forwarded-For` unless `trustedProxy` is configured, so clients cannot spoof rate-limit identities by sending proxy headers directly.
 
 ### 3. CSRF Protection (`CsrfMiddleware`)
 

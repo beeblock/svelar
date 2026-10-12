@@ -8,6 +8,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 No changes yet.
 
+## [0.8.0] - 2026-10-12
+
+### Changed
+
+- **Node.js baseline** — Svelar now requires Node.js 22 or higher, and generated Dockerfiles use `node:22-alpine`.
+- **Dependency refresh** — refreshed core runtime/test dependencies and plugin test dependencies to current compatible releases while keeping SvelteKit 2, Zod 3, Superforms 2, Vitest 4, and TypeScript 5.
+- **Typed FormRequests and DTO generation** — `FormRequest<TSchema, TOutput>` now preserves validated output types, `CreateRequest.validate(event)` returns the DTO type when declared, and the CLI includes a focused `make:dto` generator.
+- **Queue worker lifecycle** — `queue:work` now starts one long-lived worker by default, supports Redis/BullMQ concurrency and lock tuning flags, and stops gracefully on `SIGINT`, `SIGTERM`, or `--max-time`.
+- **Cache-backed rate limiting** — shared rate limits and throttles now use `Cache.incrementWithTtl()` for atomic Redis counters and explicit TTL windows.
+- **Tenant context** — Teams now uses `AsyncLocalStorage` for request-safe team context, queued jobs restore the dispatch context, and `TenantModel` applies fail-closed `team_id` query scopes.
+- **Model auditing and changes** — models now retain `getChanges()`, `getPreviousOriginal()`, and `wasChanged()` after save/delete/restore events so observers and audit logs see reliable diffs.
+
+### Security
+
+- **Dependency audit cleanup** — updated dependency ranges, removed the pinned Open VSX publisher from the workspace lockfile, and added an `esbuild` override so `npm run security:audit` passes with zero high or critical findings.
+
+### Fixed
+
+- **SvelteKit controller interop** — `Controller.handle()` now preserves SvelteKit `throw error(...)` and `throw redirect(...)` control flow instead of formatting those exceptions as generic controller errors.
+- **Generator name normalization** — `make:schema`, `make:request`, and `make:action` now normalize kebab-case and spaced names into valid TypeScript identifiers.
+- **Generated Docker worker process** — Docker scaffolding now runs the worker as a real long-lived daemon instead of recycling it with `--max-time`.
+- **Proxy header hardening** — rate limiting and throttling no longer trust `X-Forwarded-For` unless `trustedProxy` is configured.
+
 ## [0.7.9] - 2026-06-12
 
 ### Changed

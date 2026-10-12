@@ -35,6 +35,7 @@
  * ```
  */
 
+import { isHttpError, isRedirect } from '@sveltejs/kit';
 import { z, type ZodObject, type ZodRawShape } from 'zod';
 import { MiddlewareStack, type MiddlewareHandler, Middleware } from '../middleware/Middleware.js';
 
@@ -164,6 +165,10 @@ export abstract class Controller {
 
         return await this.callMethod(method, event);
       } catch (error: any) {
+        if (isHttpError(error) || isRedirect(error)) {
+          throw error;
+        }
+
         return this.handleError(error, event);
       }
     };

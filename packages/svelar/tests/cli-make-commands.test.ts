@@ -13,6 +13,7 @@ import { MakeRepositoryCommand } from '../src/cli/commands/MakeRepositoryCommand
 import { MakeResourceCommand } from '../src/cli/commands/MakeResourceCommand.js';
 import { MakeRequestCommand } from '../src/cli/commands/MakeRequestCommand.js';
 import { MakeActionCommand } from '../src/cli/commands/MakeActionCommand.js';
+import { MakeDtoCommand } from '../src/cli/commands/MakeDtoCommand.js';
 import { MakeObserverCommand } from '../src/cli/commands/MakeObserverCommand.js';
 import { MakeSchemaCommand } from '../src/cli/commands/MakeSchemaCommand.js';
 import { MakeEntityCommand } from '../src/cli/commands/MakeEntityCommand.js';
@@ -301,6 +302,29 @@ describe('Make commands — Flat structure', () => {
     });
   });
 
+  describe('MakeDtoCommand', () => {
+    it('should create DTO file with Dto suffix', async () => {
+      const cmd = new MakeDtoCommand();
+      await cmd.handle(['CreatePost'], {});
+
+      const filePath = join(tmpDir, 'src', 'lib', 'dtos', 'CreatePostDto.ts');
+      expect(existsSync(filePath)).toBe(true);
+      const content = readFileSync(filePath, 'utf-8');
+      expect(content).toContain('export class CreatePostDto');
+      expect(content).toContain('static from(input: Record<string, unknown>): CreatePostDto');
+    });
+
+    it('should import schema input types when requested', async () => {
+      const cmd = new MakeDtoCommand();
+      await cmd.handle(['CreatePostDto'], { input: 'CreatePostInput', schema: 'post' });
+
+      const filePath = join(tmpDir, 'src', 'lib', 'dtos', 'CreatePostDto.ts');
+      const content = readFileSync(filePath, 'utf-8');
+      expect(content).toContain("import type { CreatePostInput } from '$lib/schemas/post.schema.js';");
+      expect(content).toContain('static from(input: CreatePostInput): CreatePostDto');
+    });
+  });
+
   describe('MakeObserverCommand', () => {
     it('should create observer file in src/lib/observers/', async () => {
       const cmd = new MakeObserverCommand();
@@ -320,6 +344,18 @@ describe('Make commands — Flat structure', () => {
       expect(existsSync(filePath)).toBe(true);
       const content = readFileSync(filePath, 'utf-8');
       expect(content).toContain('zod');
+    });
+
+    it('should normalize kebab-case names to valid TypeScript identifiers', async () => {
+      const cmd = new MakeSchemaCommand();
+      await cmd.handle(['api-key'], {});
+
+      const filePath = join(tmpDir, 'src', 'lib', 'schemas', 'api-key.schema.ts');
+      expect(existsSync(filePath)).toBe(true);
+      const content = readFileSync(filePath, 'utf-8');
+      expect(content).toContain('export const apiKeySchema');
+      expect(content).toContain('export const createApiKeySchema');
+      expect(content).not.toContain('api-keySchema');
     });
 
     it('should create Valibot schema files when configured', async () => {
@@ -470,6 +506,18 @@ export class Invoice extends Model {}
       await cmd.handle(['PostCreated'], { module: 'blog' });
       const filePath = join(tmpDir, 'src', 'lib', 'modules', 'blog', 'domain', 'events', 'PostCreated.ts');
       expect(existsSync(filePath)).toBe(true);
+    });
+  });
+
+  describe('MakeDtoCommand (DDD)', () => {
+    it('should create DTOs in the module application layer', async () => {
+      const cmd = new MakeDtoCommand();
+      await cmd.handle(['create-invoice'], { module: 'billing', input: 'CreateInvoiceInput', schema: 'invoice' });
+
+      const filePath = join(tmpDir, 'src', 'lib', 'modules', 'billing', 'application', 'dto', 'CreateInvoiceDto.ts');
+      expect(existsSync(filePath)).toBe(true);
+      const content = readFileSync(filePath, 'utf-8');
+      expect(content).toContain("import type { CreateInvoiceInput } from '$lib/modules/billing/contracts/schemas/invoice.schema.js';");
     });
   });
 
@@ -627,6 +675,7 @@ describe('New project templates', () => {
     expect(skill).toContain('Use controllers for HTTP/API resources');
     expect(skill).toContain('FormRequest validates and authorizes');
     expect(skill).toContain('DTO carries validated data into actions/services');
+    expect(skill).toContain('make:dto');
     expect(skill).toContain('## Hard Stops');
     expect(skill).toContain('Do not implement CRUD directly inside `src/routes/**/+server.ts`');
     expect(skill).toContain('Do not put validation, authorization, persistence, and response shaping all in a SvelteKit action or API route');
@@ -648,6 +697,7 @@ describe('New project templates', () => {
     const agents = NewCommandTemplates.agentsMd();
 
     expect(agents).toContain('For CRUD/API features, start with `npx svelar make:entity');
+    expect(agents).toContain('make:dto');
     expect(agents).toContain('## Hard Stops');
     expect(agents).toContain('Do not implement CRUD directly inside `src/routes/**/+server.ts`');
     expect(agents).toContain('Do not create a write path without a shared schema, FormRequest, DTO');

@@ -64,6 +64,14 @@ npx svelar make:entity Invoice --module=billing --fields "title:string,total:num
 
 This creates the model, contract schema, DTOs, requests, actions, resource, repository, service, controller, and a focused table migration using the layered module layout.
 
+For focused work, use the same layered generators:
+
+```bash
+npx svelar make:schema Invoice --module=billing
+npx svelar make:dto CreateInvoice --module=billing --input=CreateInvoiceInput --schema=invoice
+npx svelar make:request CreateInvoice --module=billing
+```
+
 Use `$lib/...` aliases for app-owned imports across this structure:
 
 ```typescript

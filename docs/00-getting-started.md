@@ -241,6 +241,7 @@ npx svelar make:entity Invoice --module=billing --fields "title:string,total:num
 npx svelar make:model Invoice --module=billing
 npx svelar make:controller Invoice --module=billing
 npx svelar make:schema Invoice --module=billing
+npx svelar make:dto CreateInvoice --module=billing --input=CreateInvoiceInput --schema=invoice
 
 # Create API routes
 npx svelar make:route invoices --api --resource -c InvoiceController

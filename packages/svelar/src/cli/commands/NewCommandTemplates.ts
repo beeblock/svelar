@@ -50,7 +50,7 @@ export class NewCommandTemplates {
 						tailwindcss: "^4.2.2",
 						typescript: "^5.7.0",
 						vite: "^6.0.0",
-						vitest: "^4.1.8",
+						vitest: "^4.1.11",
 						"@playwright/test": "^1.48.0",
 					},
 						dependencies: {
@@ -985,6 +985,8 @@ AUTH_EMAIL_VERIFICATION_REQUIRED=false
 # "sync" runs jobs immediately (dev). "database" uses the svelar_jobs migration.
 # "redis" uses BullMQ for background processing.
 # QUEUE_DRIVER=sync
+# QUEUE_WORKER_CONCURRENCY: Jobs processed in parallel by Redis/BullMQ workers.
+# QUEUE_WORKER_CONCURRENCY=1
 
 # ── Redis ─────────────────────────────────────────────────
 # Required for: BullMQ queue, Redis cache driver, Redis session driver.
@@ -1131,7 +1133,7 @@ coverage/
 
 - Follow the Svelar architecture: route -> controller/page action -> FormRequest/shared schema validation -> DTO -> action/service -> repository -> model/resource -> response.
 - Use Svelar CLI generators before hand-writing artifacts when a generator exists.
-- For CRUD/API features, start with \`npx svelar make:entity ... --crud\` or the focused \`make:controller\`, \`make:request\`, \`make:schema\`, \`make:action\`, \`make:resource\`, \`make:repository\`, and \`make:model\` commands. If you skip a generator, explain the reason before editing files.
+- For CRUD/API features, start with \`npx svelar make:entity ... --crud\` or the focused \`make:controller\`, \`make:request\`, \`make:schema\`, \`make:dto\`, \`make:action\`, \`make:resource\`, \`make:repository\`, and \`make:model\` commands. If you skip a generator, explain the reason before editing files.
 - Use Svelar ORM and migrations. Avoid raw SQL unless it is a low-level driver/infrastructure exception.
 - Keep one migration per table or focused schema change.
 - Use shared schemas for backend validation and frontend forms. Use Superforms where app forms need shared validation.
@@ -1206,7 +1208,7 @@ Use this skill for Svelar app work. Svelar is Laravel-inspired on SvelteKit 2. F
 ## Non-Negotiable Rules
 
 - Use Svelar CLI generators before hand-writing artifacts whenever a generator exists.
-- For CRUD/API features, start with \`npx svelar make:entity ... --crud\` or the focused \`make:controller\`, \`make:request\`, \`make:schema\`, \`make:action\`, \`make:resource\`, \`make:repository\`, and \`make:model\` commands. If you skip a generator, explain the reason before editing files.
+- For CRUD/API features, start with \`npx svelar make:entity ... --crud\` or the focused \`make:controller\`, \`make:request\`, \`make:schema\`, \`make:dto\`, \`make:action\`, \`make:resource\`, \`make:repository\`, and \`make:model\` commands. If you skip a generator, explain the reason before editing files.
 - Use controllers for HTTP/API resources. SvelteKit page server actions may orchestrate page forms, but business workflows still go through FormRequest -> DTO -> action/service.
 - Default flow: route -> controller/page action -> FormRequest/shared schema validation -> DTO -> action -> service -> repository -> model/resource -> response.
 - Use both FormRequest classes and DTOs for write paths. FormRequest validates and authorizes; DTO carries validated data into actions/services.
@@ -1264,6 +1266,7 @@ Use focused generators for individual artifacts:
 - \`npx svelar make:model Invoice --module=billing\`
 - \`npx svelar make:migration create_invoices_table\`
 - \`npx svelar make:schema invoice --module=billing\`
+- \`npx svelar make:dto CreateInvoice --module=billing --input=CreateInvoiceInput --schema=invoice\`
 - \`npx svelar make:request CreateInvoiceRequest --module=billing\`
 - \`npx svelar make:action CreateInvoiceAction --module=billing\`
 - \`npx svelar make:service InvoiceService --module=billing\`

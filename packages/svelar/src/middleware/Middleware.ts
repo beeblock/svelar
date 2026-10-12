@@ -34,6 +34,34 @@ export type NextFunction = () => Promise<Response | void>;
 
 export type MiddlewareHandler = (ctx: MiddlewareContext, next: NextFunction) => Promise<Response | void>;
 
+export type TrustedProxy =
+  | boolean
+  | string[]
+  | ((address: string, ctx: MiddlewareContext) => boolean | Promise<boolean>);
+
+async function resolveClientIp(ctx: MiddlewareContext, trustedProxy: TrustedProxy = false): Promise<string> {
+  const remoteAddress = ctx.event.getClientAddress?.() ?? 'unknown';
+
+  if (!await shouldTrustProxy(remoteAddress, ctx, trustedProxy)) {
+    return remoteAddress;
+  }
+
+  const forwarded = ctx.event.request.headers.get('x-forwarded-for');
+  if (!forwarded) return remoteAddress;
+
+  return forwarded.split(',')[0]?.trim() || remoteAddress;
+}
+
+async function shouldTrustProxy(
+  remoteAddress: string,
+  ctx: MiddlewareContext,
+  trustedProxy: TrustedProxy,
+): Promise<boolean> {
+  if (typeof trustedProxy === 'boolean') return trustedProxy;
+  if (Array.isArray(trustedProxy)) return trustedProxy.includes(remoteAddress);
+  return trustedProxy(remoteAddress, ctx);
+}
+
 // ── Base Middleware Class ───────────────────────────────────
 
 export abstract class Middleware {
@@ -241,6 +269,8 @@ export interface RateLimitOptions {
   cacheStore?: string;
   /** Prefix for rate-limit keys. */
   prefix?: string;
+  /** Whether to trust X-Forwarded-For from a known proxy. Defaults to false. */
+  trustedProxy?: TrustedProxy;
 }
 
 export class RateLimitMiddleware extends Middleware {
@@ -252,6 +282,7 @@ export class RateLimitMiddleware extends Middleware {
   private store: 'memory' | 'cache';
   private cacheStore?: string;
   private prefix: string;
+  private trustedProxy: TrustedProxy;
 
   constructor(options: RateLimitOptions = {}) {
     super();
@@ -262,6 +293,7 @@ export class RateLimitMiddleware extends Middleware {
     this.store = options.store ?? 'memory';
     this.cacheStore = options.cacheStore;
     this.prefix = options.prefix ?? 'rate-limit';
+    this.trustedProxy = options.trustedProxy ?? false;
   }
 
   async handle(ctx: MiddlewareContext, next: NextFunction): Promise<Response | void> {
@@ -270,10 +302,14 @@ export class RateLimitMiddleware extends Middleware {
       ? await this.hitCacheStore(key)
       : this.hitMemoryStore(key);
 
+    const retryAfter = Math.max(1, Math.ceil((resetAt - Date.now()) / 1000));
+    const headers = this.headers(count, resetAt, retryAfter);
+
     if (count > this.maxRequests) {
-      const retryAfter = Math.max(1, Math.ceil((resetAt - Date.now()) / 1000));
       if (this.handler) {
-        return this.handler(ctx, retryAfter);
+        const response = await this.handler(ctx, retryAfter);
+        this.applyHeaders(response, headers);
+        return response;
       }
 
       return new Response(
@@ -282,21 +318,19 @@ export class RateLimitMiddleware extends Middleware {
           status: 429,
           headers: {
             'Content-Type': 'application/json',
-            'Retry-After': String(retryAfter),
+            ...headers,
           },
         }
       );
     }
 
-    return next();
+    const response = await next();
+    this.applyHeaders(response, headers);
+    return response;
   }
 
-  private defaultKey(ctx: MiddlewareContext): string {
-    return (
-      ctx.event.request.headers.get('x-forwarded-for') ??
-      ctx.event.getClientAddress?.() ??
-      'unknown'
-    );
+  private async defaultKey(ctx: MiddlewareContext): Promise<string> {
+    return resolveClientIp(ctx, this.trustedProxy);
   }
 
   private hitMemoryStore(key: string): { count: number; resetAt: number } {
@@ -316,18 +350,29 @@ export class RateLimitMiddleware extends Middleware {
   private async hitCacheStore(key: string): Promise<{ count: number; resetAt: number }> {
     const store = Cache.store(this.cacheStore);
     const cacheKey = `${this.prefix}:${key}`;
-    const now = Date.now();
-    let entry = await store.get<{ count: number; resetAt: number }>(cacheKey);
+    const ttl = Math.max(1, Math.ceil(this.windowMs / 1000));
+    const result = await store.incrementWithTtl(cacheKey, ttl, 1);
+    return {
+      count: result.value,
+      resetAt: result.expiresAt ?? Date.now() + this.windowMs,
+    };
+  }
 
-    if (!entry || now >= entry.resetAt) {
-      entry = { count: 1, resetAt: now + this.windowMs };
-    } else {
-      entry = { count: entry.count + 1, resetAt: entry.resetAt };
+  private headers(count: number, resetAt: number, retryAfter: number): Record<string, string> {
+    return {
+      'X-RateLimit-Limit': String(this.maxRequests),
+      'X-RateLimit-Remaining': String(Math.max(0, this.maxRequests - count)),
+      'X-RateLimit-Reset': String(Math.ceil(resetAt / 1000)),
+      'Retry-After': count > this.maxRequests ? String(retryAfter) : '0',
+    };
+  }
+
+  private applyHeaders(response: Response | void, headers: Record<string, string>): void {
+    if (!(response instanceof Response)) return;
+    for (const [name, value] of Object.entries(headers)) {
+      if (name === 'Retry-After' && value === '0') continue;
+      response.headers.set(name, value);
     }
-
-    const ttl = Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
-    await store.put(cacheKey, entry, ttl);
-    return entry;
   }
 }
 
@@ -737,6 +782,8 @@ export interface ThrottleOptions {
   cacheStore?: string;
   /** Prefix for throttle keys. */
   prefix?: string;
+  /** Whether to trust X-Forwarded-For from a known proxy. Defaults to false. */
+  trustedProxy?: TrustedProxy;
 }
 
 export class ThrottleMiddleware extends Middleware {
@@ -747,6 +794,7 @@ export class ThrottleMiddleware extends Middleware {
   private store: 'memory' | 'cache';
   private cacheStore?: string;
   private prefix: string;
+  private trustedProxy: TrustedProxy;
 
   constructor(options: ThrottleOptions = {}) {
     super();
@@ -756,6 +804,7 @@ export class ThrottleMiddleware extends Middleware {
     this.store = options.store ?? 'memory';
     this.cacheStore = options.cacheStore;
     this.prefix = options.prefix ?? 'throttle';
+    this.trustedProxy = options.trustedProxy ?? false;
   }
 
   async handle(ctx: MiddlewareContext, next: NextFunction): Promise<Response | void> {
@@ -774,6 +823,10 @@ export class ThrottleMiddleware extends Middleware {
   }
 
   async check(ctx: MiddlewareContext): Promise<{ blocked: boolean; retryAfter: number }> {
+    if (this.store === 'cache') {
+      return this.checkCacheStore(await this.keyGenerator(ctx));
+    }
+
     const now = Date.now();
     const key = await this.keyGenerator(ctx);
     const entry = await this.getEntry(key);
@@ -795,6 +848,11 @@ export class ThrottleMiddleware extends Middleware {
   }
 
   async hit(ctx: MiddlewareContext): Promise<void> {
+    if (this.store === 'cache') {
+      await this.hitCacheStore(await this.keyGenerator(ctx));
+      return;
+    }
+
     const now = Date.now();
     const key = await this.keyGenerator(ctx);
     const current = (await this.getEntry(key)) ?? { count: 0, blockedUntil: 0, resetAt: now + this.decayMinutes * 60_000 };
@@ -814,6 +872,15 @@ export class ThrottleMiddleware extends Middleware {
 
   async clear(ctx: MiddlewareContext): Promise<void> {
     const key = await this.keyGenerator(ctx);
+    if (this.store === 'cache') {
+      const store = Cache.store(this.cacheStore);
+      await Promise.all([
+        store.forget(this.cacheKey(key, 'attempts')),
+        store.forget(this.cacheKey(key, 'blocked')),
+      ]);
+      return;
+    }
+
     await this.forgetEntry(key);
   }
 
@@ -838,16 +905,53 @@ export class ThrottleMiddleware extends Middleware {
     return typeof status === 'number' && status >= 400 && status < 500;
   }
 
-  private defaultKey(ctx: MiddlewareContext): string {
-    const ip =
-      ctx.event.request.headers.get('x-forwarded-for') ??
-      ctx.event.getClientAddress?.() ??
-      'unknown';
+  private async defaultKey(ctx: MiddlewareContext): Promise<string> {
+    const ip = await resolveClientIp(ctx, this.trustedProxy);
     return `${ip}:${ctx.event.url.pathname}`;
   }
 
-  private cacheKey(key: string): string {
-    return `${this.prefix}:${key}`;
+  private cacheKey(key: string, part = 'entry'): string {
+    return `${this.prefix}:${part}:${key}`;
+  }
+
+  private async checkCacheStore(key: string): Promise<{ blocked: boolean; retryAfter: number }> {
+    const now = Date.now();
+    const store = Cache.store(this.cacheStore);
+    const blockedUntil = await store.get<number>(this.cacheKey(key, 'blocked'));
+
+    if (blockedUntil && now < blockedUntil) {
+      return { blocked: true, retryAfter: Math.ceil((blockedUntil - now) / 1000) };
+    }
+
+    if (blockedUntil) {
+      await store.forget(this.cacheKey(key, 'blocked'));
+    }
+
+    const count = await store.get<number>(this.cacheKey(key, 'attempts'));
+    if ((count ?? 0) >= this.maxAttempts) {
+      const blockedUntil = now + this.decayMinutes * 60_000;
+      await Promise.all([
+        store.put(this.cacheKey(key, 'blocked'), blockedUntil, this.decayMinutes * 60),
+        store.forget(this.cacheKey(key, 'attempts')),
+      ]);
+      return { blocked: true, retryAfter: this.decayMinutes * 60 };
+    }
+
+    return { blocked: false, retryAfter: 0 };
+  }
+
+  private async hitCacheStore(key: string): Promise<void> {
+    const now = Date.now();
+    const store = Cache.store(this.cacheStore);
+    const ttl = this.decayMinutes * 60;
+    const result = await store.incrementWithTtl(this.cacheKey(key, 'attempts'), ttl, 1);
+
+    if (result.value >= this.maxAttempts) {
+      await Promise.all([
+        store.put(this.cacheKey(key, 'blocked'), now + this.decayMinutes * 60_000, ttl),
+        store.forget(this.cacheKey(key, 'attempts')),
+      ]);
+    }
   }
 
   private async getEntry(key: string): Promise<{ count: number; blockedUntil: number; resetAt: number } | undefined> {

@@ -467,6 +467,12 @@ const entries = await Audit.query()
   .get();
 ```
 
+For ORM models, call `auditable(ModelClass)` once during boot to register a
+model observer. It records `created`, `updated`, `deleted`, `restored`, and
+`forceDeleted` lifecycle events with `getChanges()` / `getPreviousOriginal()`
+diffs, redacts sensitive fields such as passwords and tokens, and includes
+`userId`, `teamId`, and `correlationId` from the Svelar application context.
+
 ## API Key Management
 
 Secure token-based authentication:
@@ -517,6 +523,28 @@ await Teams.invite(team.id, 'member@example.com', 'admin');
 ```
 
 Tables are managed by Svelar core migrations. Teams use `owner`, `admin`, `member`, and `viewer` roles by default; pass `roles` to `Teams.configure()` to allow custom roles. The `owner` role is reserved for the team owner, cannot be assigned through invitations or member updates, and the owner member cannot be removed through `removeMember()`.
+
+Use `Teams.runWithTeam()` for tenant-scoped work. Svelar stores the current
+team in `AsyncLocalStorage`, so concurrent requests, events, and queued jobs do
+not overwrite each other's team context:
+
+```typescript
+import { TenantModel } from '@beeblock/svelar/orm';
+import { Teams } from '@beeblock/svelar/teams';
+
+class Project extends TenantModel {
+  static table = 'projects';
+  static fillable = ['name'];
+}
+
+await Teams.runWithTeam(team.id, async () => {
+  await Project.create({ name: 'Roadmap' }); // team_id is filled automatically
+  const projects = await Project.all();      // WHERE team_id = current team
+});
+```
+
+`TenantModel` fails closed when no team context exists. Use
+`Project.withoutTenantScope()` only for explicit admin/reporting workflows.
 
 ## Email Templates
 

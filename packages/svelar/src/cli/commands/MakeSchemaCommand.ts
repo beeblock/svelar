@@ -24,10 +24,10 @@ export class MakeSchemaCommand extends Command {
       return;
     }
 
-    // Normalize: "User" → "user", "ApiKey" → "api-key"
-    const entityName = rawName.charAt(0).toUpperCase() + rawName.slice(1);
+    // Normalize: "api-key" → "ApiKey", "ApiKey" → "api-key"
+    const entityName = this.toPascalCase(rawName);
     const fileName = this.toKebab(rawName) + '.schema';
-    const moduleName = flags.module || rawName.toLowerCase();
+    const moduleName = flags.module || this.toKebab(entityName);
 
     const moduleDir = this.moduleDir(moduleName, 'schemas', 'schema');
     mkdirSync(moduleDir, { recursive: true });
@@ -137,6 +137,19 @@ export type Update${name}Input = z.infer<typeof update${name}Schema>;
     return str
       .replace(/([a-z])([A-Z])/g, '$1-$2')
       .replace(/([A-Z]+)([A-Z][a-z])/g, '$1-$2')
+      .replace(/[^a-zA-Z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
       .toLowerCase();
+  }
+
+  private toPascalCase(str: string): string {
+    return str
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .replace(/[^a-zA-Z0-9]+/g, ' ')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join('');
   }
 }

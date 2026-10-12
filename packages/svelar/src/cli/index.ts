@@ -10,6 +10,7 @@ export { MakeSeederCommand } from './commands/MakeSeederCommand.js';
 export { MakeServiceCommand } from './commands/MakeServiceCommand.js';
 export { MakeRepositoryCommand } from './commands/MakeRepositoryCommand.js';
 export { MakeActionCommand } from './commands/MakeActionCommand.js';
+export { MakeDtoCommand } from './commands/MakeDtoCommand.js';
 export { MakeRequestCommand } from './commands/MakeRequestCommand.js';
 export { MakePluginCommand } from './commands/MakePluginCommand.js';
 export { MakeTaskCommand } from './commands/MakeTaskCommand.js';

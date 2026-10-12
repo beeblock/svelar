@@ -133,7 +133,7 @@ describe('CLI deployment and utility commands', () => {
 
     expect(compose).toContain('      target: production');
     expect(compose).toContain('  worker:');
-    expect(compose).toContain('command: ["npx", "svelar", "queue:work", "--max-time=3600", "--queue=default"]');
+    expect(compose).toContain('command: ["npx", "svelar", "queue:work", "--queue=default", "--concurrency=${QUEUE_WORKER_CONCURRENCY:-1}"]');
     expect(compose).toContain('  scheduler:');
     expect(compose).toContain('command: ["npx", "svelar", "schedule:run"]');
     expect(compose).toContain('memory: ${WORKER_MEMORY_LIMIT:-512M}');

@@ -10,7 +10,7 @@ Svelar is a Laravel-inspired TypeScript framework on SvelteKit 2. Treat the docs
 ## Non-Negotiable Rules
 
 - Use Svelar CLI generators before hand-writing artifacts whenever a generator exists.
-- For CRUD/API features, start with `npx svelar make:entity ... --crud` or the focused `make:controller`, `make:request`, `make:schema`, `make:action`, `make:resource`, `make:repository`, and `make:model` commands. If you skip a generator, explain the reason before editing files.
+- For CRUD/API features, start with `npx svelar make:entity ... --crud` or the focused `make:controller`, `make:request`, `make:schema`, `make:dto`, `make:action`, `make:resource`, `make:repository`, and `make:model` commands. If you skip a generator, explain the reason before editing files.
 - Do not bypass Svelar architecture with ad hoc page-only logic for real features.
 - Default app flow is: route -> controller/page action -> FormRequest/shared schema validation -> DTO -> action -> service -> repository -> model/resource -> response.
 - Use controllers for HTTP/API resources. SvelteKit page server actions may orchestrate page forms, but business workflows still go through FormRequest -> DTO -> action/service.
@@ -72,6 +72,7 @@ Use focused generators for individual artifacts:
 npx svelar make:model Invoice --module=billing
 npx svelar make:migration create_invoices_table
 npx svelar make:schema invoice --module=billing
+npx svelar make:dto CreateInvoice --module=billing --input=CreateInvoiceInput --schema=invoice
 npx svelar make:request CreateInvoiceRequest --module=billing
 npx svelar make:action CreateInvoiceAction --module=billing
 npx svelar make:service InvoiceService --module=billing

@@ -66,11 +66,17 @@ interface CacheStore {
   has(key: string): Promise<boolean>;
   increment(key: string, amount?: number): Promise<number>;
   decrement(key: string, amount?: number): Promise<number>;
+  incrementWithTtl(key: string, ttl: number, amount?: number): Promise<CacheIncrementResult>;
 }
 
 interface CacheEntry {
   value: any;
   expiresAt: number | null; // null = no expiry
+}
+
+export interface CacheIncrementResult {
+  value: number;
+  expiresAt: number | null;
 }
 
 function isNodeError(error: unknown, code: string): boolean {
@@ -84,6 +90,40 @@ async function unlinkIfExists(path: string): Promise<void> {
     if (!isNodeError(error, 'ENOENT')) throw error;
   }
 }
+
+const REDIS_INCREMENT_SCRIPT = `
+local raw = redis.call('GET', KEYS[1])
+local current = 0
+
+if raw then
+  local ok, decoded = pcall(cjson.decode, raw)
+  if ok and decoded and decoded['value'] ~= nil then
+    current = tonumber(decoded['value']) or 0
+  else
+    current = tonumber(raw) or 0
+  end
+end
+
+local value = current + tonumber(ARGV[1])
+local ttl = tonumber(ARGV[2])
+local existingTtl = redis.call('PTTL', KEYS[1])
+
+if ttl > 0 then
+  if existingTtl > 0 then
+    ttl = existingTtl
+  end
+  redis.call('SET', KEYS[1], cjson.encode({ value = value }), 'PX', ttl)
+  return { value, ttl }
+end
+
+if existingTtl > 0 then
+  redis.call('SET', KEYS[1], cjson.encode({ value = value }), 'PX', existingTtl)
+  return { value, existingTtl }
+end
+
+redis.call('SET', KEYS[1], cjson.encode({ value = value }))
+return { value, -1 }
+`;
 
 // ── Memory Store ───────────────────────────────────────────
 
@@ -138,6 +178,21 @@ class MemoryCacheStore implements CacheStore {
 
   async decrement(key: string, amount: number = 1): Promise<number> {
     return this.increment(key, -amount);
+  }
+
+  async incrementWithTtl(key: string, ttl: number, amount: number = 1): Promise<CacheIncrementResult> {
+    const now = Date.now();
+    const existing = this.store.get(key);
+    const expiresAt = existing?.expiresAt && existing.expiresAt > now
+      ? existing.expiresAt
+      : now + ttl * 1000;
+    const current = existing && (!existing.expiresAt || existing.expiresAt > now)
+      ? Number(existing.value) || 0
+      : 0;
+    const value = current + amount;
+
+    this.store.set(key, { value, expiresAt });
+    return { value, expiresAt };
   }
 }
 
@@ -233,6 +288,30 @@ class FileCacheStore implements CacheStore {
 
   async decrement(key: string, amount: number = 1): Promise<number> {
     return this.increment(key, -amount);
+  }
+
+  async incrementWithTtl(key: string, ttl: number, amount: number = 1): Promise<CacheIncrementResult> {
+    const now = Date.now();
+    const path = this.filePath(key);
+    let entry: CacheEntry | null = null;
+
+    try {
+      entry = JSON.parse(await readFile(path, 'utf-8'));
+    } catch (error) {
+      if (!isNodeError(error, 'ENOENT') && !(error instanceof SyntaxError)) throw error;
+    }
+
+    const expiresAt = entry?.expiresAt && entry.expiresAt > now
+      ? entry.expiresAt
+      : now + ttl * 1000;
+    const current = entry && (!entry.expiresAt || entry.expiresAt > now)
+      ? Number(entry.value) || 0
+      : 0;
+    const value = current + amount;
+
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, JSON.stringify({ value, expiresAt }));
+    return { value, expiresAt };
   }
 }
 
@@ -347,22 +426,33 @@ class RedisCacheStore implements CacheStore {
   async increment(key: string, amount: number = 1): Promise<number> {
     const client = await this.getClient();
     const cacheKey = this.key(key);
-    const [raw, ttlMs] = await Promise.all([client.get(cacheKey), client.pttl(cacheKey)]);
-    const current = raw === null ? 0 : Number(this.safeDeserialize(raw));
-    const newValue = current + amount;
-    const payload = this.serialize(newValue);
-
-    if (ttlMs > 0) {
-      await client.set(cacheKey, payload, 'PX', ttlMs);
-    } else {
-      await client.set(cacheKey, payload);
-    }
-
-    return newValue;
+    const [value] = await client.eval(
+      REDIS_INCREMENT_SCRIPT,
+      1,
+      cacheKey,
+      String(amount),
+      '0',
+    );
+    return Number(value);
   }
 
   async decrement(key: string, amount: number = 1): Promise<number> {
     return this.increment(key, -amount);
+  }
+
+  async incrementWithTtl(key: string, ttl: number, amount: number = 1): Promise<CacheIncrementResult> {
+    const client = await this.getClient();
+    const cacheKey = this.key(key);
+    const [value, ttlMs] = await client.eval(
+      REDIS_INCREMENT_SCRIPT,
+      1,
+      cacheKey,
+      String(amount),
+      String(Math.max(1, Math.ceil(ttl)) * 1000),
+    );
+
+    const expiresAt = ttlMs > 0 ? Date.now() + Number(ttlMs) : null;
+    return { value: Number(value), expiresAt };
   }
 
   private safeDeserialize(raw: string): any {
@@ -384,6 +474,7 @@ class NullCacheStore implements CacheStore {
   async has(): Promise<boolean> { return false; }
   async increment(): Promise<number> { return 0; }
   async decrement(): Promise<number> { return 0; }
+  async incrementWithTtl(): Promise<CacheIncrementResult> { return { value: 0, expiresAt: null }; }
 }
 
 // ── Cache Manager ──────────────────────────────────────────
@@ -430,6 +521,9 @@ class CacheManager {
   async has(key: string): Promise<boolean> { return this.store().has(key); }
   async increment(key: string, amount?: number): Promise<number> { return this.store().increment(key, amount); }
   async decrement(key: string, amount?: number): Promise<number> { return this.store().decrement(key, amount); }
+  async incrementWithTtl(key: string, ttl: number, amount?: number): Promise<CacheIncrementResult> {
+    return this.store().incrementWithTtl(key, ttl, amount);
+  }
 
   /**
    * Get or compute a cached value

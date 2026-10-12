@@ -28,6 +28,7 @@ import { HasOne, HasMany, BelongsTo, BelongsToMany } from './Relationship.js';
 import { type ModelObserver, type ModelEventName, MODEL_EVENTS } from './Observer.js';
 import { Event } from '../events/index.js';
 import { ulid, uuidv7 } from '../support/uuid.js';
+import { ApplicationContext } from '../support/Context.js';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -42,6 +43,10 @@ export interface ModelHooks {
   saved?: (model: Model) => Promise<void> | void;
   deleting?: (model: Model) => Promise<void> | void;
   deleted?: (model: Model) => Promise<void> | void;
+  restoring?: (model: Model) => Promise<void> | void;
+  restored?: (model: Model) => Promise<void> | void;
+  forceDeleting?: (model: Model) => Promise<void> | void;
+  forceDeleted?: (model: Model) => Promise<void> | void;
 }
 
 // ── Model Base Class ───────────────────────────────────────
@@ -89,6 +94,15 @@ export class Model {
   /** Database connection name (null = default) */
   static connection: string | undefined = undefined;
 
+  /** Whether queries should be scoped to the current team/tenant context */
+  static tenantScoped: boolean = false;
+
+  /** Tenant/team column name used by tenant-scoped models */
+  static tenantColumn: string = 'team_id';
+
+  /** Whether tenant-scoped queries should fail without a current tenant */
+  static requireTenantContext: boolean = true;
+
   /** Registered model hooks */
   private static hooks: Map<string, ModelHooks> = new Map();
 
@@ -102,6 +116,8 @@ export class Model {
 
   private attributes: ModelAttributes = {};
   private originalAttributes: ModelAttributes = {};
+  private previousOriginalAttributes: ModelAttributes = {};
+  private changedAttributes: ModelAttributes = {};
   private relations: Record<string, any> = {};
   private exists: boolean = false;
 
@@ -214,6 +230,15 @@ export class Model {
     return (this as any).query().with(...relations);
   }
 
+  static withoutTenantScope<T extends Model>(this: new () => T): QueryBuilder<T> {
+    return (this as any).query().withoutTenantScope();
+  }
+
+  static forTenant<T extends Model>(this: new () => T, teamId: string | number): QueryBuilder<T> {
+    const ctor = this as unknown as typeof Model;
+    return (this as any).query().withoutTenantScope().where(ctor.tenantColumn, teamId);
+  }
+
   static withTrashed<T extends Model>(this: new () => T): QueryBuilder<T> {
     return (this as any).query().withTrashed();
   }
@@ -238,6 +263,7 @@ export class Model {
     const ctor = this as unknown as typeof Model;
     instance.fill(attributes);
     instance.populateUniqueIds();
+    instance.applyTenantAttributes();
 
     // Run creating hook
     await instance.fireHook('creating');
@@ -258,11 +284,12 @@ export class Model {
       instance.setAttribute(ctor.primaryKey, id);
     }
 
-    instance.syncOriginal();
     instance.exists = true;
 
+    instance.captureChanges();
     await instance.fireHook('created');
     await instance.fireHook('saved');
+    instance.syncOriginal();
 
     return instance as T;
   }
@@ -282,19 +309,20 @@ export class Model {
       }
 
       const dirty = this.getDirty();
+      this.captureChanges();
       if (Object.keys(dirty).length > 0) {
         const pk = this.getAttribute(ctor.primaryKey);
         const qb = new QueryBuilder(ctor.table, this.constructor, ctor.connection);
         await qb.where(ctor.primaryKey, pk).update(dirty);
       }
 
-      this.syncOriginal();
-
       await this.fireHook('updated');
       await this.fireHook('saved');
+      this.syncOriginal();
     } else {
       // Insert (delegate to static create)
       this.populateUniqueIds();
+      this.applyTenantAttributes();
 
       await this.fireHook('creating');
       await this.fireHook('saving');
@@ -315,11 +343,12 @@ export class Model {
         this.setAttribute(ctor.primaryKey, id);
       }
 
-      this.syncOriginal();
       this.exists = true;
 
+      this.captureChanges();
       await this.fireHook('created');
       await this.fireHook('saved');
+      this.syncOriginal();
     }
   }
 
@@ -339,18 +368,21 @@ export class Model {
       const deletedAt = new Date().toISOString();
       await qb.where(ctor.primaryKey, pk).update({ [ctor.deletedAt]: deletedAt });
       this.setAttribute(ctor.deletedAt, deletedAt);
-      this.syncOriginal();
+      this.captureChanges();
     } else {
       await qb.where(ctor.primaryKey, pk).delete();
       this.exists = false;
+      this.captureChanges();
     }
 
     await this.fireHook('deleted');
+    this.syncOriginal();
   }
 
   async forceDelete(): Promise<void> {
     const ctor = this.constructor as typeof Model;
 
+    await this.fireHook('forceDeleting');
     await this.fireHook('deleting');
 
     const pk = this.getAttribute(ctor.primaryKey);
@@ -358,8 +390,11 @@ export class Model {
     await qb.withTrashed().where(ctor.primaryKey, pk).forceDelete();
 
     this.exists = false;
+    this.captureChanges();
 
     await this.fireHook('deleted');
+    await this.fireHook('forceDeleted');
+    this.syncOriginal();
   }
 
   async restore(): Promise<void> {
@@ -370,11 +405,14 @@ export class Model {
 
     const pk = this.getAttribute(ctor.primaryKey);
     const qb = new QueryBuilder(ctor.table, this.constructor, ctor.connection);
+    await this.fireHook('restoring');
     await qb.withTrashed().where(ctor.primaryKey, pk).update({ [ctor.deletedAt]: null });
 
     this.setAttribute(ctor.deletedAt, null);
-    this.syncOriginal();
+    this.captureChanges();
     this.exists = true;
+    await this.fireHook('restored');
+    this.syncOriginal();
   }
 
   trashed(): boolean {
@@ -452,6 +490,15 @@ export class Model {
     return { ...this.originalAttributes };
   }
 
+  getPreviousOriginal(key?: string): any {
+    if (key) return this.previousOriginalAttributes[key];
+    return { ...this.previousOriginalAttributes };
+  }
+
+  getChanges(): ModelAttributes {
+    return { ...this.changedAttributes };
+  }
+
   getDirty(): ModelAttributes {
     const dirty: ModelAttributes = {};
     for (const [key, value] of Object.entries(this.attributes)) {
@@ -473,7 +520,8 @@ export class Model {
   }
 
   wasChanged(...keys: string[]): boolean {
-    return this.isDirty(...keys);
+    if (keys.length === 0) return Object.keys(this.changedAttributes).length > 0;
+    return keys.some((k) => k in this.changedAttributes);
   }
 
   // ── Relationships ────────────────────────────────────────
@@ -568,6 +616,8 @@ export class Model {
     const instance = new this();
     instance.attributes = { ...row };
     instance.syncOriginal();
+    instance.previousOriginalAttributes = {};
+    instance.changedAttributes = {};
     instance.exists = true;
     return instance;
   }
@@ -651,6 +701,11 @@ export class Model {
     this.originalAttributes = { ...this.attributes };
   }
 
+  private captureChanges(): void {
+    this.previousOriginalAttributes = { ...this.originalAttributes };
+    this.changedAttributes = this.getDirty();
+  }
+
   private getInsertableAttributes(): ModelAttributes {
     const ctor = this.constructor as typeof Model;
     const attrs = { ...this.attributes };
@@ -661,6 +716,24 @@ export class Model {
     }
 
     return attrs;
+  }
+
+  private applyTenantAttributes(): void {
+    const ctor = this.constructor as typeof Model;
+    if (!ctor.tenantScoped || this.getAttribute(ctor.tenantColumn) !== undefined) {
+      return;
+    }
+
+    const teamId = ApplicationContext.get<string | number | null>('teamId');
+    if (teamId === undefined || teamId === null || teamId === '') {
+      if (!ctor.requireTenantContext) return;
+      throw new Error(
+        `Tenant context is required for model "${ctor.name}". ` +
+        'Wrap the operation in Teams.runWithTeam(...) or call withoutTenantScope() explicitly.',
+      );
+    }
+
+    this.setAttribute(ctor.tenantColumn, teamId);
   }
 
   /** Getter-based table name accessor (for relationship classes) */
@@ -689,4 +762,10 @@ export function generateUuidV7(): string {
 
 export function generateUlid(): string {
   return ulid();
+}
+
+export class TenantModel extends Model {
+  static tenantScoped = true;
+  static tenantColumn = 'team_id';
+  static requireTenantContext = true;
 }

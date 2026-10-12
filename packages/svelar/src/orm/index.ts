@@ -1,4 +1,4 @@
-export { Model, generateUlid, generateUuidV7, type ModelAttributes, type ModelHooks } from './Model.js';
+export { Model, TenantModel, generateUlid, generateUuidV7, type ModelAttributes, type ModelHooks } from './Model.js';
 export { SoftDeletes } from './SoftDeletes.js';
 export { HasUlids, HasUuids } from './UniqueIds.js';
 export { QueryBuilder, type WhereOperator, type OrderDirection, type JoinType } from './QueryBuilder.js';

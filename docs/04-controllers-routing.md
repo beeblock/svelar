@@ -429,6 +429,10 @@ export class AdminController extends Controller {
 
 Controllers can throw errors that are automatically caught and formatted:
 
+Svelar only formats Svelar controller errors. If a controller throws SvelteKit's
+`error(...)` or `redirect(...)`, `handle()` rethrows it so SvelteKit keeps its
+native error and redirect behavior.
+
 ```typescript
 import { Controller, ValidationError, NotFoundError, UnauthorizedError, ForbiddenError } from '@beeblock/svelar/routing';
 

@@ -119,6 +119,8 @@ Common project-local commands:
 npx svelar make:entity Post --module=posts --fields "title:string,body:text,published:boolean" --crud
 npx svelar make:model User
 npx svelar make:migration create_posts_table
+npx svelar make:schema Post --module=posts
+npx svelar make:dto CreatePost --module=posts --input=CreatePostInput --schema=post
 npx svelar make:controller PostController
 npx svelar make:request CreatePostRequest
 npx svelar make:resource PostResource

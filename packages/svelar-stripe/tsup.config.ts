@@ -11,7 +11,7 @@ export default defineConfig({
   dts: false,
   splitting: false,
   clean: true,
-  target: 'node20',
+  target: 'node22',
   sourcemap: false,
   minify: true,
   external: [

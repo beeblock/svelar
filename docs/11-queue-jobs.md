@@ -516,9 +516,21 @@ npx svelar queue:work --max-time=3600
 # Adjust polling interval (ms)
 npx svelar queue:work --sleep=2000
 
+# Process Redis/BullMQ jobs concurrently
+npx svelar queue:work --concurrency=5
+
+# Tune BullMQ lock and stalled-job detection windows (ms)
+npx svelar queue:work --lock-duration=45000 --stalled-interval=30000
+
 # Process a single job and exit
 npx svelar queue:work --once
 ```
+
+Without `--once` or `--max-jobs`, `queue:work` starts one long-lived worker
+process. Redis queues use one native BullMQ Worker instead of an application
+polling loop, so concurrency, locks, retries, backoff, and stalled-job detection
+stay inside BullMQ. `--max-jobs` and `--once` are intended for tests, one-off
+maintenance commands, and finite certification checks.
 
 ### Programmatic Usage
 

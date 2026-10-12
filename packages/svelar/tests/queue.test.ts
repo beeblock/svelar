@@ -7,6 +7,7 @@ import { svelarCoreMigrations } from '../src/database/CoreMigrations.js';
 import { Migrator } from '../src/database/Migration.js';
 import { Queue, Job, QueueRetryAllError } from '../src/queue/index';
 import { JobMonitor } from '../src/queue/JobMonitor.js';
+import { Teams } from '../src/teams/index.js';
 
 describe('Queue and Job Processing', () => {
   beforeEach(() => {
@@ -241,6 +242,25 @@ describe('Queue and Job Processing', () => {
       await Queue.work({ maxJobs: 1 });
 
       expect(handled).toBe(true);
+    });
+
+    it('should restore the dispatch tenant context while processing queued jobs', async () => {
+      let handledTeam: string | number | null = null;
+
+      class ContextJob extends Job {
+        async handle(): Promise<void> {
+          handledTeam = Teams.getCurrentTeam();
+        }
+      }
+
+      await Teams.runWithTeam('team-from-dispatch', async () => {
+        await Queue.dispatch(new ContextJob());
+      });
+      Teams.setCurrentTeam('worker-default');
+
+      await Queue.work({ maxJobs: 1 });
+
+      expect(handledTeam).toBe('team-from-dispatch');
     });
 
     it('should support job delays', async () => {

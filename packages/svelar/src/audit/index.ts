@@ -7,6 +7,7 @@ import { randomUUID } from 'crypto';
 import { singleton } from '../support/singleton.js';
 import { assertSqlIdentifier } from '../database/Connection.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
+import { ApplicationContext } from '../support/Context.js';
 
 export interface AuditEntry {
   id: string;
@@ -40,6 +41,7 @@ export interface AuditConfig {
   table?: string;
   enabled?: boolean;
   exclude?: string[]; // model types to exclude
+  redact?: string[];
 }
 
 class AuditManager {
@@ -48,7 +50,7 @@ class AuditManager {
   private maxEntries = 10000;
 
   configure(config: AuditConfig): void {
-    this.config = config;
+    this.config = { ...this.config, ...config };
   }
 
   private table(): string {
@@ -81,8 +83,9 @@ class AuditManager {
     if (!this.config.enabled) return;
     if (this.config.exclude?.includes(entry.modelType)) return;
 
+    const normalized = this.normalizeEntry(entry);
     const auditEntry: AuditEntry = {
-      ...entry,
+      ...normalized,
       id: randomUUID(),
       timestamp: Date.now(),
     };
@@ -102,14 +105,29 @@ class AuditManager {
         action: auditEntry.action,
         model_type: auditEntry.modelType,
         model_id: String(auditEntry.modelId),
-        old_values: auditEntry.oldValues ? JSON.stringify(auditEntry.oldValues) : null,
-        new_values: auditEntry.newValues ? JSON.stringify(auditEntry.newValues) : null,
+      old_values: auditEntry.oldValues ? JSON.stringify(this.redact(auditEntry.oldValues)) : null,
+      new_values: auditEntry.newValues ? JSON.stringify(this.redact(auditEntry.newValues)) : null,
         metadata: auditEntry.metadata ? JSON.stringify(auditEntry.metadata) : null,
         ip_address: auditEntry.ipAddress ?? null,
         user_agent: auditEntry.userAgent ?? null,
         timestamp: auditEntry.timestamp,
       });
     }
+  }
+
+  normalizeEntry(entry: Omit<AuditEntry, 'id' | 'timestamp'>): Omit<AuditEntry, 'id' | 'timestamp'> {
+    const context = ApplicationContext.snapshot();
+    return {
+      ...entry,
+      userId: entry.userId ?? context.userId ?? null,
+      oldValues: entry.oldValues ? this.redact(entry.oldValues) : undefined,
+      newValues: entry.newValues ? this.redact(entry.newValues) : undefined,
+      metadata: {
+        ...(entry.metadata ?? {}),
+        ...(context.teamId !== undefined && context.teamId !== null ? { teamId: context.teamId } : {}),
+        ...(context.correlationId ? { correlationId: context.correlationId } : {}),
+      },
+    };
   }
 
   async query(filter: AuditFilter): Promise<AuditEntry[]> {
@@ -219,11 +237,76 @@ class AuditManager {
       byModel,
     };
   }
+
+  private redact(values: Record<string, any>): Record<string, any> {
+    const keys = new Set(this.config.redact ?? ['password', 'password_hash', 'token', 'secret', 'api_key']);
+    return Object.fromEntries(
+      Object.entries(values).map(([key, value]) => [
+        key,
+        keys.has(key) ? '[redacted]' : value,
+      ]),
+    );
+  }
 }
 
 // Helper: auditable() decorator/mixin for models
 // Usage: const User = auditable(BaseUser);
 export function auditable(target: any): any {
+  if (typeof target.observe === 'function') {
+    target.observe({
+      async created(model: any) {
+        await Audit.log(Audit.normalizeEntry({
+          userId: null,
+          action: 'created',
+          modelType: target.name,
+          modelId: model.getAttribute?.(target.primaryKey ?? 'id') ?? model.id,
+          newValues: model.getChanges?.() ?? model.getAttributes?.(),
+        }));
+      },
+      async updated(model: any) {
+        const changes = model.getChanges?.() ?? {};
+        const previous = model.getPreviousOriginal?.() ?? {};
+        await Audit.log(Audit.normalizeEntry({
+          userId: null,
+          action: 'updated',
+          modelType: target.name,
+          modelId: model.getAttribute?.(target.primaryKey ?? 'id') ?? model.id,
+          oldValues: Object.fromEntries(Object.keys(changes).map((key) => [key, previous[key]])),
+          newValues: changes,
+        }));
+      },
+      async deleted(model: any) {
+        await Audit.log(Audit.normalizeEntry({
+          userId: null,
+          action: 'deleted',
+          modelType: target.name,
+          modelId: model.getAttribute?.(target.primaryKey ?? 'id') ?? model.id,
+          oldValues: model.getPreviousOriginal?.() ?? model.getOriginal?.(),
+        }));
+      },
+      async restored(model: any) {
+        await Audit.log(Audit.normalizeEntry({
+          userId: null,
+          action: 'restored',
+          modelType: target.name,
+          modelId: model.getAttribute?.(target.primaryKey ?? 'id') ?? model.id,
+          oldValues: model.getPreviousOriginal?.(),
+          newValues: model.getChanges?.(),
+        }));
+      },
+      async forceDeleted(model: any) {
+        await Audit.log(Audit.normalizeEntry({
+          userId: null,
+          action: 'forceDeleted',
+          modelType: target.name,
+          modelId: model.getAttribute?.(target.primaryKey ?? 'id') ?? model.id,
+          oldValues: model.getPreviousOriginal?.() ?? model.getOriginal?.(),
+        }));
+      },
+    });
+    return target;
+  }
+
   // Returns a proxy class that auto-logs create/update/delete via hooks
   const originalCreate = target.create || target.insert;
   const originalUpdate = target.update;
@@ -232,13 +315,13 @@ export function auditable(target: any): any {
   if (originalCreate) {
     target.create = async function (data: any) {
       const instance = await originalCreate.call(this, data);
-      await Audit.log({
+      await Audit.log(Audit.normalizeEntry({
         userId: null,
         action: 'created',
         modelType: target.name,
         modelId: instance.id,
         newValues: data,
-      });
+      }));
       return instance;
     };
   }
@@ -246,13 +329,13 @@ export function auditable(target: any): any {
   if (originalUpdate) {
     target.update = async function (id: any, data: any) {
       const instance = await originalUpdate.call(this, id, data);
-      await Audit.log({
+      await Audit.log(Audit.normalizeEntry({
         userId: null,
         action: 'updated',
         modelType: target.name,
         modelId: id,
         newValues: data,
-      });
+      }));
       return instance;
     };
   }
@@ -260,12 +343,12 @@ export function auditable(target: any): any {
   if (originalDelete) {
     target.delete = async function (id: any) {
       const result = await originalDelete.call(this, id);
-      await Audit.log({
+      await Audit.log(Audit.normalizeEntry({
         userId: null,
         action: 'deleted',
         modelType: target.name,
         modelId: id,
-      });
+      }));
       return result;
     };
   }

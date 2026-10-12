@@ -592,6 +592,11 @@ const original = user.getOriginal('name');
 
 // Save only writes dirty attributes to the database
 await user.save();
+
+user.isDirty();            // false — original state has been synced
+user.wasChanged('name');   // true — changed during the last save
+user.getChanges();         // { name: 'New Name' }
+user.getPreviousOriginal('name'); // 'Old Name'
 ```
 
 ## Debug: Inspect SQL

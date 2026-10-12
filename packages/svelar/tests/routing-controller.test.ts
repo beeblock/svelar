@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { error as svelteKitError, redirect as svelteKitRedirect } from '@sveltejs/kit';
 import {
   Controller,
   ValidationError,
@@ -79,6 +80,14 @@ class TestController extends Controller {
 
   async throwForbidden() {
     throw new ForbiddenError('No access');
+  }
+
+  async throwSvelteKitError() {
+    throw svelteKitError(404, 'Missing from SvelteKit');
+  }
+
+  async throwSvelteKitRedirect() {
+    throw svelteKitRedirect(303, '/login');
   }
 
   async throwValidation() {
@@ -202,6 +211,24 @@ describe('Controller', () => {
       const handler = ctrl.handle('throwForbidden');
       const res = await handler(createEvent());
       expect(res.status).toBe(403);
+    });
+
+    it('should preserve SvelteKit thrown errors', async () => {
+      const handler = ctrl.handle('throwSvelteKitError');
+
+      await expect(handler(createEvent())).rejects.toMatchObject({
+        status: 404,
+        body: { message: 'Missing from SvelteKit' },
+      });
+    });
+
+    it('should preserve SvelteKit thrown redirects', async () => {
+      const handler = ctrl.handle('throwSvelteKitRedirect');
+
+      await expect(handler(createEvent())).rejects.toMatchObject({
+        status: 303,
+        location: '/login',
+      });
     });
 
     it('should handle ValidationError', async () => {

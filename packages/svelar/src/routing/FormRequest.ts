@@ -39,9 +39,23 @@
  */
 
 import { z, type ZodTypeAny } from 'zod';
+import type { BaseIssue, BaseSchema, BaseSchemaAsync, InferOutput } from 'valibot';
 import type { RequestEvent } from './Controller.js';
 
-type FormRequestSchema = ZodTypeAny | unknown;
+export type FormRequestSchema =
+  | ZodTypeAny
+  | BaseSchema<unknown, unknown, BaseIssue<unknown>>
+  | BaseSchemaAsync<unknown, unknown, BaseIssue<unknown>>
+  | unknown;
+
+export type InferFormRequestOutput<TSchema> =
+  TSchema extends ZodTypeAny ? z.infer<TSchema>
+    : TSchema extends BaseSchema<unknown, unknown, BaseIssue<unknown>> | BaseSchemaAsync<unknown, unknown, BaseIssue<unknown>>
+      ? InferOutput<TSchema>
+      : unknown;
+
+export type FormRequestValidated<TRequest> =
+  TRequest extends FormRequest<any, infer TOutput> ? TOutput : never;
 
 type NormalizedValidationIssue = {
   path: string;
@@ -92,12 +106,15 @@ async function parseSchema(schema: FormRequestSchema, data: unknown): Promise<No
 
 // ── Form Request Base ──────────────────────────────────────
 
-export abstract class FormRequest {
+export abstract class FormRequest<
+  TSchema extends FormRequestSchema = FormRequestSchema,
+  TOutput = InferFormRequestOutput<TSchema>,
+> {
   /**
    * Define the validation rules. Return a Zod schema by default, or a Valibot schema
    * when the app was scaffolded with Valibot.
    */
-  abstract rules(): FormRequestSchema;
+  abstract rules(): TSchema;
 
   /**
    * Determine if the user is authorized to make this request.
@@ -125,8 +142,8 @@ export abstract class FormRequest {
   /**
    * Transform data after validation (optional).
    */
-  passedValidation(data: any): any {
-    return data;
+  passedValidation(data: InferFormRequestOutput<TSchema>): TOutput | Promise<TOutput> {
+    return data as TOutput;
   }
 
   /**
@@ -173,7 +190,7 @@ export abstract class FormRequest {
   static async validate<T extends FormRequest>(
     this: new () => T,
     event: RequestEvent
-  ): Promise<any> {
+  ): Promise<FormRequestValidated<T>> {
     const instance = new this();
 
     // Authorization check
@@ -217,7 +234,7 @@ export abstract class FormRequest {
       instance.failedValidation(errors);
     }
 
-    return instance.passedValidation((result as { success: true; data: any }).data);
+    return instance.passedValidation((result as { success: true; data: any }).data) as Promise<FormRequestValidated<T>>;
   }
 }
 

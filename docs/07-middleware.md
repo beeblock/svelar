@@ -196,6 +196,7 @@ new RateLimitMiddleware({
   windowMs: 60_000,     // Time window in milliseconds (1 minute)
   store: 'cache',        // optional: 'memory' (default) or 'cache'
   cacheStore: 'redis',   // optional: Cache store name when using store: 'cache'
+  trustedProxy: ['10.0.0.10'], // optional: proxies allowed to set X-Forwarded-For
   keyGenerator: (ctx) => ctx.event.getClientAddress(), // Custom key
   handler: (ctx, retryAfter) => {
     return new Response('Too many requests', {
@@ -206,7 +207,7 @@ new RateLimitMiddleware({
 })
 ```
 
-The default in-memory store is suitable for local development and single-process apps. For production apps running multiple Node instances, configure the Redis cache store and use `rateLimitStore: 'cache'` in `createSvelarApp()` or `store: 'cache'` on `RateLimitMiddleware`.
+The default in-memory store is suitable for local development and single-process apps. For production apps running multiple Node instances, configure the Redis cache store and use `rateLimitStore: 'cache'` in `createSvelarApp()` or `store: 'cache'` on `RateLimitMiddleware`. Cache-backed limits use `Cache.incrementWithTtl()` so Redis counters are incremented atomically and keep a stable window TTL. `X-Forwarded-For` is ignored unless `trustedProxy` is explicitly enabled.
 
 ### ThrottleMiddleware
 
@@ -218,10 +219,11 @@ new ThrottleMiddleware({
   decayMinutes: 1,
   store: 'cache',       // optional: 'memory' (default) or 'cache'
   cacheStore: 'redis',
+  trustedProxy: ['10.0.0.10'],
 })
 ```
 
-Use `authThrottleStore: 'cache'` in `createSvelarApp()` for shared named auth throttles across production app instances. Scaffolded auth pages and API auth routes also read `RATE_LIMIT_STORE=cache` and `RATE_LIMIT_CACHE_STORE=redis`, so browser form submissions and API requests share production-safe throttling.
+Use `authThrottleStore: 'cache'` in `createSvelarApp()` for shared named auth throttles across production app instances. Scaffolded auth pages and API auth routes also read `RATE_LIMIT_STORE=cache` and `RATE_LIMIT_CACHE_STORE=redis`, so browser form submissions and API requests share production-safe throttling. Cache-backed throttles use atomic increments for failed attempts.
 
 ### LoggingMiddleware
 

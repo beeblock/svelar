@@ -125,6 +125,9 @@ npx @beeblock/svelar new my-app                  # scaffold with shadcn-svelte +
 npx svelar update                      # update scaffold files without overwriting
 npx svelar make:entity Invoice --module billing --fields "title:string,total:number" --crud
 npx svelar make:model Post -m -c       # model + migration + controller
+npx svelar make:schema Invoice --module billing
+npx svelar make:dto CreateInvoice --module billing --input CreateInvoiceInput --schema invoice
+npx svelar make:request CreateInvoice --module billing
 npx svelar make:service PaymentService # service class
 npx svelar make:job SendEmail          # queue job
 npx svelar make:task CleanupTokens     # scheduled task
@@ -166,7 +169,7 @@ npm install mysql2
 
 ## Requirements
 
-- Node.js >= 20
+- Node.js >= 22
 - SvelteKit >= 2.0
 
 ## License

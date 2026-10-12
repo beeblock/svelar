@@ -15,15 +15,16 @@ export class MakeRequestCommand extends Command {
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
-    const name = args[0];
-    if (!name) {
+    const rawName = args[0];
+    if (!rawName) {
       this.error('Please provide a request name.');
       return;
     }
 
+    const name = this.toPascalCase(rawName);
     const requestName = name.endsWith('Request') ? name : `${name}Request`;
     const baseName = requestName.replace(/Request$/, '');
-    const moduleName = flags.module || baseName.toLowerCase();
+    const moduleName = flags.module || this.toKebabCase(baseName);
     if (!flags.module && this.isDDD()) {
       this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
     }
@@ -102,5 +103,25 @@ export class ${requestName} extends FormRequest {
     writeFileSync(filePath, content);
     const relDir = this.moduleRelDir(moduleName, 'dtos', 'request');
     this.success(`Request created: ${relDir}/${requestName}.ts`);
+  }
+
+  private toPascalCase(str: string): string {
+    return str
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .replace(/[^a-zA-Z0-9]+/g, ' ')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join('');
+  }
+
+  private toKebabCase(str: string): string {
+    return str
+      .replace(/([a-z])([A-Z])/g, '$1-$2')
+      .replace(/([A-Z]+)([A-Z][a-z])/g, '$1-$2')
+      .replace(/[^a-zA-Z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .toLowerCase();
   }
 }

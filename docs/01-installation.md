@@ -4,7 +4,7 @@ Get a new Svelar project up and running in minutes.
 
 ## System Requirements
 
-- **Node.js**: 20.0.0 or higher
+- **Node.js**: 22.0.0 or higher
 - **npm**: 10.0.0 or higher (or pnpm, yarn)
 - **Docker**: Recommended for production (optional for development)
 
@@ -212,7 +212,7 @@ This generates:
 
 | File | Description |
 |------|-------------|
-| `Dockerfile` | Multi-stage Node 20 Alpine adapter-node build that runs `node build/index.js` and includes app source/config for CLI runtime tasks |
+| `Dockerfile` | Multi-stage Node 22 Alpine adapter-node build that runs `node build/index.js` and includes app source/config for CLI runtime tasks |
 | `docker-compose.yml` | Web app + queue worker + scheduler + PgBouncer/PostgreSQL + Redis + Soketi + Gotenberg + RustFS |
 | `scripts/svelar-dev-runtime.mjs` | Runs local worker/scheduler commands against Docker services with safe host ports |
 | `.dockerignore` | Excludes node_modules, .env, build artifacts |
@@ -362,6 +362,7 @@ npx svelar make:controller User --module=auth   # interface/http/controllers
 npx svelar make:service Billing --module=billing --crud # CRUD Service
 npx svelar make:repository User --module=auth   # infrastructure/repositories
 npx svelar make:action CreateUser --module=auth --dto --request --schema  # action + boundaries
+npx svelar make:dto CreateUser --module=auth --input=CreateUserInput --schema=user  # application/dto
 npx svelar make:request StoreUser --module=auth  # interface/http/requests
 npx svelar make:resource User --module=auth     # interface/http/resources
 npx svelar make:schema User --module=auth       # contracts/schemas
