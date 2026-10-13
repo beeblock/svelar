@@ -43,6 +43,8 @@ describe('HTTP utilities', () => {
 
     expect(getCsrfToken()).toBe('abc 123');
     expect(getCsrfToken('missing')).toBeNull();
+    (globalThis as any).document.cookie = 'XSRF-TOKEN=%malformed';
+    expect(getCsrfToken()).toBeNull();
   });
 
   it('attaches CSRF and JSON headers for mutation requests', async () => {
@@ -67,6 +69,14 @@ describe('HTTP utilities', () => {
     expect(headers.get('X-CSRF-Token')).toBe('test-token');
     expect(headers.get('Content-Type')).toBe('application/json');
     expect(headers.get('Accept')).toBe('application/json');
+  });
+
+  it.each(['https://external.example/api', '//external.example/api', 'https://user:password@external.example/api'])('does not forward browser CSRF cookies to %s', async (url) => {
+    (globalThis as any).document = { cookie: 'XSRF-TOKEN=private-browser-token' };
+    const fetch = vi.fn(async () => new Response('{}', { headers: { 'Content-Type': 'application/json' } }));
+    globalThis.fetch = fetch as any;
+    await apiFetch(url, { method: 'POST', body: '{}' });
+    expect(new Headers(fetch.mock.calls[0][1]?.headers).has('X-CSRF-Token')).toBe(false);
   });
 
   it('shows registered toasts for validation and network errors', async () => {
@@ -99,6 +109,25 @@ describe('HTTP utilities', () => {
       title: 'Network Error',
       opts: { description: 'Unable to connect. Check your internet connection.' },
     });
+  });
+
+  it('reads resource-envelope error metadata without duplicating an inline form toast', async () => {
+    const toasts: unknown[] = [];
+    registerToast((...args) => { toasts.push(args); });
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ data: null, meta: { message: 'Invalid input', errors: { email: ['Required'] } } }),
+      { status: 422, headers: { 'Content-Type': 'application/json' } })) as any;
+    const result = await apiFetchJson('/api/proof', { showToast: false });
+    expect(result.error).toMatchObject({ message: 'Invalid input', status: 422, errors: { email: ['Required'] } });
+    expect(toasts).toEqual([]);
+    await apiFetch('/api/proof');
+    expect(toasts).toEqual([['warning', 'The submitted data is invalid.', { description: 'email: Required' }]]);
+  });
+
+  it.each([null, [], { data: null, meta: { message: {}, errors: { invalid: [null, 5] } } }])('handles malformed error metadata without throwing (%j)', async (body) => {
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify(body), { status: 422, headers: { 'Content-Type': 'application/json' } })) as any;
+    const result = await apiFetchJson('/api/proof', { showToast: false });
+    expect(result.status).toBe(422); expect(result.error?.message).toBe('The submitted data is invalid.');
+    expect(result.error?.errors).toBeUndefined();
   });
 
   it('returns typed JSON success, JSON errors, text success, and network failures', async () => {

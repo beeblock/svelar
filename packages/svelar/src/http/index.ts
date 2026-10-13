@@ -132,7 +132,7 @@ export async function apiFetch(url: string, options: ApiFetchOptions = {}): Prom
   const headers = new Headers(fetchOptions.headers);
 
   // Attach CSRF token for mutation requests
-  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && isSameOriginRequest(url)) {
     const token = getCsrfToken(csrfCookieName);
     if (token) {
       headers.set(csrfHeaderName, token);
@@ -198,10 +198,11 @@ export async function apiFetchJson<T = any>(url: string, options: ApiFetchOption
       if (response.ok) {
         data = json as T;
       } else {
+        const fields = responseErrorFields(json);
         error = {
-          message: json.message ?? DEFAULT_ERROR_MESSAGES[response.status] ?? 'An error occurred',
+          message: fields.message ?? DEFAULT_ERROR_MESSAGES[response.status] ?? 'An error occurred',
           status: response.status,
-          errors: json.errors,
+          errors: fields.errors,
           details: json,
         };
       }
@@ -229,6 +230,28 @@ export async function apiFetchJson<T = any>(url: string, options: ApiFetchOption
 
 // ── Error Response Handler ────────────────────────────────
 
+function isSameOriginRequest(target: string): boolean {
+  try {
+    const base = typeof window !== 'undefined' ? window.location.href : 'http://svelar.invalid/';
+    const url = new URL(target, base);
+    return !url.username && !url.password && url.origin === new URL(base).origin;
+  } catch { return false; }
+}
+
+function responseErrorFields(body: unknown): { message?: string; errors?: Record<string, string[]> } {
+  const record = (value: unknown): Record<string, unknown> | undefined => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+  const envelope = record(body);
+  if (!envelope) return {};
+  const meta = record(envelope.meta);
+  const message = meta?.message ?? envelope.message;
+  const rawErrors = record(meta?.errors ?? envelope.errors);
+  const errors = rawErrors ? Object.fromEntries(Object.entries(rawErrors).slice(0, 512).flatMap(([field, value]) => {
+    const messages = typeof value === 'string' ? [value] : Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+    return messages.length ? [[field, messages]] : [];
+  })) : undefined;
+  return { ...(typeof message === 'string' && message ? { message } : {}), ...(errors && Object.keys(errors).length ? { errors } : {}) };
+}
+
 async function handleErrorResponse(response: Response, messages: Record<number, string>) {
   let serverMessage = '';
 
@@ -236,11 +259,12 @@ async function handleErrorResponse(response: Response, messages: Record<number, 
     const contentType = response.headers.get('content-type') ?? '';
     if (contentType.includes('application/json')) {
       const body = await response.clone().json();
-      serverMessage = body.message ?? '';
+      const fields = responseErrorFields(body);
+      serverMessage = fields.message ?? '';
 
       // Validation errors — show field-level details
-      if (response.status === 422 && body.errors) {
-        const fieldErrors = Object.entries(body.errors as Record<string, string[]>)
+      if (response.status === 422 && fields.errors) {
+        const fieldErrors = Object.entries(fields.errors)
           .map(([field, msgs]) => `${field}: ${(msgs as string[]).join(', ')}`)
           .slice(0, 3)
           .join('\n');
@@ -273,7 +297,8 @@ export function getCsrfToken(cookieName = 'XSRF-TOKEN'): string | null {
   if (typeof document === 'undefined') return null;
   const escaped = cookieName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const match = document.cookie.match(new RegExp(`(?:^|;\\s*)${escaped}=([^;]*)`));
-  return match ? decodeURIComponent(match[1]) : null;
+  try { return match ? decodeURIComponent(match[1]) : null; }
+  catch { return null; }
 }
 
 /**
