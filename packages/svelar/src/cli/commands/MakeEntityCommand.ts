@@ -3,8 +3,9 @@
  */
 
 import { Command, type ModuleArtifactKind } from '../Command.js';
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { CapabilityScaffold, capabilityFlags, type CapabilityDecision } from '../CapabilityScaffold.js';
 
 type Field = {
   name: string;
@@ -23,6 +24,7 @@ export class MakeEntityCommand extends Command {
     { name: 'crud', description: 'Generate update/delete actions and controller methods', type: 'boolean' as const },
     { name: 'no-migration', description: 'Skip migration generation', type: 'boolean' as const },
     { name: 'controller', description: 'Controller class name (defaults to the entity name)', type: 'string' as const },
+    ...capabilityFlags,
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
@@ -48,6 +50,12 @@ export class MakeEntityCommand extends Command {
       this.artifactPath(this.containedPath(join(process.cwd(), 'src', 'lib'), 'database', 'migrations'),
         migrationFileName);
     }
+    const decision = CapabilityScaffold.decision(flags, { route: `/${this.toKebabCase(this.pluralize(name))}` });
+    const plan = CapabilityScaffold.prepare(moduleName, name, decision, flags.crud ? ['create', 'update', 'delete'] : ['create']);
+    const controllerName = flags.controller ? this.toPascalCase(flags.controller).replace(/Controller$/, '') + 'Controller' : `${name}Controller`;
+    const controllerPath = this.artifactPath(this.moduleDir(moduleName, 'controllers', 'controller'), `${controllerName}.ts`);
+    const controller = this.controllerContent(moduleName, name, Boolean(flags.crud), decision, plan.accessAlias, flags.controller);
+    if (!decision.public && existsSync(controllerPath) && readFileSync(controllerPath, 'utf8') !== controller) throw new Error('Existing controller differs from the protected scaffold. Review its guards before regenerating.');
 
     if (!flags.module && this.isDDD()) {
       this.warn(`No --module specified. Using "${moduleName}" as module. Consider: --module ${moduleName}`);
@@ -61,11 +69,13 @@ export class MakeEntityCommand extends Command {
     this.writeActions(moduleName, name, Boolean(flags.crud));
     this.writeRequests(moduleName, name, Boolean(flags.crud));
     this.writeResource(moduleName, name, fields);
-    this.writeController(moduleName, name, Boolean(flags.crud), flags.controller);
+    this.writeModuleFile(moduleName, 'controllers', 'controller', `${controllerName}.ts`, controller);
 
     if (migrationFileName) {
       this.writeMigration(name, fields, migrationFileName);
     }
+    plan.commit();
+    if (!decision.public) this.info('Run migrations and seed:run CapabilitySeeder; user-role assignments remain an explicit provisioning decision.');
   }
 
   private writeModel(moduleName: string, name: string, fields: Field[]): void {
@@ -444,13 +454,15 @@ ${fields.map((field) => `      ${field.name}: this.data.${field.name}${field.kin
 `);
   }
 
-  private writeController(moduleName: string, name: string, crud: boolean, requestedController?: string): void {
+  private controllerContent(moduleName: string, name: string, crud: boolean, decision: CapabilityDecision, accessAlias: string, requestedController?: string): string {
     const controllerName = requestedController ? this.toPascalCase(requestedController).replace(/Controller$/, '') + 'Controller' : `${name}Controller`;
     const servicePath = this.moduleImportPath(moduleName, 'controller', 'service', `${name}Service`);
     const resourcePath = this.moduleImportPath(moduleName, 'controller', 'resource', `${name}Resource`);
     const actionsPath = this.moduleImportPath(moduleName, 'controller', 'action', `${name}Actions`);
     const requestsPath = this.moduleImportPath(moduleName, 'controller', 'request', `${name}Requests`);
-    let content = `import { Controller, type RequestEvent } from '@beeblock/svelar/routing';
+    const authorize = (action?: string) => decision.public ? '' : `    await capabilityAccess.authorize('${action ? `action.${decision.resource}.${action}` : `screen.${decision.resource}.view`}', resolveCapabilityInput(event));\n`;
+    let content = `${decision.public ? '// svelar:public - functional RBAC exemption only; authentication and resource policies remain.\n' : ''}import { Controller, type RequestEvent } from '@beeblock/svelar/routing';
+${decision.public ? '' : `import { capabilityAccess, resolveCapabilityInput } from '${accessAlias}';\n`}
 import { ${name}Service } from '${servicePath}';
 import { ${name}Resource } from '${resourcePath}';
 import { Create${name}Action${crud ? `, Delete${name}Action, Update${name}Action` : ''} } from '${actionsPath}';
@@ -463,17 +475,20 @@ const deleteAction = new Delete${name}Action();
 ` : ''}
 export class ${controllerName} extends Controller {
   async index(event: RequestEvent) {
+${authorize()}
     const items = await service.list();
     return ${name}Resource.collection(items).toResponse();
   }
 
   async store(event: RequestEvent) {
+${authorize('create')}
     const dto = await Create${name}Request.validate(event);
     const item = await createAction.run(dto);
     return ${name}Resource.make(item).status(201).toResponse();
   }
 
   async show(event: RequestEvent) {
+${authorize()}
     const item = await service.find(Number(event.params.id));
     return ${name}Resource.make(item).toResponse();
   }
@@ -482,12 +497,14 @@ export class ${controllerName} extends Controller {
     if (crud) {
       content += `
   async update(event: RequestEvent) {
+${authorize('update')}
     const dto = await Update${name}Request.validate(event);
     const item = await updateAction.run(dto);
     return ${name}Resource.make(item).toResponse();
   }
 
   async destroy(event: RequestEvent) {
+${authorize('delete')}
     const dto = await Delete${name}Request.validate(event);
     await deleteAction.run(dto);
     return this.noContent();
@@ -497,7 +514,7 @@ export class ${controllerName} extends Controller {
 
     content += `}
 `;
-    this.writeModuleFile(moduleName, 'controllers', 'controller', `${controllerName}.ts`, content);
+    return content;
   }
 
   private writeMigration(name: string, fields: Field[], fileName: string): void {

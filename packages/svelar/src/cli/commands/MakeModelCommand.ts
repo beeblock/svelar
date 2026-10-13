@@ -4,6 +4,7 @@
 
 import { Command } from '../Command.js';
 import { MakeEntityCommand } from './MakeEntityCommand.js';
+import { capabilityFlags } from '../CapabilityScaffold.js';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -17,6 +18,7 @@ export class MakeModelCommand extends Command {
     { name: 'resource', alias: 'r', description: 'Create a resource controller', type: 'boolean' as const },
     { name: 'all', alias: 'a', description: 'Create model, migration, and controller', type: 'boolean' as const },
     { name: 'module', description: 'Module name (e.g. auth, billing)', type: 'string' as const },
+    ...capabilityFlags,
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
@@ -37,6 +39,7 @@ export class MakeModelCommand extends Command {
       await command.handle([name], {
         module: moduleName, crud: Boolean(flags.resource || flags.all),
         'no-migration': !Boolean(flags.migration || flags.all),
+        public: flags.public, capability: flags.capability, scope: flags.scope, 'screen-route': flags['screen-route'],
       });
       this.exitCode = command.exitCode;
       return;

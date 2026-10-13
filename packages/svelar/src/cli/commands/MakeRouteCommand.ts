@@ -6,8 +6,9 @@
  */
 
 import { Command } from '../Command.js';
-import { writeFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { CapabilityScaffold, capabilityFlags, type CapabilityDecision } from '../CapabilityScaffold.js';
 
 export class MakeRouteCommand extends Command {
   name = 'make:route';
@@ -19,6 +20,8 @@ export class MakeRouteCommand extends Command {
     { name: 'api', description: 'Prefix path with /api', type: 'boolean' as const },
     { name: 'methods', alias: 'm', description: 'HTTP methods (comma-separated: GET,POST,PUT,DELETE)', type: 'string' as const },
     { name: 'module', description: 'Module name for controller import path', type: 'string' as const },
+    ...capabilityFlags,
+    { name: 'permission', description: 'Existing canonical capability for a custom non-resource route', type: 'string' as const },
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
@@ -29,63 +32,36 @@ export class MakeRouteCommand extends Command {
     }
 
     // Normalize path
+    if (typeof rawPath !== 'string' || rawPath.length > 1024 || rawPath.startsWith('//')) throw new Error('Route must be a bounded relative SvelteKit path.');
     let routePath = rawPath.replace(/^\//, '');
+    if (!routePath || routePath.split('/').some((part) => !/^(?:[A-Za-z][A-Za-z0-9_-]*|\([A-Za-z][A-Za-z0-9_-]*\)|\[(?:\.\.\.)?[A-Za-z][A-Za-z0-9_]*(?:=[A-Za-z][A-Za-z0-9_]*)?\]|\[\[[A-Za-z][A-Za-z0-9_]*\]\])$/.test(part))) throw new Error('Route contains traversal, control characters or unsupported segments.');
     if (flags.api && !routePath.startsWith('api/')) {
       routePath = 'api/' + routePath;
     }
 
-    const controllerName = flags.controller || this.inferControllerName(routePath);
+    let controllerName = this.generatorName(flags.controller || this.inferControllerName(routePath), flags)!;
+    if (!controllerName.endsWith('Controller')) controllerName += 'Controller';
     const moduleName = flags.module || this.detectControllerModule(controllerName) || this.inferModuleName(routePath);
-
-    if (flags.resource) {
-      this.generateResourceRoutes(routePath, controllerName, moduleName);
-    } else {
-      this.generateRoute(routePath, controllerName, moduleName, flags.methods);
+    this.moduleDir(moduleName, 'controllers', 'controller');
+    if (flags.resource && flags.permission !== undefined) throw new Error('Resource routes require --capability or --public, not one broad --permission.');
+    const logicalRoute = '/' + routePath.replace(/^api\//, '').split('/').filter((part) => !part.startsWith('(')).join('/');
+    const decision = CapabilityScaffold.decision(flags, { route: logicalRoute }, true);
+    const methodList: string[] = flags.methods ? String(flags.methods).split(',').map((method) => method.trim().toUpperCase()) : ['GET'];
+    if (methodList.some((method) => !['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'].includes(method))) throw new Error('Unsupported HTTP method.');
+    const specifications = flags.resource ? [
+      { path: routePath, bindings: [{ method: 'GET', handler: 'index' }, { method: 'POST', handler: 'store' }] },
+      { path: `${routePath}/[${this.inferParamName(routePath)}]`, bindings: [{ method: 'GET', handler: 'show' }, { method: 'PUT', handler: 'update' }, { method: 'DELETE', handler: 'destroy' }] },
+    ] : [{ path: routePath, bindings: [...new Set(methodList)].map((method) => ({ method, handler: this.defaultHandler(method) })) }];
+    for (const specification of specifications) this.containedPath(join(process.cwd(), 'src/routes'), ...specification.path.split('/'), '+server.ts');
+    const actions = specifications.flatMap((specification) => specification.bindings.map((binding) => this.actionName(binding.handler)).filter((action): action is string => !!action));
+    const plan = CapabilityScaffold.prepare(moduleName, controllerName.replace(/Controller$/, ''), decision, actions);
+    for (const specification of specifications) {
+      const path = this.containedPath(join(process.cwd(), 'src/routes'), ...specification.path.split('/'), '+server.ts');
+      const expected = this.routeContent(controllerName, moduleName, specification.bindings, decision, plan.accessAlias);
+      if (!decision.public && existsSync(path) && readFileSync(path, 'utf8') !== expected) throw new Error('Existing route differs from the protected scaffold. Review its guard before regenerating.');
     }
-  }
-
-  private generateResourceRoutes(routePath: string, controllerName: string, moduleName: string): void {
-    // Collection route: GET (index) + POST (store)
-    this.generateRouteFile(
-      routePath,
-      controllerName,
-      moduleName,
-      [
-        { method: 'GET', handler: 'index' },
-        { method: 'POST', handler: 'store' },
-      ],
-    );
-
-    // Single resource route: GET (show) + PUT (update) + DELETE (destroy)
-    const paramName = this.inferParamName(routePath);
-    this.generateRouteFile(
-      `${routePath}/[${paramName}]`,
-      controllerName,
-      moduleName,
-      [
-        { method: 'GET', handler: 'show' },
-        { method: 'PUT', handler: 'update' },
-        { method: 'DELETE', handler: 'destroy' },
-      ],
-    );
-  }
-
-  private generateRoute(
-    routePath: string,
-    controllerName: string,
-    moduleName: string,
-    methods?: string,
-  ): void {
-    const methodList = methods
-      ? methods.split(',').map((m) => m.trim().toUpperCase())
-      : ['GET'];
-
-    const bindings = methodList.map((method) => ({
-      method,
-      handler: this.defaultHandler(method),
-    }));
-
-    this.generateRouteFile(routePath, controllerName, moduleName, bindings);
+    for (const specification of specifications) this.generateRouteFile(specification.path, controllerName, moduleName, specification.bindings, decision, plan.accessAlias);
+    plan.commit();
   }
 
   private generateRouteFile(
@@ -93,8 +69,10 @@ export class MakeRouteCommand extends Command {
     controllerName: string,
     moduleName: string,
     bindings: { method: string; handler: string }[],
+    decision: CapabilityDecision,
+    accessAlias: string,
   ): void {
-    const routesDir = join(process.cwd(), 'src', 'routes', ...routePath.split('/'));
+    const routesDir = this.containedPath(join(process.cwd(), 'src/routes'), ...routePath.split('/'));
     mkdirSync(routesDir, { recursive: true });
 
     const filePath = join(routesDir, '+server.ts');
@@ -103,23 +81,28 @@ export class MakeRouteCommand extends Command {
       return;
     }
 
-    const importPath = this.moduleAliasPath(moduleName, 'controllers', `${controllerName}.js`, 'controller');
-
-    const exports = bindings
-      .map((b) => `export const ${b.method} = ctrl.handle('${b.handler}');`)
-      .join('\n');
-
-    const content = `import { ${controllerName} } from '${importPath}';
-
-const ctrl = new ${controllerName}();
-${exports}
-`;
+    const content = this.routeContent(controllerName, moduleName, bindings, decision, accessAlias);
 
     writeFileSync(filePath, content);
     this.success(`Route created: src/routes/${routePath}/+server.ts`);
     for (const b of bindings) {
       this.info(`  ${b.method} /${routePath} → ${controllerName}.${b.handler}()`);
     }
+  }
+
+  private actionName(handler: string): string | undefined { return ({ store: 'create', update: 'update', destroy: 'delete' } as Record<string, string>)[handler]; }
+
+  private routeContent(controllerName: string, moduleName: string, bindings: { method: string; handler: string }[], decision: CapabilityDecision, accessAlias: string): string {
+    const importPath = this.moduleAliasPath(moduleName, 'controllers', `${controllerName}.js`, 'controller');
+    return `${decision.public ? '// svelar:public - functional RBAC exemption only; authentication and resource policies remain.\n' : ''}import { ${controllerName} } from '${importPath}';
+${decision.public ? '' : `import { capabilityAccess, resolveCapabilityInput } from '${accessAlias}';\n`}
+const ctrl = new ${controllerName}();
+${bindings.map((binding) => {
+  const action = this.actionName(binding.handler);
+  const capability = decision.permission ?? (action ? `action.${decision.resource}.${action}` : `screen.${decision.resource}.view`);
+  return `export const ${binding.method} = ${decision.public ? `ctrl.handle('${binding.handler}')` : `capabilityAccess.guardEndpoint('${capability}', ctrl.handle('${binding.handler}'), resolveCapabilityInput)`};`;
+}).join('\n')}
+`;
   }
 
   private inferControllerName(routePath: string): string {
@@ -164,8 +147,7 @@ ${exports}
     }
 
     if (matches.length > 1) {
-      this.warn(`Controller ${controllerName} exists in multiple modules (${matches.join(', ')}). Using "${matches[0]}".`);
-      return matches[0];
+      throw new Error(`Controller ${controllerName} exists in multiple modules (${matches.join(', ')}); choose an explicit --module.`);
     }
 
     return undefined;

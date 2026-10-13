@@ -48,7 +48,7 @@ async function generate(root: string, validation: string, ddd: boolean, name = '
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   try {
     process.chdir(root);
-    await new MakeEntityCommand().handle([name], { module: 'billing', fields: name === 'Invoice' ? fields : 'title:string', crud, controller: `${name}Api` });
+    await new MakeEntityCommand().handle([name], { public: true, module: 'billing', fields: name === 'Invoice' ? fields : 'title:string', crud, controller: `${name}Api` });
     if (name === 'Invoice') {
       await new MakeResourceCommand().handle(['InvoiceSummary'], { module: 'billing', model: name, collection: true });
     }

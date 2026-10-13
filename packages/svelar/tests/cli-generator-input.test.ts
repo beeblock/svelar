@@ -120,7 +120,7 @@ describe('Generator input preflight', () => {
       ];
       for (const [commandName, name, flags] of collisions) {
         const command = generators.find((generator) => generator.name === commandName)!;
-        await expect(command.handle([name], flags)).rejects.toThrow(/identifier|Name/);
+        await expect(command.handle([name], { public: true, ...flags })).rejects.toThrow(/identifier|Name/);
         expect(snapshot(sandbox)).toEqual(before);
       }
     });
@@ -128,7 +128,7 @@ describe('Generator input preflight', () => {
     it('normalizes kebab names to valid identifiers across all generators', async () => {
       setup(ddd);
       for (const command of generators) {
-        const flags: Record<string, unknown> = command.flags.some((flag) => flag.name === 'module') ? { module: 'billing' } : {};
+        const flags: Record<string, unknown> = command.flags.some((flag) => flag.name === 'module') ? { module: 'billing', public: true } : { public: true };
         if (command.name === 'make:observer') flags.model = 'Invoice';
         await command.handle(['api-key'], flags);
       }
@@ -156,7 +156,7 @@ describe('Generator input preflight', () => {
       mkdirSync(dirname(schema), { recursive: true });
       symlinkSync(outside, schema, 'dir');
       const before = snapshot(sandbox);
-      await expect(new MakeEntityCommand().handle(['Invoice'], { module: 'billing' })).rejects.toThrow(/symlink/);
+      await expect(new MakeEntityCommand().handle(['Invoice'], { public: true, module: 'billing' })).rejects.toThrow(/symlink/);
       await expect(new MakeActionCommand().handle(['CreateInvoice'], { module: 'billing', schema: true })).rejects.toThrow(/symlink/);
       expect(snapshot(sandbox)).toEqual(before);
       expect(readdirSync(outside)).toEqual([]);
@@ -196,7 +196,7 @@ describe('Generator input preflight', () => {
     const clock = vi.spyOn(Date.prototype, 'toISOString')
       .mockReturnValueOnce('2030-01-01T00:00:01.000Z')
       .mockReturnValue('2030-01-01T00:00:02.000Z');
-    await new MakeEntityCommand().handle(['Invoice'], {});
+    await new MakeEntityCommand().handle(['Invoice'], { public: true });
     expect(clock).toHaveBeenCalledTimes(1);
     expect(readdirSync(join(project, 'src/lib/database/migrations'))).toEqual(['20300101000001_create_invoices_table.ts']);
   });
