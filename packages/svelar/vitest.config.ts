@@ -3,7 +3,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
-    maxWorkers: 4,
+    maxWorkers: 1,
     testTimeout: 15000,
     coverage: {
       provider: 'v8',

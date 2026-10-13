@@ -598,7 +598,7 @@ function smokeApp(target, tarballPath) {
 
 	if (!skipTests) {
 		section(`Testing ${target.name}`);
-		run('npm', ['run', 'test'], { cwd: appDir, env });
+		run('npm', ['run', 'test', '--', '--maxWorkers=1'], { cwd: appDir, env });
 	}
 
 	if (!skipBuild) {
