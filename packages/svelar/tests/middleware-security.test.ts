@@ -134,14 +134,14 @@ describe('CsrfMiddleware', () => {
     expect((result as Response).status).toBe(419);
   });
 
-  it('exempts only verified Bearer authentication', async () => {
+  it.each(['Bearer some-jwt-token', 'bearer some-jwt-token', 'BEARER some-jwt-token'])('exempts only verified Bearer authentication (%s)', async (authorization) => {
     const csrf = new CsrfMiddleware();
     const stack = new MiddlewareStack();
     stack.use(csrf);
 
     const ctx = createCtx({
       method: 'POST',
-      headers: { authorization: 'Bearer some-jwt-token' },
+      headers: { authorization },
     });
     ctx.event.locals.authenticatedVia = 'bearer';
     const result = await stack.execute(ctx, async () => new Response('ok'));

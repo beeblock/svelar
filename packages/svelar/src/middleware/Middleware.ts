@@ -476,7 +476,7 @@ export class CsrfMiddleware extends Middleware {
 
     // AuthenticateMiddleware must run first; a caller-supplied header is not proof of token auth.
     const authHeader = event.request.headers.get('authorization') ?? '';
-    if (authHeader.startsWith('Bearer ') && event.locals.authenticatedVia === 'bearer') {
+    if (/^Bearer\s+\S+$/i.test(authHeader) && event.locals.authenticatedVia === 'bearer') {
       return next();
     }
 
@@ -606,7 +606,7 @@ export class OriginMiddleware extends Middleware {
 
     // Only verified credential auth, never session auth with an arbitrary Bearer header.
     const authHeader = event.request.headers.get('authorization') ?? '';
-    if (authHeader.startsWith('Bearer ') && event.locals.authenticatedVia === 'bearer') {
+    if (/^Bearer\s+\S+$/i.test(authHeader) && event.locals.authenticatedVia === 'bearer') {
       return next();
     }
 
