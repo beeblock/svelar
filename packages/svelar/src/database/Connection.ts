@@ -368,7 +368,7 @@ class ConnectionManager {
           const name = `svelar_${++this.savepointId}`;
           const sql = async (statement: string) => {
             if (driver === 'sqlite') client.exec(statement);
-            else await client.execute(statement);
+            else await client.query(statement);
           };
           await sql(`SAVEPOINT ${name}`);
           try { result = await run(client); await sql(`RELEASE SAVEPOINT ${name}`); }

@@ -48,6 +48,24 @@ describe.sequential('Connection.withSavepointIfNeeded', () => {
     await Connection.disconnect();
   });
 
+  it('uses MySQL text protocol for nested savepoint control statements', async () => {
+    const client = {
+      beginTransaction: vi.fn(async () => {}), commit: vi.fn(async () => {}), rollback: vi.fn(async () => {}), release: vi.fn(),
+      query: vi.fn(async (_sql: string) => []), execute: vi.fn(async () => { throw new Error('ER_UNSUPPORTED_PS'); }),
+    };
+    vi.spyOn(Connection, 'rawClient').mockResolvedValueOnce({ getConnection: async () => client });
+    await Connection.transaction(async () => {
+      expect(await Connection.transaction(async () => 42, 'mysql')).toBe(42);
+      await expect(Connection.transaction(async () => { throw new Error('nested failure'); }, 'mysql')).rejects.toThrow('nested failure');
+    }, 'mysql');
+    expect(client.execute).not.toHaveBeenCalled();
+    expect(client.query.mock.calls.map(([sql]) => sql.replace(/svelar_\d+/g, 'savepoint'))).toEqual([
+      'SAVEPOINT savepoint', 'RELEASE SAVEPOINT savepoint', 'SAVEPOINT savepoint',
+      'ROLLBACK TO SAVEPOINT savepoint', 'RELEASE SAVEPOINT savepoint',
+    ]);
+    expect(client.commit).toHaveBeenCalledOnce(); expect(client.rollback).not.toHaveBeenCalled(); expect(client.release).toHaveBeenCalledOnce();
+  });
+
   it.each(['sqlite', 'mysql', 'mysql2', 'postgres', 'postgresql'] as const)(
     'calls directly outside a transaction without acquiring a client (%s)', async (driver: DatabaseDriverAlias) => {
       Connection.configure({ default: 'main', connections: { main: { driver } } });
