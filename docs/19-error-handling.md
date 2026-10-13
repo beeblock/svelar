@@ -462,7 +462,9 @@ export const { handle, handleError } = createSvelarApp({
 });
 ```
 
-Unexpected errors are logged with an `incidentId`, request URL, method, status, and the active Svelar context (`requestId`, `correlationId`, `tenantId`, `actorId`, `jobId` when present). In production responses, Svelar returns a safe message plus the incident ID and never exposes stack traces. Structured HTTP errors in `dontReport` are returned with their normal status and are not logged by default.
+Unexpected errors are logged with an `incidentId`, request origin/path (not sensitive query strings), method, status, and the active Svelar context (`requestId`, `correlationId`, `tenantId`, `actorId`, `jobId` when present). In production responses, Svelar returns a safe message plus the incident ID and never exposes stack traces. Structured HTTP errors in `dontReport` are returned with their normal status and are not logged by default.
+
+`Controller.handle()` uses the current request's same configured ErrorHandler, including asynchronous `report`, `render` and `onError` callbacks. Concurrent Svelar apps keep their handlers isolated. Native SvelteKit HTTP errors and redirects retain their control flow before generic incident reporting. Custom controller `handleError` overrides must allow `Response | Promise<Response>` and return or await `super.handleError(error, event)` for unknown failures; do not replace that path with a raw console dump or an unreported generic 500. If the configured log backend fails, the handler emits a bounded incident fallback without the original exception or request secrets and still attempts the configured reporter.
 
 ## Next Steps
 

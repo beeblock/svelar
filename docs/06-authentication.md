@@ -22,6 +22,12 @@ export { AuthManager };
 
 The `appUrl` and `appName` are used for generating email links (password reset, email verification) and email template content.
 
+## Model Identity
+
+AuthManager reads the configured model's `primaryKey`, not a hardcoded `id` or a caller-supplied shadow property. Session/JWT/refresh subjects, API-token owners, OTP/federation login, audit/context identity, password updates and email verification support integer, UUID v7, ULID and custom-named primary keys. Invalid or missing identities cannot create a session or an allowed authentication audit event. Verification links encode opaque identifiers safely.
+
+For a custom User key, use app-owned migrations to give every actual `user_id` reference the matching type, including auth token/verification, API-key, membership and plugin tables. Changing a Model's `primaryKey` does not migrate existing columns or foreign keys; the default scaffold remains integer-keyed. Do not convert a real foreign key to text while its referenced key remains an integer.
+
 ## Account Eligibility
 
 Account status is application-owned. Opt in to the columns and policies present on your user model; add those columns through your application's migrations, never at authentication runtime:

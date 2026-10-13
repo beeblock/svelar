@@ -93,6 +93,7 @@ Factories generate model instances with sensible defaults. Extend the `Factory<T
 
 ```typescript
 import { Factory } from '@beeblock/svelar/testing';
+import { Hash } from '@beeblock/svelar/hashing';
 import { User } from '$lib/modules/auth/domain/models/User';
 
 export class UserFactory extends Factory<User> {
@@ -100,11 +101,12 @@ export class UserFactory extends Factory<User> {
     return User;
   }
 
-  definition() {
+  async definition() {
+    const sequence = this.sequence;
     return {
-      name: `User ${this.sequence}`,
-      email: `user${this.sequence}@test.com`,
-      password_hash: 'hashed',
+      name: `User ${sequence}`,
+      email: `user${sequence}@test.com`,
+      password: await Hash.make('test-only-password'),
       role: 'user',
     };
   }
@@ -124,11 +126,15 @@ const user = await UserFactory.create({ name: 'Alice' });
 const users = await UserFactory.createMany(5, { role: 'admin' });
 
 // Make without persisting (in-memory only)
-const user = UserFactory.make({ name: 'Bob' });
+const user = await UserFactory.makeAsync({ name: 'Bob' });
 
 // Make multiple without persisting
-const users = UserFactory.makeMany(3);
+const users = await UserFactory.makeManyAsync(3);
 ```
+
+`definition()` may return attributes or a Promise of attributes. `create` and `createMany` await the definition before persistence. `makeAsync` and `makeManyAsync` await it without saving; many-item operations preserve sequence order. Synchronous `make`/`makeMany` remain available for synchronous definitions, but reject asynchronous definitions instead of constructing empty models. Store actual hashes in the configured password column, never a placeholder `password_hash: 'hashed'` for the default User.
+
+New apps include real authentication tests backed by isolated migrations, the generated User factory, password hashing, FormRequests, DTOs and actions. They exercise valid/invalid credentials, safe return paths, throttling, recovery, OTP and session behavior with the selected Zod/Valibot schemas. Browser tests check inline errors and password clearing; custom business workflows still need app-owned acceptance tests.
 
 ### Generating Factories
 
@@ -421,6 +427,33 @@ await withWebhookInbox(WebhookInbox, async (inbox) => {
 ```
 
 The harness exposes receipt/rejection records, bounded operations and `find`. Invalid signatures still fail before storage. SQLite tests do not prove PostgreSQL/MySQL locking or BullMQ recovery; run the installed real-driver certification profiles for those claims.
+
+### Real Worker Recovery Harness
+
+`QueueRecoveryHarness` and `withQueueRecovery` exercise public shared Redis/database adapters with a caller-owned isolated consumer. They do not create tables, reset connections, replace queue configuration or manipulate BullMQ private keys. Provision the test database/Redis service and migrate before entering the callback. The consumer fixture must honor the supplied `AbortSignal` and own its process IDs; never kill an unrelated developer worker.
+
+```typescript
+import { Queue } from '@beeblock/svelar/queue';
+import { withQueueRecovery } from '@beeblock/svelar/testing';
+
+// consumer is the test's owned-process fixture; jobId came from dispatching its registered test job.
+await withQueueRecovery({
+  adapter: Queue.adapter('billing', 'redis'),
+  start: (signal) => consumer.start(signal),
+  stop: (signal) => consumer.stop(signal),
+  kill: (signal) => consumer.kill(signal),
+}, async (recovery) => {
+  await recovery.start();
+  await recovery.waitForJob(jobId, { status: 'active', lock: 'observed' });
+  await recovery.kill();
+  await recovery.start();
+  await recovery.waitForJob(jobId, { status: 'completed', stalledCountAtLeast: 1 });
+  const timeline = await recovery.timeline(jobId, 100);
+  expect(timeline.length).toBeGreaterThan(0);
+}, { timeoutMs: 60_000, scopeTimeoutMs: 120_000 });
+```
+
+Every operation must be awaited inside the callback. The harness installs an isolated ApplicationContext, bounds polling/operations, propagates failures and aborts, and always attempts owned-consumer cleanup with a fresh signal. Redis replacement workers perform native stalled recovery; `recover()` is database-only. SQL queues normally delete completed rows, so use `waitForMissing()` rather than inventing a retained completed job. `get`, `waitForJob` and `timeline` preserve the adapter's connection/queue scope. A fake adapter or callbacks are not evidence of native process recovery.
 
 ## E2E Tests with Playwright
 
