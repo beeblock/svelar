@@ -10,6 +10,8 @@
 import { Command } from '../Command.js';
 import { NewCommandTemplates as T, type ValidationProvider } from './NewCommandTemplates.js';
 import { MakeDashboardCommand } from './MakeDashboardCommand.js';
+import { UiPatternTemplates } from './UiPatternTemplates.js';
+import { CapabilityScaffold } from '../CapabilityScaffold.js';
 
 async function chooseValidationProvider(raw: unknown): Promise<ValidationProvider> {
   const value = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
@@ -54,7 +56,7 @@ export class NewCommand extends Command {
   ];
 
   async handle(args: string[], flags: Record<string, any>): Promise<void> {
-    const { join, resolve } = await import('node:path');
+    const { basename, join, resolve } = await import('node:path');
     const { existsSync, mkdirSync, writeFileSync } = await import('node:fs');
     const { execSync } = await import('node:child_process');
 
@@ -64,6 +66,8 @@ export class NewCommand extends Command {
     }
 
     const projectDir = resolve(process.cwd(), projectName);
+    const projectLabel = basename(projectDir);
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(projectLabel)) throw new Error('The app folder name must contain only letters, digits, dots, underscores or hyphens.');
 
     if (existsSync(projectDir)) {
       throw new Error(`Directory "${projectName}" already exists.`);
@@ -80,7 +84,7 @@ export class NewCommand extends Command {
     // Templates always use DDD paths internally. When --flat is set,
     // both the file path and import paths are transformed automatically.
     const write = (dddPath: string, content: string) => {
-      const validationContent = T.applyValidationProvider(content, validationProvider);
+      const validationContent = T.applyValidationProvider(T.reviewedAccess(dddPath, content), validationProvider);
       const { path: relativePath, content: transformedContent } = transformScaffoldFile(dddPath, validationContent, flat);
       const fullPath = join(projectDir, relativePath);
       mkdirSync(join(fullPath, '..'), { recursive: true });
@@ -147,7 +151,7 @@ export class NewCommand extends Command {
     }
     const svelarVersion = ownPkg.version;
 
-    write('package.json', T.packageJson(projectName, svelarVersion, validationProvider));
+    write('package.json', T.packageJson(projectLabel.toLowerCase(), svelarVersion, validationProvider));
     write('svelte.config.js', T.svelteConfig());
     write('vite.config.ts', T.viteConfig());
     write('tsconfig.json', T.tsConfig());
@@ -190,6 +194,7 @@ export class NewCommand extends Command {
     // Auth module
     write('src/lib/modules/auth/User.ts', T.userModel());
     write('src/lib/modules/auth/UserRepository.ts', T.userRepository());
+    write('src/lib/modules/auth/PlatformIdentityService.ts', T.platformIdentityService());
     write('src/lib/modules/auth/AuthService.ts', T.authService());
     write('src/lib/modules/auth/AuthController.ts', T.authController());
     write('src/lib/modules/auth/RegisterUserAction.ts', T.registerUserAction());
@@ -216,25 +221,12 @@ export class NewCommand extends Command {
     write('src/lib/modules/posts/UpdatePostRequest.ts', T.updatePostRequest());
     write('src/lib/modules/posts/PostResource.ts', T.postResource());
     write('src/lib/modules/posts/schemas.ts', T.postSchema(validationProvider));
+    for (const file of T.applicationWorkflowFiles()) write(file.path, file.content);
 
     // Admin module
-    write('src/lib/modules/admin/AdminService.ts', T.adminService());
-    write('src/lib/modules/admin/AdminController.ts', T.adminController());
-    write('src/lib/modules/admin/AdminDtos.ts', T.adminDtos());
-    write('src/lib/modules/admin/AdminActions.ts', T.adminActions());
-    write('src/lib/modules/admin/UpdateUserRoleRequest.ts', T.updateUserRoleRequest());
-    write('src/lib/modules/admin/DeleteUserRequest.ts', T.deleteUserRequest());
-    write('src/lib/modules/admin/CreateRoleRequest.ts', T.createRoleRequest());
-    write('src/lib/modules/admin/DeleteRoleRequest.ts', T.deleteRoleRequest());
-    write('src/lib/modules/admin/CreatePermissionRequest.ts', T.createPermissionRequest());
-    write('src/lib/modules/admin/DeletePermissionRequest.ts', T.deletePermissionRequest());
-    write('src/lib/modules/admin/RolePermissionRequest.ts', T.rolePermissionRequest());
-    write('src/lib/modules/admin/UserRoleRequest.ts', T.userRoleRequest());
-    write('src/lib/modules/admin/UserPermissionRequest.ts', T.userPermissionRequest());
-    write('src/lib/modules/admin/ExportDataRequest.ts', T.exportDataRequest());
-    write('src/lib/modules/admin/RoleResource.ts', T.roleResource());
-    write('src/lib/modules/admin/PermissionResource.ts', T.permissionResource());
-    write('src/lib/modules/admin/schemas.ts', T.adminSchema(validationProvider));
+    write('src/lib/modules/admin/DashboardProvidersService.ts', T.dashboardProvidersService());
+    write('src/lib/modules/admin/RoleRepository.ts', T.roleRepository());
+    write('src/lib/modules/admin/BackgroundWorkRepository.ts', T.backgroundWorkRepository());
 
     // API key and team modules
     write('src/lib/modules/api-keys/api-key.schema.ts', T.apiKeySchema(validationProvider));
@@ -245,6 +237,7 @@ export class NewCommand extends Command {
     write('src/lib/modules/team/TeamDtos.ts', T.teamDtos());
     write('src/lib/modules/team/TeamRequests.ts', T.teamRequests());
     write('src/lib/modules/team/TeamActions.ts', T.teamActions());
+    for (const file of T.invitationWorkflowFiles(validationProvider)) write(file.path, file.content);
 
     // Shared providers
     write('src/lib/shared/providers/EventServiceProvider.ts', T.eventServiceProvider());
@@ -299,6 +292,15 @@ export class NewCommand extends Command {
     // ── 9. API routes ─────────────────────────────────────
     this.info('Creating API routes...');
     write('src/routes/api/health/+server.ts', T.apiHealth());
+    write('src/routes/api/ready/+server.ts', T.apiReadiness());
+    write('src/routes/api/traffic/+server.ts', T.apiTraffic());
+    write('src/routes/api/operations/+server.ts', T.apiOperations());
+    write('src/routes/api/operations/[id]/+server.ts', T.apiOperations(true));
+    write('src/routes/api/operations/[id]/cancel/+server.ts', T.apiOperationCancel());
+    write('src/routes/api/broadcasting/auth/+server.ts', T.apiPusherAuth());
+    write('src/lib/shared/components/OperationsWidget.svelte', T.operationsWidget());
+    write('src/lib/shared/components/AuthFrame.svelte', T.authFrame());
+    write('src/lib/shared/components/auth-links.ts', T.authLinkHelper());
     write('src/routes/api/auth/register/+server.ts', T.apiAuthRegister());
     write('src/routes/api/auth/login/+server.ts', T.apiAuthLogin());
     write('src/routes/api/auth/logout/+server.ts', T.apiAuthLogout());
@@ -308,19 +310,22 @@ export class NewCommand extends Command {
     write('src/routes/api/auth/otp/send/+server.ts', T.apiAuthOtpSend());
     write('src/routes/api/auth/otp/verify/+server.ts', T.apiAuthOtpVerify());
     write('src/routes/api/auth/verify-email/+server.ts', T.apiAuthVerifyEmail());
+    write('src/routes/api/auth/session/+server.ts', T.apiSessionActivity());
     write('src/routes/api/posts/+server.ts', T.apiPosts());
     write('src/routes/api/posts/[id]/+server.ts', T.apiPostsSingle());
     write('src/routes/api/posts/mine/+server.ts', T.apiPostsMine());
     write('src/routes/api/broadcasting/[channel]/+server.ts', T.apiBroadcasting());
+    write('src/routes/api/webhooks/incoming/[source]/+server.ts', T.apiIncomingWebhooks());
     write('src/routes/api/internal/broadcast/+server.ts', T.apiInternalBroadcast());
-    write('src/routes/api/admin/users/+server.ts', T.apiAdminUsers());
-    write('src/routes/api/admin/roles/+server.ts', T.apiAdminRoles());
-    write('src/routes/api/admin/permissions/+server.ts', T.apiAdminPermissions());
-    write('src/routes/api/admin/role-permissions/+server.ts', T.apiAdminRolePermissions());
-    write('src/routes/api/admin/user-roles/+server.ts', T.apiAdminUserRoles());
-    write('src/routes/api/admin/user-permissions/+server.ts', T.apiAdminUserPermissions());
-    write('src/routes/api/admin/export/+server.ts', T.apiAdminExport());
-    for (const file of new MakeDashboardCommand().files()) write(file.path, file.content);
+    const dashboard = new MakeDashboardCommand();
+    const permissionPath = flags.flat ? 'permissions' : 'shared/permissions';
+    write(`src/lib/${permissionPath}/manifest.ts`, T.permissionManifest(dashboard.capabilityActions()));
+    for (const file of CapabilityScaffold.supportFiles(!flags.flat, { platformOwner: {
+      module: '$lib/modules/auth/PlatformIdentityService.js', exported: 'verifyPlatformOwner',
+    } })) write(file.path, file.content);
+    for (const file of dashboard.files({ public: false, resource: 'operations', scope: 'platform', route: '/admin/dashboard' },
+      `$lib/${permissionPath}/access.server.js`)) write(file.path, file.content);
+    for (const file of UiPatternTemplates.files(undefined, !flags.flat)) write(file.path, file.content);
 
 
     // ── 10. Jobs ──────────────────────────────────────────
@@ -340,10 +345,10 @@ export class NewCommand extends Command {
 
     // ── 12. Layout & pages ────────────────────────────────
     this.info('Creating layouts...');
-    write('src/routes/+layout.svelte', T.rootLayoutSvelte(projectName));
+    write('src/routes/+layout.svelte', T.rootLayoutSvelte(projectLabel));
     write('src/routes/+layout.server.ts', T.rootLayoutServer());
     write('src/routes/+error.svelte', T.errorSvelte());
-    write('src/routes/+page.svelte', T.homePage(projectName));
+    write('src/routes/+page.svelte', T.homePage(projectLabel));
 
     // ── 13. Testing infrastructure ─────────────────────────
     this.info('Setting up testing...');
@@ -351,6 +356,7 @@ export class NewCommand extends Command {
     write('playwright.config.ts', T.playwrightConfig());
     write('tests/unit/example.test.ts', T.exampleUnitTest());
     write('tests/feature/auth.test.ts', T.exampleFeatureTest());
+    write('tests/e2e/auth.spec.ts', T.exampleE2ETest());
     write('src/lib/factories/UserFactory.ts', T.scaffoldUserFactory());
 
     this.success(`Project structure created (${structureLabel})`);

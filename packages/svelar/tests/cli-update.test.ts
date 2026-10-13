@@ -36,7 +36,11 @@ describe('Scaffold updates', () => {
     expect(paths).not.toContain('src/lib/modules/auth/User.ts');
     expect(paths).not.toContain('src/lib/schemas.ts');
     const controller = files.find((file: any) => file.path === controllerPath).content();
-    expect(controller).toContain(ddd ? '$lib/modules/auth/application/services/AuthService' : '$lib/services/AuthService');
+    expect(controller).toContain(ddd ? '$lib/modules/auth/application/actions/LoginAction' : '$lib/actions/LoginAction');
+    const actionPath = ddd ? 'src/lib/modules/auth/application/actions/LoginAction.ts' : 'src/lib/actions/LoginAction.ts';
+    const loginAction = files.find((file: any) => file.path === actionPath);
+    expect(loginAction.ownership).toBe('user');
+    expect(loginAction.content()).toContain(ddd ? '$lib/modules/auth/application/services/AuthService' : '$lib/services/AuthService');
     expect(files.find((file: any) => file.path === modelPath).ownership).toBe('user');
   });
 

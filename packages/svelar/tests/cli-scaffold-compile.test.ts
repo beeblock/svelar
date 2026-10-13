@@ -213,13 +213,15 @@ describe('Scaffold runtime compile fixes', () => {
       if (!bindings || !ts.isNamedImports(bindings) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
       dependencies[statement.moduleSpecifier.text] = Object.fromEntries(bindings.elements.map((binding) => [binding.name.text, Placeholder]));
     }
-    const query = vi.fn(() => { throw new Error('Private data queried without a user'); });
+    const can = vi.fn(() => { throw new Error('Capabilities queried without a user'); });
     dependencies['@sveltejs/kit'] = { fail, redirect };
-    dependencies['$lib/modules/auth/User.js'] = { User: { query } };
+    dependencies['$lib/shared/permissions/access.server.js'] = { capabilityAccess: { can }, resolveCapabilityInput: vi.fn() };
     const module = evaluate(template, dependencies);
     const load = module.load as (event: { locals: { user: null } }) => Promise<unknown>;
     await expect(load({ locals: { user: null } })).rejects.toMatchObject({ status: 302, location: '/login' });
-    expect(query).not.toHaveBeenCalled();
+    expect(can).not.toHaveBeenCalled();
+    expect(template).not.toContain('User.query');
+    expect(template).not.toContain('export const actions');
   });
 
   it('passes the public container and awaits provider boot completion', async () => {

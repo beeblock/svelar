@@ -11,10 +11,14 @@ import { z } from 'zod';
 import * as v from 'valibot';
 import { NewCommandTemplates as T, type ValidationProvider } from '../src/cli/commands/NewCommandTemplates.js';
 import { AuthManager } from '../src/auth/Auth.js';
+import { authFailurePresentation } from '../src/auth/Presentation.js';
 import { Hash } from '../src/hashing/Hash.js';
 import { ThrottleMiddleware } from '../src/middleware/Middleware.js';
 import { Controller } from '../src/routing/Controller.js';
-import { FormRequest } from '../src/routing/FormRequest.js';
+import { Resource } from '../src/routing/Resource.js';
+import { FormRequest, FormAuthorizationError, FormValidationError } from '../src/routing/FormRequest.js';
+import { Action } from '../src/actions/index.js';
+import { Service } from '../src/services/index.js';
 import { Session } from '../src/session/Session.js';
 
 // Execute generated code with its real validation/HTTP contracts and bounded app dependencies.
@@ -58,14 +62,30 @@ function harness(provider: ValidationProvider, settings: Record<string, any> = {
     '@sveltejs/kit': kit,
     'sveltekit-superforms': superforms,
     'sveltekit-superforms/adapters': adapters,
-    '@beeblock/svelar/forms': { FormRequest },
-    '@beeblock/svelar/routing': { Controller },
+    '@beeblock/svelar/forms': { FormRequest, FormValidationError },
+    '@beeblock/svelar/routing': { Controller, Resource, FormRequest, FormAuthorizationError, FormValidationError },
     '@beeblock/svelar/config': { config },
     '@beeblock/svelar/middleware': { ThrottleMiddleware },
+    '@beeblock/svelar/auth': { authFailurePresentation },
+    '@beeblock/svelar/actions': { Action },
+    '@beeblock/svelar/services': { Service },
+    '@beeblock/svelar/hashing': { Hash },
+    '@beeblock/svelar/events': { Event: { dispatch: vi.fn(async () => {}) } },
     './schemas.js': schemas,
     '$lib/modules/auth/schemas': schemas,
+    '$lib/modules/auth/schemas.js': schemas,
+    '$lib/shared/components/auth-links.js': evaluate(T.authLinkHelper(), {}),
     '../../app.js': app,
   };
+  const dtoTemplates = {
+    RegisterUserDto: T.registerUserDto, LoginDto: T.loginDto,
+    ForgotPasswordDto: T.forgotPasswordDto, ResetPasswordDto: T.resetPasswordDto,
+    OtpSendDto: T.otpSendDto, OtpVerifyDto: T.otpVerifyDto,
+    LogoutDto: T.logoutDto, VerifyEmailDto: T.verifyEmailDto,
+  };
+  for (const [name, template] of Object.entries(dtoTemplates)) {
+    dependencies[`./${name}.js`] = dependencies[`$lib/modules/auth/${name}.js`] = evaluate(template(), dependencies);
+  }
   const requestTemplates = {
     RegisterRequest: T.registerRequest,
     LoginRequest: T.loginRequest,
@@ -73,26 +93,35 @@ function harness(provider: ValidationProvider, settings: Record<string, any> = {
     ResetPasswordRequest: T.resetPasswordRequest,
     OtpSendRequest: T.otpSendRequest,
     OtpVerifyRequest: T.otpVerifyRequest,
+    LogoutRequest: T.logoutRequest,
+    VerifyEmailRequest: T.verifyEmailRequest,
   };
   for (const [name, template] of Object.entries(requestTemplates)) {
     const request = evaluate(template(), dependencies);
     dependencies[`./${name}.js`] = request;
     dependencies[`$lib/modules/auth/${name}`] = request;
+    dependencies[`$lib/modules/auth/${name}.js`] = request;
   }
-  const registration = vi.fn(async (_dto: any): Promise<any> => ({ success: false, error: 'Email already registered' }));
-  class RegisterUserAction {
-    run = registration;
+  const users = {
+    findByEmail: vi.fn(async (_email: string): Promise<any> => ({ id: 7 })),
+    create: vi.fn(async (_input: any): Promise<any> => null),
+  };
+  class UserRepository { findByEmail = users.findByEmail; create = users.create; }
+  dependencies['$lib/modules/auth/UserRepository.js'] = { UserRepository };
+  dependencies['$lib/modules/auth/UserRegistered.js'] = { UserRegistered: class { constructor(readonly user: unknown) {} } };
+  const service = evaluate(T.authService(), dependencies);
+  const registration = vi.spyOn(service.AuthService.prototype, 'register');
+  dependencies['./AuthService.js'] = service;
+  dependencies['$lib/modules/auth/AuthService.js'] = service;
+  const actionTemplates = {
+    RegisterUserAction: T.registerUserAction, LoginAction: T.loginAction, LogoutAction: T.logoutAction,
+    ForgotPasswordAction: T.forgotPasswordAction, ResetPasswordAction: T.resetPasswordAction,
+    SendOtpAction: T.sendOtpAction, VerifyOtpAction: T.verifyOtpAction, VerifyEmailAction: T.verifyEmailAction,
+  };
+  for (const [name, template] of Object.entries(actionTemplates)) {
+    dependencies[`./${name}.js`] = dependencies[`$lib/modules/auth/${name}`] = dependencies[`$lib/modules/auth/${name}.js`] = evaluate(template(), dependencies);
   }
-  class AuthService {
-    async sendOtp(email: string, auth: any) { await auth.sendOtp(email); return { data: { message: 'If that email exists, a verification code has been sent.' } }; }
-    async verifyOtp(email: string, code: string, auth: any, session: any) {
-      const user = await auth.attemptOtp(email, code, session);
-      return user ? { success: true, data: user } : { success: false, error: 'Invalid or expired code' };
-    }
-  }
-  dependencies['./RegisterUserAction.js'] = dependencies['$lib/modules/auth/RegisterUserAction'] = { RegisterUserAction };
-  dependencies['./AuthService.js'] = { AuthService };
-  dependencies['./UserResource.js'] = { UserResource: { make: (user: any) => ({ toResponse: () => Response.json({ data: { id: user.id } }) }) } };
+  dependencies['$lib/modules/auth/UserResource.js'] = evaluate(T.userResource(), dependencies);
   const page = (template: () => string) => evaluate(T.applyValidationProvider(template(), provider), dependencies);
   const event = (fields: Record<string, string> = {}, path = '/login') => {
     const url = new URL(path, 'https://app.example');
@@ -107,6 +136,8 @@ function harness(provider: ValidationProvider, settings: Record<string, any> = {
         session: new Session('before-login'),
         auth: {
           attempt: vi.fn(async (_dto: any, _session: any): Promise<any> => null),
+          login: vi.fn(async (_user: any, _session: any): Promise<any> => null),
+          failureReason: vi.fn(() => 'invalid_credentials'),
           logout: vi.fn(async (_session: any) => {}),
           sendPasswordReset: vi.fn(async (_email: string) => false),
           resetPassword: vi.fn(async (_token: string, _email: string, _password: string) => false),
@@ -118,7 +149,7 @@ function harness(provider: ValidationProvider, settings: Record<string, any> = {
       },
     };
   };
-  return { page, event, schemas, app, values, config, dependencies, registration,
+  return { page, event, schemas, app, values, config, dependencies, registration, users,
     controller: () => new (evaluate(T.authController(), dependencies).AuthController)() };
 }
 
@@ -144,9 +175,9 @@ describe.each<ValidationProvider>(['zod', 'valibot'])('Production auth scaffold 
     const h = harness(provider);
     const event = h.event({ email: 'user@example.com', password: 'wrong-secret' });
     const result = await h.page(T.loginPageServer).actions.default(event);
-    expect(result).toMatchObject({ status: 401, data: { form: { message: 'Invalid email or password', data: { email: 'user@example.com', password: '' } } } });
+    expect(result).toMatchObject({ status: 401, data: { form: { message: 'Invalid email or password.', data: { email: 'user@example.com', password: '' } } } });
     expect(JSON.stringify(result)).not.toContain('wrong-secret');
-    expect(event.locals.auth.attempt).toHaveBeenCalledWith({ email: 'user@example.com', password: 'wrong-secret' }, event.locals.session);
+    expect(event.locals.auth.attempt).toHaveBeenCalledWith({ email: 'user@example.com', password: 'wrong-secret' }, event.locals.session, { remember: false });
     expect(event.locals.session.id).toBe('before-login');
     expect(event.locals.session.has('auth_user_id')).toBe(false);
   });
@@ -215,12 +246,13 @@ describe.each<ValidationProvider>(['zod', 'valibot'])('Production auth scaffold 
   it('uses configured registration verification and internal redirects', async () => {
     const h = harness(provider, { 'auth.emailVerification.required': true, 'auth.redirectTo': '/workspace' });
     const user = { id: 7, name: 'Test User', email: 'user@example.com' };
-    h.registration.mockResolvedValue({ success: true, data: user });
+    h.users.findByEmail.mockResolvedValue(null);
+    h.users.create.mockResolvedValue(user);
     const event = h.event({ name: 'Test User', email: 'user@example.com', password: 'valid-password', password_confirmation: 'valid-password' }, '/register');
-    await expect(h.page(T.registerPageServer).actions.default(event)).rejects.toMatchObject({ status: 303, location: '/workspace' });
+    await expect(h.page(T.registerPageServer).actions.default(event)).rejects.toMatchObject({ status: 303, location: '/login?reason=email-unverified&redirectTo=%2Fworkspace' });
     expect(event.locals.auth.sendVerificationEmail).toHaveBeenCalledWith(user);
-    expect(event.locals.session.id).not.toBe('before-login');
-    expect(event.locals.session.get('auth_user_id')).toBe(7);
+    expect(event.locals.session.id).toBe('before-login');
+    expect(event.locals.session.has('auth_user_id')).toBe(false);
   });
 
   it('rejects a missing reset token before calling the auth API', async () => {
@@ -231,6 +263,22 @@ describe.each<ValidationProvider>(['zod', 'valibot'])('Production auth scaffold 
     expect(result.data.form.errors.token).toEqual(['Reset token is required']);
     expect(event.locals.auth.resetPassword).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain('valid-password');
+  });
+
+  it('preserves a validated destination through disabled OTP and password recovery redirects', async () => {
+    const h = harness(provider);
+    const destination = '/invitations/team-token?source=mail#accept';
+    const query = new URLSearchParams({ redirectTo: destination });
+    await expect(h.page(T.otpLoginPageServer).load(h.event({}, `/otp-login?${query}`)))
+      .rejects.toMatchObject({ status: 302, location: `/login?${query}` });
+    await expect(h.page(T.resetPasswordPageServer).load(h.event({}, `/reset-password?${query}`)))
+      .rejects.toMatchObject({ status: 302, location: `/forgot-password?${query}` });
+    const event = h.event({ token: 'reset-token', email: 'user@example.com', password: 'valid-password', password_confirmation: 'valid-password' }, `/reset-password?${query}`);
+    event.locals.auth.resetPassword.mockResolvedValue(true);
+    await expect(h.page(T.resetPasswordPageServer).actions.default(event))
+      .rejects.toMatchObject({ status: 303, location: `/login?reset=success&${query}` });
+    await expect(h.page(T.otpLoginPageServer).load(h.event({}, '/otp-login?redirectTo=https://evil.example')))
+      .rejects.toMatchObject({ status: 302, location: '/login' });
   });
 
   it('rejects disabled OTP page posts and direct API calls before invoking auth', async () => {
@@ -291,11 +339,55 @@ describe.each<ValidationProvider>(['zod', 'valibot'])('Production auth scaffold 
     const controller = h.controller();
     const result = await controller.login(event);
     expect(result.status).toBe(401);
-    expect(await result.json()).toEqual({ message: 'Invalid email or password' });
-    expect(event.locals.auth.attempt).toHaveBeenCalledWith({ email: 'user@example.com', password: 'wrong-secret' }, event.locals.session);
-    await controller.logout(event);
-    expect(event.locals.auth.logout).toHaveBeenCalledWith(event.locals.session);
-    await expect(h.page(T.logoutPageServer).actions.default(event)).rejects.toMatchObject({ status: 303, location: '/' });
+    expect(await result.json()).toEqual({ data: null, meta: { code: 'invalid_credentials', message: 'Sign-in failed.' } });
+    expect(event.locals.auth.attempt).toHaveBeenCalledWith({ email: 'user@example.com', password: 'wrong-secret' }, event.locals.session, { remember: false });
+    const logout = h.event({}, '/api/auth/logout');
+    const response = await controller.logout(logout);
+    expect(await response.json()).toEqual({ data: null, meta: { message: 'Logged out successfully' } });
+    expect(logout.locals.auth.logout).toHaveBeenCalledWith(logout.locals.session);
+    const pageLogout = h.event({}, '/logout');
+    await expect(h.page(T.logoutPageServer).actions.default(pageLogout)).rejects.toMatchObject({ status: 303, location: '/' });
+    expect(pageLogout.locals.auth.logout).toHaveBeenCalledWith(pageLogout.locals.session);
+  });
+
+  it('validates verification links before invoking the named action and returns consistent API envelopes', async () => {
+    const h = harness(provider);
+    const invalid = h.event({}, '/verify-email?token=sentinel&id=invalid');
+    invalid.request = new Request(invalid.url);
+    expect(await h.page(T.verifyEmailPageServer).load(invalid)).toMatchObject({ success: false });
+    expect(invalid.locals.auth.verifyEmail).not.toHaveBeenCalled();
+    const valid = h.event({}, '/verify-email?token=sentinel&id=7');
+    valid.request = new Request(valid.url);
+    valid.locals.auth.verifyEmail.mockResolvedValue(true);
+    expect(await h.page(T.verifyEmailPageServer).load(valid)).toMatchObject({ success: true });
+    expect(valid.locals.auth.verifyEmail).toHaveBeenCalledExactlyOnceWith('sentinel', '7');
+    const controller = h.controller();
+    const badResponse = await controller.handle('verifyEmail')(h.event({}, '/api/auth/verify-email?id=invalid'));
+    expect(badResponse.status).toBe(422);
+    expect(await badResponse.json()).toMatchObject({ data: null, meta: { errors: { token: expect.any(Array), id: expect.any(Array) } } });
+    const api = h.event({}, '/api/auth/verify-email?token=sentinel&id=7');
+    api.locals.auth.verifyEmail.mockResolvedValue(true);
+    const response = await controller.handle('verifyEmail')(api);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ data: null, meta: { message: 'Email verified successfully' } });
+  });
+
+  it('uses real named API actions for recovery/reset/OTP and projects users through the resource', async () => {
+    const h = harness(provider, { 'auth.otp.enabled': true });
+    const controller = h.controller();
+    const recovery = h.event({ email: 'missing@example.com' }, '/api/auth/forgot-password');
+    const sent = await controller.handle('forgotPassword')(recovery);
+    expect(await sent.json()).toEqual({ data: null, meta: { message: 'If that email exists, a reset link has been sent.' } });
+    expect(recovery.locals.auth.sendPasswordReset).toHaveBeenCalledExactlyOnceWith('missing@example.com');
+    const reset = h.event({ token: 'sentinel', email: 'user@example.com', password: 'new-password', password_confirmation: 'new-password' }, '/api/auth/reset-password');
+    const failed = await controller.handle('resetPassword')(reset);
+    expect(failed.status).toBe(400);
+    expect(await failed.json()).toEqual({ data: null, meta: { message: 'Invalid or expired reset link' } });
+    const otp = h.event({ email: 'user@example.com', code: '123456' }, '/api/auth/otp/verify');
+    otp.locals.auth.attemptOtp.mockResolvedValue({ id: 7, name: 'User', email: 'user@example.com', password: 'never-public' });
+    const signedIn = await controller.handle('verifyOtp')(otp);
+    expect(signedIn.status).toBe(200);
+    expect(await signedIn.json()).toEqual({ data: { id: 7, name: 'User', email: 'user@example.com', role: 'user', created_at: null } });
   });
 });
 
@@ -338,20 +430,40 @@ function renderAuthPage(template: () => string, data: any, actionData?: any, pro
     'sveltekit-superforms': { superForm },
     'sveltekit-superforms/adapters': adapters,
     '$lib/modules/auth/schemas': schemas,
+    '$lib/shared/components/auth-links.js': evaluate(T.authLinkHelper(), {}),
     '@beeblock/svelar/ui': components,
+    '@lucide/svelte/icons/eye': { __esModule: true, default: children },
+    '@lucide/svelte/icons/eye-off': { __esModule: true, default: children },
+    '@lucide/svelte/icons/loader-circle': { __esModule: true, default: children },
   });
   const output = render(module.default, { props: { data, form: actionData } });
   return { output: { body: output.body, head: output.head }, formInstances };
 }
 
 describe('Auth page rendering', () => {
+  it.each<ValidationProvider>(['zod', 'valibot'])('preserves encoded destinations in every auth-mode link (%s)', (provider) => {
+    const form = { data: { name: '', email: '', password: '', password_confirmation: '', code: '' }, errors: {} };
+    const destination = '/invitations/team-token?source=mail#accept';
+    const data = { form, requestForm: form, verifyForm: form, appName: 'Acme', otpEnabled: true, redirectTo: destination };
+    const pages = [T.loginPageSvelte, T.registerPageSvelte, T.forgotPasswordPageSvelte, T.otpLoginPageSvelte, T.verifyEmailPageSvelte];
+    for (const template of pages) {
+      const { output } = renderAuthPage(template, data, undefined, provider);
+      const links = [...output.body.matchAll(/href="(\/[^" ]+)"/g)].map((match) => new URL(match[1].replaceAll('&amp;', '&'), 'https://app.example'));
+      expect(links.length).toBeGreaterThan(0);
+      for (const link of links) {
+        expect(link.origin).toBe('https://app.example');
+        expect(link.searchParams.get('redirectTo')).toBe(destination);
+      }
+    }
+  });
+
   it.each([T.loginPageSvelte, T.registerPageSvelte, T.forgotPasswordPageSvelte, T.resetPasswordPageSvelte, T.otpLoginPageSvelte, T.verifyEmailPageSvelte])('compiles and escapes branding without advertising unsupported OAuth or remember-me', (template) => {
     const form = { data: { name: '', email: '', password: '', password_confirmation: '', code: '' }, errors: {} };
     const { output } = renderAuthPage(template, { form, requestForm: form, verifyForm: form, appName: '<script>alert(1)</script>', otpEnabled: false });
     expect(output.head).toContain('&lt;script>');
     expect(output.body).toContain('&lt;script>');
     expect(output.body).not.toContain('<script>alert(1)</script>');
-    expect(template()).not.toMatch(/OAuth|Continue with Google|Continue with GitHub|name="remember"/);
+    expect(output.body).not.toMatch(/OAuth|Continue with Google|Continue with GitHub|name="remember"/);
     if (template === T.loginPageSvelte) expect(output.body).not.toContain('/otp-login');
   });
 
@@ -420,7 +532,7 @@ describe.each<ValidationProvider>(['zod', 'valibot'])('Auth client validation (%
       const { formInstances, output } = renderAuthPage(template, data, undefined, provider);
       expect(formInstances).toHaveLength(names.length);
       expect(output.body).not.toMatch(/text-red-600|role="alert"/);
-      expect(template()).not.toContain('novalidate');
+      expect(template()).toContain('novalidate');
       for (let index = 0; index < names.length; index++) {
         const client = formInstances[index].options.validators;
         expect(client.superFormValidationLibrary).toBe(provider === 'zod' ? 'zod4' : 'valibot');

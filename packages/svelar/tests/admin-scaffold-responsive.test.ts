@@ -1,95 +1,73 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { compile, parse, type AST } from 'svelte/compiler';
+import { error, redirect } from '@sveltejs/kit';
+import ts from 'typescript';
 import { NewCommandTemplates as T, type ValidationProvider } from '../src/cli/commands/NewCommandTemplates.js';
+import { MakeDashboardCommand } from '../src/cli/commands/MakeDashboardCommand.js';
 
 type Element = AST.RegularElement | AST.Component;
-
 function elements(value: unknown): Element[] {
   const found: Element[] = [];
-  function visit(node: unknown): void {
+  const visit = (node: unknown): void => {
     if (!node || typeof node !== 'object') return;
-    if (Array.isArray(node)) {
-      node.forEach(visit);
-      return;
-    }
-    if ('type' in node && (node.type === 'RegularElement' || node.type === 'Component')) {
-      found.push(node as Element);
-    }
+    if (Array.isArray(node)) { node.forEach(visit); return; }
+    if ('type' in node && (node.type === 'RegularElement' || node.type === 'Component')) found.push(node as Element);
     Object.values(node).forEach(visit);
-  }
-  visit(value);
-  return found;
+  }; visit(value); return found;
 }
-
 function attribute(node: Element, name: string): string {
   const value = node.attributes.find((item) => item.type === 'Attribute' && item.name === name);
-  if (value?.type !== 'Attribute' || !Array.isArray(value.value)) return '';
-  return value.value.filter((part) => part.type === 'Text').map((part) => part.data).join('');
+  return value?.type === 'Attribute' && Array.isArray(value.value) ? value.value.filter((part) => part.type === 'Text').map((part) => part.data).join('') : '';
 }
-
-function hasClasses(node: Element, ...classes: string[]): boolean {
-  const tokens = attribute(node, 'class').split(/\s+/);
-  return classes.every((name) => tokens.includes(name));
+function load(source: string, can = vi.fn(async()=>true)) {
+  const compiled = ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+  const module={exports:{} as Record<string,unknown>};
+  new Function('exports','require','module',compiled)(module.exports,(name:string)=>{
+    if(name==='@sveltejs/kit')return{error,redirect};
+    if(name==='$lib/shared/permissions/access.server.js')return{capabilityAccess:{can},resolveCapabilityInput:()=>({principal:{kind:'user',modelId:1},scope:{platform:true}})};
+    throw new Error('Unexpected redirect template import: '+name);
+  },module);
+  return {can,run:module.exports.load as (event:{locals:{user:unknown};url:URL})=>Promise<unknown>};
 }
+const consoleUi=new MakeDashboardCommand().files({public:false,resource:'operations',scope:'platform',route:'/admin/dashboard'},'$lib/shared/permissions/access.server.js').find(file=>file.path.endsWith('admin/dashboard/+page.svelte'))!.content;
 
-function markup(): Element[] {
-  return elements(parse(T.adminPageSvelte(), { modern: true }).fragment);
-}
-
-describe('Default admin scaffold responsive bounds', () => {
-  describe.each<ValidationProvider>(['zod', 'valibot'])('compiler contract (%s)', (provider) => {
-    it.each(['client', 'server'] as const)('compiles the unchanged admin flows for %s', (generate) => {
-      const result = compile(T.applyValidationProvider(T.adminPageSvelte(), provider), { generate, filename: 'admin-page.svelte' });
-      expect(result.js.code.length).toBeGreaterThan(1000);
-      expect(result.js.code).toContain('task.name');
-      expect(result.js.code).toContain('runTask');
-      expect(result.js.code).toContain('toggleTask');
-      expect(result.warnings.filter((warning) => warning.code === 'a11y_no_noninteractive_tabindex')).toEqual([]);
+describe('Legacy admin redirects and operational shell bounds',()=>{
+  describe.each<ValidationProvider>(['zod','valibot'])('compiler contract (%s)',provider=>{
+    it.each(['client','server'] as const)('compiles the thin legacy shell and operational console for %s',generate=>{
+      for(const source of [T.adminLayoutSvelte(),T.adminPageSvelte(),consoleUi]) {
+        const result=compile(T.applyValidationProvider(source,provider),{generate,filename:'admin-page.svelte'});
+        expect(result.js.code.length).toBeGreaterThan(0);expect(result.warnings.filter(item=>item.code.startsWith('a11y'))).toEqual([]);
+      }
     });
   });
-
-  it('bounds the page and stacks its heading and refresh control on narrow screens without clipping', () => {
-    const nodes = markup();
-    const root = nodes.find((node) => hasClasses(node, 'space-y-8'))!;
-    expect(hasClasses(root, 'min-w-0', 'max-w-full', '[overflow-wrap:anywhere]')).toBe(true);
-    expect(hasClasses(root, 'overflow-hidden')).toBe(false);
-    expect(nodes.some((node) => hasClasses(node, 'flex-col', 'sm:flex-row', 'sm:justify-between', 'items-start'))).toBe(true);
-  });
-
-  it('stacks scheduler details and wraps actions while retaining full dynamic task names', () => {
-    const row = markup().find((node) => hasClasses(node, 'p-4', 'hover:bg-muted/50'))!;
-    expect(hasClasses(row, 'min-w-0', 'flex-col', 'gap-4', 'sm:flex-row')).toBe(true);
-    const children = elements(row.fragment);
-    expect(children.some((node) => hasClasses(node, 'min-w-0', 'flex-1'))).toBe(true);
-    expect(children.some((node) => hasClasses(node, 'min-w-0', 'flex-wrap', 'sm:justify-end'))).toBe(true);
-    const name = children.find((node) => node.name === 'p' && hasClasses(node, 'font-medium', 'text-foreground'))!;
-    expect(T.adminPageSvelte().slice(name.start, name.end)).toContain('{task.name}');
-    expect(hasClasses(name, 'truncate', 'line-clamp-1')).toBe(false);
-  });
-
-  it('keeps wide users and permissions tables in their own bounded, keyboard-focusable scroll regions', () => {
-    const nodes = markup();
-    for (const [label, minimum] of [['User management table', 'min-w-[760px]'], ['Permissions table', 'min-w-[640px]']]) {
-      const region = nodes.find((node) => attribute(node, 'aria-label') === label)!;
-      expect(attribute(region, 'role')).toBe('region');
-      expect(attribute(region, 'tabindex')).toBe('0');
-      expect(hasClasses(region, 'min-w-0', 'w-full', 'max-w-full', 'overflow-x-auto')).toBe(true);
-      const table = elements(region.fragment).find((node) => node.name === 'table')!;
-      expect(hasClasses(table, 'w-full', minimum)).toBe(true);
+  it('removes the nested admin shell, stale CRUD actions and guessed health counters',()=>{
+    const layout=T.adminLayoutSvelte();expect(layout).toContain('{@render children()}');expect(elements(parse(layout,{modern:true}).fragment)).toEqual([]);
+    for(const source of [T.adminLayoutServer(),T.adminPageServer(),T.adminPageSvelte()]) {
+      expect(source).not.toContain("role: 'admin'");expect(source).not.toContain('User.query');expect(source).not.toContain('export const actions');
+      expect(source).not.toContain('superValidate');expect(source).not.toContain("status: 'ok'");
     }
-    expect(nodes.filter((node) => node.name === 'table')).toHaveLength(2);
   });
-
-  it('wraps log filters, role/permission controls and create fields instead of imposing mobile minimum widths', () => {
-    const nodes = markup();
-    const filters = nodes.find((node) => node.name === 'div' && hasClasses(node, 'gap-2', 'mb-4'))!;
-    expect(hasClasses(filters, 'flex-wrap')).toBe(true);
-    const fields = nodes.filter((node) => hasClasses(node, 'basis-full'));
-    expect(fields).toHaveLength(6);
-    expect(fields.every((node) => hasClasses(node, 'min-w-0', 'flex-1'))).toBe(true);
-    expect(nodes.some((node) => hasClasses(node, 'min-w-[200px]') || hasClasses(node, 'min-w-[140px]'))).toBe(false);
-    expect(nodes.some((node) => node.name === 'button' && hasClasses(node, 'max-w-full', 'whitespace-normal', '[overflow-wrap:anywhere]'))).toBe(true);
-    const log = nodes.find((node) => hasClasses(node, 'p-3', 'bg-muted/50', 'text-sm'))!;
-    expect(hasClasses(log, 'min-w-0', 'flex-col', 'sm:flex-row')).toBe(true);
+  it('keeps the actual console shell responsive with active URL navigation and bounded scroll surfaces',()=>{
+    expect(consoleUi).toContain('grid-template-columns:216px minmax(0,1fr)');expect(consoleUi).toContain('@media(max-width:760px)');
+    expect(consoleUi).toContain('minmax(0,1fr)');expect(consoleUi).toContain('overflow-wrap:anywhere');expect(consoleUi).toContain('overflow-x:auto');
+    const nodes=elements(parse(consoleUi,{modern:true}).fragment);
+    for(const label of ['User directory','Permission roles','Queue jobs','Scheduler tasks']) {
+      const region=nodes.find(node=>attribute(node,'aria-label')===label)!;expect(region).toBeTruthy();expect(attribute(region,'role')).toBe('region');
+      expect(region.attributes.some(item=>item.type==='UseDirective'&&item.name==='focusableScrollRegion')).toBe(true);
+    }
+    expect(consoleUi).toContain('aria-current=');expect(consoleUi).toContain('class:collapsed={sidebarCollapsed}');
+  });
+  it.each([['queue','queues'],['jobs','queues'],['roles','permissions'],['schedule','scheduler'],['tasks','scheduler'],['scheduler','scheduler'],['logs','logs']])('redirects legacy tab %s to %s without losing scope/pagination',async(before,after)=>{
+    const {run,can}=load(T.adminPageServer());
+    await expect(run({locals:{user:{id:1,role:'operator'}},url:new URL('http://localhost/admin?tab='+before+'&queue=imports&connection=secondary&status=failed&offset=25&tenantId=tenant')})).rejects.toMatchObject({status:302,location:'/admin/dashboard?tab='+after+'&queue=imports&connection=secondary&status=failed&offset=25&tenantId=tenant'});
+    expect(can).toHaveBeenCalledWith('screen.operations.view',expect.anything());
+  });
+  it.each([T.adminLayoutServer(),T.adminPageServer()])('checks authentication before capabilities and rejects unauthorized direct loads',async(source)=>{
+    const can=vi.fn(async()=>false);const {run}=load(source,can);
+    await expect(run({locals:{user:null},url:new URL('http://localhost/admin')})).rejects.toMatchObject({status:302,location:'/login'});expect(can).not.toHaveBeenCalled();
+    await expect(run({locals:{user:{id:1,role:'admin'}},url:new URL('http://localhost/admin')})).rejects.toMatchObject({status:403});
+  });
+  it('allows a capability-authorized non-admin operator through the layout',async()=>{
+    const {run}=load(T.adminLayoutServer());expect(await run({locals:{user:{id:1,role:'operator'}},url:new URL('http://localhost/admin/dashboard')})).toEqual({});
   });
 });

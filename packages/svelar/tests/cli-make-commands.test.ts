@@ -209,7 +209,7 @@ describe('Make commands — Flat structure', () => {
   describe('MakeControllerCommand', () => {
     it('should create controller file in src/lib/controllers/', async () => {
       const cmd = new MakeControllerCommand();
-      await cmd.handle(['PostController'], {});
+      await cmd.handle(['PostController'], { public: true });
       const filePath = join(tmpDir, 'src', 'lib', 'controllers', 'PostController.ts');
       expect(existsSync(filePath)).toBe(true);
       const content = readFileSync(filePath, 'utf-8');
@@ -375,7 +375,7 @@ describe('Make commands — Flat structure', () => {
 
   describe('MakeEntityCommand', () => {
     it('generates a valid create-only service without update DTO imports', async () => {
-      await new MakeEntityCommand().handle(['Draft'], { fields: 'title:string', 'no-migration': true });
+      await new MakeEntityCommand().handle(['Draft'], { public: true, fields: 'title:string', 'no-migration': true });
       const service = readFileSync(join(tmpDir, 'src/lib/services/DraftService.ts'), 'utf8');
       expect(service).not.toContain('UpdateDraftDto');
       expect(service).not.toContain('async update(');
@@ -386,9 +386,9 @@ describe('Make commands — Flat structure', () => {
       vi.useFakeTimers({ toFake: ['Date'] });
       try {
         vi.setSystemTime(new Date('2026-10-12T10:00:00Z'));
-        await new MakeEntityCommand().handle(['Draft'], { fields: 'title:string' });
+        await new MakeEntityCommand().handle(['Draft'], { public: true, fields: 'title:string' });
         vi.setSystemTime(new Date('2026-10-12T10:01:00Z'));
-        await new MakeEntityCommand().handle(['Draft'], { fields: 'title:string' });
+        await new MakeEntityCommand().handle(['Draft'], { public: true, fields: 'title:string' });
         const files = readdirSync(join(tmpDir, 'src/lib/database/migrations'));
         expect(files.filter((file) => file.endsWith('_create_drafts_table.ts'))).toHaveLength(1);
       } finally { vi.useRealTimers(); }
@@ -398,7 +398,7 @@ describe('Make commands — Flat structure', () => {
       writeFileSync(join(tmpDir, 'svelar.validation.json'), JSON.stringify({ validation: 'valibot' }));
 
       const cmd = new MakeEntityCommand();
-      await cmd.handle(['Task'], { fields: 'title:string,done:boolean,status:enum(todo,doing,done)', crud: true, 'no-migration': true });
+      await cmd.handle(['Task'], { public: true, fields: 'title:string,done:boolean,status:enum(todo,doing,done)', crud: true, 'no-migration': true });
 
       const filePath = join(tmpDir, 'src', 'lib', 'schemas', 'task.schema.ts');
       const content = readFileSync(filePath, 'utf-8');
@@ -484,7 +484,7 @@ describe('Make commands — DDD structure', () => {
   describe('MakeControllerCommand (DDD)', () => {
     it('should create controller in the module HTTP interface layer', async () => {
       const cmd = new MakeControllerCommand();
-      await cmd.handle(['PostController'], { module: 'blog' });
+      await cmd.handle(['PostController'], { public: true, module: 'blog' });
       const filePath = join(tmpDir, 'src', 'lib', 'modules', 'blog', 'interface', 'http', 'controllers', 'PostController.ts');
       expect(existsSync(filePath)).toBe(true);
     });
@@ -613,7 +613,7 @@ describe('MakeDeployCommand', () => {
 describe('MakeDashboardCommand', () => {
   it('scaffolds monitor-backed queue, scheduler, and logs tabs', async () => {
     const cmd = new MakeDashboardCommand();
-    await cmd.handle([], {});
+    await cmd.handle([], { public: true });
 
     const pagePath = join(tmpDir, 'src', 'routes', 'admin', 'dashboard', '+page.svelte');
     const serverPath = join(tmpDir, 'src', 'routes', 'admin', 'dashboard', '+page.server.ts');
@@ -630,13 +630,17 @@ describe('MakeDashboardCommand', () => {
     expect(page).not.toContain('coming soon');
     expect(page).toContain('retryJob');
     expect(page).toContain('runTask');
-    expect(page).toContain('panels.logs?.data?.logs');
+    expect(page).toContain('record(panels.logs?.data).logs');
     expect(page).toContain('queue.runtime?.workers');
-    expect(page).toContain('totalJobs');
+    expect(page).toContain('record(queueSummary.aggregate)');
+    expect(page).toContain('record(queueAggregate.counts)');
+    expect(page).toContain('record(queueSummary.discovery)');
+    expect(page).toContain("'Unknown'");
+    expect(page).not.toContain('topology.every((queue)=>queue.counts!==null)');
     expect(page).toContain('apiFetch');
     expect(page).toContain("from '@lucide/svelte/icons/refresh-cw'");
     expect(page).not.toContain("from 'lucide-svelte/");
-    expect(page).toContain('confirmed: true');
+    expect(page).toContain('confirmed:true');
     expect(page).not.toContain('export let data');
     expect(server).toContain('/api/admin/queue?');
     expect(server).toContain('/api/admin/scheduler');
@@ -655,7 +659,7 @@ describe('New project templates', () => {
 
     expect(pkg.scripts['dev:worker']).toBe('node scripts/svelar-dev-runtime.mjs queue:work --queue=default');
     expect(pkg.scripts['dev:scheduler']).toBe('node scripts/svelar-dev-runtime.mjs schedule:run');
-    expect(NewCommandTemplates.schedulerIndex()).toContain('.persistTaskSettings()');
+    expect(NewCommandTemplates.schedulerIndex()).toContain('new Scheduler({ persistent: true })');
   });
 
   it('ships every core framework migration wrapper in new apps', () => {
@@ -762,7 +766,8 @@ describe('New project templates', () => {
     expect(template).toContain("import { defineConfig, loadEnv } from 'vite'");
     expect(template).toContain("export default defineConfig(({ mode }) => {");
     expect(template).toContain("Object.assign(process.env, loadEnv(mode, process.cwd(), ''))");
-    expect(template).toContain('esbuild: { keepNames: true }');
+    expect(template).toContain('output: { keepNames: true }');
+    expect(template).not.toContain('esbuild:');
   });
 
   it('resolves Valibot before the broader validation alias in app and test builds', () => {
@@ -776,14 +781,15 @@ describe('New project templates', () => {
   });
 
   it('uses CSRF-aware fetches for generated admin API mutations', () => {
-    const template = NewCommandTemplates.adminPageSvelte();
+    const template = new MakeDashboardCommand().files({public:true,scope:'platform',route:'/admin/dashboard'})
+      .find((file) => file.path.endsWith('admin/dashboard/+page.svelte'))!.content;
 
-    expect(template).toContain("getCookie('XSRF-TOKEN')");
-    expect(template).toContain("'X-CSRF-Token'");
-    expect(template).toContain('headers: csrfHeaders()');
-    expect(template).toContain("headers: csrfHeaders({ 'Content-Type': 'application/json' })");
-    expect(template).toContain('await refreshScheduler()');
-    expect(template).toContain("apiError(res, 'Failed to run task')");
+    expect(template).toContain("import { apiFetch } from '@beeblock/svelar/http'");
+    expect(template).toContain('await apiFetch(item.url, {method:item.method');
+    expect(template).toContain("headers:{'Content-Type':'application/json'}");
+    expect(template).toContain('await refresh(item.panel)');
+    expect(template).toContain("throw new Error(body.meta?.message ?? 'Operation not accepted.')");
+    expect(template).not.toMatch(/\bfetch\(/);
   });
 
   it('generates Node-testable SvelteKit hooks without virtual env imports', () => {
@@ -791,10 +797,10 @@ describe('New project templates', () => {
 
     expect(hooks).toContain("import { createSvelarApp } from '@beeblock/svelar/hooks'");
     expect(hooks).toContain('secret: process.env.APP_KEY');
-    expect(hooks).toContain('sessionTouchOnActivity: process.env.SESSION_TOUCH_ON_ACTIVITY ===');
-    expect(hooks).toContain('sessionAbsoluteLifetime: process.env.SESSION_ABSOLUTE_LIFETIME');
+    expect(hooks).toContain('sessionTouchOnActivity: process.env.SESSION_TOUCH_ON_ACTIVITY !==');
+    expect(hooks).toContain('sessionAbsoluteLifetime: Number(process.env.SESSION_ABSOLUTE_LIFETIME');
     expect(hooks).toContain("process.env.RATE_LIMIT_STORE === 'cache'");
-    expect(hooks).toContain("csrfExcludePaths: ['/api/webhooks', '/api/internal/']");
+    expect(hooks).toContain("csrfExcludePaths: ['/api/webhooks/incoming/', '/api/internal/']");
     expect(hooks).not.toContain('$env/dynamic/private');
     expect(hooks).not.toContain('secret: env.APP_KEY');
   });
@@ -849,7 +855,7 @@ describe('Make commands — Cross-type imports', () => {
   describe('Flat structure import paths', () => {
     it('MakeControllerCommand should use ../models/ path in flat mode', async () => {
       const cmd = new MakeControllerCommand();
-      await cmd.handle(['PostController'], { resource: true, model: 'Post' });
+      await cmd.handle(['PostController'], { public: true, resource: true, model: 'Post' });
       const filePath = join(tmpDir, 'src', 'lib', 'controllers', 'PostController.ts');
       const content = readFileSync(filePath, 'utf-8');
       expect(content).toContain('$lib/services/PostService.js');
@@ -872,7 +878,7 @@ describe('Make commands — Cross-type imports', () => {
 
     it('MakeControllerCommand should use ./ path in DDD mode', async () => {
       const cmd = new MakeControllerCommand();
-      await cmd.handle(['PostController'], { resource: true, model: 'Post', module: 'blog' });
+      await cmd.handle(['PostController'], { public: true, resource: true, model: 'Post', module: 'blog' });
       const filePath = join(tmpDir, 'src', 'lib', 'modules', 'blog', 'interface', 'http', 'controllers', 'PostController.ts');
       const content = readFileSync(filePath, 'utf-8');
       expect(content).toContain('$lib/modules/blog/application/services/PostService.js');
@@ -893,7 +899,7 @@ describe('Make commands — Cross-type imports', () => {
       writeFileSync(join(controllerDir, 'InvoiceController.ts'), 'export class InvoiceController {}');
 
       const cmd = new MakeRouteCommand();
-      await cmd.handle(['invoices'], { api: true, resource: true, controller: 'InvoiceController' });
+      await cmd.handle(['invoices'], { public: true, api: true, resource: true, controller: 'InvoiceController' });
 
       const filePath = join(tmpDir, 'src', 'routes', 'api', 'invoices', '+server.ts');
       const content = readFileSync(filePath, 'utf-8');

@@ -5,8 +5,11 @@ import { createInterface } from 'node:readline';
 import { NewCommandTemplates as T } from './NewCommandTemplates.js';
 import { transformScaffoldFile } from './NewCommand.js';
 import { MakeDashboardCommand } from './MakeDashboardCommand.js';
+import { CapabilityScaffold } from '../CapabilityScaffold.js';
+import { UiPatternTemplates } from './UiPatternTemplates.js';
 import { applyZod4Migration, planZod4Migration } from '../Zod4Migration.js';
 import { applyCoreScaffoldMigration, planCoreScaffoldMigration } from '../CoreScaffoldMigration.js';
+import { applyApiFetchMigration, planApiFetchMigration } from '../ApiFetchMigration.js';
 
 interface ScaffoldFile {
   path: string;
@@ -163,6 +166,7 @@ export class UpdateCommand extends Command {
     { name: 'add-missing-user-files', description: 'Add only missing user-owned files from the manifest; never overwrite (requires --force)', type: 'boolean' as const, default: false },
     { name: 'migrate-zod4', description: 'Opt in to backed-up Zod 4 adapter/dependency migration (requires confirmation or --force)', type: 'boolean' as const, default: false },
     { name: 'migrate-core', description: 'Opt in to narrowly backed-up 0.7.9 scaffold API migration (requires confirmation or --force)', type: 'boolean' as const, default: false },
+    { name: 'migrate-api-fetch', description: 'Opt in to AST-reviewed same-origin browser mutation migration, with exact backups', type: 'boolean' as const, default: false },
   ];
 
   async handle(_args: string[], flags: Record<string, any>): Promise<void> {
@@ -173,6 +177,15 @@ export class UpdateCommand extends Command {
     const listOnly = flags.list ?? false;
     const includeUserFiles = flags['include-user-files'] ?? false;
     const addMissingUserFiles = flags['add-missing-user-files'] ?? false;
+
+    if (flags['migrate-api-fetch']) {
+      if (addMissingUserFiles || includeUserFiles || flags['migrate-core'] || flags['migrate-zod4'] || categoryFilter) {
+        this.error('--migrate-api-fetch is a separate migration. Do not combine it with other update modes or --category.');
+        return;
+      }
+      await this.migrateApiFetch(cwd, Boolean(force), Boolean(dryRun || listOnly));
+      return;
+    }
 
     if (flags['migrate-core']) {
       if (addMissingUserFiles || includeUserFiles || flags['migrate-zod4'] || categoryFilter) {
@@ -419,6 +432,40 @@ export class UpdateCommand extends Command {
     } catch (error) { this.error(error instanceof Error ? error.message : String(error)); }
   }
 
+  private async migrateApiFetch(cwd: string, force: boolean, dryRun: boolean): Promise<void> {
+    const plan = await planApiFetchMigration(cwd);
+    this.info('apiFetch migration preflight: only proven same-origin browser mutations; server/external fetch and templates are preserved.');
+    for (const edit of plan.edits) {
+      this.log(`  ${edit.path}`);
+      for (const token of [...edit.tokens].sort((a, b) => a.start - b.start)) {
+        this.log(`    [${token.start}, ${token.end}) ${JSON.stringify(edit.original.toString('utf8').slice(token.start, token.end))} -> ${JSON.stringify(token.replacement)}`);
+      }
+    }
+    for (const skipped of plan.skipped) this.warn(skipped);
+    if (plan.errors.length) {
+      for (const error of plan.errors) this.error(error);
+      this.error('apiFetch migration blocked before writes; review the reported unsafe patterns.');
+      return;
+    }
+    if (dryRun) {
+      this.info(`Dry run: ${plan.edits.length} file(s); no source or backups written.`);
+      return;
+    }
+    if (!plan.edits.length) { this.success('No safe browser fetch mutations need migration.'); return; }
+    if (!force) {
+      if (!process.stdin.isTTY) {
+        this.error('Review --migrate-api-fetch --dry-run, then use --migrate-api-fetch --force or confirm interactively. No files written.');
+        return;
+      }
+      const answer = await ask(`Apply reviewed apiFetch tokens to ${plan.edits.length} file(s), with exact-original backups? [y/N] `);
+      if (answer !== 'y' && answer !== 'yes') { this.info('Migration cancelled; no files written.'); return; }
+    }
+    try {
+      for (const backup of applyApiFetchMigration(plan, { confirmed: true })) this.log(`  Backup: ${backup}`);
+      this.success(`Migrated ${plan.edits.length} file(s). Run the app check and tests before release.`);
+    } catch (error) { this.error(error instanceof Error ? error.message : String(error)); }
+  }
+
   private async migrateZod4(cwd: string, force: boolean, dryRun: boolean): Promise<void> {
     const plan = await planZod4Migration(cwd);
     this.info('Zod 4 migration preflight (no scaffold templates will be applied)');
@@ -629,13 +676,16 @@ export class UpdateCommand extends Command {
 
     const add = (path: string, content: () => string, category: ScaffoldFile['category'], description: string, ownership: 'framework' | 'user' = 'framework') => {
       const transformedPath = transformScaffoldFile(path, '', !isDDD).path;
-      files.push({
+      const file: ScaffoldFile = {
         path: transformedPath,
-        content: () => transformScaffoldFile(path, T.applyValidationProvider(content(), validation), !isDDD).content,
+        content: () => transformScaffoldFile(path, T.applyValidationProvider(T.reviewedAccess(path, content()), validation), !isDDD).content,
         category,
         description,
         ownership: ['domain', 'page', 'route'].includes(category) ? 'user' : ownership,
-      });
+      };
+      const existing = files.findIndex((entry) => entry.path === transformedPath);
+      if (existing < 0) files.push(file);
+      else files[existing] = file;
     };
 
     // ── Config ──
@@ -664,6 +714,7 @@ export class UpdateCommand extends Command {
     add('src/lib/database/migrations/00000003_add_role_to_users.ts', () => T.addRoleToUsers(), 'migration', 'Role column on users', 'user');
 
     // ── Auth Domain ──
+    for (const file of T.applicationWorkflowFiles()) add(file.path, () => file.content, 'domain', 'Typed application write workflow');
     const authDir = 'src/lib/modules/auth';
     const authModel = `${authDir}/User.ts`;
     const authRepo = `${authDir}/UserRepository.ts`;
@@ -673,6 +724,7 @@ export class UpdateCommand extends Command {
 
     add(authModel, () => T.userModel(), 'domain', 'User model');
     add(authRepo, () => T.userRepository(), 'domain', 'User repository');
+    add(`${authDir}/PlatformIdentityService.ts`, () => T.platformIdentityService(), 'domain', 'Trusted platform identity');
     add(authService, () => T.authService(), 'domain', 'Auth service');
     add(authController, () => T.authController(), 'domain', 'Auth controller');
     add(authAction, () => T.registerUserAction(), 'domain', 'Register user action');
@@ -708,6 +760,8 @@ export class UpdateCommand extends Command {
     const adminDir = 'src/lib/modules/admin';
     const adminFiles: Array<[string, () => string]> = [
       ['AdminService', () => T.adminService()], ['AdminController', () => T.adminController()],
+      ['DashboardProvidersService', () => T.dashboardProvidersService()], ['RoleRepository', () => T.roleRepository()],
+      ['BackgroundWorkRepository', () => T.backgroundWorkRepository()],
       ['AdminDtos', () => T.adminDtos()], ['AdminActions', () => T.adminActions()],
       ['UpdateUserRoleRequest', () => T.updateUserRoleRequest()], ['DeleteUserRequest', () => T.deleteUserRequest()],
       ['CreateRoleRequest', () => T.createRoleRequest()], ['DeleteRoleRequest', () => T.deleteRoleRequest()],
@@ -767,6 +821,19 @@ export class UpdateCommand extends Command {
 
     // ── API Routes ──
     add('src/routes/api/health/+server.ts', () => T.apiHealth(), 'route', 'Health check');
+    add('src/routes/api/ready/+server.ts', () => T.apiReadiness(), 'route', 'Read-only dependency readiness');
+    add('src/routes/api/traffic/+server.ts', () => T.apiTraffic(), 'route', 'Read-only deployment eligibility');
+    add('src/routes/api/operations/+server.ts', () => T.apiOperations(), 'route', 'Personal background operation list');
+    add('src/routes/api/operations/[id]/+server.ts', () => T.apiOperations(true), 'route', 'Personal background operation state');
+    add('src/routes/api/operations/[id]/cancel/+server.ts', () => T.apiOperationCancel(), 'route', 'Personal background operation cancellation');
+    add('src/lib/shared/components/OperationsWidget.svelte', () => T.operationsWidget(), 'page', 'Personal operation tray');
+    add('src/lib/shared/components/AuthFrame.svelte', () => T.authFrame(), 'page', 'Configured public auth branding');
+    add('src/lib/shared/components/auth-links.ts', () => T.authLinkHelper(), 'domain', 'Authentication navigation destination');
+    for (const file of T.invitationWorkflowFiles(validation)) {
+      const category = file.path.endsWith('.svelte') || file.path.endsWith('+page.server.ts') ? 'page'
+        : file.path.endsWith('+server.ts') ? 'route' : 'domain';
+      add(file.path, () => file.content, category, 'Recipient-bound team invitation workflow');
+    }
     add('src/routes/api/auth/register/+server.ts', () => T.apiAuthRegister(), 'route', 'Auth register API');
     add('src/routes/api/auth/login/+server.ts', () => T.apiAuthLogin(), 'route', 'Auth login API');
     add('src/routes/api/auth/logout/+server.ts', () => T.apiAuthLogout(), 'route', 'Auth logout API');
@@ -776,10 +843,13 @@ export class UpdateCommand extends Command {
     add('src/routes/api/auth/otp/send/+server.ts', () => T.apiAuthOtpSend(), 'route', 'OTP send API');
     add('src/routes/api/auth/otp/verify/+server.ts', () => T.apiAuthOtpVerify(), 'route', 'OTP verify API');
     add('src/routes/api/auth/verify-email/+server.ts', () => T.apiAuthVerifyEmail(), 'route', 'Verify email API');
+    add('src/routes/api/auth/session/+server.ts', () => T.apiSessionActivity(), 'route', 'Read session activity and renew explicitly');
     add('src/routes/api/posts/+server.ts', () => T.apiPosts(), 'route', 'Posts list/create API');
     add('src/routes/api/posts/[id]/+server.ts', () => T.apiPostsSingle(), 'route', 'Post CRUD API');
     add('src/routes/api/posts/mine/+server.ts', () => T.apiPostsMine(), 'route', 'My posts API');
     add('src/routes/api/broadcasting/[channel]/+server.ts', () => T.apiBroadcasting(), 'route', 'SSE broadcasting');
+    add('src/routes/api/broadcasting/auth/+server.ts', () => T.apiPusherAuth(), 'route', 'Pusher channel authorization');
+    add('src/routes/api/webhooks/incoming/[source]/+server.ts', () => T.apiIncomingWebhooks(), 'route', 'Signed incoming webhook inbox');
     add('src/routes/api/internal/broadcast/+server.ts', () => T.apiInternalBroadcast(), 'route', 'Internal broadcast bridge');
     add('src/routes/api/admin/users/+server.ts', () => T.apiAdminUsers(), 'route', 'Admin users API');
     add('src/routes/api/admin/roles/+server.ts', () => T.apiAdminRoles(), 'route', 'Admin roles API');
@@ -788,9 +858,15 @@ export class UpdateCommand extends Command {
     add('src/routes/api/admin/user-roles/+server.ts', () => T.apiAdminUserRoles(), 'route', 'User-roles API');
     add('src/routes/api/admin/user-permissions/+server.ts', () => T.apiAdminUserPermissions(), 'route', 'User-permissions API');
     add('src/routes/api/admin/export/+server.ts', () => T.apiAdminExport(), 'route', 'Admin data export');
-    for (const file of new MakeDashboardCommand().files()) {
+    for (const file of new MakeDashboardCommand().files(undefined, isDDD ? '$lib/shared/permissions/access.server.js' : '$lib/permissions/access.server.js')) {
       add(file.path, () => file.content, file.path.endsWith('+server.ts') ? 'route' : 'page', 'Operational dashboard');
     }
+    const permissionPath = isDDD ? 'shared/permissions' : 'permissions';
+    add(`src/lib/${permissionPath}/manifest.ts`, () => T.permissionManifest(new MakeDashboardCommand().capabilityActions()), 'domain', 'Literal capability manifest');
+    for (const file of CapabilityScaffold.supportFiles(isDDD, { platformOwner: {
+      module: isDDD ? '$lib/modules/auth/application/services/PlatformIdentityService.js' : '$lib/services/PlatformIdentityService.js', exported: 'verifyPlatformOwner',
+    } })) add(file.path, () => file.content, file.path.includes('/seeders/') ? 'seeder' : 'domain', 'Capability support', 'user');
+    for (const file of UiPatternTemplates.files(undefined, isDDD)) add(file.path, () => file.content, 'page', 'Operational UI pattern');
 
     // ── Jobs — user-owned (users customize job logic) ──
     const jobDir = isDDD ? 'src/lib/shared/jobs' : 'src/lib/jobs';
@@ -811,6 +887,11 @@ export class UpdateCommand extends Command {
     add('src/routes/+layout.server.ts', () => T.rootLayoutServer(), 'page', 'Root layout server', 'user');
     add('src/routes/+error.svelte', () => T.errorSvelte(), 'page', 'Error page', 'user');
     add('src/routes/+page.svelte', () => T.homePage(projectName), 'page', 'Home page', 'user');
+
+    add('src/lib/factories/UserFactory.ts', () => T.scaffoldUserFactory(), 'domain', 'Hashed test-only User factory', 'user');
+    add('tests/unit/example.test.ts', () => T.exampleUnitTest(), 'domain', 'Shared-schema unit validation examples', 'user');
+    add('tests/feature/auth.test.ts', () => T.exampleFeatureTest(), 'domain', 'Isolated real authentication regressions', 'user');
+    add('tests/e2e/auth.spec.ts', () => T.exampleE2ETest(), 'domain', 'Isolated authentication browser regressions', 'user');
 
     return files;
   }

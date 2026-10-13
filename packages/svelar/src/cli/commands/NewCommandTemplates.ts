@@ -8,12 +8,64 @@
 export type ValidationProvider = 'zod' | 'valibot';
 
 export class NewCommandTemplates {
+	static reviewedAccess(path: string, content: string): string {
+		const personal = new Set([
+			'src/routes/login/+page.server.ts', 'src/routes/register/+page.server.ts', 'src/routes/logout/+page.server.ts',
+			'src/routes/forgot-password/+page.server.ts', 'src/routes/reset-password/+page.server.ts', 'src/routes/otp-login/+page.server.ts',
+			'src/routes/dashboard/api-keys/+page.server.ts', 'src/routes/dashboard/team/+page.server.ts',
+			'src/routes/api/auth/register/+server.ts', 'src/routes/api/auth/login/+server.ts', 'src/routes/api/auth/logout/+server.ts',
+			'src/routes/api/auth/me/+server.ts', 'src/routes/api/auth/forgot-password/+server.ts', 'src/routes/api/auth/reset-password/+server.ts',
+			'src/routes/api/auth/otp/send/+server.ts', 'src/routes/api/auth/otp/verify/+server.ts', 'src/routes/api/auth/verify-email/+server.ts',
+			'src/routes/api/auth/session/+server.ts', 'src/routes/api/posts/+server.ts', 'src/routes/api/posts/[id]/+server.ts',
+			'src/routes/api/posts/mine/+server.ts', 'src/routes/api/broadcasting/[channel]/+server.ts',
+			'src/routes/api/internal/broadcast/+server.ts', 'src/routes/api/webhooks/incoming/[source]/+server.ts', 'src/routes/api/health/+server.ts',
+		]);
+		return personal.has(path) && !content.startsWith('// svelar:public')
+			? '// svelar:public - reviewed non-functional-RBAC surface; authentication, policies, validation, CSRF or provider signature checks remain.\n' + content : content;
+	}
 	// ─── Config ─────────────────────────────────────────────────
+
+	static applicationWorkflowFiles(): Array<{ path: string; content: string }> {
+		const auth: Array<[string, () => string]> = [
+			['RegisterUserDto', () => this.registerUserDto()], ['LoginDto', () => this.loginDto()],
+			['ForgotPasswordDto', () => this.forgotPasswordDto()], ['ResetPasswordDto', () => this.resetPasswordDto()],
+			['OtpSendDto', () => this.otpSendDto()], ['OtpVerifyDto', () => this.otpVerifyDto()],
+			['LogoutDto', () => this.logoutDto()], ['VerifyEmailDto', () => this.verifyEmailDto()],
+			['LoginAction', () => this.loginAction()], ['LogoutAction', () => this.logoutAction()],
+			['ForgotPasswordAction', () => this.forgotPasswordAction()], ['ResetPasswordAction', () => this.resetPasswordAction()],
+			['SendOtpAction', () => this.sendOtpAction()], ['VerifyOtpAction', () => this.verifyOtpAction()],
+			['VerifyEmailAction', () => this.verifyEmailAction()], ['LogoutRequest', () => this.logoutRequest()],
+			['VerifyEmailRequest', () => this.verifyEmailRequest()],
+		];
+		const posts: Array<[string, () => string]> = [
+			['CreatePostDto', () => this.createPostDto()], ['UpdatePostDto', () => this.updatePostDto()],
+			['DeletePostDto', () => this.deletePostDto()], ['UpdatePostAction', () => this.updatePostAction()],
+			['DeletePostAction', () => this.deletePostAction()], ['DeletePostRequest', () => this.deletePostRequest()],
+		];
+		return [...auth.map(([name, render]) => ({ path: `src/lib/modules/auth/${name}.ts`, content: render() })),
+			...posts.map(([name, render]) => ({ path: `src/lib/modules/posts/${name}.ts`, content: render() }))];
+	}
 
 	static packageJson(name: string, svelarVersion: string, validation: ValidationProvider = 'zod'): string {
 		const validationDependencies = validation === 'valibot'
-			? { valibot: "^1.4.1" }
-			: { zod: "^4.6.7", valibot: "^1.4.1" };
+			? { valibot: "^1.5.0" }
+			: { zod: "^4.6.7", valibot: "^1.5.0" };
+		const uiDependencies = {
+			"@internationalized/date": "^3.12.4",
+			"bits-ui": "^2.19.5",
+			"embla-carousel-svelte": "^8.6.0",
+			formsnap: "^2.0.1",
+			layerchart: "^2.8.0",
+			"mode-watcher": "^1.1.0",
+			paneforge: "^1.0.2",
+			"svelte-sonner": "^1.2.1",
+			"sveltekit-superforms": "^2.31.0",
+			"tailwind-variants": "^3.3.1",
+			typebox: "^1.3.37",
+			// The Svelte 5 drawer integration still requires the upstream next line.
+			"vaul-svelte": "^1.0.0-next.7",
+			"zod-v3-to-json-schema": "^4.0.0",
+		};
 
 		return (
 			JSON.stringify(
@@ -22,10 +74,13 @@ export class NewCommandTemplates {
 					version: "0.0.1",
 					private: true,
 					type: "module",
+					engines: { node: "^22.12.0 || >=24.0.0" },
 					scripts: {
 						prepare: "svelte-kit sync",
 						dev: "vite dev",
+						prebuild: "svelar lint:architecture",
 						build: "vite build",
+						"lint:architecture": "svelar lint:architecture",
 						preview: "vite preview",
 						migrate: "npx svelar migrate",
 						"migrate:rollback": "npx svelar migrate --rollback",
@@ -38,51 +93,41 @@ export class NewCommandTemplates {
 						"test:e2e": "playwright test",
 						"test:coverage": "svelte-kit sync && vitest run --coverage",
 						"ui:install":
-							"npm exec --package shadcn-svelte@latest -- shadcn-svelte add --all --yes && npm install --save-prod @internationalized/date@^3.12.2 bits-ui@^2.18.1 embla-carousel-svelte@^8.6.0 formsnap@^2.0.1 layerchart@^2.0.0-next.48 mode-watcher@^1.1.0 paneforge@^1.0.2 svelte-sonner@^1.1.1 sveltekit-superforms@^2.30.1 tailwind-variants@^3.2.2 typebox@^1.1.39 vaul-svelte@^1.0.0-next.7 zod-v3-to-json-schema@^4.0.0",
+							"npm exec --package shadcn-svelte@latest -- shadcn-svelte add --all --yes && npm install --save-prod "
+							+ Object.entries(uiDependencies).map(([dependency, version]) => `${dependency}@${version}`).join(' '),
 					},
 					devDependencies: {
-						"@sveltejs/adapter-node": "^5.5.4",
-						"@sveltejs/kit": "^2.55.0",
-						"@sveltejs/vite-plugin-svelte": "^5.0.0",
-						"@tailwindcss/vite": "^4.2.2",
-						"@lucide/svelte": "^1.17.0",
-						svelte: "^5.0.0",
-						"svelte-check": "^4.0.0",
-						tailwindcss: "^4.2.2",
+						"@sveltejs/adapter-node": "^5.5.7",
+						"@sveltejs/kit": "^2.70.3",
+						"@sveltejs/vite-plugin-svelte": "^7.3.1",
+						"@tailwindcss/vite": "^4.3.3",
+						"@lucide/svelte": "^1.56.0",
+						svelte: "^5.57.2",
+						"svelte-check": "^4.7.6",
+						tailwindcss: "^4.3.3",
 						typescript: "^6.0.3",
 						"@types/node": "^22.20.5",
-						vite: "^6.0.0",
+						vite: "^8.3.4",
 						vitest: "^4.1.11",
-						"@playwright/test": "^1.48.0",
+						"@vitest/coverage-v8": "^4.1.11",
+						"@playwright/test": "^1.64.0",
 					},
-						dependencies: {
-							"@internationalized/date": "^3.12.2",
-							"@aws-sdk/client-s3": "^3.700.0",
-							"@aws-sdk/s3-request-presigner": "^3.700.0",
-							"better-sqlite3": "^12.11.1",
-							"bits-ui": "^2.18.1",
-							bullmq: "^5.0.0",
-							"drizzle-orm": "^0.45.2",
-							"embla-carousel-svelte": "^8.6.0",
-							formsnap: "^2.0.1",
-								ioredis: "^5.0.0",
-								layerchart: "^2.0.0-next.48",
-								meilisearch: "^0.44.0",
-								mysql2: "^3.11.0",
-							"mode-watcher": "^1.1.0",
-							paneforge: "^1.0.2",
-							postgres: "^3.4.5",
-							"@beeblock/svelar": `^${svelarVersion}`,
-						clsx: "^2.1.0",
+					dependencies: {
+						...uiDependencies,
+						"@aws-sdk/client-s3": "^3.1150.0",
+						"@aws-sdk/s3-request-presigner": "^3.1150.0",
+						"better-sqlite3": "^12.11.1",
+						bullmq: "^5.81.5",
+						"drizzle-orm": "^0.45.4",
+						ioredis: "^5.11.1",
+						meilisearch: "^0.62.0",
+						mysql2: "^3.24.6",
+						postgres: "^3.4.9",
+						"@beeblock/svelar": `^${svelarVersion}`,
+						clsx: "^2.1.1",
 						pdfkit: "^0.18.0",
-						"svelte-sonner": "^1.1.1",
-							"sveltekit-superforms": "^2.31.0",
-						"tailwind-merge": "^3.0.0",
-						"tailwind-variants": "^3.2.2",
-						"tw-animate-css": "^1.2.0",
-						typebox: "^1.1.39",
-						"vaul-svelte": "^1.0.0-next.7",
-						"zod-v3-to-json-schema": "^4.0.0",
+						"tailwind-merge": "^3.7.0",
+						"tw-animate-css": "^1.4.0",
 						...validationDependencies,
 					},
 					overrides: {
@@ -232,7 +277,6 @@ export default defineConfig(({ mode }) => {
 
   return {
   plugins: [sveltekit(), tailwindcss()],
-  esbuild: { keepNames: true },
   resolve: {
     alias: {
       '@beeblock/svelar/actions': resolve(svelarRoot, 'dist/actions/index.js'),
@@ -245,8 +289,10 @@ export default defineConfig(({ mode }) => {
       '@beeblock/svelar/cli': resolve(svelarRoot, 'dist/cli/index.js'),
       '@beeblock/svelar/config': resolve(svelarRoot, 'dist/config/index.js'),
       '@beeblock/svelar/container': resolve(svelarRoot, 'dist/container/index.js'),
+      '@beeblock/svelar/dashboard/schemas': resolve(svelarRoot, 'dist/dashboard/schemas.js'),
       '@beeblock/svelar/dashboard': resolve(svelarRoot, 'dist/dashboard/index.js'),
       '@beeblock/svelar/database': resolve(svelarRoot, 'dist/database/index.js'),
+      '@beeblock/svelar/deployment': resolve(svelarRoot, 'dist/deployment/index.js'),
       '@beeblock/svelar/dates': resolve(svelarRoot, 'dist/support/date.js'),
       '@beeblock/svelar/email-templates': resolve(svelarRoot, 'dist/email-templates/index.js'),
       '@beeblock/svelar/errors': resolve(svelarRoot, 'dist/errors/index.js'),
@@ -262,10 +308,12 @@ export default defineConfig(({ mode }) => {
       '@beeblock/svelar/mail': resolve(svelarRoot, 'dist/mail/index.js'),
       '@beeblock/svelar/middleware': resolve(svelarRoot, 'dist/middleware/index.js'),
       '@beeblock/svelar/notifications': resolve(svelarRoot, 'dist/notifications/index.js'),
+      '@beeblock/svelar/operations': resolve(svelarRoot, 'dist/operations/index.js'),
       '@beeblock/svelar/orm': resolve(svelarRoot, 'dist/orm/index.js'),
       '@beeblock/svelar/pagination': resolve(svelarRoot, 'src/pagination'),
       '@beeblock/svelar/pdf/GeneratePdfJob': resolve(svelarRoot, 'dist/pdf/GeneratePdfJob.js'),
       '@beeblock/svelar/pdf': resolve(svelarRoot, 'dist/pdf/index.js'),
+      '@beeblock/svelar/permissions/client': resolve(svelarRoot, 'dist/permissions/client.js'),
       '@beeblock/svelar/permissions': resolve(svelarRoot, 'dist/permissions/index.js'),
       '@beeblock/svelar/plugins/PluginInstaller': resolve(svelarRoot, 'dist/plugins/PluginInstaller.js'),
       '@beeblock/svelar/plugins/PluginPublisher': resolve(svelarRoot, 'dist/plugins/PluginPublisher.js'),
@@ -311,7 +359,8 @@ export default defineConfig(({ mode }) => {
     exclude: ['@lucide/svelte', '@tabler/icons-svelte', 'bits-ui'],
   },
   build: {
-    rollupOptions: {
+    rolldownOptions: {
+      output: { keepNames: true },
       onwarn(warning, warn) {
         const warningText = [
           warning.message,
@@ -613,6 +662,7 @@ export default defineConfig(({ mode }) => {
 	static utilsCn(): string {
 		return `import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
+export type { WithoutChild, WithoutChildren, WithoutChildrenOrChild, WithElementRef } from 'bits-ui';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -631,6 +681,7 @@ declare global {
       auth: AuthManager;
       session: Session;
       user: User | null;
+      authenticatedVia?: 'bearer' | 'session' | null;
     }
   }
 }
@@ -653,14 +704,15 @@ import { container } from '@beeblock/svelar/container';
 import { config } from '@beeblock/svelar/config';
 import { Hash } from '@beeblock/svelar/hashing';
 import { AuthManager } from '@beeblock/svelar/auth';
-import { Cache } from '@beeblock/svelar/cache';
+import { Cache, type CacheConfig } from '@beeblock/svelar/cache';
 import { Queue } from '@beeblock/svelar/queue';
 import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
 import { Audit } from '@beeblock/svelar/audit';
 import { Log } from '@beeblock/svelar/logging';
 import { Search } from '@beeblock/svelar/search';
 import { ApiKeys } from '@beeblock/svelar/api-keys';
-import { Webhooks } from '@beeblock/svelar/webhooks';
+import { Webhooks, WebhookInbox } from '@beeblock/svelar/webhooks';
+import { BackgroundOperation } from '@beeblock/svelar/operations';
 	import { Teams } from '@beeblock/svelar/teams';
 	import { EmailTemplates } from '@beeblock/svelar/email-templates';
 	import { Mailer } from '@beeblock/svelar/mail';
@@ -669,12 +721,18 @@ import { Features } from '@beeblock/svelar/feature-flags';
 import { PDF } from '@beeblock/svelar/pdf';
 import { configureDashboard } from '@beeblock/svelar/dashboard';
 import { Broadcast } from '@beeblock/svelar/broadcasting';
+import { Permissions } from '@beeblock/svelar/permissions';
+import { DeploymentRuntime } from '@beeblock/svelar/deployment';
+import { createDashboardProviders, dashboardAuthorization } from './lib/modules/admin/DashboardProvidersService.js';
+import { permissionManifest } from './lib/shared/permissions/manifest.js';
 import { createScheduler } from './lib/shared/scheduler/index.js';
 import { User } from './lib/modules/auth/User.js';
+import { UserRepository } from './lib/modules/auth/UserRepository.js';
 import { EventServiceProvider } from './lib/shared/providers/EventServiceProvider.js';
 import './lib/modules/auth/gates.js';
 
 await config.loadFromDirectory('config');
+Permissions.registerManifest(permissionManifest);
 
 // ── Database ───────────────────────────────────────────────
 Connection.configure({
@@ -715,7 +773,7 @@ Log.configure({
   default: config.get('logging.default', 'console'),
   channels: config.get('logging.channels', { console: { driver: 'console', level: 'info', format: 'json' } }),
   viewer: {
-    driver: config.get('logging.viewer.driver', process.env.LOG_VIEWER_DRIVER ?? 'database'),
+    driver: config.get('logging.viewer.driver', process.env.LOG_VIEWER_DRIVER === 'memory' ? 'memory' : 'database'),
     retentionSeconds: config.get('logging.viewer.retentionSeconds', Number(process.env.LOG_RETENTION_SECONDS ?? 2592000)),
     tailIntervalMs: config.get('logging.viewer.tailIntervalMs', Number(process.env.LOG_TAIL_INTERVAL_MS ?? 1000)),
     onTailError: () => console.error('Shared log tail unavailable; check database connectivity.'),
@@ -733,10 +791,22 @@ export const auth = new AuthManager({
   },
   appUrl: config.get('app.url', process.env.APP_URL ?? 'http://localhost:5173'),
   appName: config.get('app.name', process.env.APP_NAME ?? 'Svelar'),
+  eligibility: {
+    disabledAtColumn: config.get('auth.eligibility.disabledAtColumn', 'disabled_at'),
+    lockedUntilColumn: config.get('auth.eligibility.lockedUntilColumn', 'locked_until'),
+    requireVerifiedEmail: config.get('auth.emailVerification.required', process.env.AUTH_EMAIL_VERIFICATION_REQUIRED === 'true') === true,
+    ...config.get('auth.eligibility', {}),
+  },
+  presentation: {
+    brand: config.get('auth.brand', {}),
+    providers: config.get('auth.providers', []),
+  },
 });
 
 // ── Cache ─────────────────────────────────────────────────
-Cache.configure({
+container.instance('auth', auth);
+
+const cacheConfig: CacheConfig = {
   default: config.get('cache.default', process.env.CACHE_DRIVER ?? 'memory'),
   stores: {
     memory: {
@@ -759,7 +829,8 @@ Cache.configure({
       ttl: config.get('cache.stores.redis.ttl', undefined),
     },
   },
-});
+};
+Cache.configure(cacheConfig);
 
 // ── Queue ─────────────────────────────────────────────────
 const queueConnections: Record<string, any> = {
@@ -804,6 +875,7 @@ ApiKeys.configure({ driver: 'database', prefix: 'sk_' });
 
 // ── Webhooks ──────────────────────────────────────────────
 Webhooks.configure({ driver: 'database', maxAttempts: 5 });
+WebhookInbox.configure({ driver: 'database' });
 
 // ── Teams ─────────────────────────────────────────────────
 Teams.configure({ driver: 'database' });
@@ -819,13 +891,30 @@ EmailTemplates.registerDefaults();
 Broadcast.configure({
   default: 'sse',
   drivers: {
-    sse: { driver: 'sse' },
+    sse: { driver: 'sse', ...(process.env.BROADCAST_BACKPLANE === 'redis' ? { backplane: {
+      driver: 'redis' as const,
+      url: process.env.REDIS_URL ?? (() => {
+        const url = new URL('redis://localhost');
+        url.hostname = process.env.REDIS_HOST ?? 'localhost';
+        url.port = process.env.REDIS_PORT ?? '6379';
+        url.password = process.env.REDIS_PASSWORD ?? '';
+        url.pathname = '/' + (process.env.REDIS_DB ?? '0');
+        return url.toString();
+      })(),
+      channel: process.env.BROADCAST_CHANNEL ?? 'svelar:broadcast',
+    } } : {}) },
   },
 });
 
 // Channel authorization — private-user-{id} for per-user channels
 Broadcast.channel('private-user-{id}', async (user: any, params: any) => {
   return user && String(user.id) === params.id;
+});
+
+Broadcast.channel('private-operations.{hash}', async (user: any, params: any) => {
+  if (!user) return false;
+  try { return BackgroundOperation.currentChannel() === 'private-operations.' + params.hash; }
+  catch { return false; }
 });
 
 // Presence channel for admin dashboard
@@ -902,7 +991,9 @@ PDF.configure({
 });
 
 // ── Dashboard ─────────────────────────────────────────────
-configureDashboard({ enabled: true, prefix: '/admin' });
+configureDashboard({ enabled: true, prefix: '/admin', providers: createDashboardProviders({
+  cacheStores: Object.entries(cacheConfig.stores).map(([name, store]) => ({ name, driver: store.driver })),
+}), authorize: dashboardAuthorization });
 
 // ── Scheduler ─────────────────────────────────────────────
 export const scheduler = createScheduler();
@@ -923,6 +1014,7 @@ export const authConfig = {
   appName: config.get('app.name', process.env.APP_NAME ?? 'Svelar'),
   otpEnabled: config.get('auth.otp.enabled', process.env.AUTH_OTP_ENABLED === 'true') === true,
   emailVerificationRequired: config.get('auth.emailVerification.required', process.env.AUTH_EMAIL_VERIFICATION_REQUIRED === 'true') === true,
+  rememberEnabled: Number(process.env.SESSION_REMEMBER_LIFETIME ?? 604800) > 0,
 };
 
 export function authRedirect(url: URL): string {
@@ -947,6 +1039,33 @@ export function authRedirect(url: URL): string {
     ?? '/dashboard';
 }
 
+// Readiness proves configured dependencies, not merely that the HTTP process exists.
+DeploymentRuntime.configure({ checks: {
+  database: async (signal) => { await new UserRepository().probe(); return !signal.aborted; },
+  cache: async (signal) => { await Cache.get('svelar:readiness'); return !signal.aborted; },
+  queue: async (signal) => {
+    const adapter = Queue.adapter('default', queueConfig.default);
+    if (adapter.capabilities.shared) await adapter.counts();
+    return !signal.aborted;
+  },
+  realtime: async (signal) => { await Broadcast.ready(); return !signal.aborted; },
+} });
+DeploymentRuntime.ready();
+
+for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => {
+  DeploymentRuntime.beginDrain();
+  void Broadcast.drain().catch(() => console.error('Svelar realtime drain failed.'));
+});
+// adapter-node emits this only after HTTP drain: never disconnect the DB on SIGTERM.
+process.once('sveltekit:shutdown', () => {
+  void (async () => {
+    await scheduler.stop();
+    await Queue.stop();
+    await Broadcast.drain();
+    await Connection.disconnect();
+  })().catch(() => console.error('Svelar shutdown cleanup failed.'));
+});
+
 export { Connection, Hash, Broadcast };
 `;
 	}
@@ -967,14 +1086,18 @@ export const { handle, handleError } = createSvelarApp({
   secret: process.env.APP_KEY,
   sessionStore: new DatabaseSessionStore(),
   sessionLifetime: Number(process.env.SESSION_LIFETIME ?? 86400),
-  sessionAbsoluteLifetime: process.env.SESSION_ABSOLUTE_LIFETIME ? Number(process.env.SESSION_ABSOLUTE_LIFETIME) : undefined,
-  sessionTouchOnActivity: process.env.SESSION_TOUCH_ON_ACTIVITY === 'true',
+  sessionIdleLifetime: Number(process.env.SESSION_IDLE_LIFETIME ?? process.env.SESSION_LIFETIME ?? 86400),
+  sessionAbsoluteLifetime: Number(process.env.SESSION_ABSOLUTE_LIFETIME ?? 86400),
+  sessionRememberLifetime: Number(process.env.SESSION_REMEMBER_LIFETIME ?? 604800) || undefined,
+  sessionRememberAbsoluteLifetime: Number(process.env.SESSION_REMEMBER_ABSOLUTE_LIFETIME ?? 2592000),
+  sessionWarningBefore: Number(process.env.SESSION_WARNING_BEFORE ?? 120),
+  sessionTouchOnActivity: process.env.SESSION_TOUCH_ON_ACTIVITY !== 'false',
   sessionTouchThrottle: Number(process.env.SESSION_TOUCH_THROTTLE ?? 300),
   rateLimitStore: process.env.RATE_LIMIT_STORE === 'cache' ? 'cache' : 'memory',
   rateLimitCacheStore: process.env.RATE_LIMIT_CACHE_STORE || process.env.CACHE_DRIVER,
   authThrottleStore: process.env.RATE_LIMIT_STORE === 'cache' ? 'cache' : 'memory',
   authThrottleCacheStore: process.env.RATE_LIMIT_CACHE_STORE || process.env.CACHE_DRIVER,
-  csrfExcludePaths: ['/api/webhooks', '/api/internal/'],
+  csrfExcludePaths: ['/api/webhooks/incoming/', '/api/internal/'],
 });
 `;
 	}
@@ -1003,6 +1126,11 @@ LOG_TAIL_INTERVAL_MS=1000
 # SESSION_TOUCH_ON_ACTIVITY=true
 # SESSION_TOUCH_THROTTLE: Minimum seconds between session TTL touches.
 # SESSION_TOUCH_THROTTLE=300
+# SESSION_IDLE_LIFETIME=86400
+# SESSION_REMEMBER_LIFETIME: Persistent idle lifetime; set 0 to hide/disable remember-me.
+# SESSION_REMEMBER_LIFETIME=604800
+# SESSION_REMEMBER_ABSOLUTE_LIFETIME=2592000
+# SESSION_WARNING_BEFORE=120
 
 # ── Internal ──────────────────────────────────────────────
 # INTERNAL_SECRET: Shared secret for internal HTTP bridge (scheduler -> web server).
@@ -1221,6 +1349,31 @@ coverage/
 `;
 	}
 
+	static runtimeGuidance(): string {
+		return `## Production Runtime Contracts
+
+- Controllers, entities, routes and dashboards require an explicit capability decision: use \`--capability=<resource>\` with team/platform scope and page path, or a reviewed \`--public\` exemption. Public only exempts functional RBAC, never auth, policies, validation or CSRF.
+- Register literal capability manifests, seed catalogs/profiles, and guard endpoints before FormRequest parsing. System profiles evolve as defaults minus exclusions plus inclusions; custom profiles are exact. Verify platform ownership against current trusted account data.
+- User-bound API credentials restrict current user authority through verified \`credentialCapabilities\`. Service accounts require trusted tenant/actor context and cannot grant platform capabilities. Client snapshots are presentation only.
+- Authenticate before Origin/CSRF; only verified Bearer identity permits a machine-request exemption. A submitted header never bypasses browser protection or permits session fallback. Signed incoming webhook routes authenticate provider credentials independently.
+- Apply configured account eligibility to password, session, token, refresh, OTP and federation login. Federation callbacks use \`auth.login()\` after provider/state proof and secure linking, never direct session writes. Add focused migrations before enabling new status columns. Auth APIs audit attempts; do not duplicate events or log credentials.
+- Render only public \`auth.presentation()\` data through the shared AuthFrame; provider controls require real configured available adapters. Never return full auth configuration to page loads or claim branding slots implement OAuth/OIDC/SAML.
+- Auth identity comes from the configured model primary key and \`auth.id()\`, never a shadow \`user.id\`. Match actual foreign-key column types through app migrations. Preserve the server-validated return path across login/register/recovery/OTP links; never trust a browser redirect target without validation.
+- Generic controller failures use the request-scoped global ErrorHandler, including awaited reporters/renderers. Return or await \`super.handleError(error, event)\`; preserve native SvelteKit redirects/HTTP errors and do not emit unreported generic 500s.
+- Use \`Queue.adapter(queue, connection)\` for named queue monitoring, replay, batch controls and timelines; include live/dead-letter source on job references. Never import BullMQ internals in app code. Unknown worker telemetry remains null/incomplete.
+- Register jobs in the common bootstrap and run daemon profiles with \`queue:work --profile=...\`. Use persistent scheduler runtime and \`ScheduleMonitor.requestRun()\`; queued run-now is not completed execution.
+- Use atomic cache primitives and \`Http.budget\` for distributed quotas. Memory is process-local and null coordination fails closed. Trust only configured proxy chains.
+- Register durable \`WebhookInbox\` sources with exact raw-byte provider verification and trusted account mapping. Register the inbox sweep in every scheduler. Handlers are at-least-once and need domain idempotency; generic HMAC is not Stripe timestamp verification.
+- Use \`BackgroundOperation\` for persisted progress, results and cooperative cancellation. Enforce tenant plus actor ownership and private channel authorization. Register handlers/sweeps across processes; queue and realtime only wake up durable work.
+- Sessions renew through real navigation/mutations or trusted server activity, not polling headers. Configure idle, absolute and remember limits and use protected session status/renew endpoints. Multitab messages only invalidate local presentation.
+- Configure shared database logs in the common bootstrap and register durable search outbox sweeps. Meilisearch outages must not turn committed database writes into failed writes.
+- Use callback-scoped fakes and explicit tenant/actor context in tests. Native database resets require an isolated test database and explicit destructive acknowledgement.
+- Factories may await real password hashes in \`definition()\`. Use \`makeAsync/makeManyAsync\` for non-persisted asynchronous definitions; synchronous make methods reject them. Generated auth tests use isolated migrations, never the application's configured database or bootstrap.
+- Use \`withQueueRecovery\` with a public shared adapter and caller-owned start/stop/kill fixtures for worker acceptance tests. Await every operation, honor abort signals and deadlines, and never kill unrelated workers. Fakes do not prove native recovery.
+- Dashboard topology, stack traces, scheduler pages and dependency probes expose bounded coverage/unknown state. Use configured queue discovery pages and the actual cache inventory; empty/null process-local reads are not distributed health or evidence of browser delivery.
+`;
+	}
+
 	static agentsMd(): string {
 		return `# Svelar App — Agent Guidelines
 
@@ -1234,6 +1387,8 @@ coverage/
 - Use shared schemas for backend validation and frontend forms. Use Superforms where app forms need shared validation.
 - Keep validation consistent with \`svelar.validation.json\`. Use Zod schemas in Zod apps and Valibot schemas in Valibot apps.
 - Use policies, permissions, teams, middleware, rate limits, sessions, jobs, events, listeners, observers, cache, storage, search, PDF, and broadcasting through Svelar APIs instead of ad hoc implementations.
+
+${this.runtimeGuidance()}
 
 ## ORM Helper Lifecycle
 
@@ -1377,7 +1532,7 @@ Use this skill for Svelar app work. Svelar is Laravel-inspired on SvelteKit 2. F
 
 For a full Laravel-style resource, start with \`make:entity\`:
 
-- \`npx svelar make:entity Invoice --module=billing --fields "title:string,total:number,status:enum(draft,paid)" --crud\`
+- \`npx svelar make:entity Invoice --module=billing --fields "title:string,total:number,status:enum(draft,paid)" --crud --capability=invoices --scope=team --screen-route=/invoices\`
 
 Use focused generators for individual artifacts:
 
@@ -1389,7 +1544,7 @@ Use focused generators for individual artifacts:
 - \`npx svelar make:action CreateInvoiceAction --module=billing\`
 - \`npx svelar make:service InvoiceService --module=billing\`
 - \`npx svelar make:repository InvoiceRepository --module=billing\`
-- \`npx svelar make:controller InvoiceController --module=billing\`
+- \`npx svelar make:controller InvoiceController --module=billing --capability=invoices --scope=team --screen-route=/invoices\`
 - \`npx svelar make:resource InvoiceResource --module=billing\`
 - \`npx svelar make:event InvoicePaid --module=billing\`
 - \`npx svelar make:listener SendInvoiceReceipt --module=billing\`
@@ -1399,7 +1554,7 @@ Use focused generators for individual artifacts:
 - \`npx svelar make:command ReconcileInvoices\`
 - \`npx svelar make:channel TeamChannel\`
 - \`npx svelar make:broadcasting\`
-- \`npx svelar make:dashboard\`
+- \`npx svelar make:dashboard --capability=operations --scope=platform\`
 - \`npx svelar make:docker\`
 - \`npx svelar make:test InvoiceService --unit\`
 
@@ -1511,6 +1666,8 @@ Controllers validate through FormRequests, call actions/services, and return res
 - These helpers are not atomic; concurrent updates to an existing record are last-writer-wins. Use database \`upsert\` or transaction/locking when atomicity is needed; \`upsert\` is eventless and does not run the full Model lifecycle.
 - Tenant-scoped \`upsert\` requires the tenant column in \`conflictColumns\` and a matching composite unique constraint; ambient or explicit \`forTenant()\` scope assigns tenant values and rejects conflicts. Upsert rejects all row predicates and soft-delete scopes: consciously use \`withTrashed().upsert(...)\` for table identity, or eventful helpers for scoped row writes. PostgreSQL/SQLite guard target/excluded tenant equality; MySQL guards each assignment against any unique/PK collision. A foreign collision can throw on PostgreSQL/SQLite or no-op on MySQL; metadata is not Model success. Upsert stays eventless: supply IDs/timestamps and authorize the tenant-only \`withoutTenantScope()\` admin bypass. MySQL's empty-update self-assignment is not \`INSERT IGNORE\`; unrelated validation/storage errors propagate.
 - A raw \`QueryBuilder\` without a model class is eventless and returns plain rows. Its helpers require stable unique row identity through an \`id\` column, not a custom model primary key. Both model and raw helpers require a single-table write target and reject joined, grouped/HAVING, CTE, and union queries.
+
+${this.runtimeGuidance()}
 
 ## Auth, Policies, Permissions, Teams
 
@@ -1748,10 +1905,233 @@ export class UserRepository extends Repository<User> {
     return this.query().where('email', email).first();
   }
 
+  async probe(): Promise<void> {
+    await this.query().select(User.primaryKey).limit(1).get();
+  }
+
   async findWithPosts(id: number): Promise<User | null> {
     return this.query().with('posts').find(id);
   }
+
+  async consolePage(search: string | undefined, limit: number, offset: number): Promise<{ users: User[]; total: number }> {
+    const query = this.query();
+    if (search) query.whereNested((filter: any) => filter.where('name', 'like', '%' + search + '%').orWhere('email', 'like', '%' + search + '%'));
+    const total = await query.clone().count();
+    const users = await query.orderBy('id').limit(limit).offset(offset).get();
+    return { users, total };
+  }
+
+  async lockForConsole(id: string): Promise<User | null> {
+    return this.query().where('id', id).forUpdate().first();
+  }
 }
+`;
+	}
+
+	static permissionManifest(actions: readonly string[]): string {
+		const definition = {
+			screens: [{ resource: 'operations', label: 'Operations', group: 'Platform', route: '/admin/dashboard', scope: 'platform' }],
+			actions: actions.map((action) => ({ screen: 'operations', action, label: action.split('.').join(' ') })),
+			aliases: [],
+			systemProfiles: [{ name: 'platform-operator', label: 'Platform operator', scope: 'platform', defaults: 'all' }],
+		};
+		return `import { PermissionManifest, type PermissionManifestDefinition } from '@beeblock/svelar/permissions';
+
+export const permissionDefinition: PermissionManifestDefinition = ${JSON.stringify(definition, null, 2)};
+export const permissionManifest = new PermissionManifest(permissionDefinition);
+`;
+	}
+
+	static platformIdentityService(): string {
+		return `import type { CapabilityPrincipal } from '@beeblock/svelar/permissions';
+import { UserRepository } from '$lib/modules/auth/UserRepository.js';
+
+const repository = new UserRepository();
+
+// Platform identity is checked against the current persisted account, not editable tenant roles or captured job flags.
+export async function verifyPlatformOwner(principal: CapabilityPrincipal): Promise<boolean> {
+  if (principal.kind !== 'user' || principal.modelType !== 'User') return false;
+  const user = await repository.findById(principal.modelId);
+  return user?.getAttribute('role') === 'admin';
+}
+`;
+	}
+
+	static roleRepository(): string {
+		return `import { QueryBuilder } from '@beeblock/svelar/orm';
+import type { RoleRecord } from '@beeblock/svelar/permissions';
+
+export class RoleRepository {
+  async page(search: string | undefined, limit: number, offset: number, guard: string) {
+    const query = new QueryBuilder<RoleRecord>('roles').where('guard', guard);
+    if (search) query.where('name', 'like', '%' + search + '%');
+    const total = await query.clone().count();
+    const roles = await query.orderBy('name').orderBy('id').limit(limit).offset(offset).get();
+    return { roles, total };
+  }
+}
+`;
+	}
+
+	static dashboardProvidersService(): string {
+		return `import { Connection } from '@beeblock/svelar/database';
+import { config } from '@beeblock/svelar/config';
+import { DashboardOperationError, createConfiguredDashboardDependencyObserver, type DashboardDependencyInventory, type DashboardProviders, type DashboardAuthorizer, type DashboardProfileScope, type DashboardUserAccessInput, type DashboardUserRoleInput, type DashboardUserCapabilityInput } from '@beeblock/svelar/dashboard';
+import { Permissions, PermissionProfiles, isReservedRoleName } from '@beeblock/svelar/permissions';
+import { Teams } from '@beeblock/svelar/teams';
+import { ApplicationContext } from '@beeblock/svelar/support';
+import { UserRepository } from '$lib/modules/auth/UserRepository.js';
+import { RoleRepository } from '$lib/modules/admin/RoleRepository.js';
+import { permissionDefinition, permissionManifest } from '$lib/shared/permissions/manifest.js';
+import { capabilityAccess, resolveCapabilityInput } from '$lib/shared/permissions/access.server.js';
+
+const users = new UserRepository();
+const roles = new RoleRepository();
+const operations = {
+  retryJob: 'queue.retry', deleteJob: 'queue.delete', retryJobs: 'queue.retry.batch', cleanupJobs: 'queue.cleanup', pauseQueue: 'queue.pause',
+  runTask: 'scheduler.run', toggleTask: 'scheduler.toggle', users: 'users.view', resetPassword: 'users.resetPassword', deleteUser: 'users.delete',
+  permissions: 'permissions.view', saveProfile: 'permissions.profile.update', deleteRole: 'permissions.delete', features: 'features.view', toggleFeature: 'features.toggle',
+  userAccess: 'users.access.view', assignRole: 'users.roles.assign', detachRole: 'users.roles.detach',
+  grantCapability: 'users.capabilities.grant', revokeCapability: 'users.capabilities.revoke', createRole: 'permissions.create',
+} as const;
+
+export const dashboardAuthorization: DashboardAuthorizer = async (event, operation) => {
+  const input = resolveCapabilityInput(event);
+  if (!input || !await capabilityAccess.can('screen.operations.view', input)) return false;
+  return operation === 'view' || (operation in operations && await capabilityAccess.can('action.operations.' + operations[operation], input));
+};
+
+async function profileScope(scope: DashboardProfileScope) {
+  const role = await Permissions.findRoleById(scope.roleId);
+  if (!role || role.guard !== permissionManifest.guard) throw new DashboardOperationError(404, 'Role not found.');
+  if (isReservedRoleName(role.name) || role.name === 'admin') throw new DashboardOperationError(403, 'This platform role is protected.');
+  if (scope.scope === 'team') {
+    if (!scope.teamId || !await Teams.findById(scope.teamId)) throw new DashboardOperationError(404, 'Team not found.');
+    return new PermissionProfiles(permissionManifest).forTeam(scope.teamId);
+  }
+  if (scope.teamId !== undefined) throw new DashboardOperationError(403, 'Inconsistent permission scope.');
+  return new PermissionProfiles(permissionManifest).forPlatform();
+}
+
+function roleResource(role: { id: number; name: string; guard: string; description?: string }) {
+  return { id: role.id, name: role.name, guard: role.guard, label: role.description || role.name,
+    protected: isReservedRoleName(role.name) || role.name === 'admin' };
+}
+async function assignmentScope(input: DashboardUserAccessInput, event: Parameters<DashboardAuthorizer>[0], mutation = false) {
+  const user = await users.lockForConsole(input.id);
+  if (!user) throw new DashboardOperationError(404, 'User not found.');
+  const currentId = event.locals.user?.getAttribute?.('id') ?? event.locals.user?.id;
+  const protectedUser = user.getAttribute('role') === 'admin' || String(user.getAttribute('id')) === String(currentId);
+  if (mutation && protectedUser) throw new DashboardOperationError(403, 'This account is protected.');
+  if (input.scope === 'team') {
+    if (!input.teamId || !await Teams.isMember(input.teamId, user.getAttribute('id'))) throw new DashboardOperationError(403, 'User is not a member of this team.');
+    return { user, protectedUser, assignments: Permissions.forTeam(input.teamId) };
+  }
+  if (input.teamId !== undefined) throw new DashboardOperationError(403, 'Inconsistent permission scope.');
+  return { user, protectedUser, assignments: Permissions.global() };
+}
+async function roleAssignment(input: DashboardUserRoleInput, event: Parameters<DashboardAuthorizer>[0], remove: boolean) {
+  await Connection.transaction(async () => {
+    const { user, assignments } = await assignmentScope(input, event, true);
+    const role = await Permissions.findRoleById(input.roleId);
+    if (!role || role.guard !== permissionManifest.guard) throw new DashboardOperationError(404, 'Role not found.');
+    if (roleResource(role).protected) throw new DashboardOperationError(403, 'This role is protected.');
+    const profiles = input.scope === 'team' ? new PermissionProfiles(permissionManifest).forTeam(input.teamId!) : new PermissionProfiles(permissionManifest).forPlatform();
+    if (!remove && !await profiles.get(role.id)) throw new DashboardOperationError(409, 'Configure a profile in this assignment scope first.');
+    if (remove) await assignments.removeRole('User', user.getAttribute('id'), role.id);
+    else await assignments.assignRole('User', user.getAttribute('id'), role.id);
+  });
+}
+async function capabilityAssignment(input: DashboardUserCapabilityInput, event: Parameters<DashboardAuthorizer>[0], remove: boolean) {
+  await Connection.transaction(async () => {
+    const { user, assignments } = await assignmentScope(input, event, true);
+    const permission = await Permissions.findPermission(input.capability, permissionManifest.guard);
+    if (!permission) throw new DashboardOperationError(404, 'Capability not found.');
+    if (!remove && permissionManifest.require(input.capability).scope !== input.scope) throw new DashboardOperationError(403, 'Capability cannot cross scopes.');
+    if (remove) await assignments.revokeModelPermission('User', user.getAttribute('id'), permission.id);
+    else await assignments.giveModelPermission('User', user.getAttribute('id'), permission.id);
+  });
+}
+
+export function createDashboardProviders(health: DashboardDependencyInventory = {}): DashboardProviders { return {
+  dependencies: createConfiguredDashboardDependencyObserver(health),
+  shell: { title: config.get('app.name', process.env.APP_NAME ?? 'Svelar'), appPath: '/dashboard', logoutPath: '/api/auth/logout' },
+  users: {
+    async access(input, event) {
+      return Connection.transaction(async () => {
+        const { user, assignments, protectedUser } = await assignmentScope(input, event);
+        const assigned = await assignments.getModelRoles('User', user.getAttribute('id'));
+        const direct = await assignments.getModelDirectPermissions('User', user.getAttribute('id'));
+        if (assigned.length > 100 || direct.length > 10000) throw new DashboardOperationError(503, 'Permission snapshot exceeds its bound.');
+        return { ...input, id: String(user.getAttribute('id')), protected: protectedUser, roles: assigned.map(roleResource),
+          directCapabilities: direct.filter((permission) => permission.guard === permissionManifest.guard).map((permission) => permission.name) };
+      });
+    },
+    async assignRole(input, event) { await roleAssignment(input, event, false); },
+    async detachRole(input, event) { await roleAssignment(input, event, true); },
+    async grantCapability(input, event) { await capabilityAssignment(input, event, false); },
+    async revokeCapability(input, event) { await capabilityAssignment(input, event, true); },
+    async list(filter, event) {
+      const result = await users.consolePage(filter.search, filter.limit, filter.offset);
+      const currentId = event.locals.user?.getAttribute?.('id') ?? event.locals.user?.id;
+      return { items: result.users.map((user) => {
+        const protectedUser = user.getAttribute('role') === 'admin' || String(user.getAttribute('id')) === String(currentId);
+        return { id: user.getAttribute('id'), name: user.getAttribute('name'), email: user.getAttribute('email'),
+          globalRole: user.getAttribute('role') ?? null, protected: protectedUser, canDelete: !protectedUser, canResetPassword: !protectedUser };
+      }), total: result.total, hasMore: filter.offset + result.users.length < result.total, scope: 'shared' };
+    },
+    async delete(id, event) {
+      await Connection.transaction(async () => {
+        const user = await users.lockForConsole(id);
+        if (!user) throw new DashboardOperationError(404, 'User not found.');
+        const currentId = event.locals.user?.getAttribute?.('id') ?? event.locals.user?.id;
+        if (user.getAttribute('role') === 'admin' || String(user.getAttribute('id')) === String(currentId)) throw new DashboardOperationError(403, 'This account is protected.');
+        await users.delete(id);
+      });
+    },
+    async resetPassword(id, event) {
+      const user = await users.findById(id);
+      if (!user) throw new DashboardOperationError(404, 'User not found.');
+      const currentId = event.locals.user?.getAttribute?.('id') ?? event.locals.user?.id;
+      if (user.getAttribute('role') === 'admin' || String(user.getAttribute('id')) === String(currentId)) throw new DashboardOperationError(403, 'Use account recovery for this protected account.');
+      if (!event.locals.auth || !await event.locals.auth.sendPasswordReset(user.getAttribute('email'))) throw new DashboardOperationError(503, 'Password recovery is unavailable.');
+      return { queued: false };
+    },
+  },
+  permissions: {
+    async getRole(id) { const role = await Permissions.findRoleById(id); return role && role.guard === permissionManifest.guard ? roleResource(role) : null; },
+    async createRole(input) {
+      if (isReservedRoleName(input.name) || input.name === 'admin') throw new DashboardOperationError(403, 'This platform role is protected.');
+      await Connection.transaction(async () => {
+        const role = await Permissions.findRole(input.name, permissionManifest.guard) ?? await Permissions.createRole({ name: input.name, description: input.label, guard: permissionManifest.guard });
+        const profiles = await profileScope({ roleId: role.id, scope: input.scope, teamId: input.teamId });
+        if (await profiles.get(role.id)) throw new DashboardOperationError(409, 'A profile already exists in this scope.');
+        await profiles.setCustom(role.id, []);
+      });
+      return roleResource((await Permissions.findRole(input.name, permissionManifest.guard))!);
+    },
+    async roles(filter) {
+      const result = await roles.page(filter.search, filter.limit, filter.offset, permissionManifest.guard);
+      return { items: result.roles.map((role) => ({ id: role.id, name: role.name, label: role.description || role.name, guard: role.guard,
+        protected: isReservedRoleName(role.name) || role.name === 'admin' })), total: result.total, hasMore: filter.offset + result.roles.length < result.total, scope: 'shared' };
+    },
+    async manifest() { return permissionDefinition; },
+    async profile(scope) { return (await profileScope(scope)).preview(scope.roleId); },
+    async saveProfile(input) {
+      const profiles = await profileScope(input);
+      if (input.kind === 'system') await profiles.setSystem(input.roleId, input.systemProfile!, { exclusions: input.exclusions, inclusions: input.inclusions });
+      else await profiles.setCustom(input.roleId, input.capabilities);
+    },
+    async deleteRole(scope) {
+      const profiles = await profileScope(scope);
+      const userId = ApplicationContext.get<number>('userId');
+      const assignments = scope.scope === 'team' ? Permissions.forTeam(scope.teamId!) : Permissions.global();
+      if (userId && (await assignments.getModelRoles('User', userId)).some((role) => role.id === scope.roleId)) throw new DashboardOperationError(403, 'Your current role assignments are protected.');
+      await profiles.deleteRole(scope.roleId);
+    },
+  },
+  features: { names: config.get<string[]>('features.operationalNames', []), scope: 'shared' },
+}; }
 `;
 	}
 
@@ -1786,72 +2166,100 @@ export class PostRepository extends Repository<Post> {
 	}
 
 	static authService(): string {
-		return `import { Service } from '@beeblock/svelar/services';
+		return `import { Service, type ServiceResult } from '@beeblock/svelar/services';
+import { authFailurePresentation, type AuthManager, type AuthLoginSession, type AuthUser, type AuthFailureReason } from '@beeblock/svelar/auth';
+import { config } from '@beeblock/svelar/config';
 import { Hash } from '@beeblock/svelar/hashing';
 import { Event } from '@beeblock/svelar/events';
-import { UserRepository } from './UserRepository.js';
-import { UserRegistered } from './UserRegistered.js';
+import { UserRepository } from '$lib/modules/auth/UserRepository.js';
+import { UserRegistered } from '$lib/modules/auth/UserRegistered.js';
+import type { User } from '$lib/modules/auth/User.js';
+import type { RegisterUserDto } from '$lib/modules/auth/RegisterUserDto.js';
+import type { LoginDto } from '$lib/modules/auth/LoginDto.js';
+import type { ForgotPasswordDto } from '$lib/modules/auth/ForgotPasswordDto.js';
+import type { ResetPasswordDto } from '$lib/modules/auth/ResetPasswordDto.js';
+import type { OtpSendDto } from '$lib/modules/auth/OtpSendDto.js';
+import type { OtpVerifyDto } from '$lib/modules/auth/OtpVerifyDto.js';
+import type { LogoutDto } from '$lib/modules/auth/LogoutDto.js';
+import type { VerifyEmailDto } from '$lib/modules/auth/VerifyEmailDto.js';
 
-const userRepo = new UserRepository();
+export interface AuthRuntimeContext {
+  auth: AuthManager;
+  session: AuthLoginSession;
+}
+
+export type AuthWriteResult<T> = ServiceResult<T> & {
+  reason?: AuthFailureReason;
+  authenticated?: boolean;
+  status?: 400 | 401 | 403 | 422 | 429 | 503;
+};
 
 export class AuthService extends Service {
-  async register(data: { name: string; email: string; password: string }) {
-    const existing = await userRepo.findByEmail(data.email);
-    if (existing) {
-      return this.fail('Email already registered');
-    }
+  constructor(private readonly context: AuthRuntimeContext, private readonly users = new UserRepository()) { super(); }
 
-    const hashedPassword = await Hash.make(data.password);
-    const user = await userRepo.create({
-      name: data.name,
-      email: data.email,
-      password: hashedPassword,
+  private denied(message: string): AuthWriteResult<never> {
+    const reason = this.context.auth.failureReason() ?? 'invalid_credentials';
+    return { ...this.fail(message), reason, status: authFailurePresentation(reason).status };
+  }
+
+  async register(data: RegisterUserDto): Promise<AuthWriteResult<User>> {
+    if (await this.users.findByEmail(data.email)) return this.fail('Email already registered', { email: ['Email already registered'] });
+    const user = await this.users.create({
+      name: data.name, email: data.email, password: await Hash.make(data.password),
     });
-
-    // Dispatch event — triggers SendWelcomeEmailListener (queues welcome email + notification)
     await Event.dispatch(new UserRegistered(user));
-    return this.ok(user);
-  }
-
-  async login(email: string, password: string) {
-    const user = await userRepo.findByEmail(email);
-    if (!user) {
-      return this.fail('Invalid credentials');
+    if (config.get('auth.emailVerification.required', process.env.AUTH_EMAIL_VERIFICATION_REQUIRED === 'true') === true) {
+      await this.context.auth.sendVerificationEmail(user);
+      return { ...this.ok(user), authenticated: false, reason: 'email_unverified' };
     }
+    const authenticated = !!await this.context.auth.login(user, this.context.session);
+    const reason = authenticated ? undefined : this.context.auth.failureReason() ?? 'temporarily_unavailable';
+    return { ...this.ok(user), authenticated, reason };
+  }
 
-    const valid = await Hash.verify(password, (user as any).password);
-    if (!valid) {
-      return this.fail('Invalid credentials');
+  async login(data: LoginDto): Promise<AuthWriteResult<AuthUser>> {
+    if (data.remember && Number(process.env.SESSION_REMEMBER_LIFETIME ?? 604800) <= 0) {
+      return { ...this.fail('Persistent sign-in is unavailable.'), status: 422 };
     }
-
-    return this.ok(user);
+    const user = await this.context.auth.attempt({ email: data.email, password: data.password }, this.context.session, { remember: data.remember });
+    return user ? this.ok(user) : this.denied('Sign-in failed.');
   }
 
-  async forgotPassword(email: string, auth: any) {
-    // Always return success to avoid leaking whether user exists
-    await auth.sendPasswordReset(email);
-    return this.ok({ message: 'If that email exists, a reset link has been sent.' });
+  async logout(_data: LogoutDto): Promise<ServiceResult<void>> {
+    await this.context.auth.logout(this.context.session);
+    return this.ok();
   }
 
-  async resetPassword(token: string, email: string, password: string, auth: any) {
-    const success = await auth.resetPassword(token, email, password);
-    if (!success) {
-      return this.fail('Invalid or expired reset link');
+  async forgotPassword(data: ForgotPasswordDto): Promise<ServiceResult<void>> {
+    // Do not expose whether the account exists.
+    await this.context.auth.sendPasswordReset(data.email);
+    return this.ok();
+  }
+
+  async resetPassword(data: ResetPasswordDto): Promise<ServiceResult<void>> {
+    const success = await this.context.auth.resetPassword(data.token, data.email, data.password);
+    return success ? this.ok() : this.fail('Invalid or expired reset link');
+  }
+
+  async sendOtp(data: OtpSendDto): Promise<AuthWriteResult<void>> {
+    if (config.get('auth.otp.enabled', process.env.AUTH_OTP_ENABLED === 'true') !== true) {
+      return { ...this.fail('Code sign-in is disabled.'), status: 403 };
     }
-    return this.ok({ message: 'Password has been reset. You can now log in.' });
+    await this.context.auth.sendOtp(data.email);
+    return this.ok();
   }
 
-  async sendOtp(email: string, auth: any) {
-    await auth.sendOtp(email);
-    return this.ok({ message: 'If that email exists, a verification code has been sent.' });
-  }
-
-  async verifyOtp(email: string, code: string, auth: any, session: any) {
-    const user = await auth.attemptOtp(email, code, session);
-    if (!user) {
-      return this.fail('Invalid or expired code');
+  async verifyOtp(data: OtpVerifyDto): Promise<AuthWriteResult<AuthUser>> {
+    if (config.get('auth.otp.enabled', process.env.AUTH_OTP_ENABLED === 'true') !== true) {
+      return { ...this.fail('Code sign-in is disabled.'), status: 403 };
     }
-    return this.ok(user);
+    const user = await this.context.auth.attemptOtp(data.email, data.code, this.context.session);
+    return user ? this.ok(user) : this.denied('Invalid or expired code');
+  }
+
+  async verifyEmail(data: VerifyEmailDto): Promise<ServiceResult<void>> {
+    const success = await this.context.auth.verifyEmail(data.token, data.id);
+    return success ? this.ok() : this.fail('Invalid or expired verification link');
   }
 }
 `;
@@ -1859,240 +2267,206 @@ export class AuthService extends Service {
 
 	static postService(): string {
 		return `import { CrudService } from '@beeblock/svelar/services';
-import { Repository } from '@beeblock/svelar/repositories';
+import type { Repository } from '@beeblock/svelar/repositories';
 import { Broadcast } from '@beeblock/svelar/broadcasting';
-import { PostRepository } from './PostRepository.js';
-import type { Post } from './Post.js';
+import { Gate } from '@beeblock/svelar/auth';
+import { PostRepository } from '$lib/modules/posts/PostRepository.js';
+import type { Post } from '$lib/modules/posts/Post.js';
+import type { User } from '$lib/modules/auth/User.js';
+import type { CreatePostDto } from '$lib/modules/posts/CreatePostDto.js';
+import type { UpdatePostDto } from '$lib/modules/posts/UpdatePostDto.js';
+import type { DeletePostDto } from '$lib/modules/posts/DeletePostDto.js';
 
-const postRepo = new PostRepository();
+export class PostService extends CrudService<Post, CreatePostDto, UpdatePostDto> {
+  constructor(private readonly posts = new PostRepository()) { super(); }
+  protected repository(): Repository<Post> { return this.posts; }
 
-export class PostService extends CrudService<Post> {
-  protected repository(): Repository<Post> {
-    return postRepo;
-  }
+  async findPublished(): Promise<Post[]> { return this.posts.findPublished(); }
+  async findByUser(userId: number): Promise<Post[]> { return this.posts.findByUser(userId); }
 
-  async findPublished(): Promise<Post[]> {
-    return postRepo.findPublished();
-  }
-
-  async findByUser(userId: number): Promise<Post[]> {
-    return postRepo.findByUser(userId);
-  }
-
-  async createForUser(userId: number, data: any): Promise<Post> {
-    const post = await postRepo.create({
-      ...data,
-      user_id: userId,
+  async createForUser(user: User, data: CreatePostDto): Promise<Post> {
+    const post = await this.posts.create({
+      title: data.title, slug: data.slug, body: data.body, published: data.published, user_id: user.id,
     });
-
-    // Broadcast post creation to subscribers on the "posts" channel
     try {
-      await Broadcast.event('post:created', {
-        id: (post as any).id,
-        title: (post as any).title,
-        userId,
-      }).on('posts').send();
+      await Broadcast.event('post:created', { id: post.id, title: post.title, userId: user.id }).on('posts').send();
     } catch {
-      // Broadcasting is best-effort — don't fail post creation
+      // A delivery outage must not turn a persisted write into a retryable failure.
     }
-
     return post;
+  }
+
+  async updateForUser(user: User, data: UpdatePostDto): Promise<Post> {
+    const post = await this.posts.findByIdOrFail(data.id);
+    await Gate.authorize('edit-post', user, post);
+    const patch: Partial<Pick<Post, 'title' | 'slug' | 'body' | 'published'>> = {};
+    if (data.title !== undefined) patch.title = data.title;
+    if (data.slug !== undefined) patch.slug = data.slug;
+    if (data.body !== undefined) patch.body = data.body;
+    if (data.published !== undefined) patch.published = data.published;
+    return this.posts.update(data.id, patch);
+  }
+
+  async deleteForUser(user: User, data: DeletePostDto): Promise<void> {
+    const post = await this.posts.findByIdOrFail(data.id);
+    await Gate.authorize('delete-post', user, post);
+    await this.posts.delete(data.id);
   }
 }
 `;
 	}
 
 	static authController(): string {
-		return `import { Controller } from '@beeblock/svelar/routing';
-import { RegisterRequest } from './RegisterRequest.js';
-import { LoginRequest } from './LoginRequest.js';
-import { ForgotPasswordRequest } from './ForgotPasswordRequest.js';
-import { ResetPasswordRequest } from './ResetPasswordRequest.js';
-import { OtpSendRequest } from './OtpSendRequest.js';
-import { OtpVerifyRequest } from './OtpVerifyRequest.js';
-import { RegisterUserAction } from './RegisterUserAction.js';
-import { AuthService } from './AuthService.js';
-import { UserResource } from './UserResource.js';
+		return `import { Controller, FormAuthorizationError, FormValidationError, type RequestEvent } from '@beeblock/svelar/routing';
+import { authFailurePresentation } from '@beeblock/svelar/auth';
+import { RegisterRequest } from '$lib/modules/auth/RegisterRequest.js';
+import { LoginRequest } from '$lib/modules/auth/LoginRequest.js';
+import { ForgotPasswordRequest } from '$lib/modules/auth/ForgotPasswordRequest.js';
+import { ResetPasswordRequest } from '$lib/modules/auth/ResetPasswordRequest.js';
+import { OtpSendRequest } from '$lib/modules/auth/OtpSendRequest.js';
+import { OtpVerifyRequest } from '$lib/modules/auth/OtpVerifyRequest.js';
+import { LogoutRequest } from '$lib/modules/auth/LogoutRequest.js';
+import { VerifyEmailRequest } from '$lib/modules/auth/VerifyEmailRequest.js';
+import { RegisterUserAction } from '$lib/modules/auth/RegisterUserAction.js';
+import { LoginAction } from '$lib/modules/auth/LoginAction.js';
+import { LogoutAction } from '$lib/modules/auth/LogoutAction.js';
+import { ForgotPasswordAction } from '$lib/modules/auth/ForgotPasswordAction.js';
+import { ResetPasswordAction } from '$lib/modules/auth/ResetPasswordAction.js';
+import { SendOtpAction } from '$lib/modules/auth/SendOtpAction.js';
+import { VerifyOtpAction } from '$lib/modules/auth/VerifyOtpAction.js';
+import { VerifyEmailAction } from '$lib/modules/auth/VerifyEmailAction.js';
+import { UserResource } from '$lib/modules/auth/UserResource.js';
 
-const registerAction = new RegisterUserAction();
-const authService = new AuthService();
+type AuthRequestEvent = Omit<RequestEvent, 'locals'> & { locals: App.Locals };
 
 export class AuthController extends Controller {
-  /** POST /api/auth/register */
-  async register(event: any) {
-    const data = await RegisterRequest.validate(event);
+  protected async handleError(error: unknown, event: RequestEvent): Promise<Response> {
+    if (error instanceof FormValidationError) return this.json({ data: null, meta: { message: error.message, errors: error.errors } }, 422);
+    if (error instanceof FormAuthorizationError) return this.json({ data: null, meta: { message: error.message } }, 403);
+    return super.handleError(error, event);
+  }
 
-    const result = await registerAction.run(data);
+  async register(event: AuthRequestEvent) {
+    const dto = await RegisterRequest.validate(event);
+    const result = await new RegisterUserAction({ auth: event.locals.auth, session: event.locals.session }).run(dto);
+    if (!result.success) return this.json({ data: null, meta: { message: result.error } }, 422);
+    return UserResource.make(result.data!).additional({ authenticated: result.authenticated, ...(result.reason ? { reason: result.reason } : {}) }).status(201).toResponse();
+  }
 
+  async login(event: AuthRequestEvent) {
+    const dto = await LoginRequest.validate(event);
+    const result = await new LoginAction({ auth: event.locals.auth, session: event.locals.session }).run(dto);
     if (!result.success) {
-      return this.json({ message: result.error }, 422);
+      const failure = authFailurePresentation(result.reason ?? 'invalid_credentials');
+      return this.json({ data: null, meta: { code: failure.reason, message: result.error } }, result.status ?? failure.status, { 'Cache-Control': 'no-store' });
     }
-
-    const user = result.data!;
-    event.locals.session.set('auth_user_id', (user as any).id);
-    event.locals.session.regenerateId();
-
-    return UserResource.make(user).status(201).toResponse();
+    return UserResource.make(result.data!).toResponse();
   }
 
-  /** POST /api/auth/login */
-  async login(event: any) {
-    const data = await LoginRequest.validate(event);
-
-    const user = await event.locals.auth.attempt(data, event.locals.session);
-
-    if (!user) {
-      return this.json({ message: 'Invalid email or password' }, 401);
-    }
-
-    return UserResource.make(user).toResponse();
+  async logout(event: AuthRequestEvent) {
+    const dto = await LogoutRequest.validate(event);
+    await new LogoutAction({ auth: event.locals.auth, session: event.locals.session }).run(dto);
+    return this.json({ data: null, meta: { message: 'Logged out successfully' } });
   }
 
-  /** POST /api/auth/logout */
-  async logout(event: any) {
-    await event.locals.auth.logout(event.locals.session);
-
-    return this.json({ message: 'Logged out successfully' });
+  async me(event: AuthRequestEvent) {
+    if (!event.locals.user) return this.json({ data: null, meta: { message: 'Unauthenticated' } }, 401);
+    return UserResource.make(event.locals.user).toResponse();
   }
 
-  /** GET /api/auth/me */
-  async me(event: any) {
-    const user = event.locals.user;
-    if (!user) {
-      return this.json({ message: 'Unauthenticated' }, 401);
-    }
-
-    return UserResource.make(user).toResponse();
+  async forgotPassword(event: AuthRequestEvent) {
+    const dto = await ForgotPasswordRequest.validate(event);
+    await new ForgotPasswordAction({ auth: event.locals.auth, session: event.locals.session }).run(dto);
+    return this.json({ data: null, meta: { message: 'If that email exists, a reset link has been sent.' } });
   }
 
-  /** POST /api/auth/forgot-password */
-  async forgotPassword(event: any) {
-    const data = await ForgotPasswordRequest.validate(event);
-    const result = await authService.forgotPassword(data.email, event.locals.auth);
-    return this.json(result.data);
+  async resetPassword(event: AuthRequestEvent) {
+    const dto = await ResetPasswordRequest.validate(event);
+    const result = await new ResetPasswordAction({ auth: event.locals.auth, session: event.locals.session }).run(dto);
+    return this.json({ data: null, meta: { message: result.success ? 'Password has been reset. You can now log in.' : result.error } }, result.success ? 200 : 400);
   }
 
-  /** POST /api/auth/reset-password */
-  async resetPassword(event: any) {
-    const data = await ResetPasswordRequest.validate(event);
-    const result = await authService.resetPassword(data.token, data.email, data.password, event.locals.auth);
-    if (!result.success) {
-      return this.json({ message: result.error }, 400);
-    }
-    return this.json(result.data);
+  async sendOtp(event: AuthRequestEvent) {
+    const dto = await OtpSendRequest.validate(event);
+    const result = await new SendOtpAction({ auth: event.locals.auth, session: event.locals.session }).run(dto);
+    return this.json({ data: null, meta: { message: result.success ? 'If that email exists, a verification code has been sent.' : result.error } }, result.success ? 200 : result.status ?? 403);
   }
 
-  /** POST /api/auth/otp/send */
-  async sendOtp(event: any) {
-    const data = await OtpSendRequest.validate(event);
-    const result = await authService.sendOtp(data.email, event.locals.auth);
-    return this.json(result.data);
+  async verifyOtp(event: AuthRequestEvent) {
+    const dto = await OtpVerifyRequest.validate(event);
+    const result = await new VerifyOtpAction({ auth: event.locals.auth, session: event.locals.session }).run(dto);
+    if (!result.success) return this.json({ data: null, meta: { message: result.error, code: result.reason } }, result.status ?? 401);
+    return UserResource.make(result.data!).toResponse();
   }
 
-  /** POST /api/auth/otp/verify */
-  async verifyOtp(event: any) {
-    const data = await OtpVerifyRequest.validate(event);
-    const result = await authService.verifyOtp(data.email, data.code, event.locals.auth, event.locals.session);
-    if (!result.success) {
-      return this.json({ message: result.error }, 401);
-    }
-
-    const user = result.data!;
-    return this.json({
-      message: 'Login successful',
-      user: { id: (user as any).id, name: (user as any).name, email: (user as any).email },
-    });
-  }
-
-  /** GET /api/auth/verify-email */
-  async verifyEmail(event: any) {
-    const token = event.url.searchParams.get('token');
-    const id = event.url.searchParams.get('id');
-    if (!token || !id) return this.json({ message: 'Invalid verification link' }, 400);
-
-    const success = await event.locals.auth.verifyEmail(token, id);
-    if (!success) {
-      return this.json({ message: 'Invalid or expired verification link' }, 400);
-    }
-    return this.json({ message: 'Email verified successfully' });
+  async verifyEmail(event: AuthRequestEvent) {
+    const dto = await VerifyEmailRequest.validate(event);
+    const result = await new VerifyEmailAction({ auth: event.locals.auth, session: event.locals.session }).run(dto);
+    return this.json({ data: null, meta: { message: result.success ? 'Email verified successfully' : result.error } }, result.success ? 200 : 400);
   }
 }
 `;
 	}
 
 	static postController(): string {
-		return `import { Controller } from '@beeblock/svelar/routing';
-import { CreatePostRequest } from './CreatePostRequest.js';
-import { UpdatePostRequest } from './UpdatePostRequest.js';
-import { PostService } from './PostService.js';
-import { CreatePostAction } from './CreatePostAction.js';
-import { PostResource } from './PostResource.js';
+		return `import { Controller, FormAuthorizationError, FormValidationError, type RequestEvent } from '@beeblock/svelar/routing';
+import { AuthorizationError } from '@beeblock/svelar/auth';
+import { CreatePostRequest } from '$lib/modules/posts/CreatePostRequest.js';
+import { UpdatePostRequest } from '$lib/modules/posts/UpdatePostRequest.js';
+import { DeletePostRequest } from '$lib/modules/posts/DeletePostRequest.js';
+import { PostService } from '$lib/modules/posts/PostService.js';
+import { CreatePostAction } from '$lib/modules/posts/CreatePostAction.js';
+import { UpdatePostAction } from '$lib/modules/posts/UpdatePostAction.js';
+import { DeletePostAction } from '$lib/modules/posts/DeletePostAction.js';
+import { PostResource } from '$lib/modules/posts/PostResource.js';
+import type { User } from '$lib/modules/auth/User.js';
 
 const postService = new PostService();
-const createPostAction = new CreatePostAction();
+type PostRequestEvent = Omit<RequestEvent, 'locals'> & { locals: App.Locals };
 
 export class PostController extends Controller {
-  /** GET /api/posts */
-  async index(event: any) {
-    const showAll = event.url.searchParams.get('all') === 'true';
+  private actor(event: PostRequestEvent): User {
+    if (!event.locals.user) throw new FormAuthorizationError();
+    return event.locals.user;
+  }
 
-    if (showAll && event.locals.user) {
-      const posts = await postService.findAll();
-      return PostResource.collection(posts).toResponse();
-    }
+  protected async handleError(error: unknown, event: RequestEvent): Promise<Response> {
+    if (error instanceof FormValidationError) return this.json({ data: null, meta: { message: error.message, errors: error.errors } }, 422);
+    if (error instanceof FormAuthorizationError) return this.json({ data: null, meta: { message: error.message } }, 403);
+    if (error instanceof AuthorizationError) return this.json({ data: null, meta: { message: error.message } }, error.statusCode);
+    return super.handleError(error, event);
+  }
 
-    const posts = await postService.findPublished();
+  async index(event: PostRequestEvent) {
+    const posts = event.url.searchParams.get('all') === 'true' && event.locals.user
+      ? await postService.findAll() : await postService.findPublished();
     return PostResource.collection(posts).toResponse();
   }
 
-  /** GET /api/posts/:id */
-  async show(event: any) {
-    const post = await postService.findByIdOrFail(event.params.id);
-    return PostResource.make(post).toResponse();
+  async show(event: PostRequestEvent) {
+    return PostResource.make(await postService.findByIdOrFail(event.params.id)).toResponse();
   }
 
-  /** POST /api/posts */
-  async store(event: any) {
-    const data = await CreatePostRequest.validate(event);
-    const userId = event.locals.user?.id;
-
-    if (!userId) {
-      return this.json({ message: 'Unauthenticated' }, 401);
-    }
-
-    const post = await createPostAction.run({
-      userId,
-      title: data.title,
-      slug: data.slug,
-      body: data.body,
-      published: data.published,
-    });
-
+  async store(event: PostRequestEvent) {
+    const dto = await CreatePostRequest.validate(event);
+    const post = await new CreatePostAction(this.actor(event)).run(dto);
     return PostResource.make(post).status(201).toResponse();
   }
 
-  /** PUT /api/posts/:id */
-  async update(event: any) {
-    const data = await UpdatePostRequest.validate(event);
-    const post = await postService.update(event.params.id, data);
+  async update(event: PostRequestEvent) {
+    const dto = await UpdatePostRequest.validate(event);
+    const post = await new UpdatePostAction(this.actor(event)).run(dto);
     return PostResource.make(post).toResponse();
   }
 
-  /** DELETE /api/posts/:id */
-  async destroy(event: any) {
-    await postService.delete(event.params.id);
+  async destroy(event: PostRequestEvent) {
+    const dto = await DeletePostRequest.validate(event);
+    await new DeletePostAction(this.actor(event)).run(dto);
     return this.noContent();
   }
 
-  /** GET /api/posts/mine */
-  async mine(event: any) {
-    const userId = event.locals.user?.id;
-    if (!userId) {
-      return this.json({ message: 'Unauthenticated' }, 401);
-    }
-
-    const posts = await postService.findByUser(userId);
-    return PostResource.collection(posts).toResponse();
+  async mine(event: PostRequestEvent) {
+    return PostResource.collection(await postService.findByUser(this.actor(event).id)).toResponse();
   }
 }
 `;
@@ -2277,10 +2651,9 @@ export class AdminController extends Controller {
 	}
 
 	static registerRequest(): string {
-		return `import { FormRequest } from '@beeblock/svelar/forms';
-import { registerSchema, type RegisterInput } from './schemas.js';
-
-export type RegisterUserDto = Readonly<Pick<RegisterInput, 'name' | 'email' | 'password'>>;
+		return `import { FormRequest } from '@beeblock/svelar/routing';
+import { registerSchema, type RegisterInput } from '$lib/modules/auth/schemas.js';
+import { RegisterUserDto } from '$lib/modules/auth/RegisterUserDto.js';
 
 export class RegisterRequest extends FormRequest<typeof registerSchema, RegisterUserDto> {
   rules() {
@@ -2288,17 +2661,16 @@ export class RegisterRequest extends FormRequest<typeof registerSchema, Register
   }
 
   passedValidation(data: RegisterInput): RegisterUserDto {
-    return { name: data.name, email: data.email, password: data.password };
+    return new RegisterUserDto(data);
   }
 }
 `;
 	}
 
 	static loginRequest(): string {
-		return `import { FormRequest } from '@beeblock/svelar/forms';
-import { loginSchema, type LoginInput } from './schemas.js';
-
-export type LoginDto = Readonly<LoginInput>;
+		return `import { FormRequest } from '@beeblock/svelar/routing';
+import { loginSchema, type LoginInput } from '$lib/modules/auth/schemas.js';
+import { LoginDto } from '$lib/modules/auth/LoginDto.js';
 
 export class LoginRequest extends FormRequest<typeof loginSchema, LoginDto> {
   rules() {
@@ -2306,17 +2678,16 @@ export class LoginRequest extends FormRequest<typeof loginSchema, LoginDto> {
   }
 
   passedValidation(data: LoginInput): LoginDto {
-    return { email: data.email, password: data.password };
+    return new LoginDto(data);
   }
 }
 `;
 	}
 
 	static forgotPasswordRequest(): string {
-		return `import { FormRequest } from '@beeblock/svelar/forms';
-import { forgotPasswordSchema, type ForgotPasswordInput } from './schemas.js';
-
-export type ForgotPasswordDto = Readonly<ForgotPasswordInput>;
+		return `import { FormRequest } from '@beeblock/svelar/routing';
+import { forgotPasswordSchema, type ForgotPasswordInput } from '$lib/modules/auth/schemas.js';
+import { ForgotPasswordDto } from '$lib/modules/auth/ForgotPasswordDto.js';
 
 export class ForgotPasswordRequest extends FormRequest<typeof forgotPasswordSchema, ForgotPasswordDto> {
   rules() {
@@ -2324,17 +2695,16 @@ export class ForgotPasswordRequest extends FormRequest<typeof forgotPasswordSche
   }
 
   passedValidation(data: ForgotPasswordInput): ForgotPasswordDto {
-    return { email: data.email };
+    return new ForgotPasswordDto(data);
   }
 }
 `;
 	}
 
 	static resetPasswordRequest(): string {
-		return `import { FormRequest } from '@beeblock/svelar/forms';
-import { resetPasswordSchema, type ResetPasswordInput } from './schemas.js';
-
-export type ResetPasswordDto = Readonly<Pick<ResetPasswordInput, 'token' | 'email' | 'password'>>;
+		return `import { FormRequest } from '@beeblock/svelar/routing';
+import { resetPasswordSchema, type ResetPasswordInput } from '$lib/modules/auth/schemas.js';
+import { ResetPasswordDto } from '$lib/modules/auth/ResetPasswordDto.js';
 
 export class ResetPasswordRequest extends FormRequest<typeof resetPasswordSchema, ResetPasswordDto> {
   rules() {
@@ -2342,159 +2712,237 @@ export class ResetPasswordRequest extends FormRequest<typeof resetPasswordSchema
   }
 
   passedValidation(data: ResetPasswordInput): ResetPasswordDto {
-    return { token: data.token, email: data.email, password: data.password };
+    return new ResetPasswordDto(data);
   }
 }
 `;
 	}
 
 	static otpSendRequest(): string {
-		return `import { FormRequest } from '@beeblock/svelar/forms';
+		return `import { FormRequest } from '@beeblock/svelar/routing';
+import type { RequestEvent } from '@beeblock/svelar/routing';
 import { config } from '@beeblock/svelar/config';
-import { otpRequestSchema, type OtpRequestInput } from './schemas.js';
-
-export type OtpSendDto = Readonly<OtpRequestInput>;
+import { otpRequestSchema, type OtpRequestInput } from '$lib/modules/auth/schemas.js';
+import { OtpSendDto } from '$lib/modules/auth/OtpSendDto.js';
 
 export class OtpSendRequest extends FormRequest<typeof otpRequestSchema, OtpSendDto> {
   rules() {
     return otpRequestSchema;
   }
 
-  authorize(_event: any): boolean {
+  authorize(_event: RequestEvent): boolean {
     return config.get('auth.otp.enabled', process.env.AUTH_OTP_ENABLED === 'true') === true;
   }
 
   passedValidation(data: OtpRequestInput): OtpSendDto {
-    return { email: data.email };
+    return new OtpSendDto(data);
   }
 }
 `;
 	}
 
 	static otpVerifyRequest(): string {
-		return `import { FormRequest } from '@beeblock/svelar/forms';
+		return `import { FormRequest } from '@beeblock/svelar/routing';
+import type { RequestEvent } from '@beeblock/svelar/routing';
 import { config } from '@beeblock/svelar/config';
-import { otpVerifySchema, type OtpVerifyInput } from './schemas.js';
-
-export type OtpVerifyDto = Readonly<OtpVerifyInput>;
+import { otpVerifySchema, type OtpVerifyInput } from '$lib/modules/auth/schemas.js';
+import { OtpVerifyDto } from '$lib/modules/auth/OtpVerifyDto.js';
 
 export class OtpVerifyRequest extends FormRequest<typeof otpVerifySchema, OtpVerifyDto> {
   rules() {
     return otpVerifySchema;
   }
 
-  authorize(_event: any): boolean {
+  authorize(_event: RequestEvent): boolean {
     return config.get('auth.otp.enabled', process.env.AUTH_OTP_ENABLED === 'true') === true;
   }
 
   passedValidation(data: OtpVerifyInput): OtpVerifyDto {
-    return { email: data.email, code: data.code };
+    return new OtpVerifyDto(data);
   }
 }
 `;
 	}
 
 	static createPostRequest(): string {
-		return `import { FormRequest } from '@beeblock/svelar/forms';
-import { createPostSchema } from './schemas.js';
+		return `import { FormRequest } from '@beeblock/svelar/routing';
+import type { RequestEvent } from '@beeblock/svelar/routing';
+import { createPostSchema, type CreatePostInput } from '$lib/modules/posts/schemas.js';
+import { CreatePostDto } from '$lib/modules/posts/CreatePostDto.js';
 
-export class CreatePostRequest extends FormRequest {
+export class CreatePostRequest extends FormRequest<typeof createPostSchema, CreatePostDto> {
   rules() {
     return createPostSchema;
   }
 
-  authorize(event: any): boolean {
+  authorize(event: RequestEvent): boolean {
     return !!event.locals.user;
   }
 
-  passedValidation(data: any) {
-    if (!data.slug) {
-      data.slug = data.title
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-|-$/g, '');
-    }
-    return data;
+  passedValidation(data: CreatePostInput): CreatePostDto {
+    const slug = data.slug ?? data.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    if (!slug) this.failedValidation({ slug: ['Provide a lowercase alphanumeric slug for this title.'] });
+    return new CreatePostDto({ ...data, slug });
   }
 }
 `;
 	}
 
 	static updatePostRequest(): string {
-		return `import { FormRequest } from '@beeblock/svelar/forms';
-import { updatePostSchema } from './schemas.js';
+		return `import { FormRequest } from '@beeblock/svelar/routing';
+import type { RequestEvent } from '@beeblock/svelar/routing';
+import { updatePostSchema, type UpdatePostInput } from '$lib/modules/posts/schemas.js';
+import { UpdatePostDto } from '$lib/modules/posts/UpdatePostDto.js';
 
-export class UpdatePostRequest extends FormRequest {
+export class UpdatePostRequest extends FormRequest<typeof updatePostSchema, UpdatePostDto> {
   rules() {
     return updatePostSchema;
   }
 
-  authorize(event: any): boolean {
+  authorize(event: RequestEvent): boolean {
     return !!event.locals.user;
   }
-}
-`;
-	}
 
-	static registerUserAction(): string {
-		return `import { Action } from '@beeblock/svelar/actions';
-import { AuthService } from './AuthService.js';
-import type { User } from './User.js';
+  protected async parseBody(event: RequestEvent): Promise<Record<string, unknown>> {
+    return { ...await super.parseBody(event), id: event.params.id };
+  }
 
-interface RegisterInput {
-  name: string;
-  email: string;
-  password: string;
-}
-
-interface ServiceResult<T> {
-  success: boolean;
-  data?: T;
-  error?: string;
-}
-
-const authService = new AuthService();
-
-export class RegisterUserAction extends Action<RegisterInput, ServiceResult<User>> {
-  async execute(input: RegisterInput): Promise<ServiceResult<User>> {
-    return authService.register(input);
+  passedValidation(data: UpdatePostInput): UpdatePostDto {
+    return new UpdatePostDto(data);
   }
 }
 `;
 	}
 
-	static createPostAction(): string {
-		return `import { Action } from '@beeblock/svelar/actions';
-import { PostService } from './PostService.js';
-import type { Post } from './Post.js';
+	static logoutRequest(): string {
+		return `import { FormRequest } from '@beeblock/svelar/routing';
+import { logoutSchema, type LogoutInput } from '$lib/modules/auth/schemas.js';
+import { LogoutDto } from '$lib/modules/auth/LogoutDto.js';
 
-interface CreatePostInput {
-  userId: number;
-  title: string;
-  slug?: string;
-  body: string;
-  published?: boolean;
+export class LogoutRequest extends FormRequest<typeof logoutSchema, LogoutDto> {
+  rules() { return logoutSchema; }
+  passedValidation(data: LogoutInput): LogoutDto { return new LogoutDto(data); }
 }
+`;
+	}
 
-const postService = new PostService();
+	static verifyEmailRequest(): string {
+		return `import { FormRequest } from '@beeblock/svelar/routing';
+import { verifyEmailSchema, type VerifyEmailInput } from '$lib/modules/auth/schemas.js';
+import { VerifyEmailDto } from '$lib/modules/auth/VerifyEmailDto.js';
 
-export class CreatePostAction extends Action<CreatePostInput, Post> {
-  async execute(input: CreatePostInput): Promise<Post> {
-    const slug = input.slug || input.title
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '');
+export class VerifyEmailRequest extends FormRequest<typeof verifyEmailSchema, VerifyEmailDto> {
+  rules() { return verifyEmailSchema; }
+  passedValidation(data: VerifyEmailInput): VerifyEmailDto { return new VerifyEmailDto(data); }
+}
+`;
+	}
 
-    return postService.createForUser(input.userId, {
-      title: input.title,
-      slug,
-      body: input.body,
-      published: input.published ?? false,
-    });
+	static deletePostRequest(): string {
+		return `import { FormRequest } from '@beeblock/svelar/routing';
+import type { RequestEvent } from '@beeblock/svelar/routing';
+import { deletePostSchema, type DeletePostInput } from '$lib/modules/posts/schemas.js';
+import { DeletePostDto } from '$lib/modules/posts/DeletePostDto.js';
+
+export class DeletePostRequest extends FormRequest<typeof deletePostSchema, DeletePostDto> {
+  rules() { return deletePostSchema; }
+  authorize(event: RequestEvent): boolean { return !!event.locals.user; }
+  protected async parseBody(event: RequestEvent): Promise<Record<string, unknown>> {
+    return { ...await super.parseBody(event), id: event.params.id };
+  }
+  passedValidation(data: DeletePostInput): DeletePostDto { return new DeletePostDto(data); }
+}
+`;
+	}
+
+	private static contractDto(name: string, input: string, fields: readonly string[], module: 'auth' | 'posts' = 'auth'): string {
+		const shape = fields.length ? `Pick<${input}, ${fields.map((field) => `'${field}'`).join(' | ')}>` : input;
+		return `import type { ${input} } from '$lib/modules/${module}/schemas.js';
+
+export class ${name} {
+${fields.map((field) => `  readonly ${field}: ${input}['${field}'];`).join('\n')}
+
+  constructor(${fields.length ? 'input' : '_input'}: ${shape}) {
+${fields.map((field) => `    this.${field} = input.${field};`).join('\n')}
   }
 }
 `;
 	}
+
+	static registerUserDto(): string { return NewCommandTemplates.contractDto('RegisterUserDto', 'RegisterInput', ['name', 'email', 'password']); }
+	static loginDto(): string { return NewCommandTemplates.contractDto('LoginDto', 'LoginInput', ['email', 'password', 'remember']); }
+	static forgotPasswordDto(): string { return NewCommandTemplates.contractDto('ForgotPasswordDto', 'ForgotPasswordInput', ['email']); }
+	static resetPasswordDto(): string { return NewCommandTemplates.contractDto('ResetPasswordDto', 'ResetPasswordInput', ['token', 'email', 'password']); }
+	static otpSendDto(): string { return NewCommandTemplates.contractDto('OtpSendDto', 'OtpRequestInput', ['email']); }
+	static otpVerifyDto(): string { return NewCommandTemplates.contractDto('OtpVerifyDto', 'OtpVerifyInput', ['email', 'code']); }
+	static logoutDto(): string { return NewCommandTemplates.contractDto('LogoutDto', 'LogoutInput', []); }
+	static verifyEmailDto(): string { return NewCommandTemplates.contractDto('VerifyEmailDto', 'VerifyEmailInput', ['token', 'id']); }
+	static updatePostDto(): string { return NewCommandTemplates.contractDto('UpdatePostDto', 'UpdatePostInput', ['id', 'title', 'slug', 'body', 'published'], 'posts'); }
+	static deletePostDto(): string { return NewCommandTemplates.contractDto('DeletePostDto', 'DeletePostInput', ['id'], 'posts'); }
+
+	static createPostDto(): string {
+		return `import type { CreatePostInput } from '$lib/modules/posts/schemas.js';
+
+export class CreatePostDto {
+  readonly title: CreatePostInput['title'];
+  readonly slug: string;
+  readonly body: CreatePostInput['body'];
+  readonly published: CreatePostInput['published'];
+  constructor(input: CreatePostInput & { slug: string }) {
+    this.title = input.title;
+    this.slug = input.slug;
+    this.body = input.body;
+    this.published = input.published;
+  }
+}
+`;
+	}
+
+	private static authWriteAction(name: string, dto: string, method: string): string {
+		return `import { Action } from '@beeblock/svelar/actions';
+import { AuthService, type AuthRuntimeContext } from '$lib/modules/auth/AuthService.js';
+import type { ${dto} } from '$lib/modules/auth/${dto}.js';
+
+type Result = Awaited<ReturnType<AuthService['${method}']>>;
+
+export class ${name} extends Action<${dto}, Result> {
+  constructor(context: AuthRuntimeContext, private readonly service = new AuthService(context)) { super(); }
+  async execute(input: ${dto}): Promise<Result> {
+    return this.service.${method}(input);
+  }
+}
+`;
+	}
+
+	static registerUserAction(): string { return NewCommandTemplates.authWriteAction('RegisterUserAction', 'RegisterUserDto', 'register'); }
+	static loginAction(): string { return NewCommandTemplates.authWriteAction('LoginAction', 'LoginDto', 'login'); }
+	static logoutAction(): string { return NewCommandTemplates.authWriteAction('LogoutAction', 'LogoutDto', 'logout'); }
+	static forgotPasswordAction(): string { return NewCommandTemplates.authWriteAction('ForgotPasswordAction', 'ForgotPasswordDto', 'forgotPassword'); }
+	static resetPasswordAction(): string { return NewCommandTemplates.authWriteAction('ResetPasswordAction', 'ResetPasswordDto', 'resetPassword'); }
+	static sendOtpAction(): string { return NewCommandTemplates.authWriteAction('SendOtpAction', 'OtpSendDto', 'sendOtp'); }
+	static verifyOtpAction(): string { return NewCommandTemplates.authWriteAction('VerifyOtpAction', 'OtpVerifyDto', 'verifyOtp'); }
+	static verifyEmailAction(): string { return NewCommandTemplates.authWriteAction('VerifyEmailAction', 'VerifyEmailDto', 'verifyEmail'); }
+
+	private static postWriteAction(name: string, dto: string, method: string): string {
+		return `import { Action } from '@beeblock/svelar/actions';
+import { PostService } from '$lib/modules/posts/PostService.js';
+import type { User } from '$lib/modules/auth/User.js';
+import type { ${dto} } from '$lib/modules/posts/${dto}.js';
+
+type Result = Awaited<ReturnType<PostService['${method}']>>;
+
+export class ${name} extends Action<${dto}, Result> {
+  constructor(private readonly user: User, private readonly service = new PostService()) { super(); }
+  async execute(input: ${dto}): Promise<Result> {
+    return this.service.${method}(this.user, input);
+  }
+}
+`;
+	}
+
+	static createPostAction(): string { return NewCommandTemplates.postWriteAction('CreatePostAction', 'CreatePostDto', 'createForUser'); }
+	static updatePostAction(): string { return NewCommandTemplates.postWriteAction('UpdatePostAction', 'UpdatePostDto', 'updateForUser'); }
+	static deletePostAction(): string { return NewCommandTemplates.postWriteAction('DeletePostAction', 'DeletePostDto', 'deleteForUser'); }
 
 	static userResource(): string {
 		return `import { Resource } from '@beeblock/svelar/routing';
@@ -2906,6 +3354,7 @@ Gate.defineSuperUser((user) => user?.role === 'admin');
 export const loginSchema = v.object({
   email: v.pipe(v.string(), v.email('Please enter a valid email address')),
   password: v.pipe(v.string(), v.minLength(1, 'Password is required')),
+  remember: v.optional(v.boolean(), false),
 });
 
 export const registerSchema = v.pipe(
@@ -2947,6 +3396,12 @@ export const otpVerifySchema = v.object({
   code: v.pipe(v.string(), v.regex(/^[0-9]{6}$/, 'Code must be 6 digits')),
 });
 
+export const logoutSchema = v.object({});
+export const verifyEmailSchema = v.object({
+  token: v.pipe(v.string(), v.minLength(1, 'Verification token is required'), v.maxLength(1024)),
+  id: v.pipe(v.string(), v.regex(/^[1-9][0-9]*$/, 'A valid user ID is required'), v.maxLength(255)),
+});
+
 // ── Inferred Types ───────────────────────────────────────
 
 export type LoginInput = v.InferOutput<typeof loginSchema>;
@@ -2955,6 +3410,8 @@ export type ForgotPasswordInput = v.InferOutput<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = v.InferOutput<typeof resetPasswordSchema>;
 export type OtpRequestInput = v.InferOutput<typeof otpRequestSchema>;
 export type OtpVerifyInput = v.InferOutput<typeof otpVerifySchema>;
+export type LogoutInput = v.InferOutput<typeof logoutSchema>;
+export type VerifyEmailInput = v.InferOutput<typeof verifyEmailSchema>;
 
 // ── Response Schemas (Resources + API contracts) ─────────
 
@@ -2977,6 +3434,7 @@ export type UserResponse = v.InferOutput<typeof userResponseSchema>;
 export const loginSchema = z.object({
   email: z.string().email('Please enter a valid email address'),
   password: z.string().min(1, 'Password is required'),
+  remember: z.boolean().default(false),
 });
 
 export const registerSchema = z.object({
@@ -3012,6 +3470,12 @@ export const otpVerifySchema = z.object({
   code: z.string().regex(/^[0-9]{6}$/, 'Code must be 6 digits'),
 });
 
+export const logoutSchema = z.object({});
+export const verifyEmailSchema = z.object({
+  token: z.string().min(1, 'Verification token is required').max(1024),
+  id: z.string().regex(/^[1-9][0-9]*$/, 'A valid user ID is required').max(255),
+});
+
 // ── Inferred Types ───────────────────────────────────────
 
 export type LoginInput = z.infer<typeof loginSchema>;
@@ -3020,6 +3484,8 @@ export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
 export type OtpRequestInput = z.infer<typeof otpRequestSchema>;
 export type OtpVerifyInput = z.infer<typeof otpVerifySchema>;
+export type LogoutInput = z.infer<typeof logoutSchema>;
+export type VerifyEmailInput = z.infer<typeof verifyEmailSchema>;
 
 // ── Response Schemas (Resources + API contracts) ─────────
 
@@ -3049,16 +3515,22 @@ export const createPostSchema = v.object({
 });
 
 export const updatePostSchema = v.object({
+  id: v.pipe(v.string(), v.regex(/^[1-9][0-9]*$/, 'A valid post ID is required'), v.maxLength(255)),
   title: v.optional(v.pipe(v.string(), v.minLength(3), v.maxLength(255))),
   slug: v.optional(v.pipe(v.string(), v.regex(/^[a-z0-9-]+$/))),
   body: v.optional(v.pipe(v.string(), v.minLength(10))),
   published: v.optional(v.boolean()),
 });
 
+export const deletePostSchema = v.object({
+  id: v.pipe(v.string(), v.regex(/^[1-9][0-9]*$/, 'A valid post ID is required'), v.maxLength(255)),
+});
+
 // ── Inferred Types ───────────────────────────────────────
 
 export type CreatePostInput = v.InferOutput<typeof createPostSchema>;
 export type UpdatePostInput = v.InferOutput<typeof updatePostSchema>;
+export type DeletePostInput = v.InferOutput<typeof deletePostSchema>;
 
 // ── Response Schema (Resources + API contracts) ──────────
 
@@ -3089,16 +3561,22 @@ export const createPostSchema = z.object({
 });
 
 export const updatePostSchema = z.object({
+  id: z.string().regex(/^[1-9][0-9]*$/, 'A valid post ID is required').max(255),
   title: z.string().min(3).max(255).optional(),
   slug: z.string().regex(/^[a-z0-9-]+$/).optional(),
   body: z.string().min(10).optional(),
   published: z.boolean().optional(),
 });
 
+export const deletePostSchema = z.object({
+  id: z.string().regex(/^[1-9][0-9]*$/, 'A valid post ID is required').max(255),
+});
+
 // ── Inferred Types ───────────────────────────────────────
 
 export type CreatePostInput = z.infer<typeof createPostSchema>;
 export type UpdatePostInput = z.infer<typeof updatePostSchema>;
+export type DeletePostInput = z.infer<typeof deletePostSchema>;
 
 // ── Response Schema (Resources + API contracts) ──────────
 
@@ -3156,6 +3634,18 @@ export type PostResponse = z.infer<typeof postResponseSchema>;
 			['00000000_000034_scope_webhook_inbox_idempotency.ts', 'ScopeWebhookInboxIdempotency', 'Tenant-scoped incoming webhook idempotency'],
 			['00000000_000035_create_svelar_logs_table.ts', 'CreateSvelarLogsTable', 'Shared logs for web, workers and scheduler'],
 			['00000000_000036_create_search_outbox_table.ts', 'CreateSearchOutboxTable', 'Durable search synchronization outbox'],
+			['00000000_000037_add_webhook_inbox_processing.ts', 'AddWebhookInboxProcessing', 'Webhook inbox processing leases and version ordering'],
+			['00000000_000038_add_queue_job_leases.ts', 'AddQueueJobLeases', 'Durable queue job leases and metadata'],
+			['00000000_000039_add_failed_queue_replay.ts', 'AddFailedQueueReplay', 'Failed queue replay ownership and receipts'],
+			['00000000_000040_create_role_capability_profiles_table.ts', 'CreateRoleCapabilityProfilesTable', 'Platform capability profiles'],
+			['00000000_000041_create_team_role_capability_profiles_table.ts', 'CreateTeamRoleCapabilityProfilesTable', 'Team capability profiles'],
+			['00000000_000043_create_queue_events_table.ts', 'CreateQueueEventsTable', 'Shared queue event timelines'],
+			['00000000_000044_add_scheduler_settings_policy.ts', 'AddSchedulerSettingsPolicy', 'Persistent scheduler settings and missed-run policy'],
+			['00000000_000045_add_api_key_rotation_state.ts', 'AddApiKeyRotationState', 'Atomic credential rotation overlap'],
+			['00000000_000046_create_background_operations_table.ts', 'CreateBackgroundOperationsTable', 'Durable background operation progress'],
+			['00000000_000047_create_scheduler_runtime_table.ts', 'CreateSchedulerRuntimeTable', 'Shared scheduler leases and health'],
+			['00000000_000048_create_scheduler_requests_table.ts', 'CreateSchedulerRequestsTable', 'Durable scheduler run-now requests'],
+			['00000000_000049_create_deployment_locks_table.ts', 'CreateDeploymentLocksTable', 'Exclusive deployment migration ownership'],
 		] as const;
 
 		return migrations.map(([file, className, label]) => ({
@@ -3180,6 +3670,8 @@ export default class CreateUsersTable extends Migration {
       table.string('email').unique();
       table.string('password');
       table.timestamp('email_verified_at').nullable();
+      table.timestamp('disabled_at').nullable();
+      table.timestamp('locked_until').nullable();
       table.timestamps();
     });
   }
@@ -3241,9 +3733,11 @@ import { Hash } from '@beeblock/svelar/hashing';
 import { Permissions } from '@beeblock/svelar/permissions';
 import { User } from '$lib/modules/auth/User.js';
 import { Post } from '$lib/modules/posts/Post.js';
+import { CapabilitySeeder } from './CapabilitySeeder.js';
 
 export class DatabaseSeeder extends Seeder {
   async run(): Promise<void> {
+    await new CapabilitySeeder().run();
     // ── Create Permissions ────────────────────────────────
     await Permissions.createPermission({ name: 'manage-users', description: 'Create, edit, delete users' });
     await Permissions.createPermission({ name: 'manage-roles', description: 'Assign and manage roles' });
@@ -3338,8 +3832,10 @@ import { fail, redirect } from '@sveltejs/kit';
 import { superValidate, message } from 'sveltekit-superforms';
 import { zod4 } from 'sveltekit-superforms/adapters';
 import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
+import { authFailurePresentation } from '@beeblock/svelar/auth';
 import { loginSchema } from '$lib/modules/auth/schemas';
 import { LoginRequest } from '$lib/modules/auth/LoginRequest';
+import { LoginAction } from '$lib/modules/auth/LoginAction';
 import { authConfig, authRedirect } from '../../app.js';
 
 const loginRequest = new LoginRequest();
@@ -3359,7 +3855,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   if (locals.user) throw redirect(302, authRedirect(url));
 
   const form = await superValidate(zod4(loginSchema));
-  return { form, appName: authConfig.appName, otpEnabled: authConfig.otpEnabled, passwordReset: url.searchParams.get('reset') === 'success' };
+  return { form, appName: authConfig.appName, otpEnabled: authConfig.otpEnabled, rememberEnabled: authConfig.rememberEnabled,
+    expiredSession: url.searchParams.get('reason') === 'session-expired', emailUnverified: url.searchParams.get('reason') === 'email-unverified',
+    passwordReset: url.searchParams.get('reset') === 'success' };
 };
 
 export const actions: Actions = {
@@ -3383,11 +3881,20 @@ export const actions: Actions = {
     }
 
     const dto = loginRequest.passedValidation(input);
-    const user = await locals.auth.attempt(dto, locals.session);
+    if (dto.remember && !authConfig.rememberEnabled) return message(form, 'Persistent sign-in is unavailable.', { status: 422 });
+    const result = await new LoginAction({ auth: locals.auth, session: locals.session }).run(dto);
 
-    if (!user) {
+    if (!result.success) {
       await throttle.hit(ctx);
-      return message(form, 'Invalid email or password', { status: 401 });
+      const reason = result.reason ?? 'invalid_credentials';
+      const failure = authFailurePresentation(reason);
+      const messages = {
+        invalid_credentials: 'Invalid email or password.', session_expired: 'Your session expired. Sign in again.',
+        account_disabled: 'This account is disabled.', account_locked: 'This account is temporarily locked.',
+        email_unverified: 'Verify your email before signing in.', temporarily_unavailable: 'Sign-in is temporarily unavailable. Please retry.',
+        rate_limited: 'Too many attempts. Please try again later.', provider_unavailable: 'This sign-in provider is temporarily unavailable.',
+      };
+      return message(form, messages[reason], { status: result.status ?? failure.status });
     }
 
     await throttle.clear(ctx);
@@ -3400,12 +3907,17 @@ export const actions: Actions = {
 
 	static loginPageSvelte(): string {
 		return `<script lang="ts">
+  import { authPageHref } from '$lib/shared/components/auth-links.js';
   import { superForm } from 'sveltekit-superforms';
   import { zod4Client } from 'sveltekit-superforms/adapters';
   import { loginSchema } from '$lib/modules/auth/schemas';
   import { Button, Input, Label, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, Alert } from '@beeblock/svelar/ui';
+  import Eye from '@lucide/svelte/icons/eye';
+  import EyeOff from '@lucide/svelte/icons/eye-off';
+  import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 
   let { data } = $props();
+  let showPassword = $state(false);
 
   // svelte-ignore state_referenced_locally
   const { form, errors, message, enhance, submitting, delayed } = superForm(data.form, {
@@ -3435,6 +3947,8 @@ export const actions: Actions = {
     </CardHeader>
 
     <CardContent class="space-y-4">
+      {#if data.expiredSession}<Alert>Your session expired. Sign in to continue.</Alert>{/if}
+      {#if data.emailUnverified}<Alert>Check your inbox and verify your email before signing in.</Alert>{/if}
       {#if data.passwordReset}
         <Alert variant="success">Your password was reset. Sign in with your new password.</Alert>
       {/if}
@@ -3444,7 +3958,7 @@ export const actions: Actions = {
         </Alert>
       {/if}
 
-      <form method="POST" use:enhance class="space-y-4">
+      <form method="POST" use:enhance novalidate class="space-y-4">
         <div class="space-y-2">
           <Label for="email">Email</Label>
           <Input
@@ -3464,34 +3978,46 @@ export const actions: Actions = {
 
         <div class="space-y-2">
           <Label for="password">Password</Label>
+          <div class="relative">
           <Input
             id="password"
             name="password"
-            type="password"
+            type={showPassword ? 'text' : 'password'}
             autocomplete="current-password"
             placeholder="Enter your password"
             bind:value={$form.password}
             aria-invalid={$errors.password ? 'true' : undefined}
             disabled={$submitting}
+            class="pr-12"
           />
+          <button type="button" class="absolute right-1 top-1 flex h-8 w-8 items-center justify-center rounded-sm hover:bg-muted focus-visible:outline" disabled={$submitting}
+            aria-label={showPassword ? 'Hide password' : 'Show password'} title={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} onclick={() => showPassword = !showPassword}>
+            {#if showPassword}<EyeOff class="h-4 w-4" />{:else}<Eye class="h-4 w-4" />{/if}
+          </button>
+          </div>
           {#if $errors.password}
             <p class="text-sm text-red-600">{$errors.password[0]}</p>
           {/if}
         </div>
 
+        {#if data.rememberEnabled}
+          <label class="flex items-center gap-2 text-sm" for="remember"><input id="remember" name="remember" type="checkbox" bind:checked={$form.remember} disabled={$submitting} />Remember me</label>
+        {/if}
+
         <div class="flex items-center justify-between">
-          <Button type="submit" class="w-full" disabled={$submitting}>
+          <Button type="submit" class="w-full" disabled={$submitting} aria-busy={$submitting}>
+            {#if $submitting}<LoaderCircle class="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />{/if}
             {$delayed ? 'Signing in...' : 'Sign In'}
           </Button>
         </div>
 
         <div class="text-center">
-          <a href="/forgot-password" class="text-sm text-muted-foreground hover:text-brand hover:underline">Forgot your password?</a>
+          <a href={authPageHref('/forgot-password', data.redirectTo)} class="text-sm text-muted-foreground hover:text-brand hover:underline">Forgot your password?</a>
         </div>
 
         {#if data.otpEnabled}
           <div class="text-center">
-            <a href="/otp-login" class="text-sm text-muted-foreground hover:text-brand hover:underline">Sign in with a code instead</a>
+            <a href={authPageHref('/otp-login', data.redirectTo)} class="text-sm text-muted-foreground hover:text-brand hover:underline">Sign in with a code instead</a>
           </div>
         {/if}
       </form>
@@ -3500,7 +4026,7 @@ export const actions: Actions = {
     <CardFooter class="border-t pt-6">
       <p class="text-sm text-center w-full text-muted-foreground">
         Don't have an account?
-        <a href="/register" class="font-medium text-brand hover:underline">Create one</a>
+        <a href={authPageHref('/register', data.redirectTo)} class="font-medium text-brand hover:underline">Create one</a>
       </p>
     </CardFooter>
   </Card>
@@ -3508,7 +4034,7 @@ export const actions: Actions = {
 `;
 	}
 
-	static registerPageServer(): string {
+static registerPageServer(): string {
 		return `import type { Actions, PageServerLoad } from './$types';
 import { fail, redirect } from '@sveltejs/kit';
 import { superValidate, message, setError } from 'sveltekit-superforms';
@@ -3518,9 +4044,9 @@ import { registerSchema } from '$lib/modules/auth/schemas';
 import { RegisterRequest } from '$lib/modules/auth/RegisterRequest';
 import { RegisterUserAction } from '$lib/modules/auth/RegisterUserAction';
 import { authConfig, authRedirect } from '../../app.js';
+import { authPageHref } from '$lib/shared/components/auth-links.js';
 
 const registerRequest = new RegisterRequest();
-const registerAction = new RegisterUserAction();
 const throttle = new ThrottleMiddleware({
   maxAttempts: 5,
   decayMinutes: 2,
@@ -3561,25 +4087,20 @@ export const actions: Actions = {
       return fail(400, { form });
     }
 
-    const result = await registerAction.run(registerRequest.passedValidation(input));
+    const result = await new RegisterUserAction({ auth: locals.auth, session: locals.session }).run(registerRequest.passedValidation(input));
 
     if (!result.success) {
       await throttle.hit(ctx);
-      if (result.error?.includes('Email')) {
-        return setError(form, 'email', result.error);
-      }
-      return message(form, result.error || 'Registration failed', { status: 422 });
+      return result.errors?.email ? setError(form, 'email', result.errors.email)
+        : message(form, result.error || 'Registration failed', { status: 422 });
     }
 
     await throttle.clear(ctx);
-    const user = result.data!;
-    locals.session.set('auth_user_id', (user as any).id);
-    locals.session.regenerateId();
-
-    // Send verification email if required
-    if (authConfig.emailVerificationRequired) {
-      await locals.auth.sendVerificationEmail(user as any);
+    if (result.reason === 'email_unverified') {
+      throw redirect(303, authPageHref('/login', authRedirect(event.url), { reason: 'email-unverified' }));
     }
+
+    if (!result.authenticated) return message(form, 'Your account cannot sign in right now.', { status: 403 });
 
     throw redirect(303, authRedirect(event.url));
   },
@@ -3589,6 +4110,7 @@ export const actions: Actions = {
 
 	static registerPageSvelte(): string {
 		return `<script lang="ts">
+  import { authPageHref } from '$lib/shared/components/auth-links.js';
   import { superForm } from 'sveltekit-superforms';
   import { zod4Client } from 'sveltekit-superforms/adapters';
   import { registerSchema } from '$lib/modules/auth/schemas';
@@ -3632,7 +4154,7 @@ export const actions: Actions = {
         </Alert>
       {/if}
 
-      <form method="POST" use:enhance class="space-y-4">
+      <form method="POST" use:enhance novalidate class="space-y-4">
         <div class="space-y-2">
           <Label for="name">Name</Label>
           <Input
@@ -3709,7 +4231,7 @@ export const actions: Actions = {
     <CardFooter class="border-t pt-6">
       <p class="text-sm text-center w-full text-muted-foreground">
         Already have an account?
-        <a href="/login" class="font-medium text-brand hover:underline">Sign in</a>
+        <a href={authPageHref('/login', data.redirectTo)} class="font-medium text-brand hover:underline">Sign in</a>
       </p>
     </CardFooter>
   </Card>
@@ -3720,10 +4242,13 @@ export const actions: Actions = {
 	static logoutPageServer(): string {
 		return `import { redirect } from '@sveltejs/kit';
 import type { Actions } from './$types.js';
+import { LogoutRequest } from '$lib/modules/auth/LogoutRequest';
+import { LogoutAction } from '$lib/modules/auth/LogoutAction';
 
 export const actions: Actions = {
   default: async (event) => {
-    await event.locals.auth.logout(event.locals.session);
+    const dto = await LogoutRequest.validate(event);
+    await new LogoutAction({ auth: event.locals.auth, session: event.locals.session }).run(dto);
     throw redirect(303, '/');
   },
 };
@@ -3740,6 +4265,7 @@ import { zod4 } from 'sveltekit-superforms/adapters';
 import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { forgotPasswordSchema } from '$lib/modules/auth/schemas';
 import { ForgotPasswordRequest } from '$lib/modules/auth/ForgotPasswordRequest';
+import { ForgotPasswordAction } from '$lib/modules/auth/ForgotPasswordAction';
 import { authConfig } from '../../app.js';
 
 const forgotPasswordRequest = new ForgotPasswordRequest();
@@ -3781,7 +4307,7 @@ export const actions: Actions = {
 
     await throttle.hit(ctx);
     const dto = forgotPasswordRequest.passedValidation(form.data);
-    await event.locals.auth.sendPasswordReset(dto.email);
+    await new ForgotPasswordAction({ auth: event.locals.auth, session: event.locals.session }).run(dto);
 
     return message(form, { kind: 'success', text: 'If that email exists, a reset link has been sent. Check your inbox.' });
   },
@@ -3791,6 +4317,7 @@ export const actions: Actions = {
 
 	static forgotPasswordPageSvelte(): string {
 		return `<script lang="ts">
+  import { authPageHref } from '$lib/shared/components/auth-links.js';
   import { superForm } from 'sveltekit-superforms';
   import { zod4Client } from 'sveltekit-superforms/adapters';
   import { forgotPasswordSchema } from '$lib/modules/auth/schemas';
@@ -3829,7 +4356,7 @@ export const actions: Actions = {
       {/if}
 
       {#if !submitted}
-        <form method="POST" use:enhance class="space-y-4">
+        <form method="POST" use:enhance novalidate class="space-y-4">
           <div class="space-y-2">
             <Label for="email">Email</Label>
             <Input
@@ -3857,7 +4384,7 @@ export const actions: Actions = {
     <CardFooter class="border-t pt-6">
       <p class="text-sm text-center w-full text-muted-foreground">
         Remember your password?
-        <a href="/login" class="font-medium text-brand hover:underline">Sign in</a>
+        <a href={authPageHref('/login', data.redirectTo)} class="font-medium text-brand hover:underline">Sign in</a>
       </p>
     </CardFooter>
   </Card>
@@ -3867,7 +4394,7 @@ export const actions: Actions = {
 
 	// ─── Reset Password ────────────────────────────────────────
 
-	static resetPasswordPageServer(): string {
+static resetPasswordPageServer(): string {
 		return `import type { Actions, PageServerLoad } from './$types';
 import { fail, redirect } from '@sveltejs/kit';
 import { superValidate, message } from 'sveltekit-superforms';
@@ -3875,7 +4402,9 @@ import { zod4 } from 'sveltekit-superforms/adapters';
 import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { resetPasswordSchema } from '$lib/modules/auth/schemas';
 import { ResetPasswordRequest } from '$lib/modules/auth/ResetPasswordRequest';
-import { authConfig } from '../../app.js';
+import { ResetPasswordAction } from '$lib/modules/auth/ResetPasswordAction';
+import { authConfig, authRedirect } from '../../app.js';
+import { authPageHref } from '$lib/shared/components/auth-links.js';
 
 const resetPasswordRequest = new ResetPasswordRequest();
 
@@ -3896,7 +4425,7 @@ export const load: PageServerLoad = async ({ url }) => {
   const email = url.searchParams.get('email') ?? '';
 
   if (!token || !email) {
-    throw redirect(302, '/forgot-password');
+    throw redirect(302, authPageHref('/forgot-password', authRedirect(url)));
   }
 
   const form = await superValidate({ token, email, password: '', password_confirmation: '' }, zod4(resetPasswordSchema), { errors: false });
@@ -3925,15 +4454,15 @@ export const actions: Actions = {
     }
 
     const dto = resetPasswordRequest.passedValidation(input);
-    const success = await event.locals.auth.resetPassword(dto.token, dto.email, dto.password);
+    const result = await new ResetPasswordAction({ auth: event.locals.auth, session: event.locals.session }).run(dto);
 
-    if (!success) {
+    if (!result.success) {
       await throttle.hit(ctx);
       return message(form, 'Invalid or expired reset link. Please request a new one.', { status: 400 });
     }
 
     await throttle.clear(ctx);
-    throw redirect(303, '/login?reset=success');
+    throw redirect(303, authPageHref('/login', authRedirect(event.url), { reset: 'success' }));
   },
 };
 `;
@@ -3984,7 +4513,7 @@ export const actions: Actions = {
         </Alert>
       {/if}
 
-      <form method="POST" use:enhance class="space-y-4">
+      <form method="POST" use:enhance novalidate class="space-y-4">
         <input type="hidden" name="token" value={$form.token} />
         <input type="hidden" name="email" value={$form.email} />
 
@@ -4034,7 +4563,7 @@ export const actions: Actions = {
 
 	// ─── OTP Login ─────────────────────────────────────────────
 
-	static otpLoginPageServer(): string {
+static otpLoginPageServer(): string {
 		return `import type { Actions, PageServerLoad } from './$types';
 import { fail, redirect } from '@sveltejs/kit';
 import { superValidate, message } from 'sveltekit-superforms';
@@ -4043,7 +4572,10 @@ import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
 import { otpRequestSchema, otpVerifySchema } from '$lib/modules/auth/schemas';
 import { OtpSendRequest } from '$lib/modules/auth/OtpSendRequest';
 import { OtpVerifyRequest } from '$lib/modules/auth/OtpVerifyRequest';
+import { SendOtpAction } from '$lib/modules/auth/SendOtpAction';
+import { VerifyOtpAction } from '$lib/modules/auth/VerifyOtpAction';
 import { authConfig, authRedirect } from '../../app.js';
+import { authPageHref } from '$lib/shared/components/auth-links.js';
 
 const sendRequest = new OtpSendRequest();
 const verifyRequest = new OtpVerifyRequest();
@@ -4067,13 +4599,13 @@ function throttleContext(event: any) {
   return { event, params: event.params ?? {}, locals: event.locals ?? {} };
 }
 
-function otpFailure(form: any, text: string, status: 401 | 403 | 429, codeSent = false) {
+function otpFailure(form: any, text: string, status: 400 | 401 | 403 | 422 | 429 | 503, codeSent = false) {
   message(form, text, { status });
   return fail(status, { [codeSent ? 'verifyForm' : 'requestForm']: form, codeSent, email: form.data.email });
 }
 
 export const load: PageServerLoad = async ({ locals, url }) => {
-  if (!authConfig.otpEnabled) throw redirect(302, '/login');
+  if (!authConfig.otpEnabled) throw redirect(302, authPageHref('/login', authRedirect(url)));
   if (locals.user) throw redirect(302, authRedirect(url));
 
   const requestForm = await superValidate(zod4(otpRequestSchema), { id: 'otp-request' });
@@ -4101,7 +4633,8 @@ export const actions: Actions = {
 
     await sendThrottle.hit(ctx);
     const dto = sendRequest.passedValidation(form.data);
-    await event.locals.auth.sendOtp(dto.email);
+    const result = await new SendOtpAction({ auth: event.locals.auth, session: event.locals.session }).run(dto);
+    if (!result.success) return otpFailure(form, result.error ?? 'Code sign-in is unavailable.', result.status ?? 503);
 
     const verifyForm = await superValidate({ email: dto.email }, zod4(otpVerifySchema), { id: 'otp-verify', errors: false });
     return { requestForm: form, verifyForm, codeSent: true, email: dto.email };
@@ -4127,11 +4660,11 @@ export const actions: Actions = {
     }
 
     const dto = verifyRequest.passedValidation(input);
-    const user = await locals.auth.attemptOtp(dto.email, dto.code, locals.session);
+    const result = await new VerifyOtpAction({ auth: locals.auth, session: locals.session }).run(dto);
 
-    if (!user) {
+    if (!result.success) {
       await verifyThrottle.hit(ctx);
-      return otpFailure(form, 'Invalid or expired code. Please try again.', 401, true);
+      return otpFailure(form, result.error ?? 'Invalid or expired code. Please try again.', result.status ?? 401, true);
     }
 
     await verifyThrottle.clear(ctx);
@@ -4143,6 +4676,7 @@ export const actions: Actions = {
 
 	static otpLoginPageSvelte(): string {
 		return `<script lang="ts">
+  import { authPageHref } from '$lib/shared/components/auth-links.js';
   import { superForm } from 'sveltekit-superforms';
   import { zod4Client } from 'sveltekit-superforms/adapters';
   import { otpRequestSchema, otpVerifySchema } from '$lib/modules/auth/schemas';
@@ -4216,7 +4750,7 @@ export const actions: Actions = {
       {/if}
 
       {#if !codeSent}
-        <form method="POST" action="?/send" use:requestEnhance class="space-y-4">
+        <form method="POST" action="?/send" use:requestEnhance novalidate class="space-y-4">
           <div class="space-y-2">
             <Label for="email">Email</Label>
             <Input
@@ -4239,7 +4773,7 @@ export const actions: Actions = {
           </Button>
         </form>
       {:else}
-        <form method="POST" action="?/verify" use:verifyEnhance class="space-y-4">
+        <form method="POST" action="?/verify" use:verifyEnhance novalidate class="space-y-4">
           <input type="hidden" name="email" value={email} />
 
           <div class="space-y-2">
@@ -4281,7 +4815,7 @@ export const actions: Actions = {
     <CardFooter class="border-t pt-6">
       <p class="text-sm text-center w-full text-muted-foreground">
         Prefer a password?
-        <a href="/login" class="font-medium text-brand hover:underline">Sign in with password</a>
+        <a href={authPageHref('/login', data.redirectTo)} class="font-medium text-brand hover:underline">Sign in with password</a>
       </p>
     </CardFooter>
   </Card>
@@ -4293,29 +4827,29 @@ export const actions: Actions = {
 
 	static verifyEmailPageServer(): string {
 		return `import type { PageServerLoad } from './$types';
+import { FormValidationError } from '@beeblock/svelar/routing';
+import { VerifyEmailRequest } from '$lib/modules/auth/VerifyEmailRequest';
+import { VerifyEmailAction } from '$lib/modules/auth/VerifyEmailAction';
 import { authConfig } from '../../app.js';
 
-export const load: PageServerLoad = async ({ url, locals }) => {
-  const token = url.searchParams.get('token');
-  const id = url.searchParams.get('id');
-
-  if (!token || !id) {
+export const load: PageServerLoad = async (event) => {
+  let dto;
+  try { dto = await VerifyEmailRequest.validate(event); }
+  catch (error) {
+    if (!(error instanceof FormValidationError)) throw error;
     return { success: false, message: 'Invalid verification link.', appName: authConfig.appName };
   }
-
-  const success = await locals.auth.verifyEmail(token, id);
-
-  if (success) {
-    return { success: true, message: 'Your email has been verified!', appName: authConfig.appName };
-  }
-
-  return { success: false, message: 'Invalid or expired verification link. Please request a new one.', appName: authConfig.appName };
+  const result = await new VerifyEmailAction({ auth: event.locals.auth, session: event.locals.session }).run(dto);
+  return { success: result.success,
+    message: result.success ? 'Your email has been verified!' : 'Invalid or expired verification link. Please request a new one.',
+    appName: authConfig.appName };
 };
 `;
 	}
 
 	static verifyEmailPageSvelte(): string {
 		return `<script lang="ts">
+  import { authPageHref } from '$lib/shared/components/auth-links.js';
   import { Card, CardHeader, CardTitle, CardContent, CardFooter, Alert, Button } from '@beeblock/svelar/ui';
 
   let { data } = $props();
@@ -4351,7 +4885,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
             <Button class="w-full">Go to Dashboard</Button>
           </a>
         {:else}
-          <a href="/login">
+          <a href={authPageHref('/login', data.redirectTo)}>
             <Button variant="outline" class="w-full">Back to Sign In</Button>
           </a>
         {/if}
@@ -4903,979 +5437,50 @@ export const actions: Actions = {
 	// ─── Admin Pages ──────────────────────────────────────────
 
 	static adminLayoutServer(): string {
-		return `import { guardAuth } from '@beeblock/svelar/auth';
+		return `import { error, redirect } from '@sveltejs/kit';
+import { capabilityAccess, resolveCapabilityInput } from '$lib/shared/permissions/access.server.js';
+import type { LayoutServerLoad } from './$types';
 
-export const load = guardAuth('/dashboard', { role: 'admin' });
+export const load: LayoutServerLoad = async (event) => {
+  if (!event.locals.user) redirect(302, '/login');
+  if (!await capabilityAccess.can('screen.operations.view', resolveCapabilityInput(event))) error(403, 'Console access denied.');
+  return {};
+};
 `;
 	}
 
 	static adminLayoutSvelte(): string {
 		return `<script lang="ts">
-  import { page } from '$app/stores';
   import type { Snippet } from 'svelte';
-  import { Icon } from '@beeblock/svelar/ui';
-  import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
-  import Users from '@lucide/svelte/icons/users';
-  import ShieldCheck from '@lucide/svelte/icons/shield-check';
-  import Lock from '@lucide/svelte/icons/lock';
-  import ListTodo from '@lucide/svelte/icons/list-todo';
-  import Clock from '@lucide/svelte/icons/clock';
-  import FileText from '@lucide/svelte/icons/file-text';
-  import ArrowLeft from '@lucide/svelte/icons/arrow-left';
-
-  interface Props {
-    data: any;
-    children: Snippet;
-  }
-
-  let { data, children }: Props = $props();
-
-  const navItems = [
-    { tab: 'overview', label: 'Overview', icon: LayoutDashboard },
-    { tab: 'users', label: 'Users', icon: Users },
-    { tab: 'roles', label: 'Roles', icon: ShieldCheck },
-    { tab: 'permissions', label: 'Permissions', icon: Lock },
-    { tab: 'queue', label: 'Queue', icon: ListTodo },
-    { tab: 'scheduler', label: 'Scheduler', icon: Clock },
-    { tab: 'logs', label: 'Logs', icon: FileText },
-  ];
-
-  function isActive(tab: string, currentUrl: URL): boolean {
-    const activeTab = currentUrl.searchParams.get('tab') ?? 'overview';
-    return activeTab === tab && (currentUrl.pathname === "/admin/dashboard") === ["queue", "scheduler", "logs"].includes(tab);
-  }
+  let { children }: { children: Snippet } = $props();
 </script>
 
-<div class="flex min-h-[calc(100vh-130px)]">
-  <aside class="w-64 border-r border-border bg-muted/50 hidden md:block">
-    <div class="p-4 border-b border-border">
-      <p class="text-xs font-semibold text-muted-foreground/70 uppercase tracking-wider">Administration</p>
-    </div>
-    <nav class="p-4 space-y-1">
-      {#each navItems as item}
-        {@const active = isActive(item.tab, $page.url)}
-        <a
-          href={["queue", "scheduler", "logs"].includes(item.tab) ? \`/admin/dashboard?tab=\${item.tab}\` : \`/admin?tab=\${item.tab}\`}
-          class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors {active ? 'bg-brand/10 text-brand' : 'text-foreground hover:bg-muted hover:text-foreground'}"
-        >
-          <Icon icon={item.icon} size={20} class={active ? 'text-brand' : 'text-muted-foreground/70'} />
-          {item.label}
-        </a>
-      {/each}
-    </nav>
-
-    <div class="border-t border-border mx-4 my-2"></div>
-    <div class="p-4 pt-0">
-      <a
-        href="/dashboard"
-        class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-foreground hover:bg-muted hover:text-foreground transition-colors"
-      >
-        <Icon icon={ArrowLeft} size={20} class="text-muted-foreground/70" />
-        Back to Dashboard
-      </a>
-    </div>
-  </aside>
-
-  <div class="flex-1 min-w-0 p-6 md:p-8">
-    {@render children()}
-  </div>
-</div>
+{@render children()}
 `;
 	}
 
 	static adminPageServer(): string {
-		return "import type { Actions, PageServerLoad } from './$types';\nimport { fail, redirect } from '@sveltejs/kit';\nimport { superValidate } from 'sveltekit-superforms';\nimport { zod4 } from 'sveltekit-superforms/adapters';\nimport { User } from '$lib/modules/auth/User.js';\nimport { Post } from '$lib/modules/posts/Post.js';\nimport { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';\nimport { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';\nimport { LogViewer } from '@beeblock/svelar/logging/LogViewer';\nimport { Permissions } from '@beeblock/svelar/permissions';\nimport {\n  AssignUserRoleAction,\n  AttachRolePermissionAction,\n  CreatePermissionAction,\n  CreateRoleAction,\n  DeletePermissionAction,\n  DeleteRoleAction,\n  DeleteUserAction,\n  DetachRolePermissionAction,\n  GrantUserPermissionAction,\n  RemoveUserRoleAction,\n  RevokeUserPermissionAction,\n  UpdateUserRoleAction,\n} from '$lib/modules/admin/AdminActions.js';\nimport { CreatePermissionRequest } from '$lib/modules/admin/CreatePermissionRequest.js';\nimport { CreateRoleRequest } from '$lib/modules/admin/CreateRoleRequest.js';\nimport { DeletePermissionRequest } from '$lib/modules/admin/DeletePermissionRequest.js';\nimport { DeleteRoleRequest } from '$lib/modules/admin/DeleteRoleRequest.js';\nimport { DeleteUserRequest } from '$lib/modules/admin/DeleteUserRequest.js';\nimport { RolePermissionRequest } from '$lib/modules/admin/RolePermissionRequest.js';\nimport { UpdateUserRoleRequest } from '$lib/modules/admin/UpdateUserRoleRequest.js';\nimport { UserPermissionRequest } from '$lib/modules/admin/UserPermissionRequest.js';\nimport { UserRoleRequest } from '$lib/modules/admin/UserRoleRequest.js';\n\nconst createRoleRequest = new CreateRoleRequest();\nconst deleteRoleRequest = new DeleteRoleRequest();\nconst createPermissionRequest = new CreatePermissionRequest();\nconst deletePermissionRequest = new DeletePermissionRequest();\nconst rolePermissionRequest = new RolePermissionRequest();\nconst userRoleRequest = new UserRoleRequest();\nconst userPermissionRequest = new UserPermissionRequest();\nconst updateUserRoleRequest = new UpdateUserRoleRequest();\nconst deleteUserRequest = new DeleteUserRequest();\n\nconst createRoleAction = new CreateRoleAction();\nconst deleteRoleAction = new DeleteRoleAction();\nconst createPermissionAction = new CreatePermissionAction();\nconst deletePermissionAction = new DeletePermissionAction();\nconst attachRolePermissionAction = new AttachRolePermissionAction();\nconst detachRolePermissionAction = new DetachRolePermissionAction();\nconst assignUserRoleAction = new AssignUserRoleAction();\nconst removeUserRoleAction = new RemoveUserRoleAction();\nconst grantUserPermissionAction = new GrantUserPermissionAction();\nconst revokeUserPermissionAction = new RevokeUserPermissionAction();\nconst updateUserRoleAction = new UpdateUserRoleAction();\nconst deleteUserAction = new DeleteUserAction();\n\nasync function authorize(request: { authorize(event: any): boolean | Promise<boolean> }, event: any) {\n  if (!await request.authorize(event)) return fail(403, { error: 'This action is unauthorized.' });\n  return null;\n}\n\nfunction failure(result: any, status = 400) {\n  return fail(status, { error: result?.error ?? result?.message ?? 'Admin action failed' });\n}\n\nexport const load: PageServerLoad = async (event) => {\n  const user = event.locals.user;\n  if (!user) throw redirect(302, '/login');\n\n  // Fetch all users\n  const users = await User.query().get();\n\n  // Fetch stats\n  const userCount = users.length;\n  const postCount = await Post.count();\n\n  const roleDistribution = {\n    admin: users.filter((u: any) => u.role === 'admin').length,\n    user: users.filter((u: any) => u.role === 'user').length,\n  };\n\n  // Queue stats from JobMonitor\n  let queueCounts = { waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0, total: 0 };\n  try {\n    queueCounts = await JobMonitor.getCounts('default');\n  } catch { /* sync/memory driver — no counts available */ }\n\n  // Scheduler tasks from ScheduleMonitor\n  let scheduledTasks: any[] = [];\n  try {\n    scheduledTasks = await ScheduleMonitor.listTasks();\n  } catch { /* scheduler not configured */ }\n\n  // Recent logs from LogViewer\n  let recentLogs: any[] = [];\n  let logStats = { totalEntries: 0, byLevel: {} as Record<string, number>, byChannel: {} };\n  try {\n    recentLogs = await LogViewer.query({ limit: 50 });\n    logStats = await LogViewer.getStats();\n  } catch { /* no logs yet */ }\n\n  // System health\n  const memUsage = process.memoryUsage();\n  const health = {\n    status: 'ok',\n    uptime: process.uptime(),\n    memoryUsedMB: Math.round(memUsage.heapUsed / 1024 / 1024),\n    memoryTotalMB: Math.round(memUsage.heapTotal / 1024 / 1024),\n    memoryPercent: Math.round((memUsage.heapUsed / memUsage.heapTotal) * 100),\n  };\n\n  // Roles & Permissions\n  let roles: any[] = [];\n  let permissions: any[] = [];\n  let rolePermissionsMap: Record<number, number[]> = {};\n  let userRolesMap: Record<number, any[]> = {};\n  let userDirectPermsMap: Record<number, any[]> = {};\n  try {\n    roles = await Permissions.allRoles();\n    permissions = await Permissions.allPermissions();\n\n    // Load permissions for each role\n    for (const role of roles) {\n      const rolePerms = await Permissions.getRolePermissions(role.id);\n      rolePermissionsMap[role.id] = rolePerms.map((p: any) => p.id);\n    }\n\n    // Load roles and direct permissions for each user\n    for (const u of users) {\n      userRolesMap[u.id] = await Permissions.getModelRoles('User', u.id);\n      userDirectPermsMap[u.id] = await Permissions.getModelDirectPermissions('User', u.id);\n    }\n  } catch { /* permissions tables may not exist yet */ }\n\n  return {\n    user: {\n      id: user.id,\n      name: user.name,\n      email: user.email,\n      role: user.role,\n    },\n    users: users.map((u: any) => ({\n      id: u.id,\n      name: u.name,\n      email: u.email,\n      role: u.role,\n      created_at: u.created_at,\n    })),\n    stats: {\n      userCount,\n      postCount,\n      roleDistribution,\n    },\n    queueCounts,\n    scheduledTasks: scheduledTasks.map((t: any) => ({\n      name: t.name,\n      expression: t.expression,\n      humanReadable: t.humanReadable,\n      enabled: t.enabled,\n      isRunning: t.isRunning,\n      lastRun: t.lastRun?.toISOString() ?? null,\n      lastStatus: t.lastStatus ?? null,\n      nextRun: t.nextRun?.toISOString() ?? null,\n    })),\n    recentLogs: recentLogs.map((l: any) => ({\n      timestamp: l.timestamp,\n      level: l.level,\n      channel: l.channel,\n      message: l.message,\n    })),\n    logStats,\n    health,\n    roles: roles.map((r: any) => ({\n      id: r.id,\n      name: r.name,\n      guard: r.guard,\n      description: r.description,\n      created_at: r.created_at,\n    })),\n    permissions: permissions.map((p: any) => ({\n      id: p.id,\n      name: p.name,\n      guard: p.guard,\n      description: p.description,\n      created_at: p.created_at,\n    })),\n    rolePermissionsMap,\n    userRolesMap: Object.fromEntries(\n      Object.entries(userRolesMap).map(([uid, roles]) => [\n        uid,\n        roles.map((r: any) => ({ id: r.id, name: r.name })),\n      ]),\n    ),\n    userDirectPermsMap: Object.fromEntries(\n      Object.entries(userDirectPermsMap).map(([uid, perms]) => [\n        uid,\n        perms.map((p: any) => ({ id: p.id, name: p.name })),\n      ]),\n    ),\n    createRoleForm: await superValidate({ guard: 'web' }, zod4(createRoleRequest.rules()), { id: 'admin-create-role' }),\n    createPermissionForm: await superValidate({ guard: 'web' }, zod4(createPermissionRequest.rules()), { id: 'admin-create-permission' }),\n  };\n};\n\nexport const actions: Actions = {\n  createRole: async (event) => {\n    const denied = await authorize(createRoleRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(createRoleRequest.rules()), { id: 'admin-create-role' });\n    if (!validated.valid) return fail(422, { createRoleForm: validated });\n    const result = await createRoleAction.run(createRoleRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result, 409);\n    return { message: 'Role created', createRoleForm: validated };\n  },\n\n  deleteRole: async (event) => {\n    const denied = await authorize(deleteRoleRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(deleteRoleRequest.rules()), { id: 'admin-delete-role' });\n    if (!validated.valid) return fail(422, { error: 'Role name is required' });\n    const result = await deleteRoleAction.run(deleteRoleRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'Role deleted' };\n  },\n\n  createPermission: async (event) => {\n    const denied = await authorize(createPermissionRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(createPermissionRequest.rules()), { id: 'admin-create-permission' });\n    if (!validated.valid) return fail(422, { createPermissionForm: validated });\n    const result = await createPermissionAction.run(createPermissionRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result, 409);\n    return { message: 'Permission created', createPermissionForm: validated };\n  },\n\n  deletePermission: async (event) => {\n    const denied = await authorize(deletePermissionRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(deletePermissionRequest.rules()), { id: 'admin-delete-permission' });\n    if (!validated.valid) return fail(422, { error: 'Permission name is required' });\n    const result = await deletePermissionAction.run(deletePermissionRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'Permission deleted' };\n  },\n\n  attachRolePermission: async (event) => {\n    const denied = await authorize(rolePermissionRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(rolePermissionRequest.rules()), { id: 'admin-role-permission' });\n    if (!validated.valid) return fail(422, { error: 'Role and permission are required' });\n    const result = await attachRolePermissionAction.run(rolePermissionRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'Permission attached to role' };\n  },\n\n  detachRolePermission: async (event) => {\n    const denied = await authorize(rolePermissionRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(rolePermissionRequest.rules()), { id: 'admin-role-permission' });\n    if (!validated.valid) return fail(422, { error: 'Role and permission are required' });\n    const result = await detachRolePermissionAction.run(rolePermissionRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'Permission detached from role' };\n  },\n\n  assignUserRole: async (event) => {\n    const denied = await authorize(userRoleRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(userRoleRequest.rules()), { id: 'admin-user-role' });\n    if (!validated.valid) return fail(422, { error: 'User and role are required' });\n    const result = await assignUserRoleAction.run(userRoleRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'Role assigned' };\n  },\n\n  removeUserRole: async (event) => {\n    const denied = await authorize(userRoleRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(userRoleRequest.rules()), { id: 'admin-user-role' });\n    if (!validated.valid) return fail(422, { error: 'User and role are required' });\n    const result = await removeUserRoleAction.run(userRoleRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'Role removed' };\n  },\n\n  grantUserPermission: async (event) => {\n    const denied = await authorize(userPermissionRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(userPermissionRequest.rules()), { id: 'admin-user-permission' });\n    if (!validated.valid) return fail(422, { error: 'User and permission are required' });\n    const result = await grantUserPermissionAction.run(userPermissionRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'Permission granted' };\n  },\n\n  revokeUserPermission: async (event) => {\n    const denied = await authorize(userPermissionRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(userPermissionRequest.rules()), { id: 'admin-user-permission' });\n    if (!validated.valid) return fail(422, { error: 'User and permission are required' });\n    const result = await revokeUserPermissionAction.run(userPermissionRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'Permission revoked' };\n  },\n\n  updateUserRole: async (event) => {\n    const denied = await authorize(updateUserRoleRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(updateUserRoleRequest.rules()), { id: 'admin-update-user-role' });\n    if (!validated.valid) return fail(422, { error: 'User and role are required' });\n    const result = await updateUserRoleAction.run(updateUserRoleRequest.passedValidation(validated.data)) as any;\n    if (!result.success) return failure(result);\n    return { message: 'User role updated' };\n  },\n\n  deleteUser: async (event) => {\n    const user = event.locals.user;\n    if (!user) return fail(401, { error: \"Authentication required.\" });\n    const denied = await authorize(deleteUserRequest, event);\n    if (denied) return denied;\n    const form = await event.request.formData();\n    const validated = await superValidate(form, zod4(deleteUserRequest.rules()), { id: 'admin-delete-user' });\n    if (!validated.valid) return fail(422, { error: 'User is required' });\n    const result = await deleteUserAction.run({ dto: deleteUserRequest.passedValidation(validated.data), currentUserId: user.id }) as any;\n    if (!result.success) return failure(result);\n    return { message: 'User deleted' };\n  },\n};\n";
+		return `import { error, redirect } from '@sveltejs/kit';
+import { capabilityAccess, resolveCapabilityInput } from '$lib/shared/permissions/access.server.js';
+import type { PageServerLoad } from './$types';
+
+export const load: PageServerLoad = async (event) => {
+  if (!event.locals.user) redirect(302, '/login');
+  if (!await capabilityAccess.can('screen.operations.view', resolveCapabilityInput(event))) error(403, 'Console access denied.');
+  const target = new URL(event.url);
+  target.pathname = '/admin/dashboard';
+  const aliases: Record<string, string> = { queue: 'queues', jobs: 'queues', roles: 'permissions', schedule: 'scheduler', tasks: 'scheduler' };
+  const tab = target.searchParams.get('tab');
+  if (tab && aliases[tab]) target.searchParams.set('tab', aliases[tab]);
+  redirect(302, target.pathname + target.search);
+};
+`;
 	}
 
 
 	static adminPageSvelte(): string {
-		return `<script lang="ts">
-  import { page } from '$app/stores';
-  import { superForm } from 'sveltekit-superforms';
-  import { Button, Badge, Card, CardHeader, CardTitle, CardDescription, CardContent, Alert, Input, Label } from '@beeblock/svelar/ui';
-
-  let { data, form: actionData }: { data: any; form?: any } = $props();
-  let users = $state<any[]>([]);
-  let message = $state('');
-  let messageType = $state<'success' | 'error'>('success');
-
-  // Real data from server
-  let queueCounts = $state({ waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0, total: 0 });
-  let scheduledTasks = $state<any[]>([]);
-  let recentLogs = $state<any[]>([]);
-  let logStats = $state<{
-    totalEntries: number;
-    byLevel: Record<string, number>;
-    byChannel: Record<string, number>;
-  }>({ totalEntries: 0, byLevel: {}, byChannel: {} });
-  let health = $state({ status: 'ok', uptime: 0, memoryUsedMB: 0, memoryTotalMB: 0, memoryPercent: 0 });
-
-  // Roles & Permissions
-  let roles = $state<any[]>([]);
-  let permissions = $state<any[]>([]);
-  let rolePermissionsMap = $state<Record<number, number[]>>({});
-  let userRolesMap = $state<Record<number, { id: number; name: string }[]>>({});
-  let userDirectPermsMap = $state<Record<number, { id: number; name: string }[]>>({});
-
-  let showRoleForm = $state(false);
-  let showPermForm = $state(false);
-
-  let logFilter = $state<'all' | 'info' | 'warn' | 'error'>('all');
-
-  const activeTab = $derived($page.url.searchParams.get('tab') ?? 'overview');
-
-  const filteredLogs = $derived(
-    logFilter === 'all' ? recentLogs : recentLogs.filter((log: any) => log.level === logFilter)
-  );
-
-  // svelte-ignore state_referenced_locally
-  const {
-    form: createRoleForm,
-    errors: createRoleErrors,
-    enhance: enhanceCreateRole,
-    delayed: creatingRole,
-  } = superForm(data.createRoleForm, {
-    resetForm: true,
-  });
-
-  // svelte-ignore state_referenced_locally
-  const {
-    form: createPermissionForm,
-    errors: createPermissionErrors,
-    enhance: enhanceCreatePermission,
-    delayed: creatingPermission,
-  } = superForm(data.createPermissionForm, {
-    resetForm: true,
-  });
-
-  $effect(() => {
-    users = data.users;
-    queueCounts = data.queueCounts;
-    scheduledTasks = data.scheduledTasks;
-    recentLogs = data.recentLogs;
-    logStats = data.logStats;
-    health = data.health;
-    roles = data.roles ?? [];
-    permissions = data.permissions ?? [];
-    rolePermissionsMap = data.rolePermissionsMap ?? {};
-    userRolesMap = data.userRolesMap ?? {};
-    userDirectPermsMap = data.userDirectPermsMap ?? {};
-  });
-
-  $effect(() => {
-    if (actionData?.message) {
-      flash(actionData.message);
-      showRoleForm = false;
-      showPermForm = false;
-    }
-    if (actionData?.error) {
-      flash(actionData.error, 'error');
-    }
-  });
-
-  function flash(msg: string, type: 'success' | 'error' = 'success') {
-    message = msg;
-    messageType = type;
-  }
-
-  function getCookie(name: string): string | null {
-    const escaped = name.replace(/[.*+?^\${}()|[\\]\\\\]/g, '\\\\$&');
-    const match = document.cookie.match(new RegExp(\`(?:^|;\\\\s*)\${escaped}=([^;]*)\`));
-    return match ? decodeURIComponent(match[1]) : null;
-  }
-
-  function csrfHeaders(extra: Record<string, string> = {}): HeadersInit {
-    const token = getCookie('XSRF-TOKEN');
-    return token ? { ...extra, 'X-CSRF-Token': token } : extra;
-  }
-
-  async function apiError(res: Response, fallback: string): Promise<string> {
-    try {
-      const body = await res.json();
-      return body.meta?.message || body.error || body.message || fallback;
-    } catch {
-      return fallback;
-    }
-  }
-
-  function submitAdminAction(action: string, fields: Record<string, string | number>) {
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = action;
-    form.hidden = true;
-    for (const [name, value] of Object.entries(fields)) {
-      const input = document.createElement('input');
-      input.type = 'hidden';
-      input.name = name;
-      input.value = String(value);
-      form.append(input);
-    }
-    document.body.append(form);
-    form.requestSubmit();
-  }
-
-  async function refreshDashboard() {
-    try {
-      const res = await fetch('/api/admin/stats');
-      if (res.ok) {
-        const { data: stats } = await res.json();
-        if (stats.queue) {
-          queueCounts = stats.queue.queues?.default ?? queueCounts;
-        }
-      }
-    } catch { /* ignore refresh errors */ }
-  }
-
-  function updateUserRole(userId: number, newRole: string) {
-    submitAdminAction('?/updateUserRole', { userId, role: newRole });
-  }
-
-  function deleteUser(userId: number, userName: string) {
-    if (!confirm(\`Are you sure you want to delete \${userName}? This cannot be undone.\`)) {
-      return;
-    }
-    submitAdminAction('?/deleteUser', { userId });
-  }
-
-  async function retryJob(jobId: string) {
-    try {
-      const res = await fetch(\`/api/admin/queue/\${jobId}/retry\`, {
-        method: 'POST',
-        headers: csrfHeaders(),
-      });
-      if (res.ok) {
-        flash('Job queued for retry');
-        await refreshQueue();
-      } else {
-        flash(await apiError(res, 'Failed to retry job'), 'error');
-      }
-    } catch {
-      flash('Failed to retry job', 'error');
-    }
-  }
-
-  async function refreshQueue() {
-    try {
-      const res = await fetch('/api/admin/queue');
-      if (res.ok) {
-        const data = await res.json();
-        queueCounts = data.data.counts;
-      }
-    } catch { /* ignore */ }
-  }
-
-  async function runTask(taskName: string) {
-    try {
-      const res = await fetch(\`/api/admin/scheduler/\${taskName}/run\`, {
-        method: 'POST',
-        headers: csrfHeaders(),
-      });
-      if (res.ok) {
-        flash(\`Task '\${taskName}' completed\`);
-        await refreshScheduler();
-      } else {
-        flash(await apiError(res, 'Failed to run task'), 'error');
-      }
-    } catch {
-      flash('Failed to run task', 'error');
-    }
-  }
-
-  async function refreshScheduler() {
-    try {
-      const res = await fetch('/api/admin/scheduler');
-      if (res.ok) {
-        const data = await res.json();
-        scheduledTasks = data.data.tasks ?? scheduledTasks;
-      }
-    } catch { /* ignore */ }
-  }
-
-  async function toggleTask(taskName: string, enabled: boolean) {
-    try {
-      const res = await fetch(\`/api/admin/scheduler/\${taskName}/toggle\`, {
-        method: 'POST',
-        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ enabled }),
-      });
-      if (res.ok) {
-        scheduledTasks = scheduledTasks.map((t: any) =>
-          t.name === taskName ? { ...t, enabled } : t
-        );
-        flash(\`Task '\${taskName}' \${enabled ? 'enabled' : 'disabled'}\`);
-      } else {
-        flash(await apiError(res, 'Failed to toggle task'), 'error');
-      }
-    } catch {
-      flash('Failed to toggle task', 'error');
-    }
-  }
-
-  // -- Roles CRUD --
-
-  function deleteRole(name: string) {
-    if (!confirm(\`Delete role "\${name}"? This will remove it from all users.\`)) return;
-    submitAdminAction('?/deleteRole', { name });
-  }
-
-  // -- Permissions CRUD --
-
-  function deletePermission(name: string) {
-    if (!confirm(\`Delete permission "\${name}"? This will revoke it from all roles and users.\`)) return;
-    submitAdminAction('?/deletePermission', { name });
-  }
-
-  // -- Role <-> Permission --
-
-  function toggleRolePermission(roleId: number, permissionId: number) {
-    const current = rolePermissionsMap[roleId] ?? [];
-    const has = current.includes(permissionId);
-    submitAdminAction(has ? '?/detachRolePermission' : '?/attachRolePermission', { roleId, permissionId });
-  }
-
-  // -- User <-> Role --
-
-  function assignRoleToUser(userId: number, roleId: number) {
-    submitAdminAction('?/assignUserRole', { userId, roleId });
-  }
-
-  function removeRoleFromUser(userId: number, roleId: number) {
-    submitAdminAction('?/removeUserRole', { userId, roleId });
-  }
-
-  // -- User <-> Direct Permission --
-
-  function grantPermToUser(userId: number, permissionId: number) {
-    submitAdminAction('?/grantUserPermission', { userId, permissionId });
-  }
-
-  function revokePermFromUser(userId: number, permissionId: number) {
-    submitAdminAction('?/revokeUserPermission', { userId, permissionId });
-  }
-
-  function formatDate(date: string | null): string {
-    if (!date) return 'Never';
-    try {
-      return new Date(date).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
-    } catch {
-      return date;
-    }
-  }
-
-  function formatUptime(seconds: number): string {
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    return h > 0 ? \`\${h}h \${m}m\` : \`\${m}m\`;
-  }
-
-  function getLogBadgeVariant(level: string): 'default' | 'secondary' | 'destructive' {
-    return level === 'error' || level === 'fatal' ? 'destructive' : level === 'warn' ? 'secondary' : 'default';
-  }
-
-
-</script>
-
-<svelte:head>
-  <title>Admin Dashboard</title>
-</svelte:head>
-
-<div class="min-w-0 max-w-full space-y-8 [overflow-wrap:anywhere]">
-  <div class="flex min-w-0 flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
-    <div class="min-w-0 flex-1">
-      <h1 class="text-3xl font-bold text-foreground">Admin Dashboard</h1>
-      <p class="text-muted-foreground mt-1">System health, queue monitoring, and task management</p>
-    </div>
-    <Button variant="outline" onclick={refreshDashboard}>Refresh</Button>
-  </div>
-
-  {#if message}
-    <Alert variant={messageType === 'error' ? 'destructive' : 'success'}>
-      <span class="text-sm">{message}</span>
-    </Alert>
-  {/if}
-
-  <!-- Overview -->
-  {#if activeTab === 'overview'}
-    <div class="space-y-6">
-      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent class="pt-6">
-            <div>
-              <p class="text-sm text-muted-foreground">Total Users</p>
-              <p class="text-3xl font-bold text-[var(--color-brand)] mt-2">{data.stats.userCount}</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent class="pt-6">
-            <div>
-              <p class="text-sm text-muted-foreground">Total Posts</p>
-              <p class="text-3xl font-bold text-[var(--color-brand)] mt-2">{data.stats.postCount}</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent class="pt-6">
-            <div>
-              <p class="text-sm text-muted-foreground">Queue Pending</p>
-              <p class="text-3xl font-bold text-yellow-600 mt-2">{queueCounts.waiting}</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent class="pt-6">
-            <div>
-              <p class="text-sm text-muted-foreground">Failed Jobs</p>
-              <p class="text-3xl font-bold text-red-600 mt-2">{queueCounts.failed}</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>System Health</CardTitle>
-        </CardHeader>
-        <CardContent class="space-y-4">
-          <div class="flex justify-between text-sm">
-            <span>Status</span>
-            <Badge variant="default">{health.status}</Badge>
-          </div>
-          <div class="flex justify-between text-sm">
-            <span>Uptime</span>
-            <span class="font-medium">{formatUptime(health.uptime)}</span>
-          </div>
-          <div class="space-y-2">
-            <div class="flex justify-between text-sm">
-              <span>Memory Usage</span>
-              <Badge variant={health.memoryPercent > 90 ? 'destructive' : health.memoryPercent > 70 ? 'secondary' : 'default'}>
-                {health.memoryUsedMB} MB / {health.memoryTotalMB} MB ({health.memoryPercent}%)
-              </Badge>
-            </div>
-            <div class="h-2 bg-muted rounded-full overflow-hidden">
-              <div
-                class="h-full transition-all"
-                class:bg-green-500={health.memoryPercent <= 70}
-                class:bg-yellow-500={health.memoryPercent > 70 && health.memoryPercent <= 90}
-                class:bg-red-500={health.memoryPercent > 90}
-                style="width: {health.memoryPercent}%"
-              ></div>
-            </div>
-          </div>
-          <div class="flex justify-between text-sm">
-            <span>Queue Throughput</span>
-            <span class="font-medium">{queueCounts.total} total jobs</span>
-          </div>
-          <div class="flex justify-between text-sm">
-            <span>Log Entries</span>
-            <span class="font-medium">{logStats.totalEntries} entries ({logStats.byLevel?.error ?? 0} errors)</span>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  {/if}
-
-  <!-- Users -->
-  {#if activeTab === 'users'}
-    <Card>
-      <CardHeader>
-        <CardTitle>User Management</CardTitle>
-        <CardDescription>Manage user roles and permissions ({data.stats.userCount} users)</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <!-- svelte-ignore a11y_no_noninteractive_tabindex (Native scroll regions need keyboard focus.) -->
-        <div class="min-w-0 w-full max-w-full overflow-x-auto" role="region" aria-label="User management table" tabindex="0">
-          <table class="w-full min-w-[760px] text-sm">
-            <thead>
-              <tr class="border-b border-border">
-                <th class="text-left py-3 px-4 font-semibold text-foreground">Name</th>
-                <th class="text-left py-3 px-4 font-semibold text-foreground">Email</th>
-                <th class="text-left py-3 px-4 font-semibold text-foreground">Column Role</th>
-                <th class="text-left py-3 px-4 font-semibold text-foreground">Assigned Roles</th>
-                <th class="text-left py-3 px-4 font-semibold text-foreground">Direct Permissions</th>
-                <th class="text-left py-3 px-4 font-semibold text-foreground">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each users as user (user.id)}
-                <tr class="border-b border-border hover:bg-muted/50">
-                  <td class="py-3 px-4 font-medium text-foreground">{user.name}</td>
-                  <td class="py-3 px-4 text-muted-foreground">{user.email}</td>
-                  <td class="py-3 px-4">
-                    <Badge variant={user.role === 'admin' ? 'default' : 'secondary'}>
-                      {user.role}
-                    </Badge>
-                  </td>
-                  <td class="py-3 px-4">
-                    <div class="flex flex-wrap gap-1">
-                      {#each (userRolesMap[user.id] ?? []) as role (role.id)}
-                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-800">
-                          {role.name}
-                          <button
-                            type="button"
-                            class="hover:text-red-600 font-bold"
-                            onclick={() => removeRoleFromUser(user.id, role.id)}
-                          >&times;</button>
-                        </span>
-                      {/each}
-                      {#if roles.length > 0}
-                        <select
-                          class="text-xs border border-border rounded px-1 py-0.5"
-                          onchange={(e) => {
-                            const val = Number((e.target as HTMLSelectElement).value);
-                            if (val) { assignRoleToUser(user.id, val); (e.target as HTMLSelectElement).value = ''; }
-                          }}
-                        >
-                          <option value="">+ role</option>
-                          {#each roles.filter((r) => !(userRolesMap[user.id] ?? []).some((ur) => ur.id === r.id)) as role (role.id)}
-                            <option value={role.id}>{role.name}</option>
-                          {/each}
-                        </select>
-                      {/if}
-                    </div>
-                  </td>
-                  <td class="py-3 px-4">
-                    <div class="flex flex-wrap gap-1">
-                      {#each (userDirectPermsMap[user.id] ?? []) as perm (perm.id)}
-                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-purple-100 text-purple-800">
-                          {perm.name}
-                          <button
-                            type="button"
-                            class="hover:text-red-600 font-bold"
-                            onclick={() => revokePermFromUser(user.id, perm.id)}
-                          >&times;</button>
-                        </span>
-                      {/each}
-                      {#if permissions.length > 0}
-                        <select
-                          class="text-xs border border-border rounded px-1 py-0.5"
-                          onchange={(e) => {
-                            const val = Number((e.target as HTMLSelectElement).value);
-                            if (val) { grantPermToUser(user.id, val); (e.target as HTMLSelectElement).value = ''; }
-                          }}
-                        >
-                          <option value="">+ perm</option>
-                          {#each permissions.filter((p) => !(userDirectPermsMap[user.id] ?? []).some((up) => up.id === p.id)) as perm (perm.id)}
-                            <option value={perm.id}>{perm.name}</option>
-                          {/each}
-                        </select>
-                      {/if}
-                    </div>
-                  </td>
-                  <td class="py-3 px-4">
-                    <div class="flex gap-2">
-                      {#if user.role === 'user'}
-                        <Button size="sm" variant="outline" onclick={() => updateUserRole(user.id, 'admin')}>
-                          Make Admin
-                        </Button>
-                      {:else if data.stats.roleDistribution.admin > 1}
-                        <Button size="sm" variant="outline" onclick={() => updateUserRole(user.id, 'user')}>
-                          Demote
-                        </Button>
-                      {/if}
-                      {#if user.id !== data.user.id}
-                        <Button size="sm" variant="destructive" onclick={() => deleteUser(user.id, user.name)}>
-                          Delete
-                        </Button>
-                      {/if}
-                    </div>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      </CardContent>
-    </Card>
-  {/if}
-
-  <!-- Roles -->
-  {#if activeTab === 'roles'}
-    <div class="space-y-6">
-      <Card>
-        <CardHeader>
-          <div class="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <CardTitle>Roles</CardTitle>
-              <CardDescription>{roles.length} roles defined</CardDescription>
-            </div>
-            <Button size="sm" onclick={() => (showRoleForm = !showRoleForm)}>
-              {showRoleForm ? 'Cancel' : 'Create Role'}
-            </Button>
-          </div>
-        </CardHeader>
-        {#if showRoleForm}
-          <CardContent>
-            <form
-              method="POST"
-              action="?/createRole"
-              use:enhanceCreateRole
-              novalidate
-              class="flex flex-wrap gap-3 items-end border-b border-border pb-4 mb-4"
-            >
-              <div class="min-w-0 flex-1 basis-full sm:basis-[200px]">
-                <Label for="role-name">Name</Label>
-                <Input
-                  id="role-name"
-                  name="name"
-                  bind:value={$createRoleForm.name}
-                  placeholder="e.g. editor"
-                  aria-invalid={$createRoleErrors.name ? 'true' : undefined}
-                  disabled={$creatingRole}
-                />
-                {#if $createRoleErrors.name}<p class="mt-1 text-xs text-red-600">{$createRoleErrors.name[0]}</p>{/if}
-              </div>
-              <div class="min-w-0 flex-1 basis-full sm:basis-[140px]">
-                <Label for="role-guard">Guard</Label>
-                <Input
-                  id="role-guard"
-                  name="guard"
-                  bind:value={$createRoleForm.guard}
-                  placeholder="web"
-                  disabled={$creatingRole}
-                />
-              </div>
-              <div class="min-w-0 flex-1 basis-full sm:basis-[200px]">
-                <Label for="role-desc">Description (optional)</Label>
-                <Input
-                  id="role-desc"
-                  name="description"
-                  bind:value={$createRoleForm.description}
-                  placeholder="Can edit content"
-                  aria-invalid={$createRoleErrors.description ? 'true' : undefined}
-                  disabled={$creatingRole}
-                />
-                {#if $createRoleErrors.description}<p class="mt-1 text-xs text-red-600">{$createRoleErrors.description[0]}</p>{/if}
-              </div>
-              <Button type="submit" size="sm" disabled={$creatingRole}>{$creatingRole ? 'Creating...' : 'Create'}</Button>
-            </form>
-          </CardContent>
-        {/if}
-        <CardContent>
-          {#if roles.length > 0}
-            <div class="space-y-4">
-              {#each roles as role (role.id)}
-                <div class="border border-border rounded-lg p-4">
-                  <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-                    <div class="min-w-0 flex-1">
-                      <span class="font-medium text-foreground">{role.name}</span>
-                      <Badge variant="secondary" class="ml-2">{role.guard}</Badge>
-                      {#if role.description}
-                        <p class="text-xs text-muted-foreground mt-1">{role.description}</p>
-                      {/if}
-                    </div>
-                    <Button size="sm" variant="destructive" onclick={() => deleteRole(role.name)}>Delete</Button>
-                  </div>
-                  <div>
-                    <p class="text-xs font-semibold text-muted-foreground uppercase mb-2">Permissions</p>
-                    <div class="flex flex-wrap gap-2">
-                      {#each permissions as perm (perm.id)}
-                        {@const has = (rolePermissionsMap[role.id] ?? []).includes(perm.id)}
-                        <button
-                          type="button"
-                          class="max-w-full whitespace-normal [overflow-wrap:anywhere] px-2 py-1 rounded text-xs border transition-colors {has
-                            ? 'bg-[var(--color-brand)] text-white border-[var(--color-brand)]'
-                            : 'bg-background text-muted-foreground border-border hover:border-foreground/30'}"
-                          onclick={() => toggleRolePermission(role.id, perm.id)}
-                        >
-                          {perm.name}
-                        </button>
-                      {/each}
-                      {#if permissions.length === 0}
-                        <span class="text-xs text-muted-foreground/70">No permissions defined yet</span>
-                      {/if}
-                    </div>
-                  </div>
-                </div>
-              {/each}
-            </div>
-          {:else}
-            <p class="text-sm text-muted-foreground py-4 text-center">
-              No roles defined. Create one to start assigning permissions.
-            </p>
-          {/if}
-        </CardContent>
-      </Card>
-    </div>
-  {/if}
-
-  <!-- Permissions -->
-  {#if activeTab === 'permissions'}
-    <div class="space-y-6">
-      <Card>
-        <CardHeader>
-          <div class="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <CardTitle>Permissions</CardTitle>
-              <CardDescription>{permissions.length} permissions defined</CardDescription>
-            </div>
-            <Button size="sm" onclick={() => (showPermForm = !showPermForm)}>
-              {showPermForm ? 'Cancel' : 'Create Permission'}
-            </Button>
-          </div>
-        </CardHeader>
-        {#if showPermForm}
-          <CardContent>
-            <form
-              method="POST"
-              action="?/createPermission"
-              use:enhanceCreatePermission
-              novalidate
-              class="flex flex-wrap gap-3 items-end border-b border-border pb-4 mb-4"
-            >
-              <div class="min-w-0 flex-1 basis-full sm:basis-[200px]">
-                <Label for="perm-name">Name</Label>
-                <Input
-                  id="perm-name"
-                  name="name"
-                  bind:value={$createPermissionForm.name}
-                  placeholder="e.g. manage-users"
-                  aria-invalid={$createPermissionErrors.name ? 'true' : undefined}
-                  disabled={$creatingPermission}
-                />
-                {#if $createPermissionErrors.name}<p class="mt-1 text-xs text-red-600">{$createPermissionErrors.name[0]}</p>{/if}
-              </div>
-              <div class="min-w-0 flex-1 basis-full sm:basis-[140px]">
-                <Label for="perm-guard">Guard</Label>
-                <Input
-                  id="perm-guard"
-                  name="guard"
-                  bind:value={$createPermissionForm.guard}
-                  placeholder="web"
-                  disabled={$creatingPermission}
-                />
-              </div>
-              <div class="min-w-0 flex-1 basis-full sm:basis-[200px]">
-                <Label for="perm-desc">Description (optional)</Label>
-                <Input
-                  id="perm-desc"
-                  name="description"
-                  bind:value={$createPermissionForm.description}
-                  placeholder="Can manage user accounts"
-                  aria-invalid={$createPermissionErrors.description ? 'true' : undefined}
-                  disabled={$creatingPermission}
-                />
-                {#if $createPermissionErrors.description}<p class="mt-1 text-xs text-red-600">{$createPermissionErrors.description[0]}</p>{/if}
-              </div>
-              <Button type="submit" size="sm" disabled={$creatingPermission}>{$creatingPermission ? 'Creating...' : 'Create'}</Button>
-            </form>
-          </CardContent>
-        {/if}
-        <CardContent>
-          {#if permissions.length > 0}
-            <!-- svelte-ignore a11y_no_noninteractive_tabindex (Native scroll regions need keyboard focus.) -->
-            <div class="min-w-0 w-full max-w-full overflow-x-auto" role="region" aria-label="Permissions table" tabindex="0">
-              <table class="w-full min-w-[640px] text-sm">
-                <thead>
-                  <tr class="border-b border-border">
-                    <th class="text-left py-3 px-4 font-semibold text-foreground">Name</th>
-                    <th class="text-left py-3 px-4 font-semibold text-foreground">Guard</th>
-                    <th class="text-left py-3 px-4 font-semibold text-foreground">Description</th>
-                    <th class="text-left py-3 px-4 font-semibold text-foreground">Used by Roles</th>
-                    <th class="text-left py-3 px-4 font-semibold text-foreground">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {#each permissions as perm (perm.id)}
-                    {@const usedBy = roles.filter((r) => (rolePermissionsMap[r.id] ?? []).includes(perm.id))}
-                    <tr class="border-b border-border hover:bg-muted/50">
-                      <td class="py-3 px-4 font-medium text-foreground">{perm.name}</td>
-                      <td class="py-3 px-4">
-                        <Badge variant="secondary">{perm.guard}</Badge>
-                      </td>
-                      <td class="py-3 px-4 text-muted-foreground">{perm.description || '---'}</td>
-                      <td class="py-3 px-4">
-                        <div class="flex flex-wrap gap-1">
-                          {#each usedBy as role (role.id)}
-                            <Badge variant="outline">{role.name}</Badge>
-                          {/each}
-                          {#if usedBy.length === 0}
-                            <span class="text-xs text-muted-foreground/70">None</span>
-                          {/if}
-                        </div>
-                      </td>
-                      <td class="py-3 px-4">
-                        <Button size="sm" variant="destructive" onclick={() => deletePermission(perm.name)}>Delete</Button>
-                      </td>
-                    </tr>
-                  {/each}
-                </tbody>
-              </table>
-            </div>
-          {:else}
-            <p class="text-sm text-muted-foreground py-4 text-center">
-              No permissions defined. Create one to start building your authorization system.
-            </p>
-          {/if}
-        </CardContent>
-      </Card>
-    </div>
-  {/if}
-
-  <!-- Queue -->
-  {#if activeTab === 'queue'}
-    <div class="space-y-6">
-      <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
-        <Card>
-          <CardContent class="pt-6">
-            <div>
-              <p class="text-sm text-muted-foreground">Waiting</p>
-              <p class="text-3xl font-bold text-yellow-600 mt-2">{queueCounts.waiting}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent class="pt-6">
-            <div>
-              <p class="text-sm text-muted-foreground">Active</p>
-              <p class="text-3xl font-bold text-blue-600 mt-2">{queueCounts.active}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent class="pt-6">
-            <div>
-              <p class="text-sm text-muted-foreground">Failed</p>
-              <p class="text-3xl font-bold text-red-600 mt-2">{queueCounts.failed}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent class="pt-6">
-            <div>
-              <p class="text-sm text-muted-foreground">Completed</p>
-              <p class="text-3xl font-bold text-green-600 mt-2">{queueCounts.completed}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent class="pt-6">
-            <div>
-              <p class="text-sm text-muted-foreground">Delayed</p>
-              <p class="text-3xl font-bold text-muted-foreground mt-2">{queueCounts.delayed}</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-      <Card>
-        <CardHeader>
-          <CardTitle>Queue Actions</CardTitle>
-          <CardDescription>Manage job queue</CardDescription>
-        </CardHeader>
-        <CardContent class="flex flex-wrap gap-3">
-          <Button variant="outline" onclick={refreshQueue}>Refresh Counts</Button>
-        </CardContent>
-      </Card>
-    </div>
-  {/if}
-
-  <!-- Scheduler -->
-  {#if activeTab === 'scheduler'}
-    <Card>
-      <CardHeader>
-        <CardTitle>Scheduled Tasks</CardTitle>
-        <CardDescription>
-          {scheduledTasks.length > 0
-            ? \`\${scheduledTasks.length} registered tasks\`
-            : 'No tasks registered. Configure your scheduler to see tasks here.'}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        {#if scheduledTasks.length > 0}
-          <div class="space-y-3">
-            {#each scheduledTasks as task (task.name)}
-              <div class="flex min-w-0 flex-col gap-4 p-4 border border-border rounded-lg hover:bg-muted/50 sm:flex-row sm:items-center sm:justify-between">
-                <div class="min-w-0 flex-1">
-                  <p class="font-medium text-foreground">{task.name}</p>
-                  <p class="text-sm text-muted-foreground">Schedule: {task.humanReadable}</p>
-                  <p class="text-xs text-muted-foreground mt-1">Last run: {formatDate(task.lastRun)}</p>
-                  <p class="text-xs text-muted-foreground">Next run: {formatDate(task.nextRun)}</p>
-                </div>
-                <div class="flex min-w-0 flex-wrap items-center gap-3 sm:justify-end">
-                  {#if task.lastStatus}
-                    <Badge variant={task.lastStatus === 'success' ? 'default' : 'destructive'}>
-                      {task.lastStatus}
-                    </Badge>
-                  {/if}
-                  <Badge variant={task.enabled ? 'default' : 'secondary'}>
-                    {task.enabled ? 'enabled' : 'disabled'}
-                  </Badge>
-                  <Button size="sm" variant="outline" onclick={() => runTask(task.name)}>Run Now</Button>
-                  <Button size="sm" variant="outline" onclick={() => toggleTask(task.name, !task.enabled)}>
-                    {task.enabled ? 'Disable' : 'Enable'}
-                  </Button>
-                </div>
-              </div>
-            {/each}
-          </div>
-        {:else}
-          <p class="text-sm text-muted-foreground py-4 text-center">
-            No scheduled tasks found. Configure the Scheduler in your app.ts to register tasks.
-          </p>
-        {/if}
-      </CardContent>
-    </Card>
-  {/if}
-
-  <!-- Logs -->
-  {#if activeTab === 'logs'}
-    <Card>
-      <CardHeader>
-        <CardTitle>Application Logs</CardTitle>
-        <CardDescription>
-          {logStats.totalEntries} total entries
-          {#if logStats.byLevel?.error}
-            ({logStats.byLevel.error} errors)
-          {/if}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div class="flex flex-wrap gap-2 mb-4">
-          <Button size="sm" variant={logFilter === 'all' ? 'default' : 'outline'} onclick={() => (logFilter = 'all')}>
-            All ({logStats.totalEntries})
-          </Button>
-          <Button size="sm" variant={logFilter === 'info' ? 'default' : 'outline'} onclick={() => (logFilter = 'info')}>
-            Info ({logStats.byLevel?.info ?? 0})
-          </Button>
-          <Button size="sm" variant={logFilter === 'warn' ? 'default' : 'outline'} onclick={() => (logFilter = 'warn')}>
-            Warning ({logStats.byLevel?.warn ?? 0})
-          </Button>
-          <Button size="sm" variant={logFilter === 'error' ? 'default' : 'outline'} onclick={() => (logFilter = 'error')}>
-            Error ({logStats.byLevel?.error ?? 0})
-          </Button>
-        </div>
-
-        {#if filteredLogs.length > 0}
-          <div class="min-w-0 max-w-full space-y-2 max-h-96 overflow-y-auto">
-            {#each filteredLogs as log, i (i)}
-              <div class="flex min-w-0 flex-col gap-3 p-3 border border-border rounded bg-muted/50 text-sm sm:flex-row sm:items-start">
-                <Badge variant={getLogBadgeVariant(log.level)} class="mt-0.5">
-                  {log.level.toUpperCase()}
-                </Badge>
-                <div class="min-w-0 flex-1">
-                  <p class="text-foreground">{log.message}</p>
-                  <p class="text-xs text-muted-foreground mt-1">
-                    {formatDate(log.timestamp)}
-                    {#if log.channel && log.channel !== 'default'}
-                      <span class="ml-2 text-muted-foreground/70">[{log.channel}]</span>
-                    {/if}
-                  </p>
-                </div>
-              </div>
-            {/each}
-          </div>
-        {:else}
-          <p class="text-sm text-muted-foreground py-4 text-center">
-            No log entries found. Logs appear here as your application runs.
-          </p>
-        {/if}
-      </CardContent>
-    </Card>
-  {/if}
-</div>
+		return `<svelte:head><title>Operations</title></svelte:head>
+<p role="status">Redirecting...</p>
 `;
 	}
 
@@ -5893,6 +5498,160 @@ export const GET: RequestHandler = async () => {
     timestamp: new Date().toISOString(),
   });
 };
+`;
+	}
+
+	static apiReadiness(): string {
+		return `// svelar:public - read-only dependency readiness; no secrets or control operations.
+import { DeploymentController } from '@beeblock/svelar/deployment';
+import '../../../app.js';
+const controller = new DeploymentController();
+export const GET = controller.handle('ready');
+`;
+	}
+
+	static apiTraffic(): string {
+		return `// svelar:public - read-only deployment eligibility; no HTTP control operations.
+import { DeploymentController } from '@beeblock/svelar/deployment';
+import '../../../app.js';
+const controller = new DeploymentController();
+export const GET = controller.handle('traffic');
+`;
+	}
+
+	static apiOperations(single = false): string {
+		return `// svelar:public - personal operations retain authentication, actor/tenant ownership and CSRF.
+import { OperationsController } from '@beeblock/svelar/operations';
+const controller = new OperationsController();
+export const GET = controller.handle('${single ? 'show' : 'index'}');
+`;
+	}
+
+	static apiOperationCancel(): string {
+		return `// svelar:public - personal cancellation retains authentication, actor/tenant ownership and CSRF.
+import { OperationsController } from '@beeblock/svelar/operations';
+const controller = new OperationsController();
+export const POST = controller.handle('cancel');
+`;
+	}
+
+	static authFrame(): string {
+		return `<script lang="ts">
+  import type { Snippet } from 'svelte';
+  import type { AuthPresentation } from '@beeblock/svelar/auth';
+  let { presentation, showProviders = false, children }: { presentation: AuthPresentation; showProviders?: boolean; children: Snippet } = $props();
+  const providers = $derived(presentation.providers.filter((provider) => provider.available));
+</script>
+
+<main class="auth-frame" class:illustrated={!!presentation.brand.imageUrl} style:--auth-accent={presentation.brand.accentColor ?? '#206052'}>
+  <section class="auth-content" aria-label="Authentication">
+    <header>
+      {#if presentation.brand.logoUrl}<img class="logo" src={presentation.brand.logoUrl} alt={presentation.brand.logoAlt ?? presentation.brand.name} />{/if}
+      <h1>{presentation.brand.title ?? presentation.brand.name}</h1>
+      {#if presentation.brand.description}<p>{presentation.brand.description}</p>{/if}
+    </header>
+    <div class="form-area">{@render children()}</div>
+    {#if showProviders && providers.length}
+      <nav class="providers" aria-label="Other sign-in methods">
+        {#each providers as provider (provider.id)}
+          <a href={provider.loginUrl}>{#if provider.iconUrl}<img src={provider.iconUrl} alt="" />{/if}{provider.label}</a>
+        {/each}
+      </nav>
+    {/if}
+  </section>
+  {#if presentation.brand.imageUrl}<img class="institutional" src={presentation.brand.imageUrl} alt={presentation.brand.imageAlt ?? ''} />{/if}
+</main>
+
+<style>
+  .auth-frame { display: grid; min-height: 100dvh; background: #f6f8fa; color: #20252b; }
+  .auth-content { width: min(100%, 36rem); margin: auto; padding: 2rem 1.25rem; box-sizing: border-box; min-width: 0; }
+  header { margin: 0 auto 1rem; max-width: 28rem; overflow-wrap: anywhere; }
+  h1 { font-size: 1.5rem; line-height: 1.25; margin: .75rem 0; }
+  header p { color: #4f5964; font-size: .875rem; line-height: 1.5; }
+  .logo { display: block; width: auto; height: 2.5rem; max-width: 100%; object-fit: contain; }
+  .form-area :global(> div) { min-height: 0; }
+  .form-area :global(button[type="submit"]) { background: var(--auth-accent); }
+  .providers { display: grid; gap: .75rem; max-width: 28rem; margin: 1.5rem auto 0; }
+  .providers a { display: flex; align-items: center; justify-content: center; gap: .75rem; min-height: 2.75rem; padding: .5rem .75rem; border: 1px solid #b9c5d0; border-radius: 4px; color: #20252b; background: #fff; font-size: .875rem; overflow-wrap: anywhere; }
+  .providers a:focus-visible { outline: 2px solid var(--auth-accent); outline-offset: 3px; }
+  .providers img { width: 1.25rem; height: 1.25rem; object-fit: contain; }
+  .institutional { display: none; }
+  @media (min-width: 960px) { .illustrated { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .institutional { display: block; width: 100%; height: 100dvh; object-fit: cover; } }
+</style>
+`;
+	}
+
+	static operationsWidget(): string {
+		return `<script lang="ts">
+  import { onMount } from 'svelte';
+  import { apiFetch } from '@beeblock/svelar/http';
+  import OperationTray from '$lib/shared/components/patterns/OperationTray.svelte';
+  import type { OperationSummary } from '$lib/shared/components/patterns/contracts.js';
+  import { Popover, PopoverContent, PopoverTrigger } from '$lib/components/ui/popover/index.js';
+  import { Button } from '$lib/components/ui/button/index.js';
+  import ListTodo from '@lucide/svelte/icons/list-todo';
+
+  const endpoint = '/api/operations';
+  let operations = $state<OperationSummary[]>([]);
+  let loading = $state(true);
+  let failure = $state('');
+  let active = $state(false);
+  let flight: Promise<void> | null = null;
+  let refetch = false;
+  let stream: EventSource | null = null;
+  let channel = '';
+  const pending = $derived(operations.filter((operation) => ['queued', 'running'].includes(operation.state)).length);
+
+  async function refresh(): Promise<void> {
+    if (!active) return;
+    if (flight) { refetch = true; return flight; }
+    loading = true;
+    flight = (async () => {
+      try {
+        const response = await apiFetch(endpoint, { showToast: false, headers: { 'X-Svelar-Session-Activity': 'false' } });
+        if (!response.ok) throw new Error('Operations unavailable.');
+        const payload = await response.json();
+        if (!Array.isArray(payload.data)) throw new Error('Invalid operation response.');
+        if (!active) return;
+        operations = payload.data; failure = '';
+        if (typeof payload.meta?.channel === 'string' && payload.meta.channel !== channel) {
+          stream?.close(); channel = payload.meta.channel;
+          stream = new EventSource('/api/broadcasting/' + encodeURIComponent(channel));
+          stream.addEventListener('operation.changed', () => { void refresh(); });
+        }
+      } catch { if (active) failure = 'Unable to load operations. Please retry.'; }
+      finally { loading = false; }
+    })();
+    try { await flight; }
+    finally {
+      flight = null;
+      if (refetch && active) { refetch = false; void refresh(); }
+    }
+  }
+  async function cancel(id: string) {
+    const response = await apiFetch(endpoint + '/' + encodeURIComponent(id) + '/cancel', { method: 'POST', showToast: false });
+    if (!response.ok) throw new Error('Cancellation unavailable.');
+    await refresh();
+  }
+  onMount(() => {
+    active = true; void refresh();
+    const timer = setInterval(() => { void refresh(); }, 10000);
+    return () => { active = false; clearInterval(timer); stream?.close(); };
+  });
+</script>
+
+<Popover>
+  <PopoverTrigger>
+    {#snippet child({ props })}
+      <Button {...props} variant="ghost" size="icon" title="Operations" aria-label={pending ? 'Operations: ' + pending + ' pending' : 'Operations'}>
+        <ListTodo class="size-4" /><span class="sr-only">{pending} pending</span>
+      </Button>
+    {/snippet}
+  </PopoverTrigger>
+  <PopoverContent align="end" class="w-80 max-w-[calc(100vw-2rem)] max-h-[70vh] overflow-y-auto">
+    <OperationTray {operations} {loading} error={failure} onrefresh={refresh} oncancel={cancel} />
+  </PopoverContent>
+</Popover>
 `;
 	}
 
@@ -6068,67 +5827,46 @@ export const GET = ctrl.handle('mine');
 	}
 
 	static apiBroadcasting(): string {
-		return `import type { RequestHandler } from '@sveltejs/kit';
-import { Broadcast } from '@beeblock/svelar/broadcasting';
+		return `// svelar:public - private/presence subscriptions still require channel authorization.
+import { BroadcastingController } from '@beeblock/svelar/broadcasting';
 
-export const GET: RequestHandler = async (event) => {
-  const channelName = event.params.channel!;
+const controller = new BroadcastingController();
+export const GET = controller.handle('stream');
+`;
+	}
 
-  if (channelName.startsWith('private-') || channelName.startsWith('presence-')) {
-    const user = event.locals.user;
-    if (!user) {
-      return new Response('Unauthorized', { status: 401 });
-    }
+	static apiIncomingWebhooks(): string {
+		return `import { IncomingWebhookController } from '@beeblock/svelar/webhooks';
 
-    const authorized = await Broadcast.authorize(channelName, user);
-    if (!authorized) {
-      return new Response('Forbidden', { status: 403 });
-    }
+const controller = new IncomingWebhookController();
+export const POST = controller.handle('receive');
+`;
+	}
 
-    if (channelName.startsWith('presence-') && typeof authorized === 'object') {
-      return Broadcast.subscribe(channelName, user.id, authorized);
-    }
+	static apiPusherAuth(): string {
+		return `// svelar:public - authenticated users still require channel authorization and browser CSRF.
+import { BroadcastingController } from '@beeblock/svelar/broadcasting';
 
-    return Broadcast.subscribe(channelName, user.id);
-  }
+const controller = new BroadcastingController();
+export const POST = controller.handle('authenticate');
+`;
+	}
 
-  const user = event.locals.user;
-  return Broadcast.subscribe(channelName, user?.id);
-};
+	static apiSessionActivity(): string {
+		return `import { SessionActivityController } from '@beeblock/svelar/auth';
+
+const controller = new SessionActivityController();
+export const GET = controller.handle('status');
+export const POST = controller.handle('renew');
 `;
 	}
 
 	static apiInternalBroadcast(): string {
-		return `import { json } from '@sveltejs/kit';
-import type { RequestHandler } from '@sveltejs/kit';
-import { Broadcast } from '@beeblock/svelar/broadcasting';
+		return `// svelar:public - the controller verifies the server-only internal credential.
+import { BroadcastingController } from '@beeblock/svelar/broadcasting';
 
-export const POST: RequestHandler = async (event) => {
-  const secret = event.request.headers.get('x-internal-secret');
-  const expected = process.env.INTERNAL_SECRET;
-  if (!expected) return json({ message: 'INTERNAL_SECRET not set' }, { status: 500 });
-
-  if (secret !== expected) {
-    return json({ message: 'Unauthorized' }, { status: 401 });
-  }
-
-  try {
-    const { channel, eventName, data } = await event.request.json();
-
-    if (!channel || !eventName) {
-      return json({ message: 'channel and eventName are required' }, { status: 400 });
-    }
-
-    await Broadcast.to(channel).send(eventName, data ?? {});
-
-    return json({
-      message: 'Event broadcast',
-      subscribers: Broadcast.totalSubscribers(),
-    });
-  } catch (err: any) {
-    return json({ message: err.message || 'Failed to broadcast' }, { status: 500 });
-  }
-};
+const controller = new BroadcastingController();
+export const POST = controller.handle('publish');
 `;
 	}
 
@@ -6208,6 +5946,27 @@ export const POST = ctrl.handle('exportData');
 
 	// ─── Jobs ─────────────────────────────────────────────────
 
+	static backgroundWorkRepository(): string {
+		return `import { User } from '$lib/modules/auth/User.js';
+import { Post } from '$lib/modules/posts/Post.js';
+
+export class BackgroundWorkRepository {
+  async dailyDigest(): Promise<{ userCount: number; postCount: number; recentPosts: Post[]; admins: User[] }> {
+    const userCount = await User.count();
+    const postCount = await Post.count();
+    const recentPosts = await Post.where('published', true).orderBy('created_at', 'desc').limit(5).get();
+    const admins = await User.where('role', 'admin').get();
+    return { userCount, postCount, recentPosts, admins };
+  }
+
+  async exportPosts(userId: number): Promise<Post[] | null> {
+    if (!await User.find(userId)) return null;
+    return Post.where('user_id', userId).get();
+  }
+}
+`;
+	}
+
 	static sendWelcomeEmail(): string {
 		return `import { Job } from '@beeblock/svelar/queue';
 import { EmailTemplates } from '@beeblock/svelar/email-templates';
@@ -6256,8 +6015,7 @@ export class SendWelcomeEmail extends Job {
 	static dailyDigestJob(): string {
 		return `import { Job } from '@beeblock/svelar/queue';
 import { Mailer } from '@beeblock/svelar/mail';
-import { User } from '$lib/modules/auth/User.js';
-import { Post } from '$lib/modules/posts/Post.js';
+import { BackgroundWorkRepository } from '$lib/modules/admin/BackgroundWorkRepository.js';
 
 export class DailyDigestJob extends Job {
   maxAttempts = 3;
@@ -6272,24 +6030,16 @@ export class DailyDigestJob extends Job {
 
   async handle(): Promise<void> {
     const appName = process.env.APP_NAME ?? 'Svelar';
-    const userCount = await User.count();
-    const postCount = await Post.count();
-    const recentPosts = await Post.where('published', true)
-      .orderBy('created_at', 'desc')
-      .limit(5)
-      .get();
+    const { userCount, postCount, recentPosts, admins } = await new BackgroundWorkRepository().dailyDigest();
 
     const postList = recentPosts.length > 0
-      ? recentPosts.map((p: any) => \`- \${p.title}\`).join('\\n')
+      ? recentPosts.map((post) => \`- \${post.title}\`).join('\\n')
       : 'No new posts today.';
-
-    // Send digest to all admin users
-    const admins = await User.where('role', 'admin').get();
 
     for (const admin of admins) {
       try {
         await Mailer.send({
-          to: (admin as any).email,
+          to: admin.email,
           subject: \`[\${appName}] Daily Digest — \${this.date}\`,
           html: \`
             <h2>\${appName} Daily Digest</h2>
@@ -6301,7 +6051,7 @@ export class DailyDigestJob extends Job {
           \`,
         });
       } catch {
-        console.warn(\`[DailyDigestJob] Failed to send digest to \${(admin as any).email}\`);
+        console.warn(\`[DailyDigestJob] Failed to send digest to \${admin.email}\`);
       }
     }
 
@@ -6326,8 +6076,7 @@ export class DailyDigestJob extends Job {
 	static exportDataJob(): string {
 		return `import { Job } from '@beeblock/svelar/queue';
 import { Storage } from '@beeblock/svelar/storage';
-import { User } from '$lib/modules/auth/User.js';
-import { Post } from '$lib/modules/posts/Post.js';
+import { BackgroundWorkRepository } from '$lib/modules/admin/BackgroundWorkRepository.js';
 
 export class ExportDataJob extends Job {
   maxAttempts = 2;
@@ -6345,10 +6094,8 @@ export class ExportDataJob extends Job {
   async handle(): Promise<void> {
     if (!this.userId) throw new Error('User ID is required for export');
 
-    const user = await User.find(this.userId);
-    if (!user) throw new Error(\`User #\${this.userId} not found\`);
-
-    const posts = await Post.where('user_id', '=', this.userId).get();
+    const posts = await new BackgroundWorkRepository().exportPosts(this.userId);
+    if (!posts) throw new Error(\`User #\${this.userId} not found\`);
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = \`exports/user-\${this.userId}-\${timestamp}.\${this.format}\`;
 
@@ -6357,14 +6104,14 @@ export class ExportDataJob extends Job {
     if (this.format === 'csv') {
       const rows = [
         'ID,Title,Slug,Published,Created At',
-        ...posts.map((p: any) =>
+        ...posts.map((p) =>
           \`\${p.id},"\${p.title}","\${p.slug}",\${p.published},\${p.created_at}\`
         ),
       ];
       content = rows.join('\\n');
     } else {
       content = JSON.stringify(
-        posts.map((p: any) => ({
+        posts.map((p) => ({
           id: p.id,
           title: p.title,
           slug: p.slug,
@@ -6401,7 +6148,8 @@ export class ExportDataJob extends Job {
 
 static cleanupExpiredTokens(): string {
 		return `import { ScheduledTask } from '@beeblock/svelar/scheduler';
-import { QueryBuilder } from '@beeblock/svelar/orm';
+import { container } from '@beeblock/svelar/container';
+import type { AuthManager } from '@beeblock/svelar/auth';
 
 export default class CleanupExpiredTokens extends ScheduledTask {
   name = 'cleanup-expired-tokens';
@@ -6411,17 +6159,8 @@ export default class CleanupExpiredTokens extends ScheduledTask {
   }
 
   async handle(): Promise<void> {
-    const now = new Date().toISOString();
-    const result = {
-      passwordResets: 0,
-      verifications: 0,
-      otpCodes: 0,
-    };
-
-    result.passwordResets = await new QueryBuilder('password_resets').where('expires_at', '<', now).delete();
-    result.verifications = await new QueryBuilder('email_verifications').where('expires_at', '<', now).delete();
-    result.otpCodes = await new QueryBuilder('otp_codes').where('expires_at', '<', now).delete();
-    result.otpCodes += await new QueryBuilder('otp_codes').whereNotNull('used_at').delete();
+    const auth = await container.make<Pick<AuthManager, 'cleanupExpiredTokens'>>('auth');
+    const result = await auth.cleanupExpiredTokens();
 
     console.log(
       \`[CleanupExpiredTokens] Deleted: \${result.passwordResets} password resets, \` +
@@ -6436,6 +6175,8 @@ export default class CleanupExpiredTokens extends ScheduledTask {
 		return `import { Scheduler } from '@beeblock/svelar/scheduler';
 import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
 import { SearchOutboxSweep } from '@beeblock/svelar/search';
+import { WebhookInboxSweep } from '@beeblock/svelar/webhooks';
+import { BackgroundOperationSweep } from '@beeblock/svelar/operations';
 import CleanupExpiredTokens from './CleanupExpiredTokens.js';
 import CleanExpiredSessions from './CleanExpiredSessions.js';
 import DailyDigestEmail from './DailyDigestEmail.js';
@@ -6443,9 +6184,7 @@ import PruneAuditLogs from './PruneAuditLogs.js';
 import QueueHealthCheck from './QueueHealthCheck.js';
 
 export function createScheduler(): Scheduler {
-  const scheduler = new Scheduler()
-    .persistToDatabase()
-    .persistTaskSettings();
+  const scheduler = new Scheduler({ persistent: true });
 
   scheduler.registerMany([
     new CleanupExpiredTokens(),
@@ -6454,6 +6193,8 @@ export function createScheduler(): Scheduler {
     new PruneAuditLogs(),
     new QueueHealthCheck(),
     new SearchOutboxSweep(),
+    new WebhookInboxSweep(),
+    new BackgroundOperationSweep(),
   ]);
 
   ScheduleMonitor.configure(scheduler);
@@ -6464,7 +6205,7 @@ export function createScheduler(): Scheduler {
 
 static cleanExpiredSessions(): string {
 		return `import { ScheduledTask } from '@beeblock/svelar/scheduler';
-import { QueryBuilder } from '@beeblock/svelar/orm';
+import { DatabaseSessionStore } from '@beeblock/svelar/session';
 
 export default class CleanExpiredSessions extends ScheduledTask {
   name = 'clean-expired-sessions';
@@ -6474,8 +6215,7 @@ export default class CleanExpiredSessions extends ScheduledTask {
   }
 
   async handle(): Promise<void> {
-    const now = new Date().toISOString();
-    await new QueryBuilder('sessions').where('expires_at', '<', now).delete();
+    await new DatabaseSessionStore().gc(Number(process.env.SESSION_LIFETIME ?? 86400));
     console.log('[CleanExpiredSessions] Expired sessions cleaned');
   }
 }
@@ -6503,7 +6243,7 @@ export default class DailyDigestEmail extends ScheduledTask {
 
 	static pruneAuditLogs(): string {
 		return `import { ScheduledTask } from '@beeblock/svelar/scheduler';
-import { QueryBuilder } from '@beeblock/svelar/orm';
+import { Audit } from '@beeblock/svelar/audit';
 
 export default class PruneAuditLogs extends ScheduledTask {
   name = 'prune-audit-logs';
@@ -6515,15 +6255,8 @@ export default class PruneAuditLogs extends ScheduledTask {
   async handle(): Promise<void> {
     const ninetyDaysAgo = Date.now() - (90 * 24 * 60 * 60 * 1000);
 
-    try {
-      await new QueryBuilder('audit_logs').where('timestamp', '<', ninetyDaysAgo).delete();
-      console.log('[PruneAuditLogs] Pruned audit logs older than 90 days');
-    } catch (err: any) {
-      // Table may not exist yet if no auditable events have fired
-      if (!err.message?.includes('no such table')) {
-        throw err;
-      }
-    }
+    const pruned = await Audit.pruneBefore(ninetyDaysAgo);
+    console.log(\`[PruneAuditLogs] Pruned \${pruned} audit logs older than 90 days\`);
   }
 }
 `;
@@ -6563,9 +6296,13 @@ export default class QueueHealthCheck extends ScheduledTask {
 	static rootLayoutSvelte(name: string): string {
 		return `<script lang="ts">
   import '../app.css';
-  import { Button, Toaster, toast, Seo } from '@beeblock/svelar/ui';
+  import { Button, Toaster, toast, Seo, SessionWarning } from '@beeblock/svelar/ui';
   import { getCsrfToken, registerToast } from '@beeblock/svelar/http';
   import { onMount } from 'svelte';
+  import { page } from '$app/state';
+  import OperationsWidget from '$lib/shared/components/OperationsWidget.svelte';
+  import AuthFrame from '$lib/shared/components/AuthFrame.svelte';
+  import { authPageHref } from '$lib/shared/components/auth-links.js';
 
   // Wire apiFetch error handling to the toast UI
   registerToast((variant: string, title: string, opts?: any) => {
@@ -6574,6 +6311,9 @@ export default class QueueHealthCheck extends ScheduledTask {
   });
 
   let { data, children } = $props();
+  const operational = $derived(page.url.pathname === '/admin' || page.url.pathname.startsWith('/admin/dashboard'));
+  const authentication = $derived(['/login', '/register', '/forgot-password', '/reset-password', '/otp-login', '/verify-email'].includes(page.url.pathname) || page.url.pathname.startsWith('/invitations/'));
+  const signInUrl = $derived(authPageHref('/login', authentication ? data.redirectTo : page.url.pathname + page.url.search, { reason: 'session-expired' }));
   const year = new Date().getFullYear();
 
   onMount(() => {
@@ -6614,27 +6354,33 @@ export default class QueueHealthCheck extends ScheduledTask {
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 </svelte:head>
 
+{#if operational}
+  {@render children()}
+{:else if authentication}
+  <AuthFrame presentation={data.authPresentation} showProviders={page.url.pathname === '/login'}>{@render children()}</AuthFrame>
+{:else}
 <div class="flex flex-col min-h-screen bg-background text-foreground">
   <nav class="border-b border-border bg-card shadow-sm sticky top-0 z-50">
-    <div class="px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
-      <div class="flex items-center gap-6">
-        <a href="/" class="flex items-center gap-2">
-          <div class="w-8 h-8 bg-brand rounded-md flex items-center justify-center">
+    <div class="px-4 sm:px-6 lg:px-8 py-4 flex flex-wrap gap-3 justify-between items-center">
+      <div class="flex flex-wrap items-center gap-x-6 gap-y-2 min-w-0 max-w-full">
+        <a href="/" class="flex items-center gap-2 min-w-0 max-w-full">
+          <div class="w-8 h-8 shrink-0 bg-brand rounded-md flex items-center justify-center">
             <span class="text-white font-bold text-sm">&lt;/&gt;</span>
           </div>
-          <span class="font-bold text-lg">${name}</span>
+          <span class="min-w-0 font-bold text-lg [overflow-wrap:anywhere]">${name}</span>
         </a>
         {#if data.user}
           <a href="/dashboard" class="text-muted-foreground hover:text-foreground text-sm font-medium">Dashboard</a>
-          {#if data.user.role === 'admin'}
+          {#if data.canOperate}
             <a href="/admin" class="text-muted-foreground hover:text-foreground text-sm font-medium">Admin</a>
           {/if}
         {/if}
       </div>
 
-      <div class="flex items-center gap-3">
+      <div class="flex flex-wrap items-center gap-3 min-w-0 max-w-full">
         {#if data.user}
-          <span class="text-sm text-muted-foreground hidden sm:inline">{data.user.name}</span>
+          <OperationsWidget />
+          <span class="text-sm text-muted-foreground hidden sm:inline max-w-48 truncate">{data.user.name}</span>
           <form method="POST" action="/logout">
             <Button type="submit" variant="ghost" size="sm">Logout</Button>
           </form>
@@ -6654,8 +6400,12 @@ export default class QueueHealthCheck extends ScheduledTask {
     <p>&copy; {year} ${name}. All rights reserved.</p>
   </footer>
 </div>
+{/if}
 
 <Toaster position="bottom-right" />
+{#if data.user && data.sessionActivity}
+  <SessionWarning statusUrl="/api/auth/session" renewUrl="/api/auth/session" initial={data.sessionActivity} {signInUrl} />
+{/if}
 
 <style>
   :global(body) {
@@ -6669,6 +6419,8 @@ export default class QueueHealthCheck extends ScheduledTask {
 
 	static rootLayoutServer(): string {
 		return `import type { ServerLoadEvent } from '@sveltejs/kit';
+import { capabilityAccess, resolveCapabilityInput } from '$lib/shared/permissions/access.server.js';
+import { auth, authRedirect } from '../app.js';
 
 export async function load(event: ServerLoadEvent) {
   const user = event.locals.user;
@@ -6682,7 +6434,25 @@ export async function load(event: ServerLoadEvent) {
           role: user.role ?? 'user',
         }
       : null,
+    sessionActivity: user ? event.locals.session.getActivityStatus() : null,
+    canOperate: !!user && await capabilityAccess.can('screen.operations.view', resolveCapabilityInput(event)),
+    authPresentation: auth.presentation(),
+    redirectTo: authRedirect(event.url),
   };
+}
+`;
+	}
+
+	static authLinkHelper(): string {
+		return `const paths = ['/login', '/register', '/forgot-password', '/otp-login'] as const;
+type AuthPath = typeof paths[number];
+
+export function authPageHref(path: AuthPath, destination?: string, query: Record<string, string> = {}): string {
+  if (!paths.some((allowed) => allowed === path)) throw new TypeError('Unknown authentication page.');
+  const parameters = new URLSearchParams(query);
+  if (destination && destination !== '/dashboard') parameters.set('redirectTo', destination);
+  const search = parameters.toString();
+  return path + (search ? '?' + search : '');
 }
 `;
 	}
@@ -6872,8 +6642,10 @@ export default defineConfig({
       '@beeblock/svelar/cli': resolve(svelarRoot, 'dist/cli/index.js'),
       '@beeblock/svelar/config': resolve(svelarRoot, 'dist/config/index.js'),
       '@beeblock/svelar/container': resolve(svelarRoot, 'dist/container/index.js'),
+      '@beeblock/svelar/dashboard/schemas': resolve(svelarRoot, 'dist/dashboard/schemas.js'),
       '@beeblock/svelar/dashboard': resolve(svelarRoot, 'dist/dashboard/index.js'),
       '@beeblock/svelar/database': resolve(svelarRoot, 'dist/database/index.js'),
+      '@beeblock/svelar/deployment': resolve(svelarRoot, 'dist/deployment/index.js'),
       '@beeblock/svelar/dates': resolve(svelarRoot, 'dist/support/date.js'),
       '@beeblock/svelar/email-templates': resolve(svelarRoot, 'dist/email-templates/index.js'),
       '@beeblock/svelar/errors': resolve(svelarRoot, 'dist/errors/index.js'),
@@ -6891,10 +6663,12 @@ export default defineConfig({
       '@beeblock/svelar/mail': resolve(svelarRoot, 'dist/mail/index.js'),
       '@beeblock/svelar/middleware': resolve(svelarRoot, 'dist/middleware/index.js'),
       '@beeblock/svelar/notifications': resolve(svelarRoot, 'dist/notifications/index.js'),
+      '@beeblock/svelar/operations': resolve(svelarRoot, 'dist/operations/index.js'),
       '@beeblock/svelar/orm': resolve(svelarRoot, 'dist/orm/index.js'),
       '@beeblock/svelar/pagination': resolve(svelarRoot, 'src/pagination'),
       '@beeblock/svelar/pdf/GeneratePdfJob': resolve(svelarRoot, 'dist/pdf/GeneratePdfJob.js'),
       '@beeblock/svelar/pdf': resolve(svelarRoot, 'dist/pdf/index.js'),
+      '@beeblock/svelar/permissions/client': resolve(svelarRoot, 'dist/permissions/client.js'),
       '@beeblock/svelar/permissions': resolve(svelarRoot, 'dist/permissions/index.js'),
       '@beeblock/svelar/plugins/PluginInstaller': resolve(svelarRoot, 'dist/plugins/PluginInstaller.js'),
       '@beeblock/svelar/plugins/PluginPublisher': resolve(svelarRoot, 'dist/plugins/PluginPublisher.js'),
@@ -6949,64 +6723,654 @@ export default defineConfig({
 
 	static exampleUnitTest(): string {
 		return `import { describe, it, expect } from 'vitest';
+import { superValidate } from 'sveltekit-superforms/server';
+import { zod4 } from 'sveltekit-superforms/adapters';
+import { loginSchema, registerSchema, otpVerifySchema } from '$lib/modules/auth/schemas.js';
+import { LoginRequest } from '$lib/modules/auth/LoginRequest.js';
 
-describe('Example Unit Test', () => {
-  it('should pass a basic assertion', () => {
-    expect(1 + 1).toBe(2);
+describe('Shared authentication contracts', () => {
+  it('preserves false remember intent in the validated DTO', async () => {
+    const form = await superValidate({ email: 'fixture@example.test', password: 'fixture-password', remember: false }, zod4(loginSchema));
+    expect(form.valid).toBe(true);
+    expect(new LoginRequest().passedValidation(form.data).remember).toBe(false);
   });
 
-  it('should handle string operations', () => {
-    const greeting = 'Hello, Svelar!';
-    expect(greeting).toContain('Svelar');
+  it('defaults remember to false instead of creating persistent sessions implicitly', async () => {
+    const form = await superValidate({ email: 'fixture@example.test', password: 'fixture-password' }, zod4(loginSchema));
+    expect(form.valid).toBe(true);
+    expect(form.data.remember).toBe(false);
+  });
+
+  it('rejects invalid login email and empty password through the same frontend contract', async () => {
+    const form = await superValidate({ email: 'invalid', password: '' }, zod4(loginSchema));
+    expect(form.valid).toBe(false);
+    expect(form.errors.email?.length).toBeGreaterThan(0);
+    expect(form.errors.password?.length).toBeGreaterThan(0);
+  });
+
+  it('attaches password confirmation mismatch to its field', async () => {
+    const form = await superValidate({ name: 'Fixture User', email: 'fixture@example.test', password: 'fixture-password', password_confirmation: 'different-password' }, zod4(registerSchema));
+    expect(form.valid).toBe(false);
+    expect(form.errors.password_confirmation?.length).toBeGreaterThan(0);
+  });
+
+  it('requires the exact six-digit OTP contract', async () => {
+    const form = await superValidate({ email: 'fixture@example.test', code: '12x456' }, zod4(otpVerifySchema));
+    expect(form.valid).toBe(false);
+    expect(form.errors.code?.length).toBeGreaterThan(0);
   });
 });
 `;
 	}
 
 	static exampleFeatureTest(): string {
-		return `import { describe, it, expect } from 'vitest';
-import { useSvelarTest, assertDatabaseHas } from '@beeblock/svelar/testing';
-// import UserFactory from '$lib/factories/UserFactory';
+		return `import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { randomBytes } from 'node:crypto';
+import { Connection, Migrator, svelarCoreMigrations } from '@beeblock/svelar/database';
+import { AuthManager, SessionActivityController } from '@beeblock/svelar/auth';
+import { Hash } from '@beeblock/svelar/hashing';
+import { createSvelarApp } from '@beeblock/svelar/hooks';
+import { ThrottleMiddleware } from '@beeblock/svelar/middleware';
+import { DatabaseSessionStore } from '@beeblock/svelar/session';
+import { assertDatabaseHas, createRequestEvent, fakeClock, fakeMail, runWithContext, useSvelarTest } from '@beeblock/svelar/testing';
+import UserFactory, { USER_FACTORY_PASSWORD } from '$lib/factories/UserFactory.js';
+import { LoginRequest } from '$lib/modules/auth/LoginRequest.js';
+import { LoginAction } from '$lib/modules/auth/LoginAction.js';
 
-describe('Auth Feature Test', () => {
-  useSvelarTest({ refreshDatabase: true });
+describe('Authentication on an isolated migrated database', () => {
+  // Never import src/app.ts here: its bootstrap owns application/production connections.
+  useSvelarTest({ database: { driver: 'sqlite', filename: ':memory:' }, refreshDatabase: true, migrationsPath: 'src/lib/database/migrations' });
+  beforeEach(async () => { await new Migrator().run(svelarCoreMigrations()); });
+  afterEach(async () => { await Connection.disconnect(); });
 
-  it('should set up the test database', async () => {
-    // The database is automatically refreshed before each test
-    // when refreshDatabase: true is set in useSvelarTest().
-    expect(true).toBe(true);
-  });
+  function runtime(throttle?: ThrottleMiddleware) {
+    const auth = new AuthManager({ guard: 'session', model: UserFactory.model(), jwt: { secret: randomBytes(32).toString('hex') },
+      appUrl: 'http://localhost', eligibility: { disabledAtColumn: 'disabled_at', lockedUntilColumn: 'locked_until', requireVerifiedEmail: true } });
+    const store = new DatabaseSessionStore();
+    const app = createSvelarApp({ auth, secret: randomBytes(32).toString('hex'), sessionStore: store,
+      sessionLifetime: 60, sessionIdleLifetime: 60, sessionAbsoluteLifetime: 180,
+      sessionRememberLifetime: 120, sessionRememberAbsoluteLifetime: 300, sessionWarningBefore: 10,
+      middleware: throttle ? [async (context, next) => context.event.request.method === 'POST' ? throttle.handle(context, next) : next()] : [] });
+    return { auth, store, app };
+  }
 
-  // Uncomment once you have a UserFactory:
-  // it('should create a user via factory', async () => {
-  //   const user = await UserFactory.create({ name: 'Alice' });
-  //   await assertDatabaseHas('users', { name: 'Alice' });
-  // });
+  function cookieHeader(response: Response, previous = ''): string {
+    const cookies = new Map(previous.split('; ').filter(Boolean).map((value) => [value.slice(0, value.indexOf('=')), value]));
+    for (const header of response.headers.getSetCookie()) {
+      const value = header.split(';')[0];
+      cookies.set(value.slice(0, value.indexOf('=')), value);
+    }
+    return [...cookies.values()].join('; ');
+  }
+
+  async function signIn(environment: ReturnType<typeof runtime>, email: string, password = USER_FACTORY_PASSWORD, remember = false) {
+    const anonymous = await environment.app.handle({ event: createRequestEvent({ url: 'http://localhost/login' }), resolve: async () => new Response('Sign in') });
+    const cookies = cookieHeader(anonymous);
+    const csrf = /(?:^|;\\s*)XSRF-TOKEN=([^;]+)/.exec(cookies)?.[1];
+    if (!csrf) throw new Error('Missing anonymous CSRF token');
+    const event = createRequestEvent({ method: 'POST', url: 'http://localhost/login',
+      headers: { cookie: cookies, origin: 'http://localhost', 'x-csrf-token': decodeURIComponent(csrf) }, body: { email, password, remember } });
+    const response = await environment.app.handle({ event, resolve: async () => {
+      const dto = await LoginRequest.validate(event);
+      const result = await new LoginAction({ auth: event.locals.auth, session: event.locals.session }).run(dto);
+      return Response.json({ success: result.success, reason: result.reason, id: result.data?.getAttribute('id') }, { status: result.status ?? 200 });
+    } });
+    return { response, session: event.locals.session, cookie: cookieHeader(response, cookies) };
+  }
+
+  it('creates real hashed factory credentials and authenticates through request/DTO/action/session', async () => runWithContext({}, async () => {
+    const user = await UserFactory.create();
+    expect(user.password).not.toBe(USER_FACTORY_PASSWORD);
+    expect(await Hash.verify(USER_FACTORY_PASSWORD, user.password)).toBe(true);
+    await assertDatabaseHas('users', { email: user.email });
+    const auth = runtime();
+    const login = await signIn(auth, user.email);
+    expect(login.response.status).toBe(200);
+    expect((await login.response.json()).id).toBe(user.id);
+    expect(login.session.get('auth_user_id')).toBe(user.id);
+    const persisted = await auth.store.read(login.session.id);
+    expect(persisted?.auth_user_id).toBe(user.id);
+    expect(persisted?._svelar_remember).toBe(false);
+  }));
+
+  it('rejects wrong credentials without an authenticated session', async () => runWithContext({}, async () => {
+    const user = await UserFactory.create();
+    const login = await signIn(runtime(), user.email, 'incorrect-fixture-password');
+    expect(login.response.status).toBe(401);
+    expect((await login.response.json()).reason).toBe('invalid_credentials');
+    expect(login.session.get('auth_user_id')).toBeUndefined();
+  }));
+
+  it.each([
+    { patch: { disabled_at: new Date().toISOString() }, reason: 'account_disabled' },
+    { patch: { locked_until: new Date(Date.now() + 3600000).toISOString() }, reason: 'account_locked' },
+    { patch: { email_verified_at: null }, reason: 'email_unverified' },
+  ])('rechecks persisted eligibility: $reason', async ({ patch, reason }) => runWithContext({}, async () => {
+    const user = await UserFactory.create(patch);
+    const login = await signIn(runtime(), user.email);
+    expect(login.response.status).toBe(403);
+    expect((await login.response.json()).reason).toBe(reason);
+    expect(login.session.get('auth_user_id')).toBeUndefined();
+  }));
+
+  it('enforces a failure throttle and recovers only after its real clock window', async (testContext) => runWithContext({}, async () => {
+    const user = await UserFactory.create();
+    await fakeClock(async (clock) => {
+      const throttle = new ThrottleMiddleware({ store: 'memory', maxAttempts: 2, decayMinutes: 1, prefix: 'auth-feature' });
+      const auth = runtime(throttle);
+      const attempt = () => signIn(auth, user.email, 'incorrect-fixture-password');
+      const first = await attempt();
+      expect(first.response.status).toBe(401);
+      expect((await first.response.json()).reason).toBe('invalid_credentials');
+      expect((await attempt()).response.status).toBe(401);
+      expect((await attempt()).response.status).toBe(429);
+      await clock.tick(60001);
+      expect((await attempt()).response.status).toBe(401);
+    }, { testContext });
+  }));
+
+  it('captures password recovery mail, updates the real hash and refuses token replay', async () => runWithContext({}, async () => {
+    const user = await UserFactory.create();
+    const auth = runtime().auth;
+    await fakeMail(async (mail) => {
+      expect(await auth.sendPasswordReset(user.email)).toBe(true);
+      mail.assertSent((record) => record.message.to === user.email);
+      const text = mail.sent()[0].message.text ?? '';
+      const link = text.match(/https?:\\/\\/[^\\s<>]+/)?.[0];
+      if (!link) throw new Error('Missing captured recovery link');
+      const token = new URL(link).searchParams.get('token');
+      if (!token) throw new Error('Missing captured recovery token');
+      const replacement = 'replacement-fixture-password';
+      expect(await auth.resetPassword(token, user.email, replacement)).toBe(true);
+      await user.refresh();
+      expect(await Hash.verify(replacement, user.password)).toBe(true);
+      expect(await auth.resetPassword(token, user.email, replacement)).toBe(false);
+      mail.assertNotSent((record) => record.message.text?.includes(replacement) === true);
+    });
+  }));
+
+  it('verifies the real delivered OTP once and rejects an expired code', async (testContext) => runWithContext({}, async () => {
+    const user = await UserFactory.create();
+    const auth = runtime().auth;
+    await fakeMail(async (mail) => {
+      await fakeClock(async (clock) => {
+        expect(await auth.sendOtp(user.email)).toBe(true);
+        const code = mail.sent()[0].message.text?.match(/\\b[0-9]{6}\\b/)?.[0];
+        if (!code) throw new Error('Missing captured OTP');
+        expect((await auth.verifyOtp(user.email, code))?.getAttribute('id')).toBe(user.id);
+        expect(await auth.verifyOtp(user.email, code)).toBeNull();
+        expect(await auth.sendOtp(user.email)).toBe(true);
+        const expired = mail.sent()[1].message.text?.match(/\\b[0-9]{6}\\b/)?.[0];
+        if (!expired) throw new Error('Missing second captured OTP');
+        await clock.tick(600001);
+        expect(await auth.verifyOtp(user.email, expired)).toBeNull();
+      }, { testContext });
+    });
+  }));
+
+  it('persists remember intent and expires the authenticated session at its absolute limit', async (testContext) => runWithContext({}, async () => {
+    const user = await UserFactory.create();
+    await fakeClock(async (clock) => {
+      const auth = runtime();
+      const login = await signIn(auth, user.email, USER_FACTORY_PASSWORD, true);
+      expect(login.response.status).toBe(200);
+      expect(login.session.getActivityStatus()?.remembered).toBe(true);
+      const status = login.session.getActivityStatus();
+      if (!status || status.absoluteExpiresAt === null) throw new Error('Missing absolute session policy');
+      expect(status.absoluteExpiresAt - status.createdAt).toBe(300000);
+      let cookies = login.cookie;
+      for (let renewal = 0; renewal < 3; renewal++) {
+        await clock.tick(90000);
+        const csrf = /(?:^|;\\s*)XSRF-TOKEN=([^;]+)/.exec(cookies)?.[1];
+        if (!csrf) throw new Error('Missing session CSRF token');
+        const event = createRequestEvent({ method: 'POST', url: 'http://localhost/api/auth/session', body: {},
+          headers: { cookie: cookies, origin: 'http://localhost', 'x-csrf-token': decodeURIComponent(csrf) } });
+        const response = await auth.app.handle({ event, resolve: new SessionActivityController().handle('renew') });
+        expect(response.status).toBe(200);
+        const renewed = event.locals.session.getActivityStatus();
+        expect(renewed?.absoluteExpiresAt).toBe(status.absoluteExpiresAt);
+        expect(renewed?.expiresAt).toBeLessThanOrEqual(status.absoluteExpiresAt);
+        cookies = cookieHeader(response, cookies);
+      }
+      await clock.tick(30001);
+      const event = createRequestEvent({ url: 'http://localhost/api/auth/me', headers: { cookie: cookies } });
+      await auth.app.handle({ event, resolve: async () => Response.json({ id: event.locals.user?.getAttribute('id') ?? null }) });
+      expect(event.locals.user).toBeNull();
+      expect(await auth.store.read(login.session.id)).toBeNull();
+    }, { testContext });
+  }));
 });
 `;
 	}
 
 	static scaffoldUserFactory(): string {
 		return `import { Factory } from '@beeblock/svelar/testing';
-import { User } from '$lib/modules/auth/User';
+import { Hash } from '@beeblock/svelar/hashing';
+import { User } from '$lib/modules/auth/User.js';
+
+export const USER_FACTORY_PASSWORD = 'test-fixture-password';
 
 export class UserFactory extends Factory<User> {
   model() {
     return User;
   }
 
-  definition() {
+  async definition() {
+    const sequence = this.sequence;
     return {
-      name: \`User \${this.sequence}\`,
-      email: \`user\${this.sequence}@test.com\`,
-      password_hash: 'hashed',
+      name: \`User \${sequence}\`,
+      email: \`user\${sequence}@example.test\`,
+      password: await Hash.make(USER_FACTORY_PASSWORD),
       role: 'user',
+      email_verified_at: new Date().toISOString(),
+      disabled_at: null,
+      locked_until: null,
     };
   }
 }
 
 // Singleton instance for convenience
 export default new UserFactory();
+`;
+		}
+
+	static exampleE2ETest(): string {
+		return `import { expect, test } from '@playwright/test';
+
+test.describe('Authentication pages', () => {
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+    test('labels, keyboard and password visibility at ' + viewport.width, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      await page.goto('/login');
+      await expect(page.getByRole('checkbox', { name: 'Remember me' })).not.toBeChecked();
+      const password = page.getByLabel('Password', { exact: true });
+      await password.fill('visibility-fixture');
+      await page.getByRole('button', { name: 'Show password', exact: true }).click();
+      await expect(password).toHaveAttribute('type', 'text');
+      await page.getByRole('button', { name: 'Hide password', exact: true }).click();
+      await expect(password).toHaveAttribute('type', 'password');
+      await password.fill('');
+      await page.getByLabel('Email', { exact: true }).focus();
+      await page.keyboard.press('Tab');
+      await expect(password).toBeFocused();
+      await expect(page.locator('form')).toHaveAttribute('novalidate', '');
+      await expect(page.locator('input[required]')).toHaveCount(0);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    });
+  }
+});
+
+test.describe('Owned isolated-app authentication', () => {
+  test.describe.configure({ mode: 'serial' });
+  test.beforeEach(() => {
+    expect(process.env.SVELAR_E2E_ISOLATED_APP, 'Use a fresh isolated migrated/seeded test app, never a production server.').toBe('1');
+    expect(process.env.SVELAR_E2E_USER_EMAIL, 'Provide a fixture-owned account.').toBeTruthy();
+    expect(process.env.SVELAR_E2E_USER_PASSWORD, 'Provide its test-only password.').toBeTruthy();
+  });
+
+  for (const target of ['/dashboard?view=profile', 'https://attacker.invalid', '//attacker.invalid', '/%2f%2fattacker.invalid']) {
+    test('sign-in accepts only a local redirect: ' + target, async ({ page }) => {
+      await page.goto('/login?redirectTo=' + encodeURIComponent(target));
+      const origin = new URL(page.url()).origin;
+      await page.getByLabel('Email', { exact: true }).fill(process.env.SVELAR_E2E_USER_EMAIL!);
+      await page.getByLabel('Password', { exact: true }).fill(process.env.SVELAR_E2E_USER_PASSWORD!);
+      await page.getByRole('button', { name: 'Sign In', exact: true }).click();
+      await page.waitForURL((url) => url.pathname !== '/login');
+      expect(new URL(page.url()).origin).toBe(origin);
+      expect(new URL(page.url()).pathname).toBe('/dashboard');
+      if (target.startsWith('/dashboard?')) expect(new URL(page.url()).search).toBe('?view=profile');
+    });
+  }
+
+  test('wrong credentials have one visible error and no retained password', async ({ page }) => {
+    await page.goto('/login');
+    await page.getByLabel('Email', { exact: true }).fill(process.env.SVELAR_E2E_USER_EMAIL!);
+    await page.getByLabel('Password', { exact: true }).fill('incorrect-fixture-password');
+    await page.getByRole('button', { name: 'Sign In', exact: true }).click();
+    await expect(page.getByRole('alert')).toHaveCount(1);
+    await expect(page.getByRole('alert')).toContainText('Invalid email or password');
+    await expect(page.getByLabel('Password', { exact: true })).toHaveValue('');
+  });
+});
+`;
+	}
+
+	static invitationWorkflowFiles(provider: ValidationProvider = 'zod'): Array<{ path: string; content: string }> {
+		const t = NewCommandTemplates;
+		const artifacts: Array<[string, string]> = [
+			['Invitation', t.invitationModel()], ['InvitationRepository', t.invitationRepository()],
+			['InvitationDto', t.invitationDto()], ['InvitationRequest', t.invitationRequest()],
+			['InvitationResource', t.invitationResource()], ['InvitationService', t.invitationService()],
+			['AcceptInvitationAction', t.invitationAction('accept')], ['DeclineInvitationAction', t.invitationAction('decline')],
+			['InvitationController', t.invitationController()], ['invitation.schema', t.invitationSchema(provider)],
+		];
+		return [
+			...artifacts.map(([name, content]) => ({ path: `src/lib/modules/team/${name}.ts`, content })),
+			{ path: 'src/routes/invitations/[token]/+page.server.ts', content: t.invitationPageServer() },
+			{ path: 'src/routes/invitations/[token]/+page.svelte', content: t.invitationPageSvelte() },
+			{ path: 'src/routes/api/invitations/[token]/+server.ts', content: t.invitationApiRoute('preview') },
+			{ path: 'src/routes/api/invitations/[token]/accept/+server.ts', content: t.invitationApiRoute('accept') },
+			{ path: 'src/routes/api/invitations/[token]/decline/+server.ts', content: t.invitationApiRoute('decline') },
+		];
+	}
+
+	static invitationSchema(provider: ValidationProvider = 'zod'): string {
+		return provider === 'valibot' ? `import * as v from 'valibot';
+export const invitationSchema = v.object({ token: v.pipe(v.string(), v.uuid('Invalid invitation link')) });
+export type InvitationInput = v.InferOutput<typeof invitationSchema>;
+` : `import { z } from '@beeblock/svelar/validation';
+export const invitationSchema = z.object({ token: z.string().uuid('Invalid invitation link') });
+export type InvitationInput = z.output<typeof invitationSchema>;
+`;
+	}
+
+	static invitationModel(): string {
+		return `import { Model } from '@beeblock/svelar/orm';
+
+export class Invitation extends Model {
+  static table = 'team_invitations';
+  static timestamps = false;
+  static incrementing = false;
+  static fillable = ['id', 'team_id', 'email', 'role', 'token', 'expires_at', 'accepted_at'];
+  static hidden = ['email', 'token'];
+  declare id: string;
+  declare team_id: string | number;
+  declare email: string;
+  declare role: string;
+  declare token: string;
+  declare expires_at: number;
+  declare accepted_at: number | undefined;
+}
+`;
+	}
+
+	static invitationRepository(): string {
+		return `import { Repository } from '@beeblock/svelar/repositories';
+import { Teams, type TeamInvitationLookup } from '@beeblock/svelar/teams';
+import { Invitation } from '$lib/modules/team/Invitation.js';
+
+export interface InvitationLookup {
+  record: Invitation;
+  team: TeamInvitationLookup['team'];
+  state: TeamInvitationLookup['state'];
+}
+export interface InvitationActor { id: string | number; email: string }
+
+export class InvitationRepository extends Repository<Invitation> {
+  model() { return Invitation; }
+  async lookup(token: string): Promise<InvitationLookup | null> {
+    const result = await Teams.lookupInvitation(token);
+    if (!result) return null;
+    const invitation = result.invitation;
+    return { team: result.team, state: result.state, record: new Invitation({
+      id: invitation.id, team_id: invitation.teamId, email: invitation.email, role: invitation.role,
+      token: invitation.token, expires_at: invitation.expiresAt, accepted_at: invitation.acceptedAt,
+    }) };
+  }
+  async accept(token: string, actor: InvitationActor): Promise<boolean> {
+    return Teams.acceptInvitation(token, actor.id, actor.email);
+  }
+  async decline(token: string, actor: InvitationActor): Promise<boolean> {
+    return Teams.declineInvitation(token, actor.email);
+  }
+}
+`;
+	}
+
+	static invitationDto(): string {
+		return `import type { InvitationInput } from '$lib/modules/team/invitation.schema.js';
+export class InvitationDto {
+  readonly token: InvitationInput['token'];
+  constructor(data: InvitationInput) { this.token = data.token; }
+}
+`;
+	}
+
+	static invitationRequest(): string {
+		return `import { FormRequest, type RequestEvent } from '@beeblock/svelar/routing';
+import { invitationSchema, type InvitationInput } from '$lib/modules/team/invitation.schema.js';
+import { InvitationDto } from '$lib/modules/team/InvitationDto.js';
+
+export class InvitationRequest extends FormRequest<typeof invitationSchema, InvitationDto> {
+  rules() { return invitationSchema; }
+  authorize(event: RequestEvent): boolean {
+    const user = event.locals.user as App.Locals['user'];
+    const id: unknown = (event.locals.auth as App.Locals['auth'])?.id();
+    return !!user && (typeof id === 'string' ? id.trim().length > 0 : typeof id === 'number' && Number.isSafeInteger(id))
+      && typeof user.email === 'string' && user.email.trim().length > 0;
+  }
+  protected async parseBody(event: RequestEvent) { return { token: event.params.token }; }
+  passedValidation(data: InvitationInput): InvitationDto { return new InvitationDto(data); }
+}
+`;
+	}
+
+	static invitationResource(): string {
+		return `import { Resource } from '@beeblock/svelar/routing';
+import type { InvitationLookup } from '$lib/modules/team/InvitationRepository.js';
+
+export interface InvitationDetails { team: { id: string | number; name: string; slug: string }; role: string; expiresAt: number }
+export class InvitationResource extends Resource<InvitationLookup, InvitationDetails> {
+  toJSON(): InvitationDetails {
+    return { team: { ...this.data.team }, role: this.data.record.role, expiresAt: this.data.record.expires_at };
+  }
+}
+`;
+	}
+
+	static invitationService(): string {
+		return `import { Service, type ServiceResult } from '@beeblock/svelar/services';
+import { Teams } from '@beeblock/svelar/teams';
+import { InvitationRepository, type InvitationActor } from '$lib/modules/team/InvitationRepository.js';
+import { InvitationResource, type InvitationDetails } from '$lib/modules/team/InvitationResource.js';
+import type { InvitationDto } from '$lib/modules/team/InvitationDto.js';
+
+export interface InvitationView {
+  state: 'pending' | 'expired' | 'accepted' | 'declined' | 'missing' | 'forbidden' | 'changed' | 'authentication_required';
+  invitation: InvitationDetails | null;
+  loginPath?: string;
+}
+export type InvitationResult = ServiceResult<InvitationView> & { status: number };
+
+export class InvitationService extends Service {
+  constructor(private readonly actor: InvitationActor, private readonly invitations = new InvitationRepository()) { super(); }
+  async preview(dto: InvitationDto): Promise<InvitationResult> {
+    const lookup = await this.invitations.lookup(dto.token);
+    if (!lookup) return { ...this.fail('This invitation could not be found.'), status: 404, data: { state: 'missing', invitation: null } };
+    if (lookup.record.email.trim().toLowerCase() !== this.actor.email.trim().toLowerCase()
+      || !Teams.isAssignableRole(lookup.record.role)) {
+      return { ...this.fail('This invitation is not available to this account.'), status: 403, data: { state: 'forbidden', invitation: null } };
+    }
+    const data: InvitationView = { state: lookup.state, invitation: new InvitationResource(lookup).toJSON() };
+    if (lookup.state === 'expired') return { ...this.fail('This invitation has expired.'), status: 410, data };
+    if (lookup.state === 'accepted') return { ...this.fail('This invitation has already been accepted.'), status: 409, data };
+    return { ...this.ok(data), status: 200 };
+  }
+  async accept(dto: InvitationDto): Promise<InvitationResult> { return this.respond(dto, 'accept'); }
+  async decline(dto: InvitationDto): Promise<InvitationResult> { return this.respond(dto, 'decline'); }
+  private async respond(dto: InvitationDto, decision: 'accept' | 'decline'): Promise<InvitationResult> {
+    const preview = await this.preview(dto);
+    if (!preview.success) return preview;
+    const changed = decision === 'accept' ? await this.invitations.accept(dto.token, this.actor) : await this.invitations.decline(dto.token, this.actor);
+    if (!changed) {
+      const current = await this.preview(dto);
+      return current.success ? { ...this.fail('This invitation changed. Refresh before responding.'), status: 409,
+        data: { state: 'changed', invitation: null } } : current;
+    }
+    const data: InvitationView = { state: decision === 'accept' ? 'accepted' : 'declined', invitation: preview.data!.invitation };
+    return { ...this.ok(data), status: 200 };
+  }
+}
+`;
+	}
+
+	static invitationAction(decision: 'accept' | 'decline'): string {
+		const name = decision === 'accept' ? 'AcceptInvitationAction' : 'DeclineInvitationAction';
+		return `import { Action } from '@beeblock/svelar/actions';
+import { InvitationService } from '$lib/modules/team/InvitationService.js';
+import type { InvitationActor } from '$lib/modules/team/InvitationRepository.js';
+import type { InvitationDto } from '$lib/modules/team/InvitationDto.js';
+
+export class ${name} extends Action<InvitationDto, Awaited<ReturnType<InvitationService['${decision}']>>> {
+  constructor(actor: InvitationActor, private readonly service = new InvitationService(actor)) { super(); }
+  async execute(dto: InvitationDto) { return this.service.${decision}(dto); }
+}
+`;
+	}
+
+	static acceptInvitationAction(): string { return NewCommandTemplates.invitationAction('accept'); }
+	static declineInvitationAction(): string { return NewCommandTemplates.invitationAction('decline'); }
+
+	static invitationController(): string {
+		return `import { Controller, FormAuthorizationError, FormValidationError, type RequestEvent } from '@beeblock/svelar/routing';
+import { CsrfMiddleware } from '@beeblock/svelar/middleware';
+import { config } from '@beeblock/svelar/config';
+import { fail } from '@sveltejs/kit';
+import { superValidate } from 'sveltekit-superforms/server';
+import { zod4 } from 'sveltekit-superforms/adapters';
+import { invitationSchema } from '$lib/modules/team/invitation.schema.js';
+import { InvitationRequest } from '$lib/modules/team/InvitationRequest.js';
+import { InvitationService, type InvitationView } from '$lib/modules/team/InvitationService.js';
+import { AcceptInvitationAction } from '$lib/modules/team/AcceptInvitationAction.js';
+import { DeclineInvitationAction } from '$lib/modules/team/DeclineInvitationAction.js';
+import type { InvitationActor } from '$lib/modules/team/InvitationRepository.js';
+
+type InvitationEvent = Omit<RequestEvent, 'locals'> & { locals: App.Locals };
+
+export class InvitationController extends Controller {
+  private actor(event: InvitationEvent): InvitationActor | null {
+    const user = event.locals.user;
+    const id: unknown = event.locals.auth?.id();
+    return user && typeof user.email === 'string' && user.email.trim()
+      && (typeof id === 'string' && id.trim() || typeof id === 'number' && Number.isSafeInteger(id)) ? { id: id as string | number, email: user.email } : null;
+  }
+  async previewPage(event: InvitationEvent) {
+    const form = await superValidate({ token: event.params.token }, zod4(invitationSchema), { id: 'team-invitation' });
+    const appName = config.get('app.name', process.env.APP_NAME ?? 'Svelar');
+    const actor = this.actor(event);
+    if (!actor) return { appName, data: { state: 'authentication_required', invitation: null,
+      loginPath: '/login?redirectTo=' + encodeURIComponent(event.url.pathname) } satisfies InvitationView,
+      meta: { status: 401, message: 'Sign in to review this invitation.', form } };
+    if (!form.valid) return { appName, data: { state: 'missing', invitation: null } satisfies InvitationView,
+      meta: { status: 404, message: 'This invitation could not be found.', form } };
+    const dto = await InvitationRequest.validate(event);
+    const result = await new InvitationService(actor).preview(dto);
+    return { appName, data: result.data!, meta: { status: result.status, message: result.error ?? '', form } };
+  }
+  async preview(event: InvitationEvent) {
+    const { data, meta } = await this.previewPage(event);
+    return this.json({ data, meta }, meta.status, { 'Cache-Control': 'no-store' });
+  }
+  private async csrf(event: InvitationEvent): Promise<boolean> {
+    const request = new Request(event.request.clone(), { headers: event.request.headers });
+    request.headers.delete('authorization');
+    let allowed = false;
+    await new CsrfMiddleware().handle({ event: { ...event, request }, params: event.params, locals: event.locals },
+      async () => { allowed = true; });
+    return allowed;
+  }
+  private async respond(event: InvitationEvent, decision: 'accept' | 'decline') {
+    const form = await superValidate({ token: event.params.token }, zod4(invitationSchema), { id: 'team-invitation' });
+    const rejected = (status: number, message: string, state: InvitationView['state'] = 'forbidden') => ({
+      data: { state, invitation: null } satisfies InvitationView, meta: { status, message, form },
+    });
+    const actor = this.actor(event);
+    if (!actor) return rejected(401, 'Sign in before responding to an invitation.', 'authentication_required');
+    if (!await this.csrf(event)) return rejected(419, 'Your form expired. Refresh before trying again.');
+    if (!form.valid) return rejected(422, 'Invalid invitation link.', 'missing');
+    try {
+      const dto = await InvitationRequest.validate(event);
+      const result = decision === 'accept' ? await new AcceptInvitationAction(actor).run(dto) : await new DeclineInvitationAction(actor).run(dto);
+      return { data: result.data!, meta: { status: result.status,
+        message: result.error ?? (decision === 'accept' ? 'Invitation accepted.' : 'Invitation declined.'), form } };
+    } catch (error) {
+      if (error instanceof FormAuthorizationError) return rejected(403, 'This invitation is not available to this account.');
+      if (error instanceof FormValidationError) return rejected(422, 'Invalid invitation link.', 'missing');
+      throw error;
+    }
+  }
+  async accept(event: InvitationEvent) { const result = await this.respond(event, 'accept'); return this.json(result, result.meta.status, { 'Cache-Control': 'no-store' }); }
+  async decline(event: InvitationEvent) { const result = await this.respond(event, 'decline'); return this.json(result, result.meta.status, { 'Cache-Control': 'no-store' }); }
+  async acceptPage(event: InvitationEvent) { const result = await this.respond(event, 'accept'); return result.meta.status >= 400 ? fail(result.meta.status, result) : result; }
+  async declinePage(event: InvitationEvent) { const result = await this.respond(event, 'decline'); return result.meta.status >= 400 ? fail(result.meta.status, result) : result; }
+}
+`;
+	}
+
+	static invitationPageServer(): string {
+		return `// svelar:public - recipient-bound invitation flow retains authentication, validation and CSRF.
+import type { Actions, PageServerLoad } from './$types';
+import { InvitationController } from '$lib/modules/team/InvitationController.js';
+const controller = new InvitationController();
+export const load: PageServerLoad = (event) => controller.previewPage(event);
+export const actions: Actions = {
+  accept: (event) => controller.acceptPage(event),
+  decline: (event) => controller.declinePage(event),
+};
+`;
+	}
+
+	static invitationApiRoute(operation: 'preview' | 'accept' | 'decline' = 'preview'): string {
+		return `// svelar:public - recipient-bound invitation flow retains authentication, validation and CSRF.
+import { InvitationController } from '$lib/modules/team/InvitationController.js';
+const controller = new InvitationController();
+export const ${operation === 'preview' ? 'GET' : 'POST'} = controller.handle('${operation}');
+`;
+	}
+
+	static invitationPageSvelte(): string {
+		return `<script lang="ts">
+  import { superForm } from 'sveltekit-superforms';
+  import { zod4Client } from 'sveltekit-superforms/adapters';
+  import { invitationSchema } from '$lib/modules/team/invitation.schema.js';
+  import type { InvitationView } from '$lib/modules/team/InvitationService.js';
+  import Button from '$lib/components/ui/button/button.svelte';
+  import LoaderCircle from '@lucide/svelte/icons/loader-circle';
+  let { data } = $props();
+  let response = $state<{ data: InvitationView; message: string; token: string } | null>(null);
+  const view: InvitationView = $derived(response && response.token === data.meta.form.data.token ? response.data : data.data);
+  const feedback = $derived(response && response.token === data.meta.form.data.token ? response.message : data.meta.message);
+  let decision = $state<'accept' | 'decline'>('accept');
+  // svelte-ignore state_referenced_locally
+  const { form, errors, enhance, submitting } = superForm(data.meta.form, {
+    validators: zod4Client(invitationSchema), invalidateAll: false, resetForm: false,
+    onResult: ({ result }) => {
+      if (result.type === 'success' || result.type === 'failure') {
+        const envelope = result.data as { data: InvitationView; meta: { message: string; form: typeof data.meta.form } };
+        updateResponse(envelope.data, envelope.meta.message);
+        // Superforms discovers a top-level form; the server contract stays { data, meta }.
+        result.data = { ...envelope, form: envelope.meta.form };
+      }
+    },
+    onError: () => { updateResponse(view, 'Unable to respond right now. Please try again.'); },
+  });
+  function updateResponse(view: InvitationView, message: string) {
+    response = { data: view, message, token: data.meta.form.data.token };
+  }
+</script>
+
+<svelte:head><title>Team invitation | {data.appName}</title></svelte:head>
+<section class="w-full min-w-0 space-y-5" aria-labelledby="invitation-title">
+  <h2 id="invitation-title" class="text-xl font-semibold">Team invitation</h2>
+  {#if view.invitation}
+    <dl class="space-y-2 break-words"><div><dt class="text-sm text-muted-foreground">Team</dt><dd>{view.invitation.team.name}</dd></div>
+      <div><dt class="text-sm text-muted-foreground">Role</dt><dd>{view.invitation.role}</dd></div>
+      <div><dt class="text-sm text-muted-foreground">Expires</dt><dd><time datetime={new Date(view.invitation.expiresAt).toISOString()}>{new Date(view.invitation.expiresAt).toLocaleString()}</time></dd></div></dl>
+  {/if}
+  {#if feedback}<p role={view.state === 'pending' || view.state === 'accepted' || view.state === 'declined' ? 'status' : 'alert'} class="text-sm break-words">{feedback}</p>{/if}
+  {#if view.state === 'authentication_required' && view.loginPath}<a href={view.loginPath} class="text-sm font-medium underline">Sign in</a>{/if}
+  {#if view.state === 'pending'}
+    <form method="POST" action="?/accept" use:enhance novalidate class="space-y-3">
+      <input type="hidden" name="token" bind:value={$form.token}/>
+      {#if $errors.token}<p class="text-sm text-destructive" role="alert">{$errors.token[0]}</p>{/if}
+      <div class="flex flex-wrap gap-3">
+        <Button type="submit" disabled={$submitting} aria-busy={$submitting && decision === 'accept'} onclick={() => decision = 'accept'}>{#if $submitting && decision === 'accept'}<LoaderCircle class="size-4 animate-spin"/>{/if}Accept invitation</Button>
+        <Button type="submit" formaction="?/decline" variant="outline" style="background: transparent; color: inherit" disabled={$submitting} aria-busy={$submitting && decision === 'decline'} onclick={() => decision = 'decline'}>{#if $submitting && decision === 'decline'}<LoaderCircle class="size-4 animate-spin"/>{/if}Decline</Button>
+      </div>
+    </form>
+  {/if}
+  {#if view.state === 'accepted' || view.state === 'declined'}<a href="/dashboard/team" class="text-sm font-medium underline">Return to teams</a>{/if}
+</section>
 `;
 	}
 }
