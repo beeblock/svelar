@@ -14,6 +14,7 @@ import { parseEnv } from 'node:util';
 const scriptPath = fileURLToPath(import.meta.url);
 const resultPrefix = 'AUTH_UI_FIXTURE_RESULT:';
 export const fixturePolicy = Object.freeze({ idle: 90, absolute: 600, remember: 300, rememberAbsolute: 1200, warning: 20 });
+export const authUiMessages = Object.freeze({ invalidOtp: 'Invalid or expired code' });
 export const surfaces = Object.freeze([
   { path: '/login', heading: 'Sign In', form: true },
   { path: '/register', heading: 'Create Account', form: true },
@@ -492,8 +493,12 @@ async function fullCases(browser, options, fixture, state, checks, runtimeErrors
     await page.getByLabel('Verification Code', { exact: true }).waitFor();
     await runFixtureCommand(fixture.appDir, fixture.env, 'otp-fixture', state, { code: '123456' });
     await page.getByLabel('Verification Code', { exact: true }).fill('654321');
+    const invalidOtpResponse = page.waitForResponse((response) => new URL(response.url()).pathname === '/otp-login' && response.request().method() === 'POST');
     await page.locator('form [type=submit]').click();
-    await page.getByText('Invalid or expired code. Please try again.', { exact: true }).waitFor();
+    const invalidOtp = await (await invalidOtpResponse).json();
+    assert.equal(invalidOtp.type, 'failure', 'Invalid OTP must remain an action failure.');
+    assert.equal(invalidOtp.status, 401, 'Invalid OTP must preserve its authentication failure status.');
+    await page.getByText(authUiMessages.invalidOtp, { exact: true }).waitFor();
     assert.equal(await page.getByLabel('Verification Code', { exact: true }).inputValue(), '', 'OTP failure retained code.');
     assert.equal(await page.getByRole('alert').count(), 1);
     await page.getByLabel('Verification Code', { exact: true }).fill('123456');
@@ -501,6 +506,17 @@ async function fullCases(browser, options, fixture, state, checks, runtimeErrors
     await page.waitForURL((url) => url.pathname !== '/otp-login');
     checks.push('real-otp-two-step-error-and-success');
     await logout(page);
+    const replay = await page.evaluate(async ({ email }) => {
+      const csrf = document.cookie.split('; ').find((value) => value.startsWith('XSRF-TOKEN='))?.slice('XSRF-TOKEN='.length);
+      const response = await fetch('/api/auth/otp/verify', { method: 'POST', headers: { 'content-type': 'application/json', 'x-csrf-token': decodeURIComponent(csrf ?? '') },
+        body: JSON.stringify({ email, code: '123456' }) });
+      const body = await response.json();
+      return { status: response.status, message: body.meta?.message, authenticatedStatus: (await fetch('/api/auth/me')).status };
+    }, { email: state.accounts.eligible.email });
+    assert.equal(replay.status, 401, 'A consumed OTP must not be accepted again.');
+    assert.equal(replay.message, authUiMessages.invalidOtp);
+    assert.equal(replay.authenticatedStatus, 401, 'OTP replay must not create an authenticated session.');
+    checks.push('consumed-otp-replay-denied');
     await login(page, options, state, 'eligible', false, true);
     let status = await sessionStatus(page);
     assert.equal(status.remembered, false);

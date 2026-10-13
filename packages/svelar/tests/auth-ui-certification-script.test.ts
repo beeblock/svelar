@@ -11,6 +11,7 @@ import { Hash } from '../src/hashing/Hash.js';
 import { Model } from '../src/orm/Model.js';
 import { QueryBuilder } from '../src/orm/QueryBuilder.js';
 import { DatabaseSessionStore } from '../src/session/Session.js';
+import { NewCommandTemplates } from '../src/cli/commands/NewCommandTemplates.js';
 
 const harness = await import(new URL('../../../scripts/auth-ui-certification.mjs', import.meta.url).href);
 
@@ -21,6 +22,11 @@ class FixtureUser extends Model {
 }
 
 describe('Executable auth UI harness options and cleanup', () => {
+  it('expects the current safe AuthService OTP denial message rather than the page fallback', () => {
+    expect(harness.authUiMessages.invalidOtp).toBe('Invalid or expired code');
+    expect(NewCommandTemplates.authService()).toContain(`this.denied('${harness.authUiMessages.invalidOtp}')`);
+  });
+
   it('requires explicit external read-only mode instead of mutating a shared server', () => {
     expect(() => harness.parseOptions(['--app-dir', '/fixture', '--no-server', '--base-url', 'http://127.0.0.1:5798'])).toThrow('read-only');
     const options = harness.parseOptions(['--app-dir', '/fixture', '--no-server', '--base-url', 'http://127.0.0.1:5798', '--phase', 'baseline']);
