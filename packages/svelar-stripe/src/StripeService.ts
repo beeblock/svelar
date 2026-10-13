@@ -1,5 +1,6 @@
 import type Stripe from 'stripe';
 import type { StripeConfig } from './types.js';
+import { stripeObjectId } from './StripeApiShapes.js';
 
 export class StripeService {
   private stripe: Stripe | null = null;
@@ -23,9 +24,7 @@ export class StripeService {
         throw new Error('StripeService not configured. Call Stripe.configure() in app.ts first.');
       }
       const { default: StripeSDK } = await import('stripe');
-      this.stripe = new StripeSDK(this.config.secretKey, {
-        apiVersion: '2024-04-10' as any,
-      });
+      this.stripe = new StripeSDK(this.config.secretKey);
     }
     return this.stripe;
   }
@@ -65,7 +64,8 @@ export class StripeService {
   async getCustomer(customerId: string): Promise<Stripe.Customer> {
     const client = await this.getClient();
     const customer = await client.customers.retrieve(customerId);
-    return customer as Stripe.Customer;
+    if (customer.deleted) throw new Error(`Stripe customer ${customerId} has been deleted`);
+    return customer;
   }
 
   async createSubscription(
@@ -244,12 +244,22 @@ export class StripeService {
 
   async refundInvoice(invoiceId: string): Promise<Stripe.Refund> {
     const client = await this.getClient();
-    const invoice = await client.invoices.retrieve(invoiceId) as any;
-    const chargeId = invoice.charge ?? invoice.payment_intent;
-    if (!chargeId) {
-      throw new Error('Invoice has no associated charge or payment intent');
+    const payments = await client.invoicePayments.list({ invoice: invoiceId, status: 'paid', limit: 2 });
+    if (payments.has_more || payments.data.length > 1) {
+      throw new Error('Invoice has multiple payments; review and refund individual payments explicitly.');
     }
-    return client.refunds.create({ charge: String(chargeId) });
+    const paid = payments.data[0];
+    if (!paid || !Number.isSafeInteger(paid.amount_paid) || paid.amount_paid === null || paid.amount_paid <= 0) {
+      throw new Error('Invoice has no refundable paid payment.');
+    }
+    const payment = paid.payment;
+    const params: Stripe.RefundCreateParams = { amount: paid.amount_paid };
+    if (payment.type === 'payment_intent') params.payment_intent = stripeObjectId(payment.payment_intent);
+    else if (payment.type === 'charge') params.charge = stripeObjectId(payment.charge);
+    if (!params.payment_intent && !params.charge) {
+      throw new Error('Invoice payment is not a refundable Stripe charge or PaymentIntent.');
+    }
+    return client.refunds.create(params);
   }
 
   async getRefund(refundId: string): Promise<Stripe.Refund> {

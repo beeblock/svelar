@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **Dependency and plugin alignment** - SvelteKit/Svelte/TypeScript tooling is updated and versioned plugins require the tested Svelar 0.8 baseline. Stripe SDK 22/23 compatibility uses current subscription/invoice-payment shapes, removes the historical API-version pin and rejects ambiguous automatic refunds. The Datatable package has its own repository/tooling commit and Node 22 build target; no nested repository is absorbed into core.
+
 - **Production schema operations** - PostgreSQL supports trusted expression/partial/INCLUDE/concurrent indexes, named checks and explicit type/null/default alterations with preserved modifiers. Concurrent DDL rejects active transactions before changes. SQLite/unsupported features fail preflight; MySQL full-definition replacement requires explicit opt-in instead of silently dropping attributes.
 
 - **Global scopes and semantic casts** - Models support inherited named condition-only scopes with protected OR grouping and explicit removal. Scoped helper mutations and stale instances fail closed; insert scope values are explicit rather than inferred. Exact decimal/custom casts and deep mutable snapshots preserve meaningful dirty/audit diffs. Custom primary keys, keyset OR boundaries and aggregate raw-binding isolation are respected.

@@ -2,6 +2,10 @@
 
 The `@beeblock/svelar-stripe` plugin provides Stripe billing with a polymorphic Billable mixin, subscriptions, one-time payments, checkout, invoices, refunds, guarded admin endpoints, and signed webhook handling.
 
+The current plugin targets Svelar `^0.8.0` and Stripe SDK `^22.2.1 || ^23.0.0`; older core/SDK versions are not claimed as supported. The SDK's own API-version default is used rather than a hardcoded historical version. Subscription periods are read from the matching subscription item, and invoice subscription references use the current parent/payment shape.
+
+Refunds resolve paid invoice payments and use the invoice allocation amount. Automatic refunds refuse ambiguous multiple-payment or mismatched charge/invoice allocations instead of risking an incorrect financial operation; reconcile those explicitly. Build/type tests exercise SDK 22 and 23, with local provider fixtures rather than live charges.
+
 ## Setup
 
 ### 1. Install the Plugin

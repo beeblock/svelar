@@ -2,6 +2,7 @@ import { Log } from '@beeblock/svelar/logging';
 import type { StripeWebhookHandler } from './StripeWebhookHandler.js';
 import { Subscription } from './Subscription.js';
 import { Invoice } from './Invoice.js';
+import { invoiceSubscriptionId, legacyChargeInvoiceId, stripeObjectId, subscriptionDates } from './StripeApiShapes.js';
 
 // Register default webhook handlers that sync Stripe events to the local DB.
 // Call once in app.ts:
@@ -31,11 +32,8 @@ export function registerDefaultWebhookHandlers(webhooks: StripeWebhookHandler): 
       stripe_customer_id: typeof stripeSub.customer === 'string' ? stripeSub.customer : stripeSub.customer?.id,
       stripe_price_id: priceId,
       status: stripeSub.status,
-      current_period_start: stripeSub.current_period_start ? new Date(stripeSub.current_period_start * 1000).toISOString() : null,
-      current_period_end: stripeSub.current_period_end ? new Date(stripeSub.current_period_end * 1000).toISOString() : null,
-      trial_ends_at: stripeSub.trial_end ? new Date(stripeSub.trial_end * 1000).toISOString() : null,
+      ...subscriptionDates(stripeSub, priceId),
       cancel_at_period_end: stripeSub.cancel_at_period_end ? 1 : 0,
-      canceled_at: stripeSub.canceled_at ? new Date(stripeSub.canceled_at * 1000).toISOString() : null,
     });
   }));
 
@@ -45,14 +43,14 @@ export function registerDefaultWebhookHandlers(webhooks: StripeWebhookHandler): 
     if (!existing) return;
 
     const priceId = stripeSub.items?.data?.[0]?.price?.id;
+    const dates = subscriptionDates(stripeSub, priceId);
     await existing.update({
       status: stripeSub.status,
       stripe_price_id: priceId ?? (existing as any).stripe_price_id,
-      current_period_start: stripeSub.current_period_start ? new Date(stripeSub.current_period_start * 1000).toISOString() : (existing as any).current_period_start,
-      current_period_end: stripeSub.current_period_end ? new Date(stripeSub.current_period_end * 1000).toISOString() : (existing as any).current_period_end,
-      trial_ends_at: stripeSub.trial_end ? new Date(stripeSub.trial_end * 1000).toISOString() : null,
+      ...dates,
+      current_period_start: dates.current_period_start ?? existing.getAttribute('current_period_start'),
+      current_period_end: dates.current_period_end ?? existing.getAttribute('current_period_end'),
       cancel_at_period_end: stripeSub.cancel_at_period_end ? 1 : 0,
-      canceled_at: stripeSub.canceled_at ? new Date(stripeSub.canceled_at * 1000).toISOString() : null,
     });
   }));
 
@@ -106,7 +104,20 @@ export function registerDefaultWebhookHandlers(webhooks: StripeWebhookHandler): 
 
   webhooks.on('charge.refunded', safe(async (event) => {
     const charge = event.data.object;
-    const invoiceId = typeof charge.invoice === 'string' ? charge.invoice : charge.invoice?.id;
+    let invoiceId = legacyChargeInvoiceId(charge);
+    if (!invoiceId) {
+      const paymentIntentId = stripeObjectId(charge.payment_intent);
+      if (!paymentIntentId) return;
+      const { Stripe } = await import('./index.js');
+      const client = await Stripe.service().getClient();
+      const payments = await client.invoicePayments.list({
+        payment: { type: 'payment_intent', payment_intent: paymentIntentId }, status: 'paid', limit: 2,
+      });
+      if (payments.has_more || payments.data.length > 1) {
+        throw new Error('Refund spans multiple invoice payments; reconcile invoice allocations explicitly.');
+      }
+      invoiceId = stripeObjectId(payments.data[0]?.invoice);
+    }
     if (!invoiceId) return;
 
     const existing = await Invoice.findByStripeInvoiceId(invoiceId);
@@ -114,6 +125,9 @@ export function registerDefaultWebhookHandlers(webhooks: StripeWebhookHandler): 
 
     const refunded = charge.amount_refunded ?? 0;
     const total = charge.amount ?? 0;
+    if (existing.getAttribute('amount_paid') !== total) {
+      throw new Error('Refund charge and invoice paid amounts differ; reconcile invoice allocations explicitly.');
+    }
     await existing.update({
       status: refunded >= total ? 'refunded' : 'partially_refunded',
     });
@@ -140,9 +154,7 @@ function safe(handler: (event: any) => Promise<void>): (event: any) => Promise<v
 }
 
 async function syncInvoice(stripeInvoice: any): Promise<void> {
-  const stripeSubId = typeof stripeInvoice.subscription === 'string'
-    ? stripeInvoice.subscription
-    : stripeInvoice.subscription?.id;
+  const stripeSubId = invoiceSubscriptionId(stripeInvoice);
 
   let billableType = stripeInvoice.metadata?.billable_type;
   let billableId = stripeInvoice.metadata?.billable_id ? Number(stripeInvoice.metadata.billable_id) : null;

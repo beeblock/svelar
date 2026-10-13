@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "stripe": ["../../node_modules/stripe22/esm/stripe.esm.node.d.ts"]
+    }
+  }
+}

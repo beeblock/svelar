@@ -1,29 +1,6 @@
 import type { StripeService } from './StripeService.js';
 import { Subscription } from './Subscription.js';
-
-function periodStart(sub: any): string | null {
-  const v = sub.current_period_start;
-  if (!v) return null;
-  return typeof v === 'number' ? new Date(v * 1000).toISOString() : new Date(v).toISOString();
-}
-
-function periodEnd(sub: any): string | null {
-  const v = sub.current_period_end;
-  if (!v) return null;
-  return typeof v === 'number' ? new Date(v * 1000).toISOString() : new Date(v).toISOString();
-}
-
-function trialEnd(sub: any): string | null {
-  const v = sub.trial_end;
-  if (!v) return null;
-  return typeof v === 'number' ? new Date(v * 1000).toISOString() : new Date(v).toISOString();
-}
-
-function canceledAt(sub: any): string | null {
-  const v = sub.canceled_at;
-  if (!v) return null;
-  return typeof v === 'number' ? new Date(v * 1000).toISOString() : new Date(v).toISOString();
-}
+import { subscriptionDates } from './StripeApiShapes.js';
 
 // Resolve billable Model class from Stripe registry
 async function resolveBillableModel(billableType: string): Promise<any> {
@@ -88,11 +65,8 @@ export class BillingService {
       stripe_customer_id: customerId,
       stripe_price_id: priceId,
       status: stripeSub.status,
-      current_period_start: periodStart(stripeSub),
-      current_period_end: periodEnd(stripeSub),
-      trial_ends_at: trialEnd(stripeSub),
+      ...subscriptionDates(stripeSub, priceId),
       cancel_at_period_end: stripeSub.cancel_at_period_end ? 1 : 0,
-      canceled_at: canceledAt(stripeSub),
     });
   }
 
@@ -111,8 +85,7 @@ export class BillingService {
     await record.update({
       stripe_price_id: newPriceId,
       status: stripeSub.status,
-      current_period_start: periodStart(stripeSub),
-      current_period_end: periodEnd(stripeSub),
+      ...subscriptionDates(stripeSub, newPriceId),
     });
 
     return record;
@@ -217,11 +190,8 @@ export class BillingService {
       stripe_customer_id: record.stripe_customer_id,
       stripe_price_id: priceId,
       status: stripeSub.status,
-      current_period_start: periodStart(stripeSub),
-      current_period_end: periodEnd(stripeSub),
-      trial_ends_at: trialEnd(stripeSub),
+      ...subscriptionDates(stripeSub, priceId),
       cancel_at_period_end: stripeSub.cancel_at_period_end ? 1 : 0,
-      canceled_at: canceledAt(stripeSub),
     };
 
     if (existing) {
