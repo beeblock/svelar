@@ -15,6 +15,7 @@ import { MakeCommandCommand } from './commands/MakeCommandCommand.js';
 import { MakeConfigCommand } from './commands/MakeConfigCommand.js';
 import { MakeControllerCommand } from './commands/MakeControllerCommand.js';
 import { MakeDashboardCommand } from './commands/MakeDashboardCommand.js';
+import { MakeUiCommand } from './commands/MakeUiCommand.js';
 import { MakeDeployCommand } from './commands/MakeDeployCommand.js';
 import { MakeDockerCommand } from './commands/MakeDockerCommand.js';
 import { MakeDtoCommand } from './commands/MakeDtoCommand.js';
@@ -55,6 +56,9 @@ import { QueueRetryCommand } from './commands/QueueRetryCommand.js';
 import { QueueWorkCommand } from './commands/QueueWorkCommand.js';
 import { RoutesListCommand } from './commands/RoutesListCommand.js';
 import { ScheduleRunCommand } from './commands/ScheduleRunCommand.js';
+import { ScheduleWorkCommand } from './commands/ScheduleWorkCommand.js';
+import { ScheduleListCommand } from './commands/ScheduleListCommand.js';
+import { LockedMigrateCommand } from '../deployment/LockedMigrateCommand.js';
 import { SearchSetupCommand } from './commands/SearchSetupCommand.js';
 import { SeedCommand } from './commands/SeedCommand.js';
 import { TinkerCommand } from './commands/TinkerCommand.js';
@@ -94,6 +98,7 @@ export const BUILTIN_COMMANDS: BuiltinCommandConstructor[] = [
   MakeDeployCommand,
   MakeBroadcastingCommand,
   MakeDashboardCommand,
+  MakeUiCommand,
   MakeTestCommand,
   MakeFactoryCommand,
   MakeObserverCommand,
@@ -104,6 +109,9 @@ export const BUILTIN_COMMANDS: BuiltinCommandConstructor[] = [
   MigrateCommand,
   SeedCommand,
   ScheduleRunCommand,
+  ScheduleWorkCommand,
+  ScheduleListCommand,
+  LockedMigrateCommand,
   QueueWorkCommand,
   QueueFailedCommand,
   QueueRetryCommand,

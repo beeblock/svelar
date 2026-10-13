@@ -5,7 +5,7 @@
  */
 
 // ORM
-export { Model, type ModelAttributes, type ModelHooks } from './orm/Model.js';
+export { Model, isModelClass, type ModelAttributes, type ModelHooks } from './orm/Model.js';
 export { QueryBuilder } from './orm/QueryBuilder.js';
 export type { SchemaExpression, SchemaDefault, IndexColumn, IndexOptions, DropIndexOptions, ColumnChangeOptions } from './database/SchemaBuilder.js';
 export type { AttributeCast, ModelCast } from './orm/Model.js';
@@ -50,7 +50,7 @@ export { z, rules, validate } from './validation/index.js';
 
 // Auth
 export { AuthManager, AuthenticateMiddleware, RequireAuthMiddleware, signJwt, verifyJwt } from './auth/Auth.js';
-export type { AuthConfig, AuthUser, GuardType, JwtConfig, JwtPayload } from './auth/Auth.js';
+export type { AuthConfig, AuthAuditConfig, AuthAuditEvent, AuthUser, GuardType, JwtConfig, JwtPayload } from './auth/Auth.js';
 
 // Hashing
 export { Hash } from './hashing/Hash.js';
@@ -144,10 +144,17 @@ export type { FeatureFlag, FeatureFlagOverride, FeatureFlagsConfig, FeatureFlagD
 // Permissions
 export { Permissions, HasRoles, RequirePermissionMiddleware, RequireRoleMiddleware } from './permissions/index.js';
 export type { PermissionRecord, RoleRecord, HasRolesInstance } from './permissions/index.js';
+export { BackgroundOperation, BackgroundOperationManager, BackgroundOperationSweep, ProcessBackgroundOperationJob, OperationsController } from './operations/index.js';
+export type { OperationRecord, OperationDefinition, OperationExecution, OperationState } from './operations/index.js';
+export { DeploymentRuntime, DeploymentController, MigrationLock, MigrationLockBusyError, MigrationLockFoundationError } from './deployment/index.js';
+export type { DeploymentRuntimeConfig, MigrationLockOptions } from './deployment/index.js';
+export { PermissionManifest, PermissionProfiles, CapabilityAuthorizer, CapabilityAuthorizationError, auditCapabilityBindings } from './permissions/index.js';
+export type { PermissionManifestDefinition, CapabilityName, CapabilityScope, CapabilityAuthorizationInput,
+  CapabilityPrincipal, CapabilityResolver, RoleCapabilityProfile, CapabilityBinding } from './permissions/index.js';
 
 // Search
 export { Search, Searchable } from './search/index.js';
-export type { SearchConfig, SearchHit, SearchResults, SearchOptions, SearchableInstance } from './search/index.js';
+export type { SearchConfig, SearchHit, SearchResults, SearchOptions, SearchableInstance, SearchableStatic } from './search/index.js';
 
 // Scheduler
 export { Scheduler, ScheduledTask, task, SchedulerLock, parseCron, cronMatches } from './scheduler/index.js';

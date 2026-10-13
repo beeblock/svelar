@@ -31,6 +31,10 @@
 			"types": "./dist/hooks/index.d.ts",
 			"import": "./dist/hooks/index.js"
 		},
+		"./deployment": {
+			"types": "./dist/deployment/index.d.ts",
+			"import": "./dist/deployment/index.js"
+		},
 		"./cli": {
 			"types": "./dist/cli/index.d.ts",
 			"import": "./dist/cli/index.js"
@@ -113,6 +117,10 @@
 			"types": "./dist/notifications/index.d.ts",
 			"import": "./dist/notifications/index.js"
 		},
+		"./operations": {
+			"types": "./dist/operations/index.d.ts",
+			"import": "./dist/operations/index.js"
+		},
 		"./broadcasting": {
 			"types": "./dist/broadcasting/index.d.ts",
 			"import": "./dist/broadcasting/index.js"
@@ -161,6 +169,10 @@
 			"types": "./dist/permissions/index.d.ts",
 			"import": "./dist/permissions/index.js"
 		},
+		"./permissions/client": {
+			"types": "./dist/permissions/client.d.ts",
+			"import": "./dist/permissions/client.js"
+		},
 		"./search": {
 			"types": "./dist/search/index.d.ts",
 			"import": "./dist/search/index.js"
@@ -208,6 +220,10 @@
 		"./dashboard": {
 			"types": "./dist/dashboard/index.d.ts",
 			"import": "./dist/dashboard/index.js"
+		},
+		"./dashboard/schemas": {
+			"types": "./dist/dashboard/schemas.d.ts",
+			"import": "./dist/dashboard/schemas.js"
 		},
 		"./queue/JobMonitor": {
 			"types": "./dist/queue/JobMonitor.d.ts",
@@ -268,7 +284,7 @@
 		"prepublishOnly": "npm run build"
 	},
 	"engines": {
-		"node": ">=22.0.0"
+		"node": ">=22.12.0"
 	},
 	"dependencies": {
 		"cron-parser": "^5.10.2",
@@ -286,6 +302,7 @@
 		"@vitest/coverage-v8": "^4.1.11",
 		"better-sqlite3": "^12.11.1",
 		"exceljs": "^4.4.0",
+		"meilisearch": "^0.62.0",
 		"sveltekit-superforms": "^2.31.0",
 		"tsup": "^8.5.1",
 		"typescript": "^6.0.3",
@@ -301,13 +318,13 @@
 		"better-sqlite3": "*",
 		"bullmq": "^5.77.4",
 		"exceljs": ">=4.4.0",
-		"ioredis": ">=5.0.0",
-		"meilisearch": ">=0.44.0",
+		"ioredis": "^5.0.0",
+		"meilisearch": "^0.62.0",
 		"mysql2": "*",
 		"nodemailer": ">=6.0.0",
 		"pdfkit": ">=0.18.0",
 		"postgres": "*",
-		"sveltekit-superforms": ">=2.31.0",
+		"sveltekit-superforms": "^2.31.0",
 		"valibot": ">=1.0.0",
 		"vitest": ">=1.0.0"
 	},
