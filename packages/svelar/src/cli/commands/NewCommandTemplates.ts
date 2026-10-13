@@ -1097,7 +1097,8 @@ export const { handle, handleError } = createSvelarApp({
   rateLimitCacheStore: process.env.RATE_LIMIT_CACHE_STORE || process.env.CACHE_DRIVER,
   authThrottleStore: process.env.RATE_LIMIT_STORE === 'cache' ? 'cache' : 'memory',
   authThrottleCacheStore: process.env.RATE_LIMIT_CACHE_STORE || process.env.CACHE_DRIVER,
-  csrfExcludePaths: ['/api/webhooks/incoming/', '/api/internal/'],
+  csrfExcludePaths: ['/api/webhooks/incoming/'],
+  csrfExcludeExactPaths: ['/api/internal/broadcast'],
 });
 `;
 	}
@@ -1356,6 +1357,7 @@ coverage/
 - Register literal capability manifests, seed catalogs/profiles, and guard endpoints before FormRequest parsing. System profiles evolve as defaults minus exclusions plus inclusions; custom profiles are exact. Verify platform ownership against current trusted account data.
 - User-bound API credentials restrict current user authority through verified \`credentialCapabilities\`. Service accounts require trusted tenant/actor context and cannot grant platform capabilities. Client snapshots are presentation only.
 - Authenticate before Origin/CSRF; only verified Bearer identity permits a machine-request exemption. A submitted header never bypasses browser protection or permits session fallback. Signed incoming webhook routes authenticate provider credentials independently.
+- Use \`csrfExcludeExactPaths\`/\`excludeExactPaths\` for a single authenticated bridge; never exempt all \`/api/internal/\`. Prefix exceptions match path-segment boundaries, not lookalikes, and the handler still verifies its credential.
 - Apply configured account eligibility to password, session, token, refresh, OTP and federation login. Federation callbacks use \`auth.login()\` after provider/state proof and secure linking, never direct session writes. Add focused migrations before enabling new status columns. Auth APIs audit attempts; do not duplicate events or log credentials.
 - Render only public \`auth.presentation()\` data through the shared AuthFrame; provider controls require real configured available adapters. Never return full auth configuration to page loads or claim branding slots implement OAuth/OIDC/SAML.
 - Auth identity comes from the configured model primary key and \`auth.id()\`, never a shadow \`user.id\`. Match actual foreign-key column types through app migrations. Preserve the server-validated return path across login/register/recovery/OTP links; never trust a browser redirect target without validation.

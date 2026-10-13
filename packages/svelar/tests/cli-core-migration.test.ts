@@ -134,6 +134,22 @@ afterEach(() => {
 });
 
 describe('Scoped core AST migration', () => {
+  it.each([false, true])('adds the ninth file only when recognized legacy hooks exist (flat=%s)', async (flat) => {
+    fixture(flat);
+    const path = 'src/hooks.server.ts';
+    const original = "import { createSvelarApp } from '@beeblock/svelar/hooks';\nexport const { handle, handleError } = createSvelarApp({\n  csrfExcludePaths: ['/api/webhooks/', '/api/internal/'],\n});\n";
+    write(path, original);
+    const plan = await planCoreScaffoldMigration(root);
+    expect(plan.errors).toEqual([]);
+    expect(plan.edits).toHaveLength(9);
+    expect(plan.edits.find((edit) => edit.path === path)?.tokens.map((token) => token.rule)).toEqual(['csrf-exclusions', 'csrf-exclusions']);
+    expect(plan.warnings[0]).toContain('nine recognized');
+    expect(applyCoreScaffoldMigration(plan, { confirmed: true })).toHaveLength(9);
+    expect(read(path + '.core.bak')).toBe(original);
+    expect((await planCoreScaffoldMigration(root)).edits).toEqual([]);
+    expect((await planCoreScaffoldMigration(root)).errors).toEqual([]);
+  });
+
   it.each([false, true])('changes exactly eight DDD/flat files, exposes rules/tokens, backs up originals and is idempotent (flat=%s)', async (flat) => {
     const originals = fixture(flat);
     const plan = await planCoreScaffoldMigration(root);

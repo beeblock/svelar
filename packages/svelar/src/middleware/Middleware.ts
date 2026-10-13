@@ -443,6 +443,8 @@ export interface CsrfOptions {
   /** Random token byte length before hex encoding (default: 32 bytes = 64 hex chars). */
   tokenLength?: number;
   excludePaths?: string[];
+  /** Exact mutation paths whose own handler authenticates a server/provider credential. */
+  excludeExactPaths?: string[];
   /** If set, CSRF validation only applies to requests matching these path prefixes */
   onlyPaths?: string[];
 }
@@ -453,6 +455,7 @@ export class CsrfMiddleware extends Middleware {
   private fieldName: string;
   private tokenLength: number;
   private excludePaths: string[];
+  private excludeExactPaths: Set<string>;
   private onlyPaths: string[] | null;
 
   constructor(options: CsrfOptions = {}) {
@@ -461,8 +464,14 @@ export class CsrfMiddleware extends Middleware {
     this.headerName = options.headerName ?? 'X-CSRF-Token';
     this.fieldName = options.fieldName ?? '_csrf';
     this.tokenLength = options.tokenLength ?? 32;
-    this.excludePaths = options.excludePaths ?? [];
-    this.onlyPaths = options.onlyPaths ?? null;
+    const paths = (value: string[], label: string): string[] => {
+      if (!Array.isArray(value) || value.some((path) => typeof path !== 'string' || !path.startsWith('/')
+        || path.startsWith('//') || /[?#\\\x00-\x20\x7f]/.test(path))) throw new TypeError(`Invalid CSRF ${label}.`);
+      return [...value];
+    };
+    this.excludePaths = paths(options.excludePaths ?? [], 'excludePaths');
+    this.excludeExactPaths = new Set(paths(options.excludeExactPaths ?? [], 'excludeExactPaths'));
+    this.onlyPaths = options.onlyPaths === undefined ? null : paths(options.onlyPaths, 'onlyPaths');
   }
 
   async handle(ctx: MiddlewareContext, next: NextFunction): Promise<Response | void> {
@@ -482,12 +491,14 @@ export class CsrfMiddleware extends Middleware {
 
     // Only enforce CSRF on specific paths (if configured)
     const pathname = event.url.pathname;
-    if (this.onlyPaths && !this.onlyPaths.some((p) => pathname.startsWith(p))) {
+    const matches = (prefix: string) => pathname === prefix
+      || pathname.startsWith(prefix.endsWith('/') ? prefix : prefix + '/');
+    if (this.onlyPaths && !this.onlyPaths.some(matches)) {
       return this.setTokenAndContinue(ctx, next);
     }
 
     // Excluded paths (e.g. webhooks)
-    if (this.excludePaths.some((p) => pathname.startsWith(p))) {
+    if (this.excludeExactPaths.has(pathname) || this.excludePaths.some(matches)) {
       return next();
     }
 

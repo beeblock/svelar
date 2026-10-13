@@ -800,7 +800,9 @@ describe('New project templates', () => {
     expect(hooks).toContain('sessionTouchOnActivity: process.env.SESSION_TOUCH_ON_ACTIVITY !==');
     expect(hooks).toContain('sessionAbsoluteLifetime: Number(process.env.SESSION_ABSOLUTE_LIFETIME');
     expect(hooks).toContain("process.env.RATE_LIMIT_STORE === 'cache'");
-    expect(hooks).toContain("csrfExcludePaths: ['/api/webhooks/incoming/', '/api/internal/']");
+    expect(hooks).toContain("csrfExcludePaths: ['/api/webhooks/incoming/']");
+    expect(hooks).toContain("csrfExcludeExactPaths: ['/api/internal/broadcast']");
+    expect(hooks).not.toContain("'/api/internal/'");
     expect(hooks).not.toContain('$env/dynamic/private');
     expect(hooks).not.toContain('secret: env.APP_KEY');
   });

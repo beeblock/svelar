@@ -6,7 +6,8 @@ import { randomUUID } from 'node:crypto';
 import type * as TypeScript from 'typescript';
 
 export type CoreMigrationRule = 'provider-bootstrap' | 'queue-observations' | 'notification-channels'
-  | 'admin-user-guards' | 'queue-delete-outcome' | 'queue-retry-outcome' | 'scheduler-run-outcome' | 'scheduler-toggle-await' | 'log-viewer-await';
+  | 'admin-user-guards' | 'queue-delete-outcome' | 'queue-retry-outcome' | 'scheduler-run-outcome' | 'scheduler-toggle-await' | 'log-viewer-await'
+  | 'csrf-exclusions';
 
 export interface CoreMigrationToken {
   readonly start: number;
@@ -32,6 +33,7 @@ export interface CoreMigrationPlan {
 
 const RULES: Readonly<Record<string, CoreMigrationRule>> = {
   'src/app.ts': 'provider-bootstrap',
+  'src/hooks.server.ts': 'csrf-exclusions',
   'src/routes/admin/+page.server.ts': 'admin-user-guards',
   'src/routes/api/admin/queue/[id]/+server.ts': 'queue-delete-outcome',
   'src/routes/api/admin/queue/[id]/retry/+server.ts': 'queue-retry-outcome',
@@ -61,11 +63,12 @@ export function planCoreScaffoldMigrationFromSource(
   const errors: string[] = [];
   const edits: CoreMigrationFile[] = [];
   const warnings = [
-    'This opt-in migration changes only eight recognized 0.7.9 scaffold files. Customized legacy patterns require manual review; templates are never copied over source.',
+    'This opt-in migration changes only nine recognized legacy scaffold files when present. Customized legacy patterns require manual review; templates are never copied over source.',
     'Queue health reports Queue.size() on the configured default connection/queue and the length of Queue.failed(). These are bounded observations, not full BullMQ status counts or worker health.',
     'Admin guards and operator outcomes are semantic changes: missing params return 400, unavailable deletes return 404, unavailable retries/skipped task runs return 409, and failed runs return 500. Toggle persistence is awaited.',
     'Legacy scheduler-toggle body.enabled ?? true, error envelopes, default queue selection and other app-owned JSON/schema APIs are not migrated. Review their validation/authorization and exercise admin operations before claiming upgrade compatibility.',
     'Recognized LogViewer calls in async scaffold functions become awaited. Custom synchronous wrappers or shadowed imports require review. Configure the shared database viewer and search sweep explicitly in existing app bootstrap.',
+    'Only the recognized two-path legacy CSRF exclusion array in a direct imported createSvelarApp hooks binding is narrowed to the signed incoming-webhook prefix and exact internal broadcast endpoint. Custom callers, spreads, shadowed bindings, and conflicting exact exclusions require manual review; signed-endpoint authentication remains required.',
   ];
   const read = (path: string): Buffer | undefined => {
     const absolute = checkedPath(root, path);
@@ -198,7 +201,78 @@ function coreTokens(
     }
   }
 
-  if (rule === 'provider-bootstrap') {
+  if (rule === 'csrf-exclusions') {
+    const nodes = all();
+    const propertyName = (node: TypeScript.PropertyName): string | undefined =>
+      ts.isIdentifier(node) || ts.isStringLiteral(node) ? node.text : undefined;
+    const exclusionName = (node: TypeScript.PropertyName): string | undefined => propertyName(node)
+      ?? (ts.isComputedPropertyName(node) && ts.isStringLiteral(node.expression) ? node.expression.text : undefined);
+    const exclusions = nodes.filter((node) => (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node))
+      && ['csrfExcludePaths', 'csrfExcludeExactPaths'].includes(exclusionName(node.name) ?? ''));
+    if (!exclusions.length && !nodes.some((node) => (ts.isIdentifier(node) || ts.isStringLiteral(node))
+      && ['csrfExcludePaths', 'csrfExcludeExactPaths'].includes(node.text))) return tokens;
+    const factory = imported('@beeblock/svelar/hooks', 'createSvelarApp');
+    if (!factory) fail('CSRF exclusions are not bound to a direct Svelar hooks import');
+    const imports = nodes.filter((node): node is TypeScript.ImportSpecifier => ts.isImportSpecifier(node)
+      && !node.isTypeOnly && node.name.text === factory && (node.propertyName ?? node.name).text === 'createSvelarApp');
+    const calls = nodes.filter((node): node is TypeScript.CallExpression => ts.isCallExpression(node)
+      && ts.isIdentifier(node.expression) && node.expression.text === factory);
+    if (imports.length !== 1 || calls.length !== 1) fail('Ambiguous createSvelarApp binding/call requires manual review');
+    const call = calls[0];
+    if (nodes.some((node) => ts.isIdentifier(node) && node.text === factory
+      && node !== imports[0].name && node !== imports[0].propertyName && node !== call.expression)) {
+      fail('Shadowed or reused createSvelarApp binding requires manual review');
+    }
+    const declaration = call.parent;
+    if (!ts.isVariableDeclaration(declaration) || declaration.initializer !== call
+      || !ts.isObjectBindingPattern(declaration.name) || declaration.name.elements.length !== 2
+      || declaration.name.elements.some((element, index) => element.dotDotDotToken || element.propertyName || element.initializer
+        || !ts.isIdentifier(element.name) || element.name.text !== ['handle', 'handleError'][index])
+      || !ts.isVariableDeclarationList(declaration.parent) || declaration.parent.declarations.length !== 1
+      || !(declaration.parent.flags & ts.NodeFlags.Const) || !ts.isVariableStatement(declaration.parent.parent)
+      || declaration.parent.parent.parent !== source
+      || !declaration.parent.parent.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
+      || call.typeArguments?.length || call.arguments.length !== 1 || !ts.isObjectLiteralExpression(call.arguments[0])) {
+      fail('Custom createSvelarApp caller/options require manual review');
+    }
+    const options = call.arguments[0];
+    const properties = new Map<string, TypeScript.ObjectLiteralElementLike>();
+    for (const property of options.properties) {
+      if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property)) {
+        fail('Spread or custom CSRF options require manual review');
+      }
+      const name = propertyName(property.name);
+      if (!name || properties.has(name)) fail('Computed or duplicate CSRF option keys require manual review');
+      properties.set(name, property);
+    }
+    const prefix = properties.get('csrfExcludePaths');
+    const exact = properties.get('csrfExcludeExactPaths');
+    const strings = (property: TypeScript.ObjectLiteralElementLike | undefined): string[] | undefined => {
+      if (!property || !ts.isPropertyAssignment(property) || !ts.isArrayLiteralExpression(property.initializer)) return undefined;
+      const values: string[] = [];
+      for (const element of property.initializer.elements) {
+        if (!ts.isStringLiteral(element)) return undefined;
+        values.push(element.text);
+      }
+      return values;
+    };
+    const paths = strings(prefix);
+    const exactPaths = strings(exact);
+    if (paths?.length === 1 && paths[0] === '/api/webhooks/incoming/'
+      && exactPaths?.length === 1 && exactPaths[0] === '/api/internal/broadcast') return tokens;
+    if (exact) fail('Existing exact CSRF exclusions require manual review');
+    if (!prefix || !ts.isPropertyAssignment(prefix) || !ts.isArrayLiteralExpression(prefix.initializer)
+      || paths?.length !== 2 || !['/api/webhooks/', '/api/webhooks/incoming/'].includes(paths[0]) || paths[1] !== '/api/internal/') {
+      fail('Custom CSRF exclusion paths require manual review');
+    }
+    if (exclusions.length !== 1 || exclusions[0] !== prefix) fail('Additional CSRF option objects require manual review');
+    const quote = prefix.initializer.elements[0].getText(source)[0];
+    const start = prefix.getStart(source);
+    const linePrefix = source.text.slice(source.text.lastIndexOf('\n', start - 1) + 1, start);
+    const indent = /^[\t ]*$/.test(linePrefix) ? linePrefix : '  ';
+    replace(prefix.initializer, `[${quote}/api/webhooks/incoming/${quote}]`);
+    add(prefix.end, prefix.end, `,\n${indent}csrfExcludeExactPaths: [${quote}/api/internal/broadcast${quote}]`);
+  } else if (rule === 'provider-bootstrap') {
     const esp = variable('esp');
     if (!esp?.initializer || !ts.isNewExpression(esp.initializer) || !ts.isIdentifier(esp.initializer.expression)
       || esp.initializer.expression.text !== 'EventServiceProvider') return tokens;

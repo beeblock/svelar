@@ -4,7 +4,7 @@ import { MemorySessionStore } from '../src/session/Session.js';
 import { ApplicationContext } from '../src/support/Context.js';
 import { DeploymentRuntime } from '../src/deployment/Runtime.js';
 import type { AuthManager } from '../src/auth/Auth.js';
-import { SignatureMiddleware } from '../src/middleware/Middleware.js';
+import { CsrfMiddleware, SignatureMiddleware } from '../src/middleware/Middleware.js';
 
 function event(tenant = 'one', requestId = '') {
   const url = new URL('http://localhost/api/proof');
@@ -16,6 +16,33 @@ beforeEach(() => { DeploymentRuntime.configure({}); ApplicationContext.clear(); 
 afterEach(() => { DeploymentRuntime.configure({}); ApplicationContext.clear(); });
 
 describe('HTTP execution and drain boundaries', () => {
+  it.each(['/api/internal/other', '/api/internal/broadcast-evil', '/api/internal/broadcast/child', '/api/webhooks/stripe', '/api/webhooks/incoming-evil'])('retains CSRF outside the exact signed bridge: %s', async (path) => {
+    const runtime = app();
+    const url = new URL(path, 'http://localhost');
+    const resolve = vi.fn(() => new Response('must not execute'));
+    const response = await runtime.handle({ event: { ...event(), url, request: new Request(url, { method: 'POST' }) }, resolve });
+    expect(response.status).toBe(419);
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it.each(['/api/internal/broadcast', '/api/webhooks/incoming/provider'])('delegates only the signed endpoint namespace to its handler: %s', async (path) => {
+    const url = new URL(path, 'http://localhost');
+    const response = await app().handle({ event: { ...event(), url, request: new Request(url, { method: 'POST' }) }, resolve: async () => new Response('handler must verify its credential') });
+    expect(response.status).toBe(200);
+  });
+
+  it('uses path-segment prefix boundaries for explicitly configured exclusions', async () => {
+    const runtime = createSvelarApp({ secret: 'fixture-only-request-boundaries-secret', csrfExcludePaths: ['/api/provider'], csrfExcludeExactPaths: [] });
+    for (const [path, status] of [['/api/provider', 200], ['/api/provider/callback', 200], ['/api/provider-evil', 419]] as const) {
+      const url = new URL(path, 'http://localhost');
+      expect((await runtime.handle({ event: { ...event(), url, request: new Request(url, { method: 'POST' }) }, resolve: async () => new Response('ok') })).status).toBe(status);
+    }
+  });
+
+  it.each(['relative', '//provider', '/api/provider?skip', '/api/provider#skip', '/api/\\provider', '/api/provider\n'])('rejects ambiguous CSRF path configuration: %s', (path) => {
+    for (const key of ['onlyPaths', 'excludePaths', 'excludeExactPaths'] as const) expect(() => new CsrfMiddleware({ [key]: [path] })).toThrow(TypeError);
+  });
+
   it('never inherits a CLI/global tenant or actor into an incoming request', async () => {
     ApplicationContext.set('tenantId', 'unrelated-cli'); ApplicationContext.set('actorId', 'unrelated-actor');
     const response = await app().handle({ event: event(), resolve: async () => new Response(JSON.stringify(ApplicationContext.snapshot())) });

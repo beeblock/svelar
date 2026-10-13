@@ -108,8 +108,11 @@ export interface SvelarAppConfig {
   /** CSRF: paths to protect (default: ['/api/']) */
   csrfPaths?: string[];
 
-  /** CSRF: paths to exclude (default: signed incoming webhooks and internal bridge) */
+  /** CSRF: path-segment prefixes to exclude (default: signed incoming webhooks only). */
   csrfExcludePaths?: string[];
+
+  /** CSRF: exact paths to exclude (default: independently authenticated internal broadcast bridge). */
+  csrfExcludeExactPaths?: string[];
 
   /** Independently signed endpoints that must not interpret provider credentials as Svelar Bearer tokens. */
   authExcludePaths?: string[];
@@ -196,7 +199,8 @@ export function createSvelarApp(appConfig: SvelarAppConfig = {}) {
     rateLimitCacheStore,
     trustedProxy = false,
     csrfPaths = ['/api/'],
-    csrfExcludePaths = ['/api/webhooks/incoming/', '/api/internal/'],
+    csrfExcludePaths = ['/api/webhooks/incoming/'],
+    csrfExcludeExactPaths = ['/api/internal/broadcast'],
     authExcludePaths = ['/api/webhooks/incoming/'],
     authThrottleAttempts = 5,
     authThrottleDecay = 1,
@@ -257,7 +261,7 @@ export function createSvelarApp(appConfig: SvelarAppConfig = {}) {
   }
 
   // Only verified credential authentication can exempt an API call from browser protections.
-  defaultMiddleware.push(new OriginMiddleware(), new CsrfMiddleware({ onlyPaths: csrfPaths, excludePaths: csrfExcludePaths }));
+  defaultMiddleware.push(new OriginMiddleware(), new CsrfMiddleware({ onlyPaths: csrfPaths, excludePaths: csrfExcludePaths, excludeExactPaths: csrfExcludeExactPaths }));
 
   // Add any extra middleware
   defaultMiddleware.push(...(extraMiddleware as any[]));
