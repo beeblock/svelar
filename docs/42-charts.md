@@ -50,11 +50,18 @@ export const chartsPlugin = new SvelarChartsPlugin({
 
 ### 2. Query Data and Render a Chart
 
+The examples use the application's generated `capabilityAccess` and `resolveCapabilityInput` from `$lib/shared/permissions/access.server.js`. Register and seed `screen.charts.view` in the application's literal capability manifest, choose its reviewed platform/team scope, and keep the resolver bound to authenticated server context.
+
+That resolver path is for DDD apps. Flat apps use `$lib/permissions/access.server.js`; use the generated path for your layout.
+
 ```ts
 // src/routes/dashboard/+page.server.ts
 import { ChartQuery } from '@beeblock/svelar-charts';
 
-export async function load() {
+import { capabilityAccess, resolveCapabilityInput } from '$lib/shared/permissions/access.server.js';
+
+export async function load(event) {
+  await capabilityAccess.authorize('screen.charts.view', resolveCapabilityInput(event));
   const usersPerMonth = await ChartQuery.table('users')
     .count()
     .groupBy('month', 'created_at')
@@ -249,50 +256,55 @@ const bar = ChartDataBuilder.fromArray(
 
 Provides static methods for serving chart data as JSON:
 
-These are trusted query helpers. The application must authenticate and check its registered capability before running them, accepting only a literal `true` authorization decision, and add authorized tenant/actor filters where needed. A table allowlist is an additional query boundary. Controller failures currently include the thrown error message, so an application-owned HTTP controller should replace internal 500 responses with a constant public message and retain details only in server logs.
+These are trusted query helpers. The application must authenticate and check its registered capability before running them, accepting only a literal `true` authorization decision, and add authorized tenant/actor filters where needed. A table allowlist is an additional query boundary. With a request event, failures use its configured Svelar `ErrorHandler` for reporting and rendering; use `debug: false` in production. Calls without an event report through a handler with debug disabled and return a generic chart error with status 500. `handle()` preserves SvelteKit HTTP errors and redirects.
 
 ```ts
 // src/routes/api/charts/users/+server.ts
 import { ChartController } from '@beeblock/svelar-charts/server';
 import { ChartQuery } from '@beeblock/svelar-charts';
+import { capabilityAccess, resolveCapabilityInput } from '$lib/shared/permissions/access.server.js';
+import { json } from '@sveltejs/kit';
 
 // Serve a pre-built query
-export const GET = async (event) => {
+export const GET = capabilityAccess.guardEndpoint('screen.charts.view', async (event) => {
   const query = ChartQuery.table('users')
     .count()
     .groupBy('month', 'created_at')
     .period('2026-01-01', '2026-12-31')
     .label('Users');
 
-  return ChartController.serve(query);
-};
+  return ChartController.serve(query, event);
+}, resolveCapabilityInput);
 ```
 
 ```ts
 // Serve trend data
-export const GET = async (event) => {
+export const GET = capabilityAccess.guardEndpoint('screen.charts.view', async (event) => {
   const query = ChartQuery.table('orders')
     .sum('total')
     .label('Revenue');
 
-  return ChartController.serveTrend(query, 'month', 90);
-};
+  return ChartController.serveTrend(query, 'month', 90, event);
+}, resolveCapabilityInput);
 ```
 
 ```ts
 // Generic handler with dynamic query params
-export const GET = async (event) => {
-  return ChartController.handle(event, (query, params) => {
-    const groupBy = params.get('group_by') || 'month';
+export const GET = capabilityAccess.guardEndpoint('screen.charts.view', async (event) => {
+  const groupBy = event.url.searchParams.get('group_by') || 'month';
+  if (!['day', 'week', 'month', 'quarter', 'year'].includes(groupBy)) {
+    return json({ error: 'Invalid chart grouping.' }, { status: 422 });
+  }
+  return ChartController.handle(event, (query) => {
     return query.count().groupBy(groupBy, 'created_at');
   }, ['users']);
-};
+}, resolveCapabilityInput);
 ```
 
 | Method | Description |
 |---|---|
-| `ChartController.serve(query)` | Execute a ChartQuery and return JSON response |
-| `ChartController.serveTrend(query, interval, days)` | Execute a trend query and return JSON response |
+| `ChartController.serve(query, event?)` | Execute a ChartQuery and return JSON response; pass the request event to use its error handler |
+| `ChartController.serveTrend(query, interval, days, event?)` | Execute a trend query and return JSON response; pass the request event to use its error handler |
 | `ChartController.handle(event, builder, allowedTables)` | Build a query from URL params using a server-owned table allowlist |
 
 `handle()` reads `?table=...`; it returns 400 when the table is missing and 403 when the table is absent from `allowedTables`. The default allowlist is empty. Validate dynamic grouping/period parameters before invoking the helper; identifier validation does not authorize access to a table.
@@ -511,8 +523,10 @@ A stat card with title, value, trend indicator, and optional sparkline:
 ```ts
 // src/routes/dashboard/+page.server.ts
 import { ChartQuery } from '@beeblock/svelar-charts';
+import { capabilityAccess, resolveCapabilityInput } from '$lib/shared/permissions/access.server.js';
 
-export async function load() {
+export async function load(event) {
+  await capabilityAccess.authorize('screen.charts.view', resolveCapabilityInput(event));
   const usersTrend = await ChartQuery.table('users')
     .count()
     .label('New Users')
@@ -571,8 +585,8 @@ export async function load() {
 // src/routes/api/charts/revenue/+server.ts
 import { ChartController } from '@beeblock/svelar-charts/server';
 import { ChartQuery } from '@beeblock/svelar-charts';
-
-export const GET = async (event) => {
+import { capabilityAccess, resolveCapabilityInput } from '$lib/shared/permissions/access.server.js';
+export const GET = capabilityAccess.guardEndpoint('screen.charts.view', async (event) => {
   const query = ChartQuery.table('orders')
     .sum('total')
     .groupBy('month', 'created_at')
@@ -580,6 +594,6 @@ export const GET = async (event) => {
     .where('status', 'completed')
     .label('Revenue');
 
-  return ChartController.serve(query);
-};
+  return ChartController.serve(query, event);
+}, resolveCapabilityInput);
 ```
