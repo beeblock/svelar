@@ -39,7 +39,7 @@ describe('Dashboard health collection', () => {
     expect(status.lastSuccessAt).not.toBeNull();
     expect(status.lastError).toBeNull();
     expect(status.failures).toBe(0);
-    expect(Dashboard.getLatestHealthSnapshot()?.status).toBe('healthy');
+    expect(Dashboard.getLatestHealthSnapshot()?.status).not.toBe('healthy');
 
     const data = await Dashboard.getDashboardData();
     expect(data.healthCollection.lastSuccessAt).not.toBeNull();

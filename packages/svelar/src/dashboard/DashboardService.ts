@@ -1,5 +1,6 @@
-import { Queue, type QueueJobSnapshot, type QueueDeadLetterRecord, type QueueJobFilter } from '../queue/index.js';
-import { ScheduleMonitor } from '../scheduler/ScheduleMonitor.js';
+import { Queue, type QueueJobSnapshot, type QueueDeadLetterRecord, type QueueJobFilter, type QueueDefinition, type QueueAdapterCounts,
+  type QueueAdapterRuntime, type QueueSharedMetrics, type QueueMonitoringAdapter } from '../queue/index.js';
+import { ScheduleMonitor, type SchedulerHealth } from '../scheduler/ScheduleMonitor.js';
 import { LogViewer } from '../logging/LogViewer.js';
 import { Features } from '../feature-flags/index.js';
 import { PermissionManifest } from '../permissions/PermissionManifest.js';
@@ -14,14 +15,37 @@ import { dashboardProviders, safeDashboardPath, type DashboardListFilter, type D
 import { redactDashboardPayload, redactDashboardText, redactDashboardValue } from './security.js';
 
 export class DashboardOperationError extends Error { constructor(readonly status: number, message: string) { super(message); } }
+export interface DashboardQueueTopologyEntry {
+  name: string; connection: string | null; definition: unknown; registered: boolean; discovered: boolean;
+  jobs: unknown[]; workerProfiles: unknown[];
+  registryMeta: { jobsTotal: number; workerProfilesTotal: number; truncated: boolean };
+  driver?: QueueMonitoringAdapter['driver']; capabilities?: QueueMonitoringAdapter['capabilities'];
+  counts: QueueAdapterCounts | null; runtime: QueueAdapterRuntime | null; metrics: QueueSharedMetrics | null; error: string | null;
+}
+
+export function dashboardSchedulerHealth(health: SchedulerHealth, limit = 100, offset = 0) {
+  const processes = health.processes;
+  // The public scheduler source reads at most 100 process observations; a full source page is not an exact global total.
+  const sourceTruncated = !!processes && processes.length >= 100;
+  return { ...health, processes: processes?.slice(offset, offset + limit),
+    processesMeta: { total: processes && !sourceTruncated ? processes.length : null, observedTotal: processes?.length ?? null, sourceLimit: 100, sourceTruncated,
+      limit, offset, hasMore: processes ? offset + limit < processes.length : false,
+      truncated: sourceTruncated || (processes ? offset > 0 || offset + limit < processes.length : false) } };
+}
 
 export function dashboardJobResource(job: QueueJobSnapshot) {
   const mapped = job.metadata && dashboardProviders.current.resourcePath?.(job.metadata);
+  const retained = job.stacktrace ?? []; let remaining = 32_000;
+  const stacktrace = retained.slice(-5).map((trace) => { const safe = redactDashboardText(trace); const text = safe.slice(0, remaining); remaining -= text.length; return text; });
+  const stacktraceMeta = { total: job.stacktraceMeta?.total ?? retained.length,
+    truncated: job.stacktraceMeta?.truncated === true || retained.length > 5 || retained.some((trace) => trace.length > 32_000)
+      || retained.slice(-5).reduce((total, trace) => total + redactDashboardText(trace).length, 0) > 32_000 };
   return { id: job.id, connection: job.connection, queue: job.queue, jobClass: job.jobClass, source: 'live' as const,
-    status: job.status, attempts: job.attempts, maxAttempts: job.maxAttempts, stalledCount: job.stalledCount,
+    status: job.status, attempts: job.attempts, attemptsStarted: job.attemptsStarted, maxAttempts: job.maxAttempts, stalledCount: job.stalledCount,
     createdAt: job.createdAt, processedAt: job.processedAt, finishedAt: job.finishedAt, delayedUntil: job.delayedUntil,
     payload: redactDashboardPayload(job.payload), metadata: redactDashboardValue(job.metadata), progress: redactDashboardValue(job.progress),
-    error: job.error ? redactDashboardText(job.error) : null, lock: job.lock, replayRecordId: job.replayRecordId,
+    error: job.error ? redactDashboardText(job.error) : null, errorTruncated: (job.error?.length ?? 0) > 32_000,
+    stacktrace, stacktraceMeta, lock: job.lock, replayRecordId: job.replayRecordId,
     resourcePath: safeDashboardPath(mapped) ? mapped : null };
 }
 export function dashboardDeadLetterResource(job: QueueDeadLetterRecord) {
@@ -41,19 +65,60 @@ export function checkedDashboardPage<T>(page: DashboardPage<T>, limit: number): 
 
 export class DashboardService {
   async topology() {
-    const registry = Queue.queues(); const topology = [];
+    const configured = Queue.configuredConnections({ limit: 100, offset: 0 });
+    const local = Queue.queues(); const definitions = new Map<string, QueueDefinition>();
+    const key = (name: string, connection?: string) => JSON.stringify([connection ?? null, name]);
+    const localKeys = new Set(local.map((definition) => key(definition.name, definition.connection)));
+    const observed = new Set<string>();
+    const discovery: Array<{ connection: string; complete: boolean; nextCursor: string | null; coverage: 'instrumented'; error: string | null }> = [];
+    for (const connection of configured.connections) {
+      definitions.set(key(connection.queue, connection.name), { name: connection.queue, connection: connection.name });
+      if (connection.driver !== 'redis' && connection.driver !== 'database') {
+        if (connection.driver === 'unknown') discovery.push({ connection: connection.name, complete: false, nextCursor: null, coverage: 'instrumented', error: 'Connection driver unavailable.' });
+        continue;
+      }
+      try {
+        const page = await Queue.discoverQueuesPage(connection.name, { limit: 100 });
+        for (const definition of page.queues) { const identity = key(definition.name, connection.name); observed.add(identity); definitions.set(identity, { ...definition, connection: connection.name }); }
+        discovery.push({ connection: connection.name, complete: page.complete, nextCursor: page.nextCursor, coverage: page.coverage, error: null });
+      } catch { discovery.push({ connection: connection.name, complete: false, nextCursor: null, coverage: 'instrumented', error: 'Shared queue discovery unavailable.' }); }
+    }
+    // Local labels/configuration survive discovery; identical queue names on another connection remain distinct.
+    for (const definition of local) { const identity = key(definition.name, definition.connection); definitions.set(identity, { ...definitions.get(identity), ...definition }); }
+    const registry = [...definitions.values()].sort((a, b) => (a.connection ?? '').localeCompare(b.connection ?? '') || a.name.localeCompare(b.name));
+    const jobs = Queue.jobDefinitions(); const workers = Queue.workerProfiles(); const defaultConnection = configured.connections.find((connection) => connection.isDefault);
+    const topology: DashboardQueueTopologyEntry[] = [];
     for (const definition of registry.slice(0, 100)) {
-      const base = { name: definition.name, connection: definition.connection ?? null, definition: redactDashboardValue(definition) };
+      const matchingJobs = jobs.filter((job) => (job.connection ?? defaultConnection?.name) === definition.connection
+        && (job.queue ?? configured.connections.find((connection) => connection.name === definition.connection)?.queue) === definition.name);
+      const matchingWorkers = workers.filter((worker) => (worker.connection ?? defaultConnection?.name) === definition.connection && worker.queue === definition.name);
+      const identity = key(definition.name, definition.connection);
+      const base = { name: definition.name, connection: definition.connection ?? null, definition: redactDashboardValue(definition),
+        registered: localKeys.has(identity), discovered: observed.has(identity),
+        jobs: matchingJobs.slice(0, 100).map((job) => redactDashboardValue(job)), workerProfiles: matchingWorkers.slice(0, 100).map((worker) => redactDashboardValue(worker)),
+        registryMeta: { jobsTotal: matchingJobs.length, workerProfilesTotal: matchingWorkers.length, truncated: matchingJobs.length > 100 || matchingWorkers.length > 100 } };
       try {
         const adapter = Queue.adapter(definition.name, definition.connection);
         if (!adapter.capabilities.shared) { topology.push({ ...base, driver: adapter.driver, capabilities: adapter.capabilities, counts: null, runtime: null, metrics: null, error: 'Shared monitoring unavailable for this driver.' }); continue; }
-        const counts = await adapter.counts(); let runtime = null; let metrics = null; const errors: string[] = [];
+        const counts = await adapter.counts(); let runtime: QueueAdapterRuntime | null = null; let metrics: QueueSharedMetrics | null = null; const errors: string[] = [];
         try { runtime = await adapter.runtime(); } catch { errors.push('Runtime unavailable.'); }
         try { metrics = await adapter.metrics(60); } catch { errors.push('Metrics unavailable.'); }
         topology.push({ ...base, driver: adapter.driver, capabilities: adapter.capabilities, counts, runtime, metrics, error: errors.join(' ') || null });
       } catch { topology.push({ ...base, counts: null, runtime: null, metrics: null, error: 'Queue monitoring unavailable.' }); }
     }
-    return { topology, registryCount: registry.length, truncated: registry.length > 100, coverage: 'registered queues' as const };
+    const truncated = registry.length > 100 || configured.hasMore;
+    const complete = !truncated && discovery.every((page) => page.complete && !page.error);
+    let aggregateCounts: QueueAdapterCounts | null = null;
+    if (complete && topology.length && topology.every((queue) => queue.counts !== null)) {
+      aggregateCounts = { waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0, deadLetter: 0 };
+      for (const queue of topology) for (const field of Object.keys(aggregateCounts) as Array<keyof QueueAdapterCounts>) aggregateCounts[field] += queue.counts![field];
+    }
+    const locksComplete = complete && topology.length > 0 && topology.every((queue) => queue.runtime?.locksComplete === true);
+    const sum = (field: 'stalled' | 'expiredLocks') => locksComplete && topology.every((queue) => typeof queue.runtime?.[field] === 'number')
+      ? topology.reduce((total, queue) => total + queue.runtime![field]!, 0) : null;
+    return { topology, registryCount: registry.length, truncated, coverage: 'configured, registered and shared-observed queues' as const,
+      discovery: { connectionsTotal: configured.total, connectionsObserved: configured.connections.length, complete, pages: discovery },
+      aggregate: { counts: aggregateCounts, stalled: sum('stalled'), expiredLocks: sum('expiredLocks'), locksComplete } };
   }
   async queue(filter: { queue: string; connection?: string; status: QueueJobFilter['status'] | 'dead-letter'; limit: number; offset: number } & Omit<QueueJobFilter, 'status'>) {
     const adapter = Queue.adapter(filter.queue, filter.connection);
@@ -74,12 +139,17 @@ export class DashboardService {
     const job = await adapter.get(input.id); if (!job) throw new DashboardOperationError(404, 'Job not found in this connection and queue.');
     return { ...dashboardJobResource(job), timeline };
   }
-  async scheduler() {
+  async scheduler(filter = { limit: 25, offset: 0, processOffset: 0 }) {
+    if (!Number.isSafeInteger(filter.limit) || filter.limit < 1 || filter.limit > 100 || !Number.isSafeInteger(filter.offset) || filter.offset < 0
+      || !Number.isSafeInteger(filter.processOffset) || filter.processOffset < 0) throw new DashboardOperationError(422, 'Invalid scheduler page.');
     const tasks = await ScheduleMonitor.listTasks(); const health = await ScheduleMonitor.getHealth();
     if (tasks.length > 1000) throw new DashboardOperationError(503, 'Scheduler registry exceeds the console limit.');
-    return { tasks: redactDashboardValue(tasks), health: redactDashboardValue({ ...health, totalTasks: tasks.length,
-      enabledTasks: tasks.filter((task) => task.enabled).length, runningTasks: tasks.filter((task) => task.isRunning).length }),
-      runtimeScope: health.processes === undefined ? 'unknown' : 'shared' };
+    tasks.sort((a, b) => a.name.localeCompare(b.name));
+    return { tasks: tasks.slice(filter.offset, filter.offset + filter.limit).map((task) => redactDashboardValue(task)),
+      health: redactDashboardValue(dashboardSchedulerHealth({ ...health, totalTasks: tasks.length,
+        enabledTasks: tasks.filter((task) => task.enabled).length, runningTasks: tasks.filter((task) => task.isRunning).length }, filter.limit, filter.processOffset)),
+      meta: { total: tasks.length, limit: filter.limit, offset: filter.offset, hasMore: filter.offset + filter.limit < tasks.length,
+        truncated: filter.offset > 0 || filter.offset + filter.limit < tasks.length }, runtimeScope: health.processes === undefined ? 'unknown' : 'shared' };
   }
   async users(filter: DashboardListFilter, event: RequestEvent) {
     const provider = dashboardProviders.current.users; if (!provider) throw new DashboardOperationError(503, 'User directory unavailable.');

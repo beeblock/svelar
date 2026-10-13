@@ -210,7 +210,10 @@ describe('Dashboard operational boundaries', () => {
   });
 
   it('uses observed topology rather than default-only counts or fabricated worker concurrency', async () => {
-    vi.spyOn(Queue, 'queues').mockReturnValue([{ name: 'imports', label: 'Imports', concurrency: 5 }, { name: 'other', connection: 'unobserved' }]);
+    vi.spyOn(Queue, 'configuredConnections').mockReturnValue({ connections: [{ name: 'primary', driver: 'redis', queue: 'imports', isDefault: true },
+      { name: 'unobserved', driver: 'memory', queue: 'other', isDefault: false }], total: 2, limit: 100, offset: 0, hasMore: false });
+    vi.spyOn(Queue, 'discoverQueuesPage').mockResolvedValue({ queues: [{ name: 'imports', connection: 'primary' }], total: null, complete: true, nextCursor: null, coverage: 'instrumented' });
+    vi.spyOn(Queue, 'queues').mockReturnValue([{ name: 'imports', connection: 'primary', label: 'Imports', concurrency: 5 }, { name: 'other', connection: 'unobserved' }]);
     vi.mocked(monitor.runtime).mockResolvedValue({paused:false,workers:{source:'heartbeat',complete:false,observedAt:1000,limit:100,invalidRecords:0,reason:null,records:[],coverage:'instrumented',observed:{live:2,active:2,paused:0,draining:0,stale:0,concurrency:5}},effectiveConcurrency:null,globalConcurrency:8,observedConcurrency:5,oldestWaitingAt:null,lag:null,stalled:null,expiredLocks:null,locksComplete:false,coverage:'instrumented'});
     vi.mocked(Queue.adapter).mockImplementation((_queue,connection)=>connection==='unobserved'?{...monitor,driver:'memory',capabilities:{shared:false,indexedMetadata:false,durableReplay:false,pause:false}}:monitor);
     vi.spyOn(ScheduleMonitor, 'listTasks').mockResolvedValue([{ ...task, enabled: false }]);

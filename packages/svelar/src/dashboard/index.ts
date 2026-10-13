@@ -29,16 +29,22 @@ import { Plugin } from '../plugins/index.js';
 import { singleton } from '../support/singleton.js';
 import { LogViewer } from '../logging/LogViewer.js';
 import { JobMonitor, type QueueHealth } from '../queue/JobMonitor.js';
-import { ScheduleMonitor, type SchedulerHealth } from '../scheduler/ScheduleMonitor.js';
+import { ScheduleMonitor } from '../scheduler/ScheduleMonitor.js';
 import { dashboardAccess, redactDashboardValue, type DashboardAuthorizer } from './security.js';
 import { configureDashboardProviders, type DashboardProviders } from './providers.js';
+import { DashboardService, dashboardSchedulerHealth } from './DashboardService.js';
 
 export { DashboardController } from './DashboardController.js';
 export { DashboardOperationError } from './DashboardService.js';
+export type { DashboardQueueTopologyEntry } from './DashboardService.js';
 export { authorizeDashboard, redactDashboardValue, redactDashboardPayload, redactDashboardText } from './security.js';
 export type { DashboardOperation, DashboardAuthorizer } from './security.js';
 export type { DashboardProviders, DashboardUserProvider, DashboardPermissionProvider, DashboardUser, DashboardRole, DashboardPage, DashboardListFilter, DashboardProfileScope, DashboardProfileUpdate, DashboardDependency } from './providers.js';
 export { configureDashboardProviders } from './providers.js';
+export { createDashboardDependencyObserver } from './dependencies.js';
+export { createConfiguredDashboardDependencyObserver } from './configuredDependencies.js';
+export type { DashboardDependencyInventory } from './configuredDependencies.js';
+export type { DashboardDependencyProbe, DashboardDependencyOptions } from './dependencies.js';
 export type { DashboardUserAccess, DashboardRoleCreateInput, DashboardUserAccessInput, DashboardUserRoleInput, DashboardUserCapabilityInput } from './providers.js';
 
 // ── Types ──────────────────────────────────────────────────
@@ -63,7 +69,7 @@ export interface DashboardConfig {
 }
 
 export interface SystemHealth {
-  status: 'healthy' | 'degraded' | 'critical';
+  status: 'healthy' | 'degraded' | 'critical' | 'unknown';
   uptime: number;
   nodeVersion: string;
   memoryUsage: {
@@ -77,7 +83,7 @@ export interface SystemHealth {
     system: number;
   };
   queueHealth: QueueHealth;
-  schedulerHealth: SchedulerHealth;
+  schedulerHealth: ReturnType<typeof dashboardSchedulerHealth>;
   logStats: {
     totalEntries: number;
     byLevel: Record<string, number>;
@@ -271,11 +277,15 @@ class DashboardPlugin extends Plugin {
     const cpuUsage = process.cpuUsage();
 
     const queueHealth = await JobMonitor.getHealth();
-    const schedulerHealth = await ScheduleMonitor.getHealth();
+    const schedulerHealth = dashboardSchedulerHealth(await ScheduleMonitor.getHealth());
     const logStats = await LogViewer.getStats();
 
-    // Determine overall health status
-    let status: 'healthy' | 'degraded' | 'critical' = 'healthy';
+    const runtimes = Object.values(queueHealth.runtime);
+    const workersObserved = runtimes.length > 0 && runtimes.every((runtime) => runtime.workers !== null
+      && runtime.workerTelemetry?.complete && runtime.workerTelemetry.coverage === 'exclusive');
+    const schedulersObserved = !!schedulerHealth.processes?.length && !schedulerHealth.processesMeta.sourceTruncated
+      && schedulerHealth.processes.every((process) => process.healthy);
+    let status: SystemHealth['status'] = workersObserved && schedulersObserved ? 'healthy' : 'unknown';
     if (queueHealth.failureRate > 50 || schedulerHealth.lastErrors.length > 5) {
       status = 'critical';
     } else if (queueHealth.failureRate > 20 || schedulerHealth.lastErrors.length > 2) {
@@ -285,7 +295,7 @@ class DashboardPlugin extends Plugin {
     // Check memory pressure
     const heapUsedPercent = (memUsage.heapUsed / memUsage.heapTotal) * 100;
     if (heapUsedPercent > 90) {
-      status = status === 'healthy' ? 'degraded' : status;
+      status = status === 'healthy' || status === 'unknown' ? 'degraded' : status;
     }
 
     return {
@@ -336,10 +346,7 @@ class DashboardPlugin extends Plugin {
     }
 
     if (this.dashboardConfig.sections.scheduler) {
-      data.scheduler = {
-        health: health.schedulerHealth,
-        tasks: await ScheduleMonitor.listTasks(),
-      };
+      data.scheduler = await new DashboardService().scheduler({ limit: 100, offset: 0, processOffset: 0 });
     }
 
     if (this.dashboardConfig.sections.system) {

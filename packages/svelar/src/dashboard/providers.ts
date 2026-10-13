@@ -58,7 +58,8 @@ export interface DashboardPermissionProvider {
   createRole?(input: DashboardRoleCreateInput, event: RequestEvent): Promise<DashboardRole>;
   getRole?(id: number, event: RequestEvent): Promise<DashboardRole | null>;
 }
-export interface DashboardDependency { name: string; status: 'healthy' | 'degraded' | 'unavailable' | 'unknown'; latencyMs: number | null; }
+export interface DashboardDependency { name: string; status: 'healthy' | 'degraded' | 'unavailable' | 'unknown'; latencyMs: number | null;
+  scope?: 'shared' | 'process' | 'unknown'; reason?: 'unsupported' | 'timeout' | 'capacity' | 'probe-failed'; }
 export interface DashboardProviders {
   users?: DashboardUserProvider;
   permissions?: DashboardPermissionProvider;

@@ -39,6 +39,8 @@ export const dashboardBatchSchema = z.object({ queue: identifier.default('defaul
   references: z.array(z.object({ id: identifier, source: z.enum(['live', 'dead-letter']) })).min(1).max(100), confirmed: z.literal(true) });
 export const dashboardPauseSchema = z.object({ queue: identifier.default('default'), connection: identifier.optional(), paused: z.boolean(), confirmed: z.literal(true) });
 export const dashboardListSchema = z.object({ search: z.string().max(255).optional(), limit: integer(25, 100).refine((value) => value > 0, 'Must be positive'), offset: integer(0, 1_000_000) });
+export const dashboardSchedulerSchema = z.object({ limit: integer(25, 100).refine((value) => value > 0, 'Must be positive'),
+  offset: integer(0, 1_000_000), processOffset: integer(0, 1_000_000) });
 export const dashboardUserSchema = z.object({ id: identifier });
 export const dashboardDeleteUserSchema = dashboardUserSchema.extend({ confirmed: z.literal(true) });
 export const dashboardFeatureSchema = z.object({ name: identifier, enabled: z.boolean(), confirmed: z.literal(true) });

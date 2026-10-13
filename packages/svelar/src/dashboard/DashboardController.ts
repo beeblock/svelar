@@ -5,7 +5,7 @@ import { LogViewer } from '../logging/LogViewer.js';
 import { Log } from '../logging/index.js';
 import { randomUUID } from 'node:crypto';
 import { DashboardMutationRequest, dashboardJobSchema, dashboardLogSchema, dashboardMutationRequest, dashboardQueueSchema,
-  dashboardListSchema, dashboardTimelineSchema, dashboardProfileScopeSchema, dashboardRunRequestSchema, type DashboardMutationOperation } from './contracts.js';
+  dashboardListSchema, dashboardSchedulerSchema, dashboardTimelineSchema, dashboardProfileScopeSchema, dashboardRunRequestSchema, type DashboardMutationOperation } from './contracts.js';
 import { DashboardMutationAction, DashboardOperationError, DashboardService } from './DashboardService.js';
 import { ScheduleMonitor } from '../scheduler/ScheduleMonitor.js';
 import { dashboardProviders } from './providers.js';
@@ -73,10 +73,14 @@ export class DashboardController extends Controller {
   }
   async health(event: RequestEvent) {
     const dependencies = dashboardProviders.current.dependencies ? await dashboardProviders.current.dependencies(event) : [];
-    if (dependencies.length > 100) throw new DashboardOperationError(503, 'Dependency observation exceeds its bound.');
-    const status = !dependencies.length || dependencies.some((item) => item.status === 'unknown') ? 'unknown'
-      : dependencies.some((item) => item.status !== 'healthy') ? 'degraded' : 'healthy';
-    return this.result({ status, dependencies, uptime: process.uptime(), memory: process.memoryUsage(), nodeVersion: process.version, timestamp: new Date().toISOString() });
+    if (!Array.isArray(dependencies) || dependencies.length > 100 || dependencies.some((item) => !item || typeof item.name !== 'string' || !item.name || item.name.length > 255
+      || !['healthy', 'degraded', 'unavailable', 'unknown'].includes(item.status) || item.latencyMs !== null && (!Number.isFinite(item.latencyMs) || item.latencyMs < 0))) {
+      throw new DashboardOperationError(503, 'Invalid or unbounded dependency observation.');
+    }
+    const status = dependencies.some((item) => item.status === 'unavailable' || item.status === 'degraded') ? 'degraded'
+      : !dependencies.length || dependencies.some((item) => item.status === 'unknown') ? 'unknown' : 'healthy';
+    return this.result({ status, dependencies: dependencies.map(({ name, status, latencyMs, scope, reason }) => ({ name, status, latencyMs, scope, reason })),
+      uptime: process.uptime(), memory: process.memoryUsage(), nodeVersion: process.version, timestamp: new Date().toISOString() });
   }
 
   async stats(event: RequestEvent) {
@@ -107,7 +111,11 @@ export class DashboardController extends Controller {
     return this.result((await this.service.job(input, input.limit)).timeline);
   }
 
-  async scheduler() { return this.result(await this.service.scheduler()); }
+  async scheduler(event: RequestEvent) {
+    const filter = this.parse(dashboardSchedulerSchema, Object.fromEntries(event.url.searchParams));
+    const { meta, ...data } = await this.service.scheduler(filter);
+    return this.result(data, meta);
+  }
   async runRequest(event: RequestEvent) {
     const input = this.parse(dashboardRunRequestSchema, { name: event.params.name, requestId: event.params.requestId });
     const request = await ScheduleMonitor.getRunRequest(input.name, input.requestId);
