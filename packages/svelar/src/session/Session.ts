@@ -24,6 +24,8 @@
 import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
 import { assertSqlIdentifier } from '../database/Connection.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
+import { singleton } from '../support/singleton.js';
+import { isSessionActivityRequest, isSessionExpiredError, sessionActivityStatus, sessionTimingKeys, SessionExpiredError, type SessionActivityPolicy, type SessionActivityStatus } from './Activity.js';
 
 function isNodeError(error: unknown, code: string): boolean {
   return typeof error === 'object' && error !== null && (error as NodeJS.ErrnoException).code === code;
@@ -44,6 +46,8 @@ export interface SessionStore {
   destroy(id: string): Promise<void>;
   /** Garbage collect expired sessions */
   gc?(maxLifetime: number): Promise<void>;
+  /** Atomically replace an existing, unexpired payload. False means missing or concurrently changed. */
+  compareAndSwap?(id: string, expected: SessionData, data: SessionData, ttl: number): Promise<boolean>;
 }
 
 export interface SessionConfig {
@@ -51,12 +55,21 @@ export interface SessionConfig {
   cookieName?: string;
   /** Session lifetime in seconds (default: 7200 = 2 hours) */
   lifetime?: number;
+  /** Idle timeout in seconds; defaults to lifetime when activity policy is enabled. */
+  idleLifetime?: number;
   /** Absolute lifetime in seconds. When exceeded, the session is destroyed even if active. */
   absoluteLifetime?: number;
   /** Extend the store TTL only for real user activity instead of polling/SSE. */
   touchOnActivity?: boolean;
   /** Minimum seconds between activity touches (default: 300 = 5 minutes) */
   touchThrottle?: number;
+  warningBefore?: number;
+  /** Persistent login idle lifetime. Remember-me is unavailable unless explicitly configured. */
+  rememberLifetime?: number;
+  rememberAbsoluteLifetime?: number;
+  expireOnClose?: boolean;
+  /** Trusted server-side classification for relevant data loads. SSE is always excluded. */
+  activity?: (ctx: MiddlewareContext) => boolean;
   /** Secret for signing session IDs */
   secret?: string;
   /** Cookie path */
@@ -75,17 +88,30 @@ export interface SessionConfig {
 
 // ── Session Instance ───────────────────────────────────────
 
+const sessions = singleton('svelar.session.instances', () => new WeakSet<object>());
+
+export function isSession(value: unknown): value is Session {
+  return typeof value === 'object' && value !== null && sessions.has(value);
+}
+
 export class Session {
   private data: SessionData = {};
   private dirty = false;
   private flashData: Record<string, any> = {};
   private previousFlashData: Record<string, any> = {};
   private invalidatedIds: string[] = [];
+  private changedKeys = new Set<string>();
+  private flushed = false;
+  private activityPolicy?: SessionActivityPolicy;
+  private renewActivity?: () => Promise<SessionActivityStatus>;
+  private activityOverride?: boolean;
+  private renewed = false;
 
   constructor(
     public readonly id: string,
     initialData?: SessionData
   ) {
+    sessions.add(this);
     if (initialData) {
       this.data = { ...initialData };
       // Separate flash data
@@ -121,6 +147,7 @@ export class Session {
   set(key: string, value: any): void {
     this.data[key] = value;
     this.dirty = true;
+    this.changedKeys.add(key);
   }
 
   /**
@@ -136,6 +163,7 @@ export class Session {
   forget(key: string): void {
     delete this.data[key];
     this.dirty = true;
+    this.changedKeys.add(key);
   }
 
   /**
@@ -144,6 +172,7 @@ export class Session {
   flush(): void {
     this.data = {};
     this.dirty = true;
+    this.flushed = true;
   }
 
   /**
@@ -178,6 +207,67 @@ export class Session {
       data._flash = this.flashData;
     }
     return data;
+  }
+
+  getActivityStatus(): SessionActivityStatus | null {
+    return this.activityPolicy ? sessionActivityStatus(this.data, this.activityPolicy) : null;
+  }
+
+  /** Explicit user intent; callers must authenticate and validate CSRF before invoking this. */
+  async renew(): Promise<SessionActivityStatus> {
+    if (!this.renewActivity || !this.get('auth_user_id')) throw new SessionExpiredError();
+    const status = await this.renewActivity();
+    this.renewed = true;
+    return status;
+  }
+
+  /** Mark a trusted relevant data load, or exclude a status/polling endpoint from activity. */
+  markActivity(activity = true): void { this.activityOverride = activity; }
+
+  startAuthentication(remember = false): void {
+    if (remember && !this.activityPolicy?.rememberLifetime) throw new Error('Remember-me requires a configured rememberLifetime.');
+    this.set('_svelar_remember', remember);
+    if (this.activityPolicy) this.adoptActivityData(this.newTimingData());
+  }
+
+  /** @internal Reset anonymous timing when leaving a longer remembered policy. */
+  endAuthentication(): void { if (this.activityPolicy) this.adoptActivityData(this.newTimingData()); }
+
+  /** @internal */
+  bindActivity(policy: SessionActivityPolicy, renew: () => Promise<SessionActivityStatus>): void {
+    this.activityPolicy = policy;
+    this.renewActivity = renew;
+  }
+
+  /** @internal */
+  activityRequested(): boolean | undefined { return this.activityOverride; }
+
+  /** @internal */
+  wasRenewed(): boolean { return this.renewed; }
+
+  /** @internal Preserve concurrent application changes without replaying stale authentication data. */
+  mergeChanges(current: SessionData): SessionData {
+    const result: SessionData = this.flushed ? {} : { ...current };
+    for (const key of this.changedKeys) {
+      if (sessionTimingKeys.includes(key as typeof sessionTimingKeys[number])) continue;
+      if (key in this.data) result[key] = this.data[key];
+      else delete result[key];
+    }
+    if (Object.keys(this.flashData).length) result._flash = this.flashData;
+    else if (this.previousFlashData && Object.keys(this.previousFlashData).length) delete result._flash;
+    for (const key of sessionTimingKeys) result[key] = current[key];
+    return result;
+  }
+
+  /** @internal */
+  adoptActivityData(data: SessionData): void {
+    for (const key of sessionTimingKeys) this.data[key] = data[key];
+  }
+
+  /** @internal */
+  newTimingData(): SessionData {
+    const now = Date.now();
+    return { _svelar_created_at: now, _svelar_last_activity_at: now, _svelar_last_touched_at: now };
   }
 
   /**
@@ -232,16 +322,16 @@ export class MemorySessionStore implements SessionStore {
     }
     const entry = this.sessions.get(id);
     if (!entry) return null;
-    if (Date.now() > entry.expiresAt) {
+    if (Date.now() >= entry.expiresAt) {
       this.sessions.delete(id);
       return null;
     }
-    return entry.data;
+    return structuredClone(entry.data);
   }
 
   async write(id: string, data: SessionData, ttl: number): Promise<void> {
     this.sessions.set(id, {
-      data,
+      data: structuredClone(data),
       expiresAt: Date.now() + ttl * 1000,
     });
     // Register this store as the writer of this session ID
@@ -251,6 +341,13 @@ export class MemorySessionStore implements SessionStore {
   async destroy(id: string): Promise<void> {
     this.sessions.delete(id);
     sessionIdToStore.delete(id);
+  }
+
+  async compareAndSwap(id: string, expected: SessionData, data: SessionData, ttl: number): Promise<boolean> {
+    const entry = this.sessions.get(id);
+    if (!entry || this.oldSessionIds.has(id) || Date.now() >= entry.expiresAt || JSON.stringify(entry.data) !== JSON.stringify(expected)) return false;
+    await this.write(id, data, ttl);
+    return true;
   }
 
   async gc(maxLifetime: number): Promise<void> {
@@ -291,7 +388,7 @@ export class DatabaseSessionStore implements SessionStore {
     const row = await this.query().select('payload', 'expires_at').where('id', id).first();
     if (!row) return null;
 
-    if (new Date(row.expires_at) < new Date()) {
+    if (new Date(row.expires_at) <= new Date()) {
       await this.destroy(id);
       return null;
     }
@@ -317,6 +414,12 @@ export class DatabaseSessionStore implements SessionStore {
 
   async destroy(id: string): Promise<void> {
     await this.query().where('id', id).delete();
+  }
+
+  async compareAndSwap(id: string, expected: SessionData, data: SessionData, ttl: number): Promise<boolean> {
+    return (await this.query().where('id', id).where('payload', JSON.stringify(expected))
+      .where('expires_at', '>', new Date().toISOString())
+      .update({ payload: JSON.stringify(data), expires_at: new Date(Date.now() + ttl * 1000).toISOString() })) > 0;
   }
 
   async gc(maxLifetime: number): Promise<void> {
@@ -350,7 +453,7 @@ export class FileSessionStore implements SessionStore {
     try {
       const raw = await fs.readFile(this.filePath(id), 'utf-8');
       const entry = JSON.parse(raw);
-      if (new Date(entry.expiresAt) < new Date()) {
+      if (new Date(entry.expiresAt) <= new Date()) {
         await this.destroy(id);
         return null;
       }
@@ -366,20 +469,57 @@ export class FileSessionStore implements SessionStore {
   }
 
   async write(id: string, data: SessionData, ttl: number): Promise<void> {
-    await this.ensureDir();
+    await this.withLock(id, () => this.writeUnlocked(id, data, ttl));
+  }
+
+  private async writeUnlocked(id: string, data: SessionData, ttl: number): Promise<void> {
     const entry = {
       data,
       expiresAt: new Date(Date.now() + ttl * 1000).toISOString(),
     };
-    await fs.writeFile(this.filePath(id), JSON.stringify(entry), 'utf-8');
+    const temporary = `${this.filePath(id)}.${Session.generateId()}.tmp`;
+    try {
+      await fs.writeFile(temporary, JSON.stringify(entry), 'utf-8');
+      await fs.rename(temporary, this.filePath(id));
+    } finally {
+      await fs.unlink(temporary).catch((error) => { if (!isNodeError(error, 'ENOENT')) throw error; });
+    }
   }
 
   async destroy(id: string): Promise<void> {
-    try {
-      await fs.unlink(this.filePath(id));
-    } catch (error) {
-      if (!isNodeError(error, 'ENOENT')) throw error;
+    await this.withLock(id, async () => {
+      try { await fs.unlink(this.filePath(id)); }
+      catch (error) { if (!isNodeError(error, 'ENOENT')) throw error; }
+    });
+  }
+
+  async compareAndSwap(id: string, expected: SessionData, data: SessionData, ttl: number): Promise<boolean> {
+    return this.withLock(id, async () => {
+      let raw: string;
+      try { raw = await fs.readFile(this.filePath(id), 'utf-8'); }
+      catch (error) { if (isNodeError(error, 'ENOENT')) return false; throw error; }
+      const entry = JSON.parse(raw);
+      if (new Date(entry.expiresAt) <= new Date() || JSON.stringify(entry.data) !== JSON.stringify(expected)) return false;
+      await this.writeUnlocked(id, data, ttl);
+      return true;
+    });
+  }
+
+  private async withLock<T>(id: string, work: () => Promise<T>): Promise<T> {
+    await this.ensureDir();
+    const lockPath = `${this.filePath(id)}.lock`;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      let lock;
+      try { lock = await fs.open(lockPath, 'wx'); }
+      catch (error) {
+        if (!isNodeError(error, 'EEXIST')) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        continue;
+      }
+      try { return await work(); }
+      finally { await lock.close(); await fs.unlink(lockPath); }
     }
+    throw new Error('Session file is locked. Refusing an unsafe concurrent write.');
   }
 
   async gc(_maxLifetime: number): Promise<void> {
@@ -473,6 +613,12 @@ export class RedisSessionStore implements SessionStore {
     await client.del(this.prefix + id);
   }
 
+  async compareAndSwap(id: string, expected: SessionData, data: SessionData, ttl: number): Promise<boolean> {
+    const client = await this.getClient();
+    const script = "if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end; redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3]); return 1";
+    return Number(await client.eval(script, 1, this.prefix + id, JSON.stringify(expected), JSON.stringify(data), Math.max(1, Math.ceil(ttl)))) === 1;
+  }
+
   async gc(_maxLifetime: number): Promise<void> {
     // Redis handles expiration natively via TTL — no gc needed
   }
@@ -483,29 +629,49 @@ export class RedisSessionStore implements SessionStore {
 import { Middleware, type MiddlewareContext, type NextFunction } from '../middleware/Middleware.js';
 
 export class SessionMiddleware extends Middleware {
-  private config: Required<Omit<SessionConfig, 'store' | 'absoluteLifetime'>> & {
-    store: SessionStore;
-    absoluteLifetime?: number;
-  };
+  private config: SessionConfig & Required<Pick<SessionConfig, 'cookieName' | 'lifetime' | 'touchOnActivity' | 'touchThrottle' | 'warningBefore' | 'secret' | 'path' | 'domain' | 'secure' | 'httpOnly' | 'sameSite' | 'expireOnClose'>>;
+  private policy?: SessionActivityPolicy;
 
   constructor(userConfig: SessionConfig) {
     super();
+    const configured = Object.fromEntries(Object.entries(userConfig).filter(([, value]) => value !== undefined)) as SessionConfig;
     this.config = {
       cookieName: 'svelar_session',
       lifetime: 7200,
       absoluteLifetime: undefined,
       touchOnActivity: false,
       touchThrottle: 300,
+      warningBefore: 60,
+      expireOnClose: false,
       secret: '',
       path: '/',
       domain: '',
       secure: process.env.NODE_ENV === 'production',
       httpOnly: true,
       sameSite: 'lax',
-      ...userConfig,
+      ...configured,
     };
     if (!this.config.secret) {
       throw new Error('APP_KEY is not set. Set it in your environment or pass `secret` to createSvelarApp() — e.g. secret: process.env.APP_KEY.');
+    }
+    if (this.config.rememberLifetime !== undefined && !this.config.httpOnly) throw new Error('Remember-me requires an HttpOnly session cookie.');
+    if (this.config.sameSite === 'none' && !this.config.secure) throw new Error('SameSite=None session cookies require Secure.');
+    for (const key of ['lifetime', 'idleLifetime', 'absoluteLifetime', 'rememberLifetime', 'rememberAbsoluteLifetime', 'touchThrottle', 'warningBefore'] as const) {
+      const value = this.config[key];
+      if (value !== undefined && (!Number.isFinite(value) || (key === 'touchThrottle' || key === 'warningBefore' ? value < 0 : value <= 0))) {
+        throw new Error(`Invalid session ${key}.`);
+      }
+    }
+    if (userConfig.idleLifetime !== undefined || userConfig.absoluteLifetime !== undefined || userConfig.touchOnActivity || userConfig.rememberLifetime !== undefined) {
+      if (!this.config.store.compareAndSwap) throw new Error('Session activity policy requires a store with compareAndSwap().');
+      this.policy = {
+        idleLifetime: this.config.idleLifetime ?? this.config.lifetime,
+        absoluteLifetime: this.config.absoluteLifetime,
+        touchThrottle: this.config.touchThrottle,
+        warningBefore: this.config.warningBefore,
+        rememberLifetime: this.config.rememberLifetime,
+        rememberAbsoluteLifetime: this.config.rememberAbsoluteLifetime ?? this.config.absoluteLifetime ?? this.config.rememberLifetime,
+      };
     }
   }
 
@@ -521,11 +687,13 @@ export class SessionMiddleware extends Middleware {
       if (verified) {
         sessionData = await this.config.store.read(verified);
         sessionId = verified;
-        if (sessionData && this.isAbsoluteExpired(sessionData)) {
+        if (sessionData && this.policy && sessionActivityStatus(sessionData, this.policy).expired) {
+          ctx.event.locals.sessionExpiredReason = sessionActivityStatus(sessionData, this.policy).reason;
           await this.config.store.destroy(verified);
           sessionData = null;
           sessionId = null;
         }
+        if (!sessionData) sessionId = null;
       } else {
         sessionId = null;
       }
@@ -537,6 +705,10 @@ export class SessionMiddleware extends Middleware {
 
     // Create session instance
     const session = new Session(sessionId, sessionData ?? {});
+    if (this.policy) {
+      if (!sessionData) session.adoptActivityData(session.newTimingData());
+      session.bindActivity(this.policy, () => this.persistManaged(session, true));
+    }
     ctx.event.locals.session = session;
     ctx.locals.session = session;
 
@@ -547,21 +719,55 @@ export class SessionMiddleware extends Middleware {
       await this.config.store.destroy(invalidatedId);
     }
 
-    const shouldTouch = this.shouldTouchSession(ctx, sessionData, session);
-
-    // Persist session if modified or if configured activity should slide the TTL.
-    if (session.isDirty() || shouldTouch) {
-      this.ensureSessionTimestamps(session, sessionData);
-      if (shouldTouch) {
-        this.touchSession(session);
+    let cookieLifetime = this.config.lifetime;
+    let wrote = session.wasRenewed();
+    if (wrote) cookieLifetime = session.getActivityStatus()!.remainingSeconds;
+    if (this.policy) {
+      const stream = ctx.event.request.headers.get('accept')?.toLowerCase().includes('text/event-stream');
+      const requested = session.activityRequested() ?? this.config.activity?.(ctx) ?? isSessionActivityRequest(ctx.event.request);
+      const activity = !stream && requested && (this.config.touchOnActivity || session.activityRequested() === true)
+        && (!(response instanceof Response) || response.status < 400);
+      try {
+        if (session.getActivityStatus()!.expired) {
+          const current = sessionData && session.id === sessionId ? await this.config.store.read(session.id) : null;
+          if (!current || current.auth_user_id !== session.get('auth_user_id') || sessionActivityStatus(current, this.policy).expired) {
+            throw new SessionExpiredError();
+          }
+          session.adoptActivityData(current);
+        }
+        if (!sessionData || session.id !== sessionId) {
+          if (session.isDirty()) {
+            const status = session.getActivityStatus()!;
+            if (status.expired) throw new SessionExpiredError();
+            cookieLifetime = status.remainingSeconds;
+            await this.config.store.write(session.id, session.toPersist(), cookieLifetime);
+            wrote = true;
+          }
+        } else if (session.isDirty() || activity) {
+          const status = await this.persistManaged(session, false, activity);
+          cookieLifetime = status.remainingSeconds;
+          wrote = session.isDirty() || status.lastActivityAt > Number(sessionData._svelar_last_activity_at);
+        }
+      } catch (error) {
+        if (!isSessionExpiredError(error)) throw error;
+        ctx.event.locals.user = null;
+        ctx.event.locals.auth?.clearUser?.();
+        const expired = Response.json({ data: null, meta: { code: 'SESSION_EXPIRED', message: error.message } }, { status: 401 });
+        expired.headers.set('Cache-Control', 'no-store');
+        expired.headers.append('Set-Cookie', this.buildCookieString('', 0));
+        return expired;
       }
+    } else if (session.isDirty()) {
+      this.ensureSessionTimestamps(session, sessionData);
       await this.config.store.write(session.id, session.toPersist(), this.config.lifetime);
+      wrote = true;
     }
 
     // Set session cookie on response
-    if (response instanceof Response) {
+    if (response instanceof Response && (!this.policy || wrote)) {
       const signedId = this.signId(session.id);
-      const cookieValue = this.buildCookieString(signedId);
+      const persistent = session.has('_svelar_remember') ? session.get('_svelar_remember') === true : !this.config.expireOnClose;
+      const cookieValue = this.buildCookieString(signedId, persistent ? cookieLifetime : undefined);
       response.headers.append('Set-Cookie', cookieValue);
     }
 
@@ -573,7 +779,8 @@ export class SessionMiddleware extends Middleware {
     for (const cookie of cookies) {
       const [name, ...valueParts] = cookie.split('=');
       if (name === this.config.cookieName) {
-        return decodeURIComponent(valueParts.join('='));
+        try { return decodeURIComponent(valueParts.join('=')); }
+        catch { return null; }
       }
     }
     return null;
@@ -607,10 +814,10 @@ export class SessionMiddleware extends Middleware {
     return null;
   }
 
-  private buildCookieString(value: string): string {
+  private buildCookieString(value: string, lifetime?: number): string {
     const parts = [`${this.config.cookieName}=${encodeURIComponent(value)}`];
     parts.push(`Path=${this.config.path}`);
-    parts.push(`Max-Age=${this.config.lifetime}`);
+    if (lifetime !== undefined) parts.push(`Max-Age=${Math.max(0, Math.floor(lifetime))}`);
     if (this.config.domain) parts.push(`Domain=${this.config.domain}`);
     if (this.config.secure) parts.push('Secure');
     if (this.config.httpOnly) parts.push('HttpOnly');
@@ -626,40 +833,29 @@ export class SessionMiddleware extends Middleware {
     session.set('_svelar_last_touched_at', now);
   }
 
-  private isAbsoluteExpired(data: SessionData): boolean {
-    if (!this.config.absoluteLifetime) return false;
-    const createdAt = Number(data._svelar_created_at ?? Date.now());
-    return Date.now() - createdAt > this.config.absoluteLifetime * 1000;
-  }
-
-  private shouldTouchSession(ctx: MiddlewareContext, existingData: SessionData | null, session: Session): boolean {
-    if (!this.config.touchOnActivity || !existingData) return false;
-    if (!this.isActivityRequest(ctx.event.request)) return false;
-
-    const lastTouchedAt = Number(session.get('_svelar_last_touched_at', 0));
-    return Date.now() - lastTouchedAt >= this.config.touchThrottle * 1000;
-  }
-
-  private touchSession(session: Session): void {
-    const now = Date.now();
-    if (!session.has('_svelar_created_at')) {
-      session.set('_svelar_created_at', now);
+  private async persistManaged(session: Session, renew: boolean, activity = false): Promise<SessionActivityStatus> {
+    const policy = this.policy!;
+    for (let attempt = 0; attempt < 16; attempt++) {
+      const current = await this.config.store.read(session.id);
+      if (!current) throw new SessionExpiredError();
+      const now = Date.now();
+      const status = sessionActivityStatus(current, policy, now);
+      if (status.expired) { await this.config.store.destroy(session.id); throw new SessionExpiredError(); }
+      if (current.auth_user_id !== session.get('auth_user_id')) throw new SessionExpiredError();
+      const throttle = Math.min(policy.touchThrottle, (status.remembered ? policy.rememberLifetime ?? policy.idleLifetime : policy.idleLifetime) / 2);
+      const touch = (renew && status.lastActivityAt < now) || (activity && now - Number(current._svelar_last_touched_at ?? current._svelar_last_activity_at) >= throttle * 1000);
+      if (!session.isDirty() && !touch) { session.adoptActivityData(current); return status; }
+      const data = session.mergeChanges(current);
+      if (touch) { data._svelar_last_activity_at = now; data._svelar_last_touched_at = now; }
+      const next = sessionActivityStatus(data, policy, now);
+      if (next.expired) throw new SessionExpiredError();
+      if (await this.config.store.compareAndSwap!(session.id, current, data, next.remainingSeconds)) {
+        session.adoptActivityData(data);
+        const committed = sessionActivityStatus(data, policy);
+        if (committed.expired) { await this.config.store.destroy(session.id); throw new SessionExpiredError(); }
+        return committed;
+      }
     }
-    session.set('_svelar_last_activity_at', now);
-    session.set('_svelar_last_touched_at', now);
-  }
-
-  private isActivityRequest(request: Request): boolean {
-    const explicit = request.headers.get('x-svelar-session-activity')?.toLowerCase();
-    if (explicit === 'true' || explicit === '1') return true;
-    if (explicit === 'false' || explicit === '0') return false;
-
-    const method = request.method.toUpperCase();
-    const accept = request.headers.get('accept')?.toLowerCase() ?? '';
-    if (accept.includes('text/event-stream')) return false;
-
-    if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) return true;
-    if (request.headers.get('sec-fetch-mode') === 'navigate') return true;
-    return method === 'GET' && accept.includes('text/html');
+    throw new Error('Concurrent session update could not be persisted safely.');
   }
 }
