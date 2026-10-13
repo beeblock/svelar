@@ -1,6 +1,8 @@
 import type { StripeService } from './StripeService.js';
 import { Subscription } from './Subscription.js';
 import { subscriptionDates } from './StripeApiShapes.js';
+import { normalizeBillableId } from './BillableId.js';
+import type { BillableId } from './BillableId.js';
 
 // Resolve billable Model class from Stripe registry
 async function resolveBillableModel(billableType: string): Promise<any> {
@@ -14,11 +16,13 @@ export class BillingService {
 
   private async ensureCustomer(
     billableType: string,
-    billableId: number,
+    billableId: BillableId,
   ): Promise<string> {
     const BillableModel = await resolveBillableModel(billableType);
     const record = await BillableModel.find(billableId);
-    if (!record) throw new Error(`${billableType} #${billableId} not found`);
+    if (!record || normalizeBillableId(record.getAttribute(BillableModel.primaryKey ?? 'id')) !== normalizeBillableId(billableId)) {
+      throw new Error(`${billableType} #${billableId} not found`);
+    }
 
     if (record.stripe_customer_id) return record.stripe_customer_id;
 
@@ -41,7 +45,7 @@ export class BillingService {
 
   async subscribe(
     billableType: string,
-    billableId: number,
+    billableId: BillableId,
     priceId: string,
     opts?: { name?: string; trialDays?: number; metadata?: Record<string, string> },
   ): Promise<Subscription> {
@@ -51,15 +55,16 @@ export class BillingService {
     const stripeSub = await this.stripeService.createSubscription(customerId, priceId, {
       trialDays: opts?.trialDays,
       metadata: {
-        billable_type: billableType,
-        billable_id: String(billableId),
         ...opts?.metadata,
+        billable_type: billableType,
+        billable_id: normalizeBillableId(billableId),
+        subscription_name: subName,
       },
     });
 
     return Subscription.create({
       billable_type: billableType,
-      billable_id: billableId,
+      billable_id: normalizeBillableId(billableId),
       name: subName,
       stripe_subscription_id: stripeSub.id,
       stripe_customer_id: customerId,
@@ -129,7 +134,7 @@ export class BillingService {
 
   async charge(
     billableType: string,
-    billableId: number,
+    billableId: BillableId,
     amount: number,
     paymentMethodId: string,
     opts?: { currency?: string; metadata?: Record<string, string> },
@@ -140,7 +145,7 @@ export class BillingService {
 
   async checkout(
     billableType: string,
-    billableId: number,
+    billableId: BillableId,
     items: Array<{ priceId: string; quantity?: number }>,
     opts: { mode?: 'subscription' | 'payment'; successUrl: string; cancelUrl: string; trialDays?: number },
   ): Promise<any> {
@@ -152,7 +157,7 @@ export class BillingService {
         ...opts,
         metadata: {
           billable_type: billableType,
-          billable_id: String(billableId),
+          billable_id: normalizeBillableId(billableId),
         },
       },
     );
@@ -160,12 +165,12 @@ export class BillingService {
 
   async syncFromStripe(
     billableType: string,
-    billableId: number,
+    billableId: BillableId,
     subName: string = 'default',
   ): Promise<Subscription> {
     const BillableModel = await resolveBillableModel(billableType);
     const record = await BillableModel.find(billableId);
-    if (!record?.stripe_customer_id) {
+    if (!record?.stripe_customer_id || normalizeBillableId(record.getAttribute(BillableModel.primaryKey ?? 'id')) !== normalizeBillableId(billableId)) {
       throw new Error(`${billableType} #${billableId} has no Stripe customer`);
     }
 
@@ -184,7 +189,7 @@ export class BillingService {
     const existing = await Subscription.findByStripeSubscriptionId(stripeSub.id);
     const data = {
       billable_type: billableType,
-      billable_id: billableId,
+      billable_id: normalizeBillableId(billableId),
       name: subName,
       stripe_subscription_id: stripeSub.id,
       stripe_customer_id: record.stripe_customer_id,

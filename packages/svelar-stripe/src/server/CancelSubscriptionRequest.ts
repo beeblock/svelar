@@ -1,6 +1,7 @@
-import { FormRequest } from '@beeblock/svelar/routing';
+import { FormRequest, type RequestEvent } from '@beeblock/svelar/routing';
 import { CancelSubscriptionSchema } from '../types.js';
 import { CancelSubscriptionDto } from './dto.js';
+import { Stripe } from '../index.js';
 
 export interface CancelSubscriptionBody {
   subscriptionId: string;
@@ -8,6 +9,10 @@ export interface CancelSubscriptionBody {
 }
 
 export class CancelSubscriptionRequest extends FormRequest {
+  authorize(event: RequestEvent): Promise<boolean> {
+    return Stripe.authorizeAdmin(event, 'action.billing.cancel');
+  }
+
   rules() {
     return CancelSubscriptionSchema;
   }

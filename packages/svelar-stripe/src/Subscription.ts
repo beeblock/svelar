@@ -1,4 +1,6 @@
 import { Model } from '@beeblock/svelar/orm';
+import { normalizeBillableId } from './BillableId.js';
+import type { BillableId } from './BillableId.js';
 
 export class Subscription extends Model {
   static table = 'subscriptions';
@@ -14,7 +16,7 @@ export class Subscription extends Model {
 
   static casts: Record<string, 'string' | 'number' | 'boolean' | 'date' | 'json'> = {
     id: 'number',
-    billable_id: 'number',
+    billable_id: 'string',
     cancel_at_period_end: 'number',
   };
 
@@ -24,18 +26,20 @@ export class Subscription extends Model {
     return this.where('stripe_subscription_id', stripeId).first() as Promise<Subscription | null>;
   }
 
-  static async findByBillable(billableType: string, billableId: number, name: string = 'default'): Promise<Subscription | null> {
-    return this.where('billable_type', billableType)
-      .where('billable_id', billableId)
-      .where('name', name)
-      .first() as Promise<Subscription | null>;
+  static async findByBillable(billableType: string, billableId: BillableId, name: string = 'default'): Promise<Subscription | null> {
+    const subscriptions = await this.allForBillable(billableType, billableId);
+    return subscriptions.find((record) => record.getAttribute('name') === name) ?? null;
   }
 
-  static async allForBillable(billableType: string, billableId: number): Promise<Subscription[]> {
-    return this.where('billable_type', billableType)
-      .where('billable_id', billableId)
+  static async allForBillable(billableType: string, billableId: BillableId): Promise<Subscription[]> {
+    const id = normalizeBillableId(billableId);
+    const records = await this.where('billable_type', billableType)
+      .where('billable_id', id)
       .orderBy('created_at', 'desc')
-      .get() as Promise<Subscription[]>;
+      .get() as Subscription[];
+    // Host databases may use case/accent-insensitive collations for VARCHAR columns.
+    return records.filter((record) => record.getAttribute('billable_type') === billableType
+      && normalizeBillableId(record.getAttribute('billable_id')) === id);
   }
 
   // -- Instance status helpers --

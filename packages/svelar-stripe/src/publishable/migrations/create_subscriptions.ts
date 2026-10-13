@@ -5,7 +5,7 @@ export default class CreateSubscriptionsTable extends Migration {
     await this.schema.createTable('subscriptions', (table) => {
       table.increments('id');
       table.string('billable_type');
-      table.integer('billable_id');
+      table.string('billable_id', 255);
       table.string('name').default('default');
       table.string('stripe_subscription_id').unique();
       table.string('stripe_customer_id');

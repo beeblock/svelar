@@ -1,5 +1,7 @@
 import { Subscription } from './Subscription.js';
 import { Invoice } from './Invoice.js';
+import { normalizeBillableId } from './BillableId.js';
+import type { BillableId } from './BillableId.js';
 
 // Mixin constructor type
 type Constructor = new (...args: any[]) => any;
@@ -7,7 +9,7 @@ type Constructor = new (...args: any[]) => any;
 // Interface describing the methods added by Billable
 export interface BillableInstance {
   readonly _billableType: string;
-  readonly _billableId: number;
+  readonly _billableId: BillableId;
 
   // Customer management
   createOrGetStripeCustomer(opts?: { name?: string; email?: string }): Promise<string>;
@@ -55,8 +57,11 @@ export function Billable<TBase extends Constructor>(Base: TBase): TBase & (new (
       return (this.constructor as any).table || (this.constructor as any).name;
     }
 
-    get _billableId(): number {
-      return (this as any).id ?? (this as any).getAttribute?.('id');
+    get _billableId(): BillableId {
+      const primaryKey = (this.constructor as any).primaryKey ?? 'id';
+      const id: BillableId = this.getAttribute(primaryKey);
+      normalizeBillableId(id);
+      return id;
     }
 
     async createOrGetStripeCustomer(opts?: { name?: string; email?: string }): Promise<string> {
@@ -67,6 +72,9 @@ export function Billable<TBase extends Constructor>(Base: TBase): TBase & (new (
       // Use the Model's own ORM to re-check from DB (another request may have set it)
       const ModelClass = this.constructor as any;
       const fresh = await ModelClass.find(this._billableId);
+      if (!fresh || normalizeBillableId(fresh.getAttribute(ModelClass.primaryKey ?? 'id')) !== normalizeBillableId(this._billableId)) {
+        throw new Error('Billable model not found for its exact primary key.');
+      }
       if (fresh?.stripe_customer_id) {
         if (typeof (this as any).setAttribute === 'function') {
           (this as any).setAttribute('stripe_customer_id', fresh.stripe_customer_id);
@@ -148,7 +156,7 @@ export function Billable<TBase extends Constructor>(Base: TBase): TBase & (new (
           ...opts,
           metadata: {
             billable_type: this._billableType,
-            billable_id: String(this._billableId),
+            billable_id: normalizeBillableId(this._billableId),
           },
         },
       );

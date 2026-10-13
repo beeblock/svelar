@@ -1,4 +1,6 @@
 import { Model } from '@beeblock/svelar/orm';
+import { normalizeBillableId } from './BillableId.js';
+import type { BillableId } from './BillableId.js';
 
 export class Invoice extends Model {
   static table = 'invoices';
@@ -13,7 +15,7 @@ export class Invoice extends Model {
 
   static casts: Record<string, 'string' | 'number' | 'boolean' | 'date' | 'json'> = {
     id: 'number',
-    billable_id: 'number',
+    billable_id: 'string',
     subscription_id: 'number',
     amount_due: 'number',
     amount_paid: 'number',
@@ -25,11 +27,14 @@ export class Invoice extends Model {
     return this.where('stripe_invoice_id', stripeInvoiceId).first() as Promise<Invoice | null>;
   }
 
-  static async allForBillable(billableType: string, billableId: number): Promise<Invoice[]> {
-    return this.where('billable_type', billableType)
-      .where('billable_id', billableId)
+  static async allForBillable(billableType: string, billableId: BillableId): Promise<Invoice[]> {
+    const id = normalizeBillableId(billableId);
+    const records = await this.where('billable_type', billableType)
+      .where('billable_id', id)
       .orderBy('created_at', 'desc')
-      .get() as Promise<Invoice[]>;
+      .get() as Invoice[];
+    return records.filter((record) => record.getAttribute('billable_type') === billableType
+      && normalizeBillableId(record.getAttribute('billable_id')) === id);
   }
 
   static async allForSubscription(subscriptionId: number): Promise<Invoice[]> {

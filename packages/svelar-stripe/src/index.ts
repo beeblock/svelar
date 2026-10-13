@@ -14,6 +14,7 @@ export { StripeWebhookHandler } from './StripeWebhookHandler.js';
 export { BillingService } from './BillingService.js';
 export { Billable } from './Billable.js';
 export type { BillableInstance } from './Billable.js';
+export type { BillableId } from './BillableId.js';
 export { Subscription } from './Subscription.js';
 export { SubscriptionPlan } from './SubscriptionPlan.js';
 export { Invoice } from './Invoice.js';
@@ -22,6 +23,7 @@ export { registerDefaultWebhookHandlers } from './DefaultWebhookHandlers.js';
 export type {
   StripeConfig,
   StripeAdminGuard,
+  StripeAdminCapability,
   StripePluginConfig,
   SubscriptionStatus,
   PlanInterval,

@@ -6,14 +6,14 @@ import { StripeWebhookHandler } from '../src/StripeWebhookHandler.js';
 function requestEvent(
   path: string,
   init: RequestInit = {},
-  locals: Record<string, any> = {},
+  locals: Record<string, any> = { user: { id: 7, role: 'admin' } },
 ): any {
   const url = new URL(path, 'http://localhost');
   return {
     request: new Request(url, init),
     url,
     params: {},
-    locals,
+    locals: { ...locals, auth: locals.auth ?? { check: () => Boolean(locals.user), user: () => locals.user ?? null } },
     getClientAddress: () => '127.0.0.1',
     cookies: {},
     platform: {},
@@ -83,6 +83,7 @@ describe('@beeblock/svelar-stripe', () => {
   });
 
   it('coerces form-style booleans and returns DTOs from billing FormRequests', async () => {
+    Stripe.configure({ secretKey: 'sk_test_fake', publishableKey: 'pk_test_fake', webhookSecret: 'whsec_fake', adminGuard: () => true, logging: false });
     const dto = await CancelSubscriptionRequest.validate(
       requestEvent('/api/admin/billing/cancel', {
         method: 'POST',
@@ -97,6 +98,31 @@ describe('@beeblock/svelar-stripe', () => {
     expect(dto).toBeInstanceOf(CancelSubscriptionDto);
     expect(dto.subscriptionId).toBe('sub_123');
     expect(dto.immediately).toBe(false);
+  });
+
+  it('rejects anonymous billing even when a configured guard returns true', async () => {
+    Stripe.configure({ secretKey: 'sk_test_fake', publishableKey: 'pk_test_fake', webhookSecret: 'whsec_fake', adminGuard: () => true, logging: false });
+    const response = await new BillingController().handle('listSubscriptions')(requestEvent('/api/admin/billing/subscriptions', {}, {}));
+    expect(response.status).toBe(403);
+    await expect(CancelSubscriptionRequest.validate(requestEvent('/api/admin/billing/cancel', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ subscriptionId: 'sub_other', immediately: true }),
+    }, {}))).rejects.toThrow('unauthorized');
+  });
+
+  it('passes separate functional capabilities and denies truthy non-boolean guard results', async () => {
+    const requested: string[] = [];
+    Stripe.configure({ secretKey: 'sk_test_fake', publishableKey: 'pk_test_fake', webhookSecret: 'whsec_fake', logging: false,
+      adminGuard: (_event, capability) => { requested.push(capability); return false; },
+    });
+    const controller = new BillingController();
+    for (const [method, capability] of [['listSubscriptions', 'screen.billing.view'], ['cancelSubscription', 'action.billing.cancel'], ['refundInvoice', 'action.billing.refund']]) {
+      expect((await controller.handle(method)(requestEvent('/api/admin/billing'))).status).toBe(403);
+      expect(requested.at(-1)).toBe(capability);
+    }
+    Stripe.configure({ secretKey: 'sk_test_fake', publishableKey: 'pk_test_fake', webhookSecret: 'whsec_fake', logging: false,
+      adminGuard: (() => 'false') as never,
+    });
+    expect(await Stripe.authorizeAdmin(requestEvent('/api/admin/billing'), 'screen.billing.view')).toBe(false);
   });
 
   it('wraps admin billing list responses in a data/meta envelope', async () => {

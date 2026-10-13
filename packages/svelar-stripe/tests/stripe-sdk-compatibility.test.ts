@@ -107,6 +107,10 @@ describe.each([
     await service.createCustomer({ id: 7, billableType: 'test_billables' });
     expect(transport.calls[0].headers.get('stripe-version')).toBe(apiVersion);
     expect(transport.calls[0].body.get('metadata[billable_id]')).toBe('7');
+    const opaqueId = '019c20a1-ff11-7000-8000-abcde1234567';
+    await service.createCustomer({ id: opaqueId, billableType: 'test_billables', metadata: { billable_id: '999', billable_type: 'foreign' } });
+    expect(transport.calls[1].body.get('metadata[billable_id]')).toBe(opaqueId);
+    expect(transport.calls[1].body.get('metadata[billable_type]')).toBe('test_billables');
     expect(await service.getClient()).toBe(await service.getClient());
   });
 
@@ -188,7 +192,7 @@ describe.each([
     } } });
     const invoice = await Invoice.findByStripeInvoiceId('in_test');
     expect(invoice?.getAttribute('subscription_id')).toBe(local?.getAttribute('id'));
-    expect(invoice?.getAttribute('billable_id')).toBe(7);
+    expect(invoice?.getAttribute('billable_id')).toBe('7');
     transport.response = () => ({ object: 'list', has_more: false, data: [{ invoice: 'in_test' }] });
     await Stripe.webhooks().handle({ type: 'charge.refunded', data: { object: {
       id: 'ch_test', payment_intent: 'pi_test', amount: 900, amount_refunded: 900,

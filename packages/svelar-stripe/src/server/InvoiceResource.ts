@@ -1,10 +1,11 @@
 import { Resource } from '@beeblock/svelar/routing';
 import type { Invoice } from '../Invoice.js';
+import { normalizeBillableId } from '../BillableId.js';
 
 export interface InvoiceData {
   id: number;
   billableType: string;
-  billableId: number;
+  billableId: string;
   subscriptionId: number | null;
   stripeInvoiceId: string;
   amountDue: number;
@@ -28,7 +29,7 @@ export class InvoiceResource extends Resource<Invoice, InvoiceData> {
     return {
       id: (inv as any).id,
       billableType: (inv as any).billable_type,
-      billableId: (inv as any).billable_id,
+      billableId: normalizeBillableId(inv.getAttribute('billable_id')),
       subscriptionId: (inv as any).subscription_id,
       stripeInvoiceId: (inv as any).stripe_invoice_id,
       amountDue: (inv as any).amount_due,

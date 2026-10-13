@@ -1,4 +1,6 @@
-import type { StripeAdminGuard, StripeConfig } from './types.js';
+import type { StripeAdminCapability, StripeAdminGuard, StripeConfig } from './types.js';
+import type { RequestEvent } from '@beeblock/svelar/routing';
+import type { AuthManager } from '@beeblock/svelar/auth';
 import { StripeService } from './StripeService.js';
 import { StripeWebhookHandler } from './StripeWebhookHandler.js';
 import { BillingService } from './BillingService.js';
@@ -29,9 +31,11 @@ export class StripeManager {
     return this.webhookHandler;
   }
 
-  async authorizeAdmin(event: any): Promise<boolean> {
+  async authorizeAdmin(event: RequestEvent, capability: StripeAdminCapability): Promise<boolean> {
+    const auth: AuthManager | undefined = event.locals?.auth;
+    if (typeof auth?.check !== 'function' || typeof auth.user !== 'function' || !auth.check() || !auth.user()) return false;
     if (!this.adminGuard) return false;
-    return Boolean(await this.adminGuard(event));
+    return await this.adminGuard(event, capability) === true;
   }
 
   billing(): BillingService {

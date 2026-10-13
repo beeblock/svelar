@@ -5,8 +5,8 @@ export default class CreateInvoicesTable extends Migration {
     await this.schema.createTable('invoices', (table) => {
       table.increments('id');
       table.string('billable_type');
-      table.integer('billable_id');
-      table.integer('subscription_id').nullable().references('id', 'subscriptions');
+      table.string('billable_id', 255);
+      table.integer('subscription_id').unsigned().nullable().references('id', 'subscriptions');
       table.string('stripe_invoice_id').unique();
       table.integer('amount_due').default(0);
       table.integer('amount_paid').default(0);

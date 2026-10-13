@@ -2,6 +2,7 @@ import { Log } from '@beeblock/svelar/logging';
 import type { StripeWebhookHandler } from './StripeWebhookHandler.js';
 import { Subscription } from './Subscription.js';
 import { Invoice } from './Invoice.js';
+import { normalizeBillableId } from './BillableId.js';
 import { invoiceSubscriptionId, legacyChargeInvoiceId, stripeObjectId, subscriptionDates } from './StripeApiShapes.js';
 
 // Register default webhook handlers that sync Stripe events to the local DB.
@@ -15,7 +16,7 @@ export function registerDefaultWebhookHandlers(webhooks: StripeWebhookHandler): 
   webhooks.on('customer.subscription.created', safe(async (event) => {
     const stripeSub = event.data.object;
     const billableType = stripeSub.metadata?.billable_type;
-    const billableId = stripeSub.metadata?.billable_id ? Number(stripeSub.metadata.billable_id) : null;
+    const billableId = stripeSub.metadata?.billable_id === undefined ? null : normalizeBillableId(stripeSub.metadata.billable_id);
     if (!billableType || !billableId) return;
 
     const existing = await Subscription.findByStripeSubscriptionId(stripeSub.id);
@@ -157,14 +158,15 @@ async function syncInvoice(stripeInvoice: any): Promise<void> {
   const stripeSubId = invoiceSubscriptionId(stripeInvoice);
 
   let billableType = stripeInvoice.metadata?.billable_type;
-  let billableId = stripeInvoice.metadata?.billable_id ? Number(stripeInvoice.metadata.billable_id) : null;
+  let billableId = stripeInvoice.metadata?.billable_id === undefined ? null : normalizeBillableId(stripeInvoice.metadata.billable_id);
   let subscriptionId: number | null = null;
 
   if (stripeSubId) {
     const sub = await Subscription.findByStripeSubscriptionId(stripeSubId);
     if (sub) {
-      billableType = billableType ?? (sub as any).billable_type;
-      billableId = billableId ?? (sub as any).billable_id;
+      // A linked local subscription is authoritative over editable invoice metadata.
+      billableType = sub.getAttribute('billable_type');
+      billableId = normalizeBillableId(sub.getAttribute('billable_id'));
       subscriptionId = (sub as any).id;
     }
   }

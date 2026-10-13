@@ -1,6 +1,8 @@
 import type Stripe from 'stripe';
 import type { StripeConfig } from './types.js';
 import { stripeObjectId } from './StripeApiShapes.js';
+import { normalizeBillableId } from './BillableId.js';
+import type { BillableId } from './BillableId.js';
 
 export class StripeService {
   private stripe: Stripe | null = null;
@@ -30,20 +32,21 @@ export class StripeService {
   }
 
   async createCustomer(opts: {
-    id: number | string;
+    id: BillableId;
     name?: string;
     email?: string;
     billableType?: string;
     metadata?: Record<string, string>;
   }): Promise<Stripe.Customer> {
+    const billableId = normalizeBillableId(opts.id);
     const client = await this.getClient();
     return client.customers.create({
       email: opts.email,
       name: opts.name || undefined,
       metadata: {
-        billable_type: opts.billableType ?? 'users',
-        billable_id: String(opts.id),
         ...opts.metadata,
+        billable_type: opts.billableType ?? 'users',
+        billable_id: billableId,
       },
     });
   }

@@ -1,4 +1,6 @@
 import { z } from '@beeblock/svelar/validation';
+import type { RequestEvent } from '@beeblock/svelar/routing';
+export type { BillableId } from './BillableId.js';
 
 const inputNumber = (schema: z.ZodNumber) => z.preprocess((value) => {
   if (value === '' || value === null || value === undefined) return undefined;
@@ -20,7 +22,8 @@ const inputBoolean = (defaultValue: boolean) => z.preprocess((value) => {
 
 // -- Stripe config --
 
-export type StripeAdminGuard = (event: any) => boolean | Promise<boolean>;
+export type StripeAdminCapability = 'screen.billing.view' | 'action.billing.cancel' | 'action.billing.refund';
+export type StripeAdminGuard = (event: RequestEvent, capability: StripeAdminCapability) => boolean | Promise<boolean>;
 
 export interface StripeConfig {
   secretKey: string;
@@ -56,7 +59,7 @@ export type InvoiceStatus = 'draft' | 'open' | 'paid' | 'void' | 'uncollectible'
 export interface SubscriptionRecord {
   id: number;
   billable_type: string;
-  billable_id: number;
+  billable_id: string;
   name: string;
   stripe_subscription_id: string;
   stripe_customer_id: string;
@@ -91,7 +94,7 @@ export interface SubscriptionPlanRecord {
 export interface InvoiceRecord {
   id: number;
   billable_type: string;
-  billable_id: number;
+  billable_id: string;
   subscription_id: number | null;
   stripe_invoice_id: string;
   amount_due: number;

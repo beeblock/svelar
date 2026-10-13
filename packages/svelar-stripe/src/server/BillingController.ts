@@ -2,6 +2,7 @@ import { Controller } from '@beeblock/svelar/routing';
 import { CancelSubscriptionRequest } from './CancelSubscriptionRequest.js';
 import { RefundRequest } from './RefundRequest.js';
 import { SubscriptionResource } from './SubscriptionResource.js';
+import type { StripeAdminCapability } from '../types.js';
 
 // Admin billing controller for Stripe operations.
 //
@@ -22,9 +23,9 @@ export class BillingController extends Controller {
     return manager.service();
   }
 
-  private async authorizeAdmin(event: any): Promise<Response | null> {
+  private async authorizeAdmin(event: any, capability: StripeAdminCapability): Promise<Response | null> {
     const manager = await this.getStripeManager();
-    if (await manager.authorizeAdmin(event)) return null;
+    if (await manager.authorizeAdmin(event, capability)) return null;
 
     return this.json({
       data: null,
@@ -36,7 +37,7 @@ export class BillingController extends Controller {
   }
 
   async listSubscriptions(event: any): Promise<Response> {
-    const forbidden = await this.authorizeAdmin(event);
+    const forbidden = await this.authorizeAdmin(event, 'screen.billing.view');
     if (forbidden) return forbidden;
 
     const requestedLimit = Number(event.url.searchParams.get('limit') ?? '25');
@@ -65,7 +66,7 @@ export class BillingController extends Controller {
   }
 
   async cancelSubscription(event: any): Promise<Response> {
-    const forbidden = await this.authorizeAdmin(event);
+    const forbidden = await this.authorizeAdmin(event, 'action.billing.cancel');
     if (forbidden) return forbidden;
 
     const data = await CancelSubscriptionRequest.validate(event);
@@ -88,7 +89,7 @@ export class BillingController extends Controller {
   }
 
   async refundInvoice(event: any): Promise<Response> {
-    const forbidden = await this.authorizeAdmin(event);
+    const forbidden = await this.authorizeAdmin(event, 'action.billing.refund');
     if (forbidden) return forbidden;
 
     const data = await RefundRequest.validate(event);
