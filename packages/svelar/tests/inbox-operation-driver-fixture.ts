@@ -47,6 +47,7 @@ interface Worker {
   output: string;
   exit: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
   exited: boolean;
+  transportError?: Error;
 }
 
 async function until<T>(callback: () => Promise<T> | T, label: string, timeout = 15_000): Promise<NonNullable<T>> {
@@ -119,6 +120,7 @@ function events(workers: Worker[], type: string): WorkerEvent[] {
 }
 
 function workerFailure(worker: Worker): void {
+  if (worker.transportError) throw worker.transportError;
   const failure = worker.events.find((event) => event.type === 'error');
   if (failure) throw new Error(failure.message + '\n' + worker.output);
   if (worker.exited && !worker.events.some((event) => event.type === 'result')) {
@@ -132,10 +134,10 @@ async function startWorkers(config: DatabaseConfig, bundle: string, options: Wor
     const child = fork(bundle, [], { execArgv: [], stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       env: { ...process.env, SVELAR_INBOX_OPERATION_WORKER: JSON.stringify({ config, options }) } });
     const worker: Worker = { child, events: [], output: '', exited: false,
-      exit: new Promise((resolve, reject) => {
-        child.once('error', reject);
-        child.once('exit', (code, signal) => { worker.exited = true; resolve({ code, signal }); });
+      exit: new Promise((resolve) => {
+        child.once('close', (code, signal) => { worker.exited = true; resolve({ code, signal }); });
       }) };
+    child.on('error', (error) => { worker.transportError ??= error; });
     child.on('message', (message: WorkerEvent) => worker.events.push(message));
     child.stdout?.on('data', (data) => { worker.output += data; });
     child.stderr?.on('data', (data) => { worker.output += data; });
@@ -146,7 +148,7 @@ async function startWorkers(config: DatabaseConfig, bundle: string, options: Wor
     workerFailure(worker);
     return worker.events.some((event) => event.type === 'ready');
   }, 'worker ready')));
-  for (const worker of workers) worker.child.send({ type: 'go' });
+  await Promise.all(workers.map((worker) => sendCommand(worker, 'go')));
   return workers;
 }
 
@@ -159,8 +161,18 @@ async function entered(workers: Worker[], type = 'started') {
   }, 'exclusive handler entry');
 }
 
-function release(workers: Worker[]): void {
-  for (const worker of workers) if (worker.child.connected) worker.child.send({ type: 'release' });
+async function sendCommand(worker: Worker, type: 'go' | 'release'): Promise<void> {
+  workerFailure(worker);
+  assert.equal(worker.child.connected, true, 'The commanded worker disconnected before ' + type + '.\n' + worker.output);
+  await new Promise<void>((resolve, reject) => worker.child.send({ type }, (error) => error ? reject(error) : resolve()));
+}
+
+async function release(workers: Worker[]): Promise<void> {
+  // Losing contenders can disconnect between connected and send; only the held lease owner needs release.
+  const held = workers.filter((worker) => worker.events.some((event) => event.type === 'holding')
+    && !worker.events.some((event) => event.type === 'released'));
+  assert.equal(held.length, 1, 'Expected exactly one independently held handler or notifier.');
+  await sendCommand(held[0], 'release');
 }
 
 async function results(workers: Worker[]) {
@@ -240,7 +252,7 @@ export async function proof(config: DatabaseConfig, scenario: string, bundle: st
       const rejected = await results(contenders);
       assert.equal(events([...workers, ...contenders], 'started').length, 1);
       assert.ok(rejected.every((result) => inbox ? result.processed === 0 : result === false));
-      release(workers);
+      await release(workers);
       const outcomes = await results(workers);
       assert.equal(outcomes.filter((result) => inbox ? result.processed === 1 : result === true).length, 1);
       const settled = await rows().where('id', id).first();
@@ -257,7 +269,7 @@ export async function proof(config: DatabaseConfig, scenario: string, bundle: st
       assert.equal((await entered(workers)).version, 1);
       await delay(150);
       assert.equal(events(workers, 'started').length, 1);
-      release(workers);
+      await release(workers);
       assert.equal((await results(workers)).reduce((sum, result) => sum + result.processed, 0), 3);
       assert.deepEqual(events(workers, 'started').map((event) => event.version), [1, 2, 3]);
       assert.deepEqual(events(workers, 'finished').map((event) => event.version), [1, 2, 3]);
@@ -288,7 +300,7 @@ export async function proof(config: DatabaseConfig, scenario: string, bundle: st
       const claimed = await rows().where('id', id).first();
       assert.notEqual(claimed.lock_owner, pending.lock_owner);
       assert.equal(Number(claimed.attempts), 2);
-      release(replacements);
+      await release(replacements);
       const outcomes = await results(replacements);
       assert.equal(outcomes.filter((result) => inbox ? result.processed === 1 : result === true).length, 1);
       assert.equal(events(dead, 'finished').length, 0);
@@ -357,7 +369,7 @@ export async function proof(config: DatabaseConfig, scenario: string, bundle: st
       await entered(workers);
       assert.equal(await origin(() => BackgroundOperation.cancel(operation.id)), true);
       await until(() => events(workers, 'aborted').length === 1, 'cooperative abort signal after heartbeat');
-      release(workers);
+      await release(workers);
       assert.deepEqual(await results(workers), [true]);
       assert.equal(events(workers, 'finished')[0].result.cancelled, true);
       const settled = await origin(() => BackgroundOperation.find(operation.id));
@@ -411,7 +423,11 @@ export async function proof(config: DatabaseConfig, scenario: string, bundle: st
       assertHandlerContext(await entered(retries, 'notifying'));
       assert.equal(events(retries, 'started').length, 0);
       assert.ok((await operationRows().where('id', operation.id).first()).lock_owner);
-      release(retries);
+      const losers = retries.filter((worker) => !worker.events.some((event) => event.type === 'holding'));
+      assert.equal(losers.length, 4);
+      assert.deepEqual(await results(losers), [0, 0, 0, 0]);
+      assert.ok(losers.every((worker) => worker.exited && !worker.child.connected));
+      await release(retries);
       assert.deepEqual(await results(retries), [0, 0, 0, 0, 0]);
       assert.equal(events(retries, 'notifying').length, 1);
       assert.equal(events(retries, 'notified').length, 1);
@@ -420,7 +436,8 @@ export async function proof(config: DatabaseConfig, scenario: string, bundle: st
       assert.equal(Number(settled.attempts), 1);
       assert.equal(settled.state, 'succeeded');
       assert.equal(settled.lock_owner, null);
-      evidence = { operationHandlers: 1, failedNotifications: 1, retryContenders: 5, successfulNotifications: 1, repeatedOperationHandlers: 0 };
+      evidence = { operationHandlers: 1, failedNotifications: 1, retryContenders: 5, successfulNotifications: 1,
+        closedContendersBeforeRelease: losers.length, releasedOwners: 1, repeatedOperationHandlers: 0 };
     } else throw new Error('Unknown native scenario: ' + scenario);
     return { scenario, driver: config.driver, passed: true, evidence };
   } finally {
@@ -437,39 +454,48 @@ async function workerMain(config: DatabaseConfig, options: WorkerOptions): Promi
   const gate = new Promise<void>((resolve) => { unlock = resolve; });
   let go!: () => void;
   const ready = new Promise<void>((resolve) => { go = resolve; });
-  const send = (event: WorkerEvent) => process.send?.(event);
+  const send = (event: WorkerEvent) => new Promise<void>((resolve, reject) => {
+    if (!process.send || !process.connected) { reject(new Error('Native worker IPC disconnected.')); return; }
+    process.send(event, (error) => error ? reject(error) : resolve());
+  });
   process.on('message', (message: { type: string }) => {
     if (message.type === 'release') unlock();
     if (message.type === 'go') go();
   });
   await setup(config);
   WebhookInbox.registerSource(options.name, sourceDefinition(async (entry) => {
-    send({ type: 'started', id: entry.id, version: entry.payload?.version, context: ApplicationContext.snapshot() });
-    if (options.hold) await gate;
+    if (options.hold) await send({ type: 'holding', id: entry.id });
+    await send({ type: 'started', id: entry.id, version: entry.payload?.version, context: ApplicationContext.snapshot() });
+    if (options.hold) { await gate; await send({ type: 'released', id: entry.id }); }
     if (options.fail) throw new Error('password=do-not-store-this provider unavailable');
     const bytes = WebhookInbox.bodyBytes(entry);
-    send({ type: 'finished', id: entry.id, version: entry.payload?.version,
+    await send({ type: 'finished', id: entry.id, version: entry.payload?.version,
       result: { byteLength: bytes.byteLength, digest: createHash('sha256').update(bytes).digest('hex') } });
   }));
   class NativeReady extends Notification { channels() { return ['native-proof']; } }
   Notifier.configure({ channels: { 'native-proof': { driver: 'custom', handler: { send: async (recipient) => {
     assert.equal(recipient.getAttribute('id'), 'actor-a');
-    send({ type: 'notifying', id: options.id, context: ApplicationContext.snapshot() });
+    if (options.holdNotification) await send({ type: 'holding', id: options.id });
+    await send({ type: 'notifying', id: options.id, context: ApplicationContext.snapshot() });
     if (options.failNotification) throw new Error('Fixture delivery provider unavailable');
-    if (options.holdNotification) await gate;
-    send({ type: 'notified', id: options.id, context: ApplicationContext.snapshot() });
+    if (options.holdNotification) { await gate; await send({ type: 'released', id: options.id }); }
+    await send({ type: 'notified', id: options.id, context: ApplicationContext.snapshot() });
   } } } } });
   const definition: OperationDefinition = { leaseSeconds: 1, retrySeconds: 1, maxAttempts: 3,
     handle: async (execution) => {
       assert.notEqual(options.role, 'operation-sweep', 'A notification retry repeated the operation handler.');
       assert.deepEqual(execution.payload, { secretInput: 'private-input' });
       await execution.report(1);
-      execution.signal.addEventListener('abort', () => send({ type: 'aborted', id: execution.operation.id }), { once: true });
-      send({ type: 'started', id: execution.operation.id, context: ApplicationContext.snapshot() });
-      if (options.hold) await gate;
+      let abortReport: Promise<void> | undefined;
+      execution.signal.addEventListener('abort', () => { abortReport = send({ type: 'aborted', id: execution.operation.id });
+        void abortReport.catch(() => {}); }, { once: true });
+      if (options.hold) await send({ type: 'holding', id: execution.operation.id });
+      await send({ type: 'started', id: execution.operation.id, context: ApplicationContext.snapshot() });
+      if (options.hold) { await gate; await send({ type: 'released', id: execution.operation.id }); }
       const cancelled = await execution.isCancelled();
       if (!cancelled) await execution.report(2);
-      send({ type: 'finished', id: execution.operation.id, result: { cancelled, aborted: execution.signal.aborted } });
+      if (abortReport) await abortReport;
+      await send({ type: 'finished', id: execution.operation.id, result: { cancelled, aborted: execution.signal.aborted } });
       return { download: '/exports/native' };
     },
     ...(options.notification ? { notify: async () => ({
@@ -477,7 +503,7 @@ async function workerMain(config: DatabaseConfig, options: WorkerOptions): Promi
     }) } : {}),
   };
   BackgroundOperation.register(options.name, definition);
-  send({ type: 'ready' });
+  await send({ type: 'ready' });
   await ready;
   const result = await ApplicationContext.runIsolated(workerContext, async () => {
     let outcome: unknown;
@@ -488,7 +514,7 @@ async function workerMain(config: DatabaseConfig, options: WorkerOptions): Promi
     assert.deepEqual(ApplicationContext.snapshot(), workerContext, 'Handler context leaked into the worker.');
     return outcome;
   });
-  send({ type: 'result', result });
+  await send({ type: 'result', result });
 }
 
 if (process.env.SVELAR_INBOX_OPERATION_WORKER) {
@@ -498,7 +524,11 @@ if (process.env.SVELAR_INBOX_OPERATION_WORKER) {
   process.once('disconnect', orphaned);
   try { await workerMain(config, options); }
   catch (error) {
-    process.send?.({ type: 'error', message: error instanceof Error ? error.stack : String(error) });
+    const message = error instanceof Error ? error.stack : String(error);
+    console.error(message);
+    if (process.send && process.connected) await new Promise<void>((resolve) => {
+      process.send!({ type: 'error', message }, () => resolve());
+    });
     process.exitCode = 1;
   } finally {
     await close();

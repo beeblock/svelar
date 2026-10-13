@@ -5,16 +5,16 @@ import { join } from 'node:path';
 // These run against the installed tarball, so exports, discovery and emitted files
 // are exercised together instead of calling source command handlers directly.
 export const generatorCommands = [
-	['make:entity', 'CliRecord', '--module=cli-checks', '--fields=title:string,priority:integer,active:boolean', '--crud'],
-	['make:entity', 'CliDraft', '--module=cli-drafts', '--fields=title:string'],
+	['make:entity', 'CliRecord', '--module=cli-checks', '--fields=title:string,priority:integer,active:boolean', '--crud', '--public'],
+	['make:entity', 'CliDraft', '--module=cli-drafts', '--fields=title:string', '--public'],
 	['make:model', 'CliProbe', '--module=cli-probes'],
-	['make:model', 'CliFullModel', '--module=cli-full-models', '--all'],
+	['make:model', 'CliFullModel', '--module=cli-full-models', '--all', '--public'],
 	['make:schema', 'cli-probe', '--module=cli-probes'],
 	['make:dto', 'CreateCliProbe', '--module=cli-probes', '--schema=cli-probe', '--input=CreateCliProbeInput'],
 	['make:request', 'CreateCliProbe', '--module=cli-probes'],
 	['make:action', 'ProcessCliProbe', '--module=cli-probes', '--dto', '--request', '--schema'],
-	['make:controller', 'CliProbe', '--module=cli-probes'],
-	['make:controller', 'CliResourceController', '--module=cli-resource-models', '--model=CliResourceModel', '--resource'],
+	['make:controller', 'CliProbe', '--module=cli-probes', '--public'],
+	['make:controller', 'CliResourceController', '--module=cli-resource-models', '--model=CliResourceModel', '--resource', '--public'],
 	['make:service', 'CliProbe', '--module=cli-probes', '--model=CliProbe', '--crud'],
 	['make:repository', 'CliProbe', '--module=cli-probes', '--model=CliProbe'],
 	['make:resource', 'CliProbe', '--module=cli-probes', '--model=CliProbe', '--collection'],
@@ -22,7 +22,7 @@ export const generatorCommands = [
 	['make:event', 'CliProbeSaved', '--module=cli-probes'],
 	['make:listener', 'HandleCliProbeSaved', '--module=cli-probes', '--event=CliProbeSaved'],
 	['make:factory', 'CliProbe', '--model=CliProbe', '--module=cli-probes'],
-	['make:route', 'cli-probes', '--api', '--controller=CliProbeController', '--module=cli-probes'],
+	['make:route', 'cli-probes', '--api', '--controller=CliProbeController', '--module=cli-probes', '--public'],
 	['make:migration', 'create_cli_markers_table'],
 	['make:seeder', 'CliProbe'],
 	['make:job', 'CliProbeJob'],
@@ -37,7 +37,8 @@ export const generatorCommands = [
 	['make:test', 'CliProbeFeature', '--feature'],
 	['make:test', 'CliProbeBrowser', '--e2e'],
 	['make:broadcasting', '--sse'],
-	['make:dashboard'],
+	['make:dashboard', '--public'],
+	['make:ui', 'all'],
 	['make:docker', '--db=sqlite'],
 	['make:ci'],
 	['make:infra'],
@@ -46,7 +47,7 @@ export const generatorCommands = [
 
 export const runtimeCommands = [
 	['migrate', '--status'], ['seed:run', '--class=CliProbeSeeder'], ['routes:list', '--json'],
-	['schedule:run', '--once'], ['queue:work', '--once'], ['queue:failed'],
+	['schedule:run', '--once'], ['schedule:work', '--once'], ['schedule:list', '--json'], ['deploy:migrate', '--check'], ['queue:work', '--once'], ['queue:failed'],
 	['queue:retry', '--all'], ['queue:flush'], ['plugin:list'],
 	['cli:probe', '--dry-run'], ['key:generate', '--show'], ['lint:architecture', '--json'],
 ];

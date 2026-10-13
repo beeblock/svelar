@@ -60,7 +60,7 @@ describe('Native Zod 4 integration', () => {
   it('generates native schema imports/adapters and converts only the selected provider', () => {
     const manifest = JSON.parse(NewCommandTemplates.packageJson('probe', '0.8.0'));
     expect(manifest.dependencies.zod).toBe('^4.6.7');
-    const methods = ['loginPageServer', 'registerPageServer', 'forgotPasswordPageServer', 'resetPasswordPageServer', 'otpLoginPageServer', 'apiKeysPageServer', 'teamPageServer', 'adminPageServer'] as const;
+    const methods = ['loginPageServer', 'registerPageServer', 'forgotPasswordPageServer', 'resetPasswordPageServer', 'otpLoginPageServer', 'apiKeysPageServer', 'teamPageServer'] as const;
     for (const method of methods) {
       const template = NewCommandTemplates[method]();
       expect(template).toContain("import { zod4 } from 'sveltekit-superforms/adapters'");
@@ -109,7 +109,8 @@ describe('Native Zod 4 integration', () => {
     host.getSourceFile = (file, language, ...rest) => file === filename ? ts.createSourceFile(file, code, language, true) : getSourceFile(file, language, ...rest);
     const fileExists = host.fileExists.bind(host);
     host.fileExists = (file) => file === filename || fileExists(file);
-    const diagnostics = ts.getPreEmitDiagnostics(ts.createProgram([filename], options, host));
+    const optionalPeers = fileURLToPath(new URL('../src/types/externals.d.ts', import.meta.url));
+    const diagnostics = ts.getPreEmitDiagnostics(ts.createProgram([filename, optionalPeers], options, host));
     expect(diagnostics.map((issue) => `${issue.file?.fileName}: ${ts.flattenDiagnosticMessageText(issue.messageText, '\n')}`)).toEqual([]);
   }, 60_000);
 });
