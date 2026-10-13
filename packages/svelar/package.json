@@ -302,6 +302,7 @@
 		"@vitest/coverage-v8": "^4.1.11",
 		"better-sqlite3": "^12.11.1",
 		"exceljs": "^4.4.0",
+		"marked": "^18.1.1",
 		"meilisearch": "^0.62.0",
 		"sveltekit-superforms": "^2.31.0",
 		"tsup": "^8.5.1",
