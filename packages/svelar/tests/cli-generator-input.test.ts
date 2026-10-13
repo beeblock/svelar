@@ -247,9 +247,9 @@ describe('Installed CLI bin generator regressions', () => {
       const result = spawnSync(process.execPath, [installedBin, 'make:model', 'api-key', '--migration'], { cwd: project, encoding: 'utf8', timeout: 10_000 });
       expect(result.error).toBeUndefined();
       expect(result.status, result.stderr).toBe(0);
-      const model = ddd ? 'src/lib/modules/api_keies/domain/models/ApiKey.ts' : 'src/lib/models/ApiKey.ts';
+      const model = ddd ? 'src/lib/modules/api_keys/domain/models/ApiKey.ts' : 'src/lib/models/ApiKey.ts';
       expect(readFileSync(join(project, model), 'utf8')).toContain('export class ApiKey extends Model');
-      expect(readdirSync(join(project, 'src/lib/database/migrations'))).toEqual([expect.stringMatching(/_create_api_keies_table\.ts$/)]);
+      expect(readdirSync(join(project, 'src/lib/database/migrations'))).toEqual([expect.stringMatching(/_create_api_keys_table\.ts$/)]);
     }
     const result = spawnSync(process.execPath, [installedBin, 'new', '../sibling-app', '--no-install', '--validation=zod'], { cwd: project, encoding: 'utf8', timeout: 10_000 });
     expect(result.error).toBeUndefined();

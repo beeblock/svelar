@@ -234,6 +234,14 @@ export abstract class Command {
 
   // ── Project Structure Helpers ──
 
+  protected pluralize(str: string): string {
+    if (str.endsWith('y') && !/[aeiou]y$/i.test(str)) return str.slice(0, -1) + 'ies';
+    if (str.endsWith('s') || str.endsWith('x') || str.endsWith('z') || str.endsWith('ch') || str.endsWith('sh')) {
+      return str + 'es';
+    }
+    return str + 's';
+  }
+
   /** Preflight generator names and references before creating any artifacts. */
   protected generatorName(raw: string | undefined, flags: Record<string, unknown> = {}): string | undefined {
     for (const flag of this.flags) {

@@ -88,7 +88,7 @@ export class ${name} extends Model {
 
       const migrationContent = `import { Migration } from '@beeblock/svelar/database';
 
-export default class Create${name}sTable extends Migration {
+export default class Create${this.pluralize(name)}Table extends Migration {
   async up() {
     await this.schema.createTable('${tableName}', (table) => {
       table.increments('id');
@@ -115,12 +115,4 @@ export default class Create${name}sTable extends Migration {
     return str.replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '');
   }
 
-  private pluralize(str: string): string {
-    // Simple pluralization — covers common cases
-    if (str.endsWith('y')) return str.slice(0, -1) + 'ies';
-    if (str.endsWith('s') || str.endsWith('x') || str.endsWith('z') || str.endsWith('ch') || str.endsWith('sh')) {
-      return str + 'es';
-    }
-    return str + 's';
-  }
 }

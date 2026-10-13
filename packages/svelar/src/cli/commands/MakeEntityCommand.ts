@@ -35,7 +35,7 @@ export class MakeEntityCommand extends Command {
     }
 
     const name = this.toPascalCase(rawName);
-    const moduleName = flags.module || this.toKebabCase(this.pluralize(name));
+    const moduleName = flags.module || this.toSnakeCase(this.pluralize(name));
     const fields = this.parseFields(String(flags.fields ?? ''));
     for (const field of fields) this.validateIdentifier(field.name, 'Field name');
     this.preflightModuleFiles(moduleName, {
@@ -662,11 +662,4 @@ ${fields.map((field) => `      ${this.migrationColumn(field)};`).join('\n')}
     return this.toKebabCase(str).replace(/-/g, '_');
   }
 
-  private pluralize(str: string): string {
-    if (str.endsWith('y')) return str.slice(0, -1) + 'ies';
-    if (str.endsWith('s') || str.endsWith('x') || str.endsWith('z') || str.endsWith('ch') || str.endsWith('sh')) {
-      return str + 'es';
-    }
-    return str + 's';
-  }
 }
