@@ -13,6 +13,8 @@ npx svelar new my-app --validation=valibot
 
 The choice is stored in `svelar.validation.json`. Generators such as `make:schema`, `make:dto`, `make:request`, `make:action --schema`, and `make:entity` read that file so new artifacts stay consistent with the app. FormRequest, controller body validation, and the forms helpers support both providers.
 
+The framework-owned operator console is an exception to app schema selection: its role/access forms import the fixed Zod 4 contracts from `@beeblock/svelar/dashboard/schemas` and use `zod4Client` in both Zod and Valibot apps. Backend FormRequests use those identical schemas. New and Update preserve this controlled producer; app-owned forms continue to use the selected provider, without a duplicate Valibot version of core contracts.
+
 ## Migrating To Zod 4
 
 The 0.8.0 candidate uses native Zod 4. `@beeblock/svelar/validation` exports Zod 4 schemas and rules; generated Zod apps install `zod@^4.6.7`. Valibot apps keep their existing provider. This changes the public schema contract for existing Zod 3 consumers, even though the candidate framework version remains 0.8.0.

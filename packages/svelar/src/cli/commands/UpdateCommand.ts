@@ -678,7 +678,7 @@ export class UpdateCommand extends Command {
       const transformedPath = transformScaffoldFile(path, '', !isDDD).path;
       const file: ScaffoldFile = {
         path: transformedPath,
-        content: () => transformScaffoldFile(path, T.applyValidationProvider(T.reviewedAccess(path, content()), validation), !isDDD).content,
+        content: () => transformScaffoldFile(path, T.applyValidationProvider(T.reviewedAccess(path, content()), validation, path), !isDDD).content,
         category,
         description,
         ownership: ['domain', 'page', 'route'].includes(category) ? 'user' : ownership,

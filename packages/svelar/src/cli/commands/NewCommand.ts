@@ -84,7 +84,7 @@ export class NewCommand extends Command {
     // Templates always use DDD paths internally. When --flat is set,
     // both the file path and import paths are transformed automatically.
     const write = (dddPath: string, content: string) => {
-      const validationContent = T.applyValidationProvider(T.reviewedAccess(dddPath, content), validationProvider);
+      const validationContent = T.applyValidationProvider(T.reviewedAccess(dddPath, content), validationProvider, dddPath);
       const { path: relativePath, content: transformedContent } = transformScaffoldFile(dddPath, validationContent, flat);
       const fullPath = join(projectDir, relativePath);
       mkdirSync(join(fullPath, '..'), { recursive: true });

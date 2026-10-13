@@ -146,8 +146,9 @@ export class NewCommandTemplates {
 		return JSON.stringify({ validation }, null, 2) + "\n";
 	}
 
-	static applyValidationProvider(content: string, validation: ValidationProvider = 'zod'): string {
-		if (validation === 'zod') return content;
+	static applyValidationProvider(content: string, validation: ValidationProvider = 'zod', producerPath?: string): string {
+		// This controlled producer consumes the same framework Zod 4 contracts as its backend FormRequests.
+		if (validation === 'zod' || producerPath === 'src/routes/admin/dashboard/+page.svelte') return content;
 
 		return content
 			.replace(/(import \{)([^}]+)(\} from 'sveltekit-superforms\/adapters';)/g, (_match, start: string, imports: string, end: string) =>
