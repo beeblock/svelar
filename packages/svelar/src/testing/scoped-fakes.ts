@@ -4,7 +4,7 @@ import { interceptHttpForTesting, type HttpTestingRuntime } from '../http/index.
 import { Mailer, type MailMessage, type SendResult } from '../mail/index.js';
 import { Notifier, type Notifiable, type Notification, type NotificationChannel } from '../notifications/index.js';
 import { Queue, type Job } from '../queue/index.js';
-import type { ApplicationContextSnapshot } from '../support/Context.js';
+import { ApplicationContext, type ApplicationContextSnapshot } from '../support/Context.js';
 import { cloneMailMessage } from './mail-message.js';
 
 export interface FakeOptions {
@@ -191,6 +191,7 @@ export interface FakeEventRecord {
   name: string;
   event: unknown;
   dispatchedAt: Date;
+  context: ApplicationContextSnapshot;
 }
 
 export interface FakeEventsOptions extends FakeOptions {
@@ -208,7 +209,7 @@ export class FakeEvents extends FakeRecords<FakeEventRecord> {
   run<T>(callback: (fake: this) => T | Promise<T>): Promise<T> {
     return this.scoped(this.dispatcher, (isActive) => this.dispatcher.interceptForTesting((name, event) => {
       if (!isActive()) return false;
-      this.capture({ name, event, dispatchedAt: new Date() });
+      this.capture({ name, event, dispatchedAt: new Date(), context: { ...ApplicationContext.snapshot() } });
       return true;
     }), callback);
   }

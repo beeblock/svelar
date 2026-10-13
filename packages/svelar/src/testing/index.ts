@@ -32,3 +32,7 @@ export {
   type FakeHttpRecord,
   type FakeHttpResponse,
 } from './fakes.js';
+export { FakeClock, fakeClock, type FakeClockAdapter, type FakeClockOptions } from './clock.js';
+export { runWithContext, withTenant, withActor, createContextRequestEvent, assertApplicationContext,
+  type TestApplicationContext } from './context.js';
+export { WebhookInboxHarness, withWebhookInbox, type WebhookInboxHarnessTarget, type InboxAcceptanceRecord } from './inbox.js';

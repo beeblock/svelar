@@ -369,7 +369,42 @@ Record accessors return a copied array. Job, event/payload, notification, and re
 
 Each fake captures at most 1,000 records by default. Pass `{ maxRecords: 5000 }` as the second argument to increase the limit. Limits must be positive safe integers; overflow throws without performing the real side effect. The corresponding `FakeMail`, `FakeQueue`, `FakeEvents`, `FakeNotifications`, and `FakeHttp` classes accept the same options and expose `run(callback)` for reuse. A single instance cannot run overlapping scopes; use separate instances for nested or concurrent work. `reset()` only clears captured records, not HTTP responders or circuit state.
 
-Svelar currently uses native time APIs without an injectable clock contract. Use Vitest's clock controls when needed; these helpers do not patch time globally.
+### Clock And Explicit Context
+
+`fakeClock` scopes Vitest fake timers to an awaited callback. Timers are global, so it requires the public context of a sequential test and rejects nested/overlapping clock scopes or foreign fake timers. It restores real time even when the callback fails. Always await `tick()` and every operation before returning.
+
+```typescript
+import { it, expect } from 'vitest';
+import { fakeClock, runWithContext, createContextRequestEvent, assertApplicationContext } from '@beeblock/svelar/testing';
+
+it('keeps the originating tenant and advances time', async (testContext) => {
+  await fakeClock(async (clock) => {
+    await runWithContext({ tenantId: 'tenant-a', actorId: 'worker', correlationId: 'test-1' }, async () => {
+      await clock.tick(60_000);
+      assertApplicationContext({ tenantId: 'tenant-a', actorId: 'worker' });
+      const event = createContextRequestEvent();
+      expect(event.locals.context.tenantId).toBe('tenant-a');
+    });
+  }, { testContext, now: new Date('2026-01-01T00:00:00Z') });
+});
+```
+
+`withTenant(id, callback, context?)` and `withActor(id, callback, context?)` are focused variants. These helpers isolate context rather than inheriting ambient authentication; explicitly create authenticated locals when required. Fake event records include the dispatch-time context.
+
+### Real Inbox Harness
+
+`withWebhookInbox(WebhookInbox, callback)` exercises the configured durable inbox, not a signature-bypassing fake. Run migrations, register a source, and supply a real signed request in the fixture.
+
+```typescript
+await withWebhookInbox(WebhookInbox, async (inbox) => {
+  const receipt = await inbox.capture(sourceName, signedRequest);
+  await inbox.assertStored(receipt.entry.id, { status: 'received', tenantId });
+  await inbox.process(sourceName);
+  await inbox.assertStored(receipt.entry.id, { status: 'processed', tenantId });
+});
+```
+
+The harness exposes receipt/rejection records, bounded operations and `find`. Invalid signatures still fail before storage. SQLite tests do not prove PostgreSQL/MySQL locking or BullMQ recovery; run the installed real-driver certification profiles for those claims.
 
 ## E2E Tests with Playwright
 

@@ -22,6 +22,9 @@
  * ```
  */
 
+import { ApplicationContext, type ApplicationContextSnapshot } from '../support/Context.js';
+import { captureEventEnvelope, readEventEnvelope, type EventDispatchOptions, type EventJson, type NamedEventEnvelope } from './ContextEnvelope.js';
+
 // ── Types ──────────────────────────────────────────────────
 
 export type EventClass<T = any> = new (...args: any[]) => T;
@@ -35,9 +38,10 @@ export interface Subscriber {
 // ── Event Dispatcher ───────────────────────────────────────
 
 export class EventDispatcher {
-  private listeners = new Map<string, EventListener[]>();
+  private listeners = new Map<EventClass | string, EventListener[]>();
   private wildcardListeners: WildcardListener[] = [];
-  private onceListeners = new Map<string, EventListener[]>();
+  private onceListeners = new Map<EventClass | string, EventListener[]>();
+  private legacyClasses = new Map<string, EventClass>();
   private testingInterceptors = new Set<(name: string, payload: unknown) => boolean>();
 
   /** @internal Intercept delivery without modifying registered listeners. */
@@ -51,7 +55,7 @@ export class EventDispatcher {
    * Register an event listener
    */
   listen<T>(event: EventClass<T> | string, listener: EventListener<T>): () => void {
-    const name = typeof event === 'string' ? event : event.name;
+    const name = event;
 
     if (!this.listeners.has(name)) {
       this.listeners.set(name, []);
@@ -65,6 +69,7 @@ export class EventDispatcher {
         const idx = listeners.indexOf(listener as EventListener);
         if (idx >= 0) listeners.splice(idx, 1);
       }
+      this.releaseLegacyName(name);
     };
   }
 
@@ -72,7 +77,7 @@ export class EventDispatcher {
    * Register a one-time listener
    */
   once<T>(event: EventClass<T> | string, listener: EventListener<T>): () => void {
-    const name = typeof event === 'string' ? event : event.name;
+    const name = event;
 
     if (!this.onceListeners.has(name)) {
       this.onceListeners.set(name, []);
@@ -85,6 +90,7 @@ export class EventDispatcher {
         const idx = listeners.indexOf(listener as EventListener);
         if (idx >= 0) listeners.splice(idx, 1);
       }
+      this.releaseLegacyName(name);
     };
   }
 
@@ -102,52 +108,70 @@ export class EventDispatcher {
   /**
    * Dispatch an event
    */
-  async dispatch<T extends object>(event: T): Promise<void> {
+  async dispatch<T extends object>(event: T, options: EventDispatchOptions = {}): Promise<void> {
+    const context = options.context === undefined ? ApplicationContext.snapshot() : { ...options.context };
     const name = event.constructor.name;
-    for (const interceptor of [...this.testingInterceptors].reverse()) {
-      if (interceptor(name, event)) return;
-    }
-
-    // Regular listeners
-    const listeners = this.listeners.get(name) ?? [];
-    for (const listener of listeners) {
-      await listener(event);
-    }
-
-    // Once listeners
-    const onceListeners = this.onceListeners.get(name) ?? [];
-    for (const listener of onceListeners) {
-      await listener(event);
-    }
-    this.onceListeners.delete(name);
-
-    // Wildcard listeners
-    for (const listener of this.wildcardListeners) {
-      await listener(name, event);
-    }
+    const key = event.constructor as EventClass<T>;
+    const keys: (EventClass | string)[] = [key];
+    if (this.namedCount(name)) { this.assertLegacyClass(key); keys.push(name); }
+    await this.deliver(name, event, keys, context);
   }
 
   /**
    * Dispatch an event by string name with payload
    */
-  async emit(name: string, payload?: any): Promise<void> {
+  async emit(name: string, payload?: any, options: EventDispatchOptions = {}): Promise<void> {
+    const context = options.context === undefined ? ApplicationContext.snapshot() : { ...options.context };
+    await this.deliver(name, payload, [name], context);
+  }
+
+  /** Capture plain data for an explicitly named app-owned job; no constructor names or ambient worker identity. */
+  capture(name: string, payload: EventJson = null, options: EventDispatchOptions = {}): NamedEventEnvelope {
+    return captureEventEnvelope(name, payload, options);
+  }
+
+  /** Replay a serialized envelope inside the original isolated context. */
+  async replay(envelope: NamedEventEnvelope): Promise<void> {
+    const captured = readEventEnvelope(envelope);
+    await this.deliver(captured.name, captured.payload, [captured.name], captured.context, true);
+  }
+
+  private async deliver(name: string, payload: unknown, keys: (EventClass | string)[], context: ApplicationContextSnapshot, transport = false): Promise<void> {
+    const isolated = <T>(callback: () => T | Promise<T>): T | Promise<T> => ApplicationContext.runIsolated(transport ? structuredClone(context) : { ...context }, callback);
     for (const interceptor of [...this.testingInterceptors].reverse()) {
-      if (interceptor(name, payload)) return;
+      if (await isolated(() => interceptor(name, payload))) return;
     }
-    const listeners = this.listeners.get(name) ?? [];
+    const listeners = keys.flatMap((key) => this.listeners.get(key) ?? []);
     for (const listener of listeners) {
-      await listener(payload);
+      await isolated(() => listener(payload));
     }
-
-    const onceListeners = this.onceListeners.get(name) ?? [];
+    const onceListeners = keys.flatMap((key) => this.onceListeners.get(key) ?? []);
+    for (const key of keys) { this.onceListeners.delete(key); this.releaseLegacyName(key); }
     for (const listener of onceListeners) {
-      await listener(payload);
+      await isolated(() => listener(payload));
     }
-    this.onceListeners.delete(name);
+    for (const listener of [...this.wildcardListeners]) {
+      await isolated(() => listener(name, payload));
+    }
+  }
 
-    for (const listener of this.wildcardListeners) {
-      await listener(name, payload);
+  private namedCount(name: string): number {
+    return (this.listeners.get(name)?.length ?? 0) + (this.onceListeners.get(name)?.length ?? 0);
+  }
+
+  private releaseLegacyName(key: EventClass | string): void {
+    if (!this.listeners.get(key)?.length) this.listeners.delete(key);
+    if (!this.onceListeners.get(key)?.length) this.onceListeners.delete(key);
+    if (typeof key === 'string' && !this.namedCount(key)) this.legacyClasses.delete(key);
+  }
+
+  private assertLegacyClass(event: EventClass): void {
+    const known = this.legacyClasses.get(event.name);
+    const keys = [...this.listeners.keys(), ...this.onceListeners.keys()];
+    if ((known && known !== event) || keys.some((key) => typeof key !== 'string' && key.name === event.name && key !== event)) {
+      throw new Error(`Ambiguous event class name ${event.name}; bind local listeners by class identity or use explicit namespaced events.`);
     }
+    this.legacyClasses.set(event.name, event);
   }
 
   /**
@@ -161,9 +185,10 @@ export class EventDispatcher {
    * Remove all listeners for an event
    */
   forget(event: EventClass | string): void {
-    const name = typeof event === 'string' ? event : event.name;
+    const name = event;
     this.listeners.delete(name);
     this.onceListeners.delete(name);
+    this.releaseLegacyName(name);
   }
 
   /**
@@ -173,33 +198,30 @@ export class EventDispatcher {
     this.listeners.clear();
     this.onceListeners.clear();
     this.wildcardListeners = [];
+    this.legacyClasses.clear();
   }
 
   /**
    * Check if an event has listeners
    */
   hasListeners(event: EventClass | string): boolean {
-    const name = typeof event === 'string' ? event : event.name;
-    return (
-      (this.listeners.get(name)?.length ?? 0) > 0 ||
-      (this.onceListeners.get(name)?.length ?? 0) > 0 ||
-      this.wildcardListeners.length > 0
-    );
+    return this.listenerCount(event) > 0 || this.wildcardListeners.length > 0;
   }
 
   /**
    * Get the count of listeners for an event
    */
   listenerCount(event: EventClass | string): number {
-    const name = typeof event === 'string' ? event : event.name;
     return (
-      (this.listeners.get(name)?.length ?? 0) +
-      (this.onceListeners.get(name)?.length ?? 0)
+      (this.listeners.get(event)?.length ?? 0) +
+      (this.onceListeners.get(event)?.length ?? 0) +
+      (typeof event === 'string' ? 0 : this.namedCount(event.name))
     );
   }
 }
 
 import { singleton } from '../support/singleton.js';
+export type { EventDispatchOptions, EventJson, NamedEventEnvelope } from './ContextEnvelope.js';
 
 /**
  * Global event dispatcher singleton

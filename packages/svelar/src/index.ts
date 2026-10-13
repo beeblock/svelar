@@ -67,6 +67,7 @@ export type { ErrorHandlerConfig } from './errors/Handler.js';
 // Events
 export { Event, EventDispatcher } from './events/index.js';
 export type { EventClass, EventListener, Subscriber } from './events/index.js';
+export type { EventDispatchOptions, EventJson, NamedEventEnvelope } from './events/index.js';
 
 // Form Requests
 export { FormRequest, FormValidationError, FormAuthorizationError } from './routing/FormRequest.js';

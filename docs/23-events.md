@@ -19,7 +19,7 @@ export class UserRegistered {
 }
 ```
 
-Events are plain classes — no base class required. They carry the data that listeners need. A constructor-only event class is valid: TypeScript public constructor properties are the event payload, and Svelar uses the class constructor name as the event name for class-based dispatch and provider mappings.
+Events are plain classes — no base class required. They carry the data that listeners need. A constructor-only event class is valid: TypeScript public constructor properties are the event payload. Local class-based registrations use constructor identity, so unrelated module events with the same class name do not share listeners. Legacy string-name mappings reject ambiguous same-name class dispatch instead of delivering to the wrong module.
 
 ### Creating Listeners
 
@@ -71,7 +71,22 @@ This gives you the same module-decoupling benefits while letting the queue syste
 
 ### Production Class Names
 
-Class-based events, model observer registrations and queued job registries use constructor names as identifiers. Svelar's package build preserves these names across independently bundled subpaths, including PDF jobs. If you customize application bundling, preserve class names too (`keepNames: true` with esbuild); do not rename serialized job identifiers between web and worker builds while jobs are pending. String-named events use the explicit name passed to `Event.emit()`.
+Queued job registries and legacy event-provider mappings use constructor names as identifiers. Svelar's package build preserves these names across independently bundled subpaths, including PDF jobs. If you customize application bundling, preserve class names too (`keepNames: true` with esbuild); do not rename serialized job identifiers between web and worker builds while jobs are pending. Local class-based listeners and Model observers use constructor identity. String-named events use the explicit name passed to `Event.emit()`.
+
+### Context And Transport
+
+Dispatch captures the originating tenant, actor and correlation context. Each listener runs in an isolated copy, including wildcard listeners: changing context inside one listener does not change the next. Pass `{ context: {} }` explicitly for a system event that must not inherit request identity.
+
+For serialized jobs, use an explicitly namespaced transport name and JSON payload instead of serializing class instances:
+
+```typescript
+const envelope = Event.capture('billing.invoice.created', { invoiceId });
+await Queue.dispatch(new DeliverInvoiceEventJob({ envelope }));
+// In the registered job's handle():
+await Event.replay(this.data.envelope);
+```
+
+Register a named listener with `Event.listen('billing.invoice.created', ...)` in the worker bootstrap. Replay restores the captured context, not the operator/worker ambient identity. Envelope validation rejects non-JSON values, cycles, accessors and oversized data (1 MiB, depth 32, 10,000 nodes). `capture` does not dispatch, persist or enqueue anything by itself. Deliver jobs after commit, or persist an application outbox when delivery must be durable.
 
 ### Dispatching Events
 
