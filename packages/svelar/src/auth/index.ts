@@ -7,8 +7,14 @@ export {
   signJwt,
   verifyJwt,
   type AuthConfig,
+  type AuthAuditConfig,
+  type AuthAuditEvent,
   type AuthUser,
   type GuardType,
+  type SessionLoginOptions,
+  type FederationLoginOptions,
+  type AuthLoginSession,
+  type AuthenticatedVia,
   type JwtConfig,
   type JwtPayload,
   type JwtTokenPair,
@@ -30,3 +36,22 @@ export {
   type BeforeCallback,
   type AfterCallback,
 } from './Gate.js';
+export { SessionActivityController } from './SessionActivityController.js';
+export {
+  AuthEligibilityError,
+  evaluateAuthEligibility,
+  type AuthAuthenticationMethod,
+  type AuthEligibilityConfig,
+  type AuthEligibilityReason,
+  type AuthEligibilityResult,
+} from './Eligibility.js';
+export {
+  authFailurePresentation,
+  resolveAuthPresentation,
+  type AuthBrand,
+  type AuthFailurePresentation,
+  type AuthFailureReason,
+  type AuthFederationProvider,
+  type AuthPresentation,
+  type AuthPresentationConfig,
+} from './Presentation.js';

@@ -16,8 +16,9 @@
  */
 
 import { createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
-import { assertSqlIdentifier } from '../database/Connection.js';
+import { assertSqlIdentifier, Connection } from '../database/Connection.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
+import { Audit } from '../audit/index.js';
 import {
   ApiKeyAccessDeniedError,
   ApiKeyRateLimitError,
@@ -26,10 +27,43 @@ import {
   type ApiKeyValidationContext,
   type CreateKeyOptions,
 } from '../api-keys/index.js';
+import { AuthEligibilityError, evaluateAuthEligibility, type AuthAuthenticationMethod, type AuthEligibilityConfig, type AuthEligibilityResult } from './Eligibility.js';
+import { authFailurePresentation, resolveAuthPresentation, type AuthFailureReason, type AuthPresentation, type AuthPresentationConfig } from './Presentation.js';
 
 // ── Types ──────────────────────────────────────────────────
 
 export type GuardType = 'session' | 'jwt' | 'token';
+export type AuthenticatedVia = 'bearer' | 'session' | null;
+
+export interface SessionLoginOptions {
+  remember?: boolean;
+}
+
+export interface FederationLoginOptions extends SessionLoginOptions {
+  providerId?: string;
+}
+
+export interface AuthLoginSession {
+  set(key: string, value: unknown): void;
+  regenerateId(): void;
+  startAuthentication?(remember: boolean): void;
+}
+
+export interface AuthAuditEvent {
+  readonly action: 'auth.login' | 'auth.passwordless' | 'auth.federation' | 'auth.refresh' | 'auth.bearer' | 'auth.logout' | 'auth.tokens.revoked';
+  readonly method: AuthAuthenticationMethod | 'bearer';
+  readonly outcome: 'allowed' | 'denied' | 'logged_out' | 'revoked';
+  readonly subjectId: string | number | null;
+  readonly reason?: AuthFailureReason;
+  readonly providerId?: string;
+  readonly purpose?: string;
+  readonly affected?: number;
+}
+
+export interface AuthAuditConfig {
+  enabled?: boolean;
+  record?: (event: AuthAuditEvent) => void | Promise<void>;
+}
 
 export interface AuthConfig {
   guard: GuardType;
@@ -53,6 +87,12 @@ export interface AuthConfig {
   emailVerification?: EmailVerificationConfig;
   /** OTP (one-time password) configuration */
   otp?: OtpConfig;
+  /** Optional, application-owned account eligibility rules, checked for every authentication. */
+  eligibility?: AuthEligibilityConfig;
+  /** Public branding and explicitly configured federation providers. */
+  presentation?: AuthPresentationConfig;
+  /** Defaults to the configured Audit sink. False disables auth events; a recorder overrides the sink. */
+  audit?: boolean | AuthAuditConfig;
 }
 
 export interface PasswordResetConfig {
@@ -194,6 +234,7 @@ export class AuthManager {
   private config: Required<Pick<AuthConfig, 'guard' | 'model' | 'identifierColumn' | 'passwordColumn'>> & AuthConfig;
   private currentUser: AuthUser | null = null;
   private currentApiKey: ApiKeyRecord | null = null;
+  private lastFailure: AuthFailureReason | null = null;
 
   constructor(userConfig: AuthConfig) {
     this.config = {
@@ -220,6 +261,116 @@ export class AuthManager {
   clearUser(): void {
     this.currentUser = null;
     this.currentApiKey = null;
+    this.lastFailure = null;
+  }
+
+  failureReason(): AuthFailureReason | null { return this.lastFailure; }
+
+  hasJwtConfig(): boolean { return this.config.jwt !== undefined; }
+
+  presentation(): AuthPresentation {
+    return resolveAuthPresentation(this.config.presentation, this.config.appName ?? process.env.APP_NAME ?? 'Svelar');
+  }
+
+  federationProvider(providerId: string): AuthPresentation['providers'][number] | null {
+    return this.presentation().providers.find((provider) => provider.id === providerId) ?? null;
+  }
+
+  async checkEligibility(user: AuthUser, method: AuthAuthenticationMethod = 'session'): Promise<AuthEligibilityResult> {
+    return evaluateAuthEligibility(user, this.config.eligibility, method, this.config.emailVerification?.verifiedColumn);
+  }
+
+  private beginAuthentication(): void {
+    this.clearUser();
+    this.lastFailure = 'invalid_credentials';
+  }
+
+  private async accepts(user: AuthUser, method: AuthAuthenticationMethod): Promise<boolean> {
+    try {
+      const result = await this.checkEligibility(user, method);
+      this.lastFailure = result.eligible ? null : result.reason;
+      return result.eligible;
+    } catch (error) {
+      this.lastFailure = 'temporarily_unavailable';
+      throw error;
+    }
+  }
+
+  private startSession(user: AuthUser, session: AuthLoginSession | undefined, options: SessionLoginOptions = {}): void {
+    if (options.remember !== undefined && typeof options.remember !== 'boolean') throw new TypeError('Remember-me must be a boolean.');
+    if (options.remember && typeof session?.startAuthentication !== 'function') throw new Error('Remember-me requires a managed Session.');
+    if (!session) return;
+    session.startAuthentication?.(options.remember ?? false);
+    session.set('auth_user_id', user.getAttribute('id'));
+    session.regenerateId();
+  }
+
+  private subjectId(user: AuthUser | null | undefined): string | number | null {
+    const id: unknown = user?.getAttribute('id');
+    return typeof id === 'string' || typeof id === 'number' && Number.isSafeInteger(id) ? id : null;
+  }
+
+  private async recordAuthAudit(event: AuthAuditEvent): Promise<void> {
+    const configured = this.config.audit;
+    if (configured === false) return;
+    if (configured !== undefined && configured !== true && (!configured || typeof configured !== 'object')) throw new TypeError('Invalid auth audit configuration.');
+    const options = typeof configured === 'object' ? configured : undefined;
+    if (options?.enabled !== undefined && typeof options.enabled !== 'boolean') throw new TypeError('Auth audit enabled must be a boolean.');
+    if (options?.enabled === false) return;
+    if (options?.record !== undefined && typeof options.record !== 'function') throw new TypeError('Auth audit record must be a function.');
+    const owned = Object.freeze({ ...event });
+    const write = async () => {
+      if (options?.record) await options.record(owned);
+      else await Audit.log({ userId: null, action: owned.action, modelType: 'Auth', modelId: owned.subjectId ?? 'anonymous',
+        metadata: { method: owned.method, outcome: owned.outcome, targetUserId: owned.subjectId,
+          ...(owned.reason === undefined ? {} : { reason: owned.reason }),
+          ...(owned.providerId === undefined ? {} : { providerId: owned.providerId }),
+          ...(owned.purpose === undefined ? {} : { purpose: owned.purpose }),
+          ...(owned.affected === undefined ? {} : { affected: owned.affected }) } });
+    };
+    try {
+      if (owned.outcome === 'allowed' && owned.subjectId !== null) {
+        await ApplicationContext.run({ userId: owned.subjectId, actorId: owned.subjectId, actorType: 'user',
+          apiKeyId: undefined, serviceAccountId: undefined, abilities: undefined }, write);
+      } else await write();
+    } catch (error) {
+      this.lastFailure = 'temporarily_unavailable';
+      throw error;
+    }
+  }
+
+  private async recordAttempt(method: AuthAuthenticationMethod, outcome: 'allowed' | 'denied', user?: AuthUser | null,
+    details: Pick<AuthAuditEvent, 'providerId' | 'purpose'> = {}): Promise<void> {
+    const action = method === 'passwordless' ? 'auth.passwordless' : method === 'federation' ? 'auth.federation'
+      : method === 'refresh' ? 'auth.refresh' : 'auth.login';
+    await this.recordAuthAudit({ action, method, outcome, subjectId: this.subjectId(user),
+      ...(outcome === 'denied' ? { reason: this.lastFailure ?? 'invalid_credentials' } : {}), ...details });
+  }
+
+  private async deniedAttempt(method: AuthAuthenticationMethod, user?: AuthUser | null,
+    details: Pick<AuthAuditEvent, 'providerId' | 'purpose'> = {}): Promise<null> {
+    await this.recordAttempt(method, 'denied', user, details);
+    return null;
+  }
+
+  /** Used by credential middleware only after the complete Bearer verification path fails. */
+  async auditBearerDenial(reason: AuthFailureReason): Promise<void> {
+    await this.recordAuthAudit({ action: 'auth.bearer', method: 'bearer', outcome: 'denied', subjectId: null, reason });
+  }
+
+  /** Establish a verified federation login using fresh persisted account state. */
+  async login(user: AuthUser, session?: AuthLoginSession, options: FederationLoginOptions = {}): Promise<AuthUser | null> {
+    this.beginAuthentication();
+    if (options.providerId !== undefined && this.federationProvider(options.providerId)?.available !== true) {
+      this.lastFailure = 'provider_unavailable';
+      return this.deniedAttempt('federation', null, { providerId: options.providerId });
+    }
+    const persisted = await this.config.model.find(user.getAttribute('id'));
+    if (!persisted || !await this.accepts(persisted, 'federation')) return this.deniedAttempt('federation', persisted, { providerId: options.providerId });
+    await this.recordAttempt('federation', 'allowed', persisted, { providerId: options.providerId });
+    this.startSession(persisted, session, options);
+    this.currentUser = persisted;
+    return persisted;
   }
 
   /**
@@ -228,8 +379,12 @@ export class AuthManager {
    */
   async attempt(
     credentials: Record<string, any>,
-    session?: any
+    session?: any,
+    options: SessionLoginOptions = {},
   ): Promise<AuthUser | null> {
+    this.beginAuthentication();
+    if (options.remember !== undefined && typeof options.remember !== 'boolean') throw new Error('Remember-me must be a boolean.');
+    if (options.remember && typeof session?.startAuthentication !== 'function') throw new Error('Remember-me requires a managed Session.');
     const { Hash } = await import('../hashing/Hash.js');
 
     const identifier = credentials[this.config.identifierColumn];
@@ -237,7 +392,7 @@ export class AuthManager {
 
     if (!identifier || !password) {
       this.currentUser = null;
-      return null;
+      return this.deniedAttempt('session');
     }
 
     // Find user by identifier
@@ -247,7 +402,7 @@ export class AuthManager {
 
     if (!user) {
       this.currentUser = null;
-      return null;
+      return this.deniedAttempt('session');
     }
 
     // Verify password
@@ -256,16 +411,14 @@ export class AuthManager {
 
     if (!valid) {
       this.currentUser = null;
-      return null;
+      return this.deniedAttempt('session', user);
     }
+
+    if (!await this.accepts(user, 'session')) return this.deniedAttempt('session', user);
+    await this.recordAttempt('session', 'allowed', user);
+    this.startSession(user, session, options);
 
     this.currentUser = user;
-
-    // Store in session if provided
-    if (session) {
-      session.set('auth_user_id', user.getAttribute('id'));
-      session.regenerateId(); // Prevent session fixation
-    }
 
     return user;
   }
@@ -277,6 +430,7 @@ export class AuthManager {
   async attemptJwt(
     credentials: Record<string, any>
   ): Promise<JwtTokenPair | null> {
+    this.beginAuthentication();
     const { Hash } = await import('../hashing/Hash.js');
 
     if (!this.config.jwt) {
@@ -288,7 +442,7 @@ export class AuthManager {
 
     if (!identifier || !password) {
       this.currentUser = null;
-      return null;
+      return this.deniedAttempt('jwt');
     }
 
     const user = await this.config.model
@@ -297,7 +451,7 @@ export class AuthManager {
 
     if (!user) {
       this.currentUser = null;
-      return null;
+      return this.deniedAttempt('jwt');
     }
 
     const hashedPassword = user.getAttribute(this.config.passwordColumn);
@@ -305,12 +459,14 @@ export class AuthManager {
 
     if (!valid) {
       this.currentUser = null;
-      return null;
+      return this.deniedAttempt('jwt', user);
     }
 
+    if (!await this.accepts(user, 'jwt')) return this.deniedAttempt('jwt', user);
+    await this.recordAttempt('jwt', 'allowed', user);
+    const pair = await this.issueTokenPair(user);
     this.currentUser = user;
-
-    return this.issueTokenPair(user);
+    return pair;
   }
 
   /**
@@ -362,6 +518,7 @@ export class AuthManager {
    * The old refresh token is revoked (rotation).
    */
   async refreshJwt(refreshToken: string): Promise<JwtTokenPair | null> {
+    this.beginAuthentication();
     if (!this.config.jwt) {
       throw new Error('JWT configuration required.');
     }
@@ -375,27 +532,28 @@ export class AuthManager {
 
     // Find the refresh token
     const row = await this.query(table).where('token', hashedRefresh).first();
-    if (!row) return null;
+    if (!row) return this.deniedAttempt('refresh');
 
     // Check if revoked
-    if (row.revoked_at) return null;
+    if (row.revoked_at) return this.deniedAttempt('refresh');
 
     // Check if expired
-    if (new Date(row.expires_at) < new Date()) return null;
+    if (new Date(row.expires_at) < new Date()) return this.deniedAttempt('refresh');
 
     // Revoke the old refresh token (rotation — each token is single-use)
     const revoked = await this.query(table)
       .where('token', hashedRefresh)
       .whereNull('revoked_at')
       .update({ revoked_at: new Date().toISOString() });
-    if (revoked === 0) return null;
+    if (revoked === 0) return this.deniedAttempt('refresh');
 
     // Resolve user and issue new pair
     const user = await this.config.model.find(row.user_id);
-    if (!user) return null;
-
+    if (!user || !await this.accepts(user, 'refresh')) return this.deniedAttempt('refresh', user);
+    await this.recordAttempt('refresh', 'allowed', user);
+    const pair = await this.issueTokenPair(user);
     this.currentUser = user;
-    return this.issueTokenPair(user);
+    return pair;
   }
 
   /**
@@ -406,16 +564,18 @@ export class AuthManager {
 
     const table = this.tableName(this.config.jwt.refreshTable ?? 'refresh_tokens', 'Refresh token table name');
 
-    await this.query(table)
-      .where('user_id', userId)
-      .whereNull('revoked_at')
-      .update({ revoked_at: new Date().toISOString() });
+    await Connection.transaction(async () => {
+      const affected = await this.query(table).where('user_id', userId).whereNull('revoked_at')
+        .update({ revoked_at: new Date().toISOString() });
+      await this.recordAuthAudit({ action: 'auth.tokens.revoked', method: 'refresh', outcome: 'revoked', subjectId: userId, affected });
+    });
   }
 
   /**
    * Resolve user from a JWT token
    */
   async resolveFromToken(token: string): Promise<AuthUser | null> {
+    this.beginAuthentication();
     if (!this.config.jwt) {
       throw new Error('JWT configuration required.');
     }
@@ -432,8 +592,8 @@ export class AuthManager {
     }
 
     const user = await this.config.model.find(payload.sub);
-    if (user) this.currentUser = user;
-    else this.currentUser = null;
+    if (!user || !await this.accepts(user, 'jwt')) return null;
+    this.currentUser = user;
     return user;
   }
 
@@ -441,6 +601,8 @@ export class AuthManager {
    * Resolve user from session
    */
   async resolveFromSession(session: any): Promise<AuthUser | null> {
+    this.beginAuthentication();
+    if (session.getActivityStatus?.()?.expired) { this.lastFailure = 'session_expired'; return null; }
     const userId = session.get('auth_user_id');
     if (!userId) {
       this.currentUser = null;
@@ -448,8 +610,15 @@ export class AuthManager {
     }
 
     const user = await this.config.model.find(userId);
-    if (user) this.currentUser = user;
-    else this.currentUser = null;
+    if (session.getActivityStatus?.()?.expired) { this.lastFailure = 'session_expired'; return null; }
+    if (!user || !await this.accepts(user, 'session')) {
+      session.forget('auth_user_id');
+      session.forget('_svelar_remember');
+      session.endAuthentication?.();
+      session.regenerateId();
+      return null;
+    }
+    this.currentUser = user;
     return user;
   }
 
@@ -457,6 +626,7 @@ export class AuthManager {
    * Register a new user
    */
   async register(attributes: Record<string, any>): Promise<AuthUser> {
+    this.beginAuthentication();
     const { Hash } = await import('../hashing/Hash.js');
 
     // Hash the password
@@ -467,7 +637,7 @@ export class AuthManager {
     }
 
     const user = await this.config.model.create(attributes);
-    this.currentUser = user;
+    if (await this.accepts(user, 'registration')) this.currentUser = user;
     return user;
   }
 
@@ -475,9 +645,12 @@ export class AuthManager {
    * Logout
    */
   async logout(session?: any): Promise<void> {
-    this.currentUser = null;
+    await this.recordAuthAudit({ action: 'auth.logout', method: 'session', outcome: 'logged_out', subjectId: this.subjectId(this.currentUser) });
+    this.clearUser();
     if (session) {
       session.forget('auth_user_id');
+      session.forget('_svelar_remember');
+      session.endAuthentication?.();
       session.regenerateId();
     }
   }
@@ -519,6 +692,10 @@ export class AuthManager {
     name: string = 'default',
     options: Omit<CreateKeyOptions, 'name' | 'userId'> = {},
   ): Promise<string> {
+    const persisted = await this.config.model.find(user.getAttribute('id'));
+    if (!persisted) throw new AuthEligibilityError('account_disabled');
+    const eligibility = await this.checkEligibility(persisted, 'api_token');
+    if (!eligibility.eligible) throw new AuthEligibilityError(eligibility.reason);
     const { plainTextKey } = await ApiKeys.create({
       ...options,
       userId: user.getAttribute('id'),
@@ -536,22 +713,35 @@ export class AuthManager {
    * Resolve user from an API token
    */
   async resolveFromApiToken(plainToken: string, context: ApiKeyValidationContext = {}): Promise<AuthUser | null> {
+    this.beginAuthentication();
     const record = await ApiKeys.validate(plainToken, context);
-    this.currentApiKey = record;
     if (!record) {
       this.currentUser = null;
       return null;
     }
 
-    if (record.userId == null) {
-      this.currentUser = null;
+    if (record.actorType === 'service_account' || record.userId == null) {
+      this.currentApiKey = record;
+      this.lastFailure = null;
       return null;
     }
 
-    const user = await this.config.model.find(record.userId);
-    if (user) this.currentUser = user;
-    else this.currentUser = null;
-    return user;
+    let user: AuthUser | null;
+    try {
+      user = await this.config.model.find(record.userId);
+      if (user && await this.accepts(user, 'api_token')) {
+        this.currentApiKey = record;
+        this.currentUser = user;
+        return user;
+      }
+    } catch (error) {
+      this.currentApiKey = null;
+      for (const key of ['teamId', 'tenantId', 'userId', 'actorId', 'actorType', 'apiKeyId', 'serviceAccountId', 'abilities']) ApplicationContext.set(key, undefined);
+      throw error;
+    }
+    this.currentApiKey = null;
+    for (const key of ['teamId', 'tenantId', 'userId', 'actorId', 'actorType', 'apiKeyId', 'serviceAccountId', 'abilities']) ApplicationContext.set(key, undefined);
+    return null;
   }
 
   /**
@@ -737,6 +927,7 @@ export class AuthManager {
       .first();
 
     if (!user) return false;
+    if (purpose === 'login' && !await this.accepts(user, 'passwordless')) return false;
 
     const table = this.tableName(this.config.otp?.table ?? 'otp_codes', 'OTP table name');
     const expiresIn = this.config.otp?.expiresIn ?? 600;
@@ -778,6 +969,7 @@ export class AuthManager {
    * Returns the user if valid, null otherwise.
    */
   async verifyOtp(email: string, code: string, purpose: string = 'login'): Promise<AuthUser | null> {
+    this.beginAuthentication();
     const table = this.tableName(this.config.otp?.table ?? 'otp_codes', 'OTP table name');
 
     const row = await this.findMatchingTokenRow(
@@ -788,25 +980,29 @@ export class AuthManager {
       code,
       'code',
     );
-    if (!row) return null;
+    if (!row) return this.deniedAttempt('passwordless', null, { purpose });
 
     if (new Date(row.expires_at) < new Date()) {
       await this.query(table).where('email', email).where('purpose', purpose).delete();
-      return null;
+      return this.deniedAttempt('passwordless', null, { purpose });
     }
 
     // Mark as used
-    await this.query(table)
+    const consumed = await this.query(table)
       .where('code', row.code)
       .where('email', email)
       .where('purpose', purpose)
+      .whereNull('used_at')
       .update({ used_at: new Date().toISOString() });
+    if (consumed === 0) return this.deniedAttempt('passwordless', null, { purpose });
 
     const user = await this.config.model
       .where(this.config.identifierColumn, email)
       .first();
 
-    if (user) this.currentUser = user;
+    if (!user || !await this.accepts(user, 'passwordless')) return this.deniedAttempt('passwordless', user, { purpose });
+    await this.recordAttempt('passwordless', 'allowed', user, { purpose });
+    this.currentUser = user;
     return user;
   }
 
@@ -823,10 +1019,7 @@ export class AuthManager {
     const user = await this.verifyOtp(email, code, purpose);
     if (!user) return null;
 
-    if (session) {
-      session.set('auth_user_id', user.getAttribute('id'));
-      session.regenerateId();
-    }
+    this.startSession(user, session);
 
     return user;
   }
@@ -927,63 +1120,68 @@ export class AuthenticateMiddleware extends Middleware {
       authManager.clearUser();
     }
     let user: AuthUser | null = null;
+    let authenticatedVia: AuthenticatedVia = null;
+    ctx.event.locals.authenticatedVia = null;
+    ctx.locals.authenticatedVia = null;
+    ctx.event.locals.user = null;
+    ctx.event.locals.apiKey = null;
+    ctx.event.locals.auth = authManager;
+    ctx.locals.auth = authManager;
+    ctx.locals.user = null;
+    ctx.locals.apiKey = null;
 
-    // Try session auth first
-    if (ctx.event.locals.session) {
-      user = await authManager.resolveFromSession(ctx.event.locals.session);
-    }
-
-    // Try JWT/Bearer token
-    if (!user) {
-      const authHeader = ctx.event.request.headers.get('authorization');
-      if (authHeader?.startsWith('Bearer ')) {
-        const token = authHeader.slice(7);
-
-        // Try JWT first, then fall back to opaque API tokens. resolveFromToken()
-        // returns null for malformed/non-JWT tokens, so fallback cannot live only in catch.
+    const authHeader = ctx.event.request.headers.get('authorization');
+    const bearerSupplied = authHeader !== null && /^Bearer(?:\s|$)/i.test(authHeader);
+    if (bearerSupplied) {
+      const token = /^Bearer\s+(\S+)$/i.exec(authHeader)?.[1];
+      if (token) {
         try {
-          user = await authManager.resolveFromToken(token);
-        } catch {
-          // JWT is not configured or failed unexpectedly. Try API token below.
-        }
-
-        if (!user) {
-          try {
-            user = await authManager.resolveFromApiToken(token, {
-              ip: ctx.event.getClientAddress?.(),
+          if (authManager.hasJwtConfig?.() !== false) user = await authManager.resolveFromToken(token);
+          const rejected = authManager.failureReason?.();
+          const eligibilityRejected = rejected != null && ['account_disabled', 'account_locked', 'email_unverified', 'temporarily_unavailable'].includes(rejected);
+          if (!user && !eligibilityRejected) user = await authManager.resolveFromApiToken(token, { ip: ctx.event.getClientAddress?.() });
+        } catch (error) {
+          if (error instanceof ApiKeyRateLimitError) {
+            await authManager.auditBearerDenial?.('rate_limited');
+            return new Response(JSON.stringify({ message: error.message, reason: 'rate_limited' }), {
+              status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': String(error.retryAfter) },
             });
-          } catch (error) {
-            if (error instanceof ApiKeyRateLimitError) {
-              return new Response(
-                JSON.stringify({ message: error.message }),
-                {
-                  status: 429,
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Retry-After': String(error.retryAfter),
-                  },
-                },
-              );
-            }
-            if (error instanceof ApiKeyAccessDeniedError) {
-              return new Response(
-                JSON.stringify({ message: error.message }),
-                { status: 403, headers: { 'Content-Type': 'application/json' } },
-              );
-            }
-            // Token table may not exist or token auth may not be configured.
           }
+          if (error instanceof ApiKeyAccessDeniedError) {
+            await authManager.auditBearerDenial?.('invalid_credentials');
+            return new Response(JSON.stringify({ message: error.message }), {
+              status: 403, headers: { 'Content-Type': 'application/json' },
+            });
+          }
+          await authManager.auditBearerDenial?.('temporarily_unavailable');
+          return new Response(JSON.stringify({ message: 'Authentication temporarily unavailable.', reason: 'temporarily_unavailable' }), {
+            status: 503, headers: { 'Content-Type': 'application/json' },
+          });
         }
       }
+      const verifiedApiKey = typeof authManager.apiKey === 'function' ? authManager.apiKey() : null;
+      if (!user && !verifiedApiKey) {
+        const failure = authFailurePresentation(authManager.failureReason?.() ?? 'invalid_credentials');
+        await authManager.auditBearerDenial?.(failure.reason);
+        return new Response(JSON.stringify({ message: 'Authentication denied.', reason: failure.reason }), {
+          status: failure.status, headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      authenticatedVia = 'bearer';
+    } else if (ctx.event.locals.session) {
+      user = await authManager.resolveFromSession(ctx.event.locals.session);
+      if (user) authenticatedVia = 'session';
     }
 
     const apiKey = typeof authManager.apiKey === 'function' ? authManager.apiKey() : null;
     ctx.event.locals.user = user;
     ctx.event.locals.apiKey = apiKey;
+    ctx.event.locals.authenticatedVia = authenticatedVia;
     ctx.event.locals.auth = authManager;
     ctx.locals.auth = authManager;
     ctx.locals.user = user;
     ctx.locals.apiKey = apiKey;
+    ctx.locals.authenticatedVia = authenticatedVia;
     const userId = user?.getAttribute?.('id') ?? user?.id;
     if (apiKey?.teamId != null) {
       ApplicationContext.set('teamId', apiKey.teamId);
