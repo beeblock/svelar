@@ -1,7 +1,9 @@
 import { singleton } from '../support/singleton.js';
 import type { RequestEvent } from '../routing/Controller.js';
 
-export type DashboardOperation = 'view' | 'retryJob' | 'deleteJob' | 'runTask' | 'toggleTask';
+export type DashboardOperation = 'view' | 'retryJob' | 'deleteJob' | 'retryJobs' | 'cleanupJobs' | 'pauseQueue' | 'runTask' | 'toggleTask'
+  | 'users' | 'resetPassword' | 'deleteUser' | 'permissions' | 'saveProfile' | 'deleteRole' | 'features' | 'toggleFeature'
+  | 'userAccess' | 'createRole' | 'assignRole' | 'detachRole' | 'grantCapability' | 'revokeCapability';
 export type DashboardAuthorizer = (event: RequestEvent, operation: DashboardOperation) => boolean | Promise<boolean>;
 
 export const dashboardAccess = singleton('svelar.dashboard.access', () => ({

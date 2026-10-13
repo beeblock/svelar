@@ -3,8 +3,7 @@ import { compile } from 'svelte/compiler';
 import ts from 'typescript';
 import { DashboardController, configureDashboard, redactDashboardPayload, redactDashboardValue } from '../src/dashboard/index.js';
 import { dashboardQueueSchema } from '../src/dashboard/contracts.js';
-import { JobMonitor, type JobInfo } from '../src/queue/JobMonitor.js';
-import { Queue } from '../src/queue/index.js';
+import { Queue, type QueueMonitoringAdapter, type QueueJobSnapshot } from '../src/queue/index.js';
 import { ScheduleMonitor } from '../src/scheduler/ScheduleMonitor.js';
 import { LogViewer } from '../src/logging/LogViewer.js';
 import { Log } from '../src/logging/index.js';
@@ -12,15 +11,16 @@ import { Audit } from '../src/audit/index.js';
 import { MakeDashboardCommand } from '../src/cli/commands/MakeDashboardCommand.js';
 import type { RequestEvent } from '../src/routing/Controller.js';
 
-const counts = { waiting: 2, active: 1, completed: 4, failed: 3, delayed: 0, total: 10 };
-const job: JobInfo = { id: '17', queue: 'imports', jobClass: 'ImportJob', status: 'failed', attempts: 3, maxAttempts: 3,
+const counts = { waiting: 2, active: 1, completed: 4, failed: 3, delayed: 0, deadLetter: 0 };
+const job: QueueJobSnapshot = { id: '17', connection: 'broker', queue: 'imports', jobClass: 'ImportJob', status: 'failed', attempts: 3, maxAttempts: 3, stalledCount: 0,
   payload: JSON.stringify({ password: 'do-not-send', nested: { access_token: 'do-not-send', title: 'Import' } }),
   metadata: { apiKey: 'do-not-send', correlationId: 'incident-17' },
-  error: 'Request failed: Bearer do-not-send\n  at ImportJob.run (worker.ts:10)', createdAt: 1000, processedAt: 2000, failedAt: 3000 };
+  error: 'Request failed: Bearer do-not-send\n  at ImportJob.run (worker.ts:10)', createdAt: 1000, processedAt: 2000, finishedAt: 3000,
+  lock: { source: 'unavailable', state: 'unknown', expiresAt: null, owner: null } };
 const task = { name: 'Import/records', expression: '* * * * *', humanReadable: 'Every minute', nextRun: new Date(),
   enabled: true, isRunning: false, history: [] };
 
-function event(path: string, options: { method?: string; body?: unknown; csrf?: boolean; user?: any; headers?: Record<string, string>; params?: Record<string, string>; signal?: AbortSignal } = {}): RequestEvent {
+function event(path: string, options: { method?: string; body?: unknown; csrf?: boolean; user?: unknown; headers?: Record<string, string>; params?: Record<string, string>; signal?: AbortSignal } = {}): RequestEvent {
   const headers: Record<string, string> = { ...options.headers };
   if (options.csrf !== false) { headers.cookie = 'session=session-id; XSRF-TOKEN=valid-token'; headers['X-CSRF-Token'] = 'valid-token'; }
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
@@ -30,27 +30,37 @@ function event(path: string, options: { method?: string; body?: unknown; csrf?: 
     cookies: {}, platform: {}, getClientAddress: () => '127.0.0.1' };
 }
 
+let monitor: QueueMonitoringAdapter;
 beforeEach(() => {
-  configureDashboard({ enabled: true, refreshInterval: 0, authorize: (event) => event.locals.user?.role === 'admin' });
+  configureDashboard({ enabled: true, refreshInterval: 0, authorize: (event) => event.locals.user?.role === 'admin', providers: {} });
   vi.spyOn(Audit, 'log').mockResolvedValue();
   vi.spyOn(Log, 'error').mockResolvedValue();
-  vi.spyOn(JobMonitor, 'getCounts').mockResolvedValue(counts);
-  vi.spyOn(JobMonitor, 'getJob').mockResolvedValue(job);
-  vi.spyOn(JobMonitor, 'listJobs').mockResolvedValue([job]);
-  vi.spyOn(JobMonitor, 'retryJob').mockResolvedValue(true);
-  vi.spyOn(JobMonitor, 'deleteJob').mockResolvedValue(true);
+  monitor = {
+    connection: 'broker', queue: 'imports', driver: 'redis', capabilities: {shared:true,indexedMetadata:true,durableReplay:true,pause:true},
+    counts: vi.fn<QueueMonitoringAdapter['counts']>().mockResolvedValue(counts), get: vi.fn<QueueMonitoringAdapter['get']>().mockResolvedValue(job),
+    list: vi.fn<QueueMonitoringAdapter['list']>().mockImplementation(async(filter={})=>({items:filter.status==='delayed'?[]:[job],limit:filter.limit??25,offset:filter.offset??0,indexedCount:counts[filter.status??'failed'],coverage:'instrumented'})),
+    runtime: vi.fn<QueueMonitoringAdapter['runtime']>().mockResolvedValue({paused:null,workers:null,globalConcurrency:null,observedConcurrency:null,effectiveConcurrency:null,oldestWaitingAt:null,lag:null,stalled:null,expiredLocks:null,locksComplete:false,coverage:'instrumented'}),
+    metrics: vi.fn<QueueMonitoringAdapter['metrics']>().mockResolvedValue({source:'redis',completed:4,failed:3,completedPerMinute:[4],failedPerMinute:[3],minutes:60}),
+    retry: vi.fn<QueueMonitoringAdapter['retry']>().mockImplementation(async(reference)=>({...reference,outcome:'accepted'})),
+    remove: vi.fn<QueueMonitoringAdapter['remove']>().mockImplementation(async(reference)=>({...reference,outcome:'accepted'})),
+    timeline: vi.fn<QueueMonitoringAdapter['timeline']>().mockResolvedValue([{id:'1',event:'created',at:1000},{id:'2',event:'processed',at:2000},{id:'3',event:'failed',at:3000}]),
+    deadLetter: vi.fn<QueueMonitoringAdapter['deadLetter']>().mockResolvedValue(null),deadLetters:vi.fn<QueueMonitoringAdapter['deadLetters']>().mockResolvedValue([]),
+    retryMany:vi.fn<QueueMonitoringAdapter['retryMany']>().mockResolvedValue({results:[],failures:[]}),cleanup:vi.fn<QueueMonitoringAdapter['cleanup']>().mockResolvedValue({results:[],failures:[]}),
+    pause:vi.fn<QueueMonitoringAdapter['pause']>().mockResolvedValue(),resume:vi.fn<QueueMonitoringAdapter['resume']>().mockResolvedValue(),reconcile:vi.fn<QueueMonitoringAdapter['reconcile']>().mockResolvedValue({indexed:0,complete:true}),recover:vi.fn<QueueMonitoringAdapter['recover']>().mockResolvedValue(0),
+  };
+  vi.spyOn(Queue, 'adapter').mockReturnValue(monitor);
   vi.spyOn(ScheduleMonitor, 'getTask').mockResolvedValue(task);
   vi.spyOn(ScheduleMonitor, 'enableTask').mockResolvedValue();
   vi.spyOn(ScheduleMonitor, 'disableTask').mockResolvedValue();
 });
-afterEach(() => { configureDashboard({ enabled: false, refreshInterval: 0 }); vi.restoreAllMocks(); });
+afterEach(() => { configureDashboard({ enabled: false, refreshInterval: 0, providers: {} }); vi.restoreAllMocks(); });
 
 describe('Dashboard operational boundaries', () => {
   it.each([null, { id: 2, role: 'member' }])('denies every endpoint before accessing monitors for %j', async (user) => {
     const response = await new DashboardController().handle('queue')(event('/api/admin/queue', { user }));
     expect(response.status).toBe(403);
     expect(response.headers.get('Cache-Control')).toBe('no-store');
-    expect(JobMonitor.getCounts).not.toHaveBeenCalled();
+    expect(monitor.counts).not.toHaveBeenCalled();
   });
 
   it('denies disabled dashboards and operation-specific policy failures', async () => {
@@ -59,40 +69,42 @@ describe('Dashboard operational boundaries', () => {
     configureDashboard({ enabled: true, authorize: (_event, operation) => operation === 'view' });
     const response = await new DashboardController().handle('retryJob')(event('/api/admin/queue/17/retry?queue=imports', { method: 'POST', params: { id: '17' } }));
     expect(response.status).toBe(403);
-    expect(JobMonitor.retryJob).not.toHaveBeenCalled();
+    expect(monitor.retry).not.toHaveBeenCalled();
     expect(Audit.log).not.toHaveBeenCalled();
   });
 
-  it.each([{}, { authorization: 'Bearer forged-token' }])('requires CSRF even with session-authorized caller headers %j', async (headers) => {
+  it.each<Record<string,string>>([{}, { authorization: 'Bearer forged-token' }])('requires CSRF even with session-authorized caller headers %j', async (headers) => {
     const response = await new DashboardController().handle('retryJob')(event('/api/admin/queue/17/retry?queue=imports', { method: 'POST', csrf: false, params: { id: '17' }, headers }));
     expect(response.status).toBe(419);
     expect(response.headers.get('Cache-Control')).toBe('no-store');
-    expect(JobMonitor.retryJob).not.toHaveBeenCalled();
+    expect(monitor.retry).not.toHaveBeenCalled();
   });
 
   it.each(['limit=0', 'limit=101', 'limit=2oops', 'limit=-1', 'limit=Infinity', 'offset=-1', 'offset=1.5', 'offset=1000001', 'status=invalid'])('rejects unsafe query %s', async (query) => {
     const response = await new DashboardController().handle('queue')(event('/api/admin/queue?' + query));
     expect(response.status).toBe(422);
-    expect(JobMonitor.listJobs).not.toHaveBeenCalled();
+    expect(monitor.list).not.toHaveBeenCalled();
   });
 
   it('returns filtered pagination metadata and redacted inspection without mutating monitor records', async () => {
     const response = await new DashboardController().handle('queue')(event('/api/admin/queue?queue=imports&status=failed&limit=2&offset=1'));
     expect(response.status).toBe(200);
     const payload = await response.json();
-    expect(JobMonitor.listJobs).toHaveBeenCalledWith({ queue: 'imports', status: 'failed', limit: 2, offset: 1 });
+    expect(Queue.adapter).toHaveBeenCalledWith('imports', undefined);
+    expect(monitor.list).toHaveBeenCalledWith({ status: 'failed', limit: 2, offset: 1 });
     expect(payload.meta).toMatchObject({ total: 3, offset: 1, limit: 2, hasMore: true });
     expect(JSON.stringify(payload)).not.toContain('do-not-send');
     expect(payload.data.jobs[0].payload.nested.title).toBe('Import');
-    expect(payload.data.jobs[0].timeline).toHaveLength(3);
+    const detail = await new DashboardController().handle('job')(event('/api/admin/queue/17?queue=imports', {params:{id:'17'}}));
+    expect((await detail.json()).data.timeline).toHaveLength(3);
     expect(payload.data.jobs[0].error).toContain('worker.ts:10');
     expect(job.payload).toContain('do-not-send');
   });
 
-  it('does not query jobs beyond a filtered total', async () => {
+  it('uses a bounded indexed status query even when broker counts report no delayed jobs', async () => {
     const response = await new DashboardController().handle('queue')(event('/api/admin/queue?status=delayed'));
     expect((await response.json()).meta.total).toBe(0);
-    expect(JobMonitor.listJobs).not.toHaveBeenCalled();
+    expect(monitor.list).toHaveBeenCalledWith({status:'delayed',offset:0,limit:25});
   });
 
   it('passes explicit queue scope to detail/retry/delete and records no payload in audit', async () => {
@@ -101,35 +113,36 @@ describe('Dashboard operational boundaries', () => {
     expect((await controller.handle('job')(event('/api/admin/queue/17?queue=imports', options))).status).toBe(200);
     expect((await controller.handle('retryJob')(event('/api/admin/queue/17/retry?queue=imports', { ...options, method: 'POST' }))).status).toBe(200);
     expect((await controller.handle('deleteJob')(event('/api/admin/queue/17?queue=imports', { ...options, method: 'DELETE', body: { confirmed: true, id: 'another-id', queue: 'another-queue' } }))).status).toBe(200);
-    expect(JobMonitor.getJob).toHaveBeenCalledWith('17', 'imports');
-    expect(JobMonitor.retryJob).toHaveBeenCalledWith('17', 'imports');
-    expect(JobMonitor.deleteJob).toHaveBeenCalledWith('17', 'imports');
+    expect(Queue.adapter).toHaveBeenCalledWith('imports', undefined);
+    expect(monitor.get).toHaveBeenCalledWith('17');
+    expect(monitor.retry).toHaveBeenCalledWith({id:'17',source:'live'});
+    expect(monitor.remove).toHaveBeenCalledWith({id:'17',source:'live'});
     expect(JSON.stringify(vi.mocked(Audit.log).mock.calls)).not.toContain('do-not-send');
-    expect(Audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'dashboard.deleteJob.completed', userId: 4, modelId: '17', metadata: { queue: 'imports' } }));
+    expect(Audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'dashboard.deleteJob.completed', userId: 4, modelId: '17', metadata: { queue: 'imports', connection:null, source:'live' } }));
   });
 
   it.each([false, 'true', null, undefined])('requires explicit deletion confirmation %j', async (confirmed) => {
     const response = await new DashboardController().handle('deleteJob')(event('/api/admin/queue/17?queue=imports', { method: 'DELETE', params: { id: '17' }, body: { confirmed } }));
     expect(response.status).toBe(422);
-    expect(JobMonitor.deleteJob).not.toHaveBeenCalled();
+    expect(monitor.remove).not.toHaveBeenCalled();
   });
 
   it('refuses active deletion and nonfailed retry', async () => {
-    vi.mocked(JobMonitor.getJob).mockResolvedValue({ ...job, status: 'active' });
+    vi.mocked(monitor.remove).mockResolvedValue({id:'17',source:'live',outcome:'busy'});
+    vi.mocked(monitor.retry).mockResolvedValue({id:'17',source:'live',outcome:'not-failed'});
     const controller = new DashboardController();
     expect((await controller.handle('deleteJob')(event('/api/admin/queue/17?queue=imports', { method: 'DELETE', params: { id: '17' }, body: { confirmed: true } }))).status).toBe(409);
     expect((await controller.handle('retryJob')(event('/api/admin/queue/17/retry?queue=imports', { method: 'POST', params: { id: '17' } }))).status).toBe(409);
-    expect(JobMonitor.deleteJob).not.toHaveBeenCalled();
-    expect(JobMonitor.retryJob).not.toHaveBeenCalled();
+    expect(monitor.remove).toHaveBeenCalledWith({id:'17',source:'live'});
+    expect(monitor.retry).toHaveBeenCalledWith({id:'17',source:'live'});
   });
 
-  it('returns 404 for missing jobs and 409 when mutations return false', async () => {
+  it('returns 404 for missing records and 409 for nonaccepted atomic outcomes', async () => {
     const controller = new DashboardController();
     const input = event('/api/admin/queue/17/retry?queue=imports', { method: 'POST', params: { id: '17' } });
-    vi.mocked(JobMonitor.getJob).mockResolvedValue(null);
+    vi.mocked(monitor.retry).mockResolvedValue({id:'17',source:'live',outcome:'missing'});
     expect((await controller.handle('retryJob')(input)).status).toBe(404);
-    vi.mocked(JobMonitor.getJob).mockResolvedValue(job);
-    vi.mocked(JobMonitor.retryJob).mockResolvedValue(false);
+    vi.mocked(monitor.retry).mockResolvedValue({id:'17',source:'live',outcome:'busy'});
     expect((await controller.handle('retryJob')(input)).status).toBe(409);
   });
 
@@ -140,7 +153,7 @@ describe('Dashboard operational boundaries', () => {
     expect(response.status).toBe(503);
     expect(text).toContain('incidentId');
     expect(text).not.toContain('do-not-send');
-    expect(JobMonitor.retryJob).not.toHaveBeenCalled();
+    expect(monitor.retry).not.toHaveBeenCalled();
     expect(Log.error).toHaveBeenCalled();
     expect(JSON.stringify(vi.mocked(Log.error).mock.calls)).not.toContain('do-not-send');
   });
@@ -150,7 +163,7 @@ describe('Dashboard operational boundaries', () => {
     const response = await new DashboardController().handle('retryJob')(event('/api/admin/queue/17/retry?queue=imports', { method: 'POST', params: { id: '17' } }));
     expect(response.status).toBe(200);
     expect((await response.json()).meta.auditWarning).toContain('Do not repeat');
-    expect(JobMonitor.retryJob).toHaveBeenCalledOnce();
+    expect(monitor.retry).toHaveBeenCalledOnce();
   });
 
   it.each([true, false])('awaits persisted schedule controls for enabled=%s', async (enabled) => {
@@ -181,31 +194,34 @@ describe('Dashboard operational boundaries', () => {
     expect(await response.text()).not.toContain('do-not-send');
   });
 
-  it('distinguishes successful, skipped, and failed schedule execution', async () => {
-    const run = vi.spyOn(ScheduleMonitor, 'runTask').mockResolvedValue({ task: task.name, success: true, duration: 1, timestamp: new Date() });
+  it('queues persistent scheduler requests, surfaces enqueue failures and never executes tasks in web', async () => {
+    const run = vi.spyOn(ScheduleMonitor, 'runTask');
+    const request = vi.spyOn(ScheduleMonitor, 'requestRun').mockResolvedValue({id:'request',task:task.name,tenantId:null,state:'pending',requestedAt:new Date(),requestedBy:'4',owner:null,leaseUntil:null,attempts:0,result:null,error:null});
     const controller = new DashboardController();
     const input = () => event('/api/admin/scheduler/task/run', { method: 'POST', params: { name: task.name } });
     expect((await controller.handle('runTask')(input())).status).toBe(200);
-    run.mockResolvedValue({ task: task.name, success: true, skipped: true, duration: 0, timestamp: new Date() });
+    vi.mocked(ScheduleMonitor.getTask).mockResolvedValue({...task,isRunning:true});
     expect((await controller.handle('runTask')(input())).status).toBe(409);
-    run.mockResolvedValue({ task: task.name, success: false, error: 'password=do-not-send', duration: 1, timestamp: new Date() });
+    vi.mocked(ScheduleMonitor.getTask).mockResolvedValue(task);
+    request.mockRejectedValue(new Error('password=do-not-send'));
     expect((await controller.handle('runTask')(input())).status).toBe(503);
     expect(JSON.stringify(vi.mocked(Log.error).mock.calls)).not.toContain('do-not-send');
+    expect(run).not.toHaveBeenCalled();
   });
 
   it('uses observed topology rather than default-only counts or fabricated worker concurrency', async () => {
     vi.spyOn(Queue, 'queues').mockReturnValue([{ name: 'imports', label: 'Imports', concurrency: 5 }, { name: 'other', connection: 'unobserved' }]);
-    vi.spyOn(JobMonitor, 'getHealth').mockResolvedValue({ driver: 'redis', registry: [], registeredJobs: ['ImportJob'], queues: { imports: counts }, failureRate: 0, throughput: 0,
-      runtime: { imports: { workers: 2, effectiveConcurrency: null, globalConcurrency: 8, paused: false, oldestWaitingJob: null, lag: null, nextWaitingJob: null, nextWaitingLag: null } } });
+    vi.mocked(monitor.runtime).mockResolvedValue({paused:false,workers:{source:'heartbeat',complete:false,observedAt:1000,limit:100,invalidRecords:0,reason:null,records:[],coverage:'instrumented',observed:{live:2,active:2,paused:0,draining:0,stale:0,concurrency:5}},effectiveConcurrency:null,globalConcurrency:8,observedConcurrency:5,oldestWaitingAt:null,lag:null,stalled:null,expiredLocks:null,locksComplete:false,coverage:'instrumented'});
+    vi.mocked(Queue.adapter).mockImplementation((_queue,connection)=>connection==='unobserved'?{...monitor,driver:'memory',capabilities:{shared:false,indexedMetadata:false,durableReplay:false,pause:false}}:monitor);
     vi.spyOn(ScheduleMonitor, 'listTasks').mockResolvedValue([{ ...task, enabled: false }]);
     vi.spyOn(ScheduleMonitor, 'getHealth').mockResolvedValue({ totalTasks: 1, enabledTasks: 1, runningTasks: 0, lastErrors: [], uptime: 0 });
     const response = await new DashboardController().handle('stats')(event('/api/admin/stats'));
     const payload = await response.json();
-    expect(payload.data.queue.topology[0].runtime.workers).toBe(2);
+    expect(payload.data.queue.topology[0].runtime.workers.observed.live).toBe(2);
     expect(payload.data.queue.topology[0].runtime.effectiveConcurrency).toBeNull();
     expect(payload.data.queue.topology[1].counts).toBeNull();
     expect(payload.data.scheduler.enabledTasks).toBe(0);
-    expect(JobMonitor.getCounts).not.toHaveBeenCalled();
+    expect(monitor.counts).toHaveBeenCalledTimes(1);
   });
 
   it('reports filtered log totals, redacted context, and process scope', async () => {
@@ -272,12 +288,14 @@ describe('Dashboard serialization and generated contracts', () => {
   it('has bounded default paging and compiles every generated TS and Svelte artifact', () => {
     expect(dashboardQueueSchema.parse({})).toEqual({ queue: 'default', status: 'failed', offset: 0, limit: 25 });
     const files = new MakeDashboardCommand().files();
-    expect(files).toHaveLength(12);
+    expect(files).toHaveLength(33);
     for (const file of files) {
       if (file.path.endsWith('.svelte')) {
         for (const generate of ['client', 'server'] as const) expect(() => compile(file.content, { filename: file.path, generate })).not.toThrow();
-        expect(file.content).toContain('replaceState');
-        expect(file.content).toContain('confirmed: true');
+        if (file.path.endsWith('admin/dashboard/+page.svelte')) {
+          expect(file.content).toContain('replaceState');
+          expect(file.content).toContain('confirmed:true');
+        }
         expect(file.content).not.toContain('on:click');
       } else {
         const result = ts.transpileModule(file.content, { fileName: file.path, reportDiagnostics: true, compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } });

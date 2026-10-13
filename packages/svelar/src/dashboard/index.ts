@@ -31,14 +31,20 @@ import { LogViewer } from '../logging/LogViewer.js';
 import { JobMonitor, type QueueHealth } from '../queue/JobMonitor.js';
 import { ScheduleMonitor, type SchedulerHealth } from '../scheduler/ScheduleMonitor.js';
 import { dashboardAccess, redactDashboardValue, type DashboardAuthorizer } from './security.js';
+import { configureDashboardProviders, type DashboardProviders } from './providers.js';
 
 export { DashboardController } from './DashboardController.js';
+export { DashboardOperationError } from './DashboardService.js';
 export { authorizeDashboard, redactDashboardValue, redactDashboardPayload, redactDashboardText } from './security.js';
 export type { DashboardOperation, DashboardAuthorizer } from './security.js';
+export type { DashboardProviders, DashboardUserProvider, DashboardPermissionProvider, DashboardUser, DashboardRole, DashboardPage, DashboardListFilter, DashboardProfileScope, DashboardProfileUpdate, DashboardDependency } from './providers.js';
+export { configureDashboardProviders } from './providers.js';
+export type { DashboardUserAccess, DashboardRoleCreateInput, DashboardUserAccessInput, DashboardUserRoleInput, DashboardUserCapabilityInput } from './providers.js';
 
 // ── Types ──────────────────────────────────────────────────
 
 export interface DashboardConfig {
+  providers?: DashboardProviders;
   /** Server-side authorization hook, checked for reads and each mutation. Defaults to the global admin role. */
   authorize?: DashboardAuthorizer;
   /** Enable or disable the dashboard */
@@ -95,7 +101,7 @@ class DashboardPlugin extends Plugin {
   readonly version = '1.0.0';
   readonly description = 'Admin dashboard with system health monitoring';
 
-  private dashboardConfig: Required<Omit<DashboardConfig, 'authorize'>> & Pick<DashboardConfig, 'authorize'> = {
+  private dashboardConfig: Required<Omit<DashboardConfig, 'authorize' | 'providers'>> & Pick<DashboardConfig, 'authorize' | 'providers'> = {
     enabled: true,
     prefix: '/admin/dashboard',
     refreshInterval: 5000,
@@ -177,6 +183,7 @@ class DashboardPlugin extends Plugin {
    * Update dashboard configuration
    */
   setConfig(config: DashboardConfig): void {
+    if (config.providers !== undefined) configureDashboardProviders(config.providers);
     if (config.refreshInterval !== undefined && (!Number.isSafeInteger(config.refreshInterval) || config.refreshInterval < 0 || config.refreshInterval > 2_147_483_647)) {
       throw new Error('Dashboard refreshInterval must be an integer between 0 and 2147483647.');
     }
@@ -310,7 +317,7 @@ class DashboardPlugin extends Plugin {
 
     const data: Record<string, any> = {
       health,
-      config: this.dashboardConfig,
+      config: { enabled: this.dashboardConfig.enabled, prefix: this.dashboardConfig.prefix, refreshInterval: this.dashboardConfig.refreshInterval, sections: this.dashboardConfig.sections },
       healthCollection: this.getHealthCollectionStatus(),
     };
 
