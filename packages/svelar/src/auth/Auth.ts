@@ -286,6 +286,10 @@ export class AuthManager {
   }
 
   private async accepts(user: AuthUser, method: AuthAuthenticationMethod): Promise<boolean> {
+    if (this.subjectId(user) === null) {
+      this.lastFailure = 'invalid_credentials';
+      return false;
+    }
     try {
       const result = await this.checkEligibility(user, method);
       this.lastFailure = result.eligible ? null : result.reason;
@@ -297,20 +301,43 @@ export class AuthManager {
   }
 
   private startSession(user: AuthUser, session: AuthLoginSession | undefined, options: SessionLoginOptions = {}): void {
+    const userId = this.requireSubjectId(user);
     if (options.remember !== undefined && typeof options.remember !== 'boolean') throw new TypeError('Remember-me must be a boolean.');
     if (options.remember && typeof session?.startAuthentication !== 'function') throw new Error('Remember-me requires a managed Session.');
     if (!session) return;
     session.startAuthentication?.(options.remember ?? false);
-    session.set('auth_user_id', user.getAttribute('id'));
+    session.set('auth_user_id', userId);
     session.regenerateId();
   }
 
+  private primaryKey(): string {
+    return this.config.model.primaryKey ?? 'id';
+  }
+
+  private validIdentity(id: unknown): id is string | number {
+    return typeof id === 'string' && id.trim().length > 0 || typeof id === 'number' && Number.isSafeInteger(id);
+  }
+
   private subjectId(user: AuthUser | null | undefined): string | number | null {
-    const id: unknown = user?.getAttribute('id');
-    return typeof id === 'string' || typeof id === 'number' && Number.isSafeInteger(id) ? id : null;
+    const id: unknown = user?.getAttribute(this.primaryKey());
+    return this.validIdentity(id) ? id : null;
+  }
+
+  private requireSubjectId(user: AuthUser): string | number {
+    const id = this.subjectId(user);
+    if (id === null) throw new TypeError('Authentication requires a valid user primary key.');
+    return id;
+  }
+
+  private async findUser(id: unknown): Promise<AuthUser | null> {
+    if (!this.validIdentity(id)) return null;
+    return this.config.model.find(id);
   }
 
   private async recordAuthAudit(event: AuthAuditEvent): Promise<void> {
+    if (event.outcome === 'allowed' && !this.validIdentity(event.subjectId)) {
+      throw new TypeError('Allowed authentication audit events require a valid user primary key.');
+    }
     const configured = this.config.audit;
     if (configured === false) return;
     if (configured !== undefined && configured !== true && (!configured || typeof configured !== 'object')) throw new TypeError('Invalid auth audit configuration.');
@@ -365,7 +392,7 @@ export class AuthManager {
       this.lastFailure = 'provider_unavailable';
       return this.deniedAttempt('federation', null, { providerId: options.providerId });
     }
-    const persisted = await this.config.model.find(user.getAttribute('id'));
+    const persisted = await this.findUser(this.subjectId(user));
     if (!persisted || !await this.accepts(persisted, 'federation')) return this.deniedAttempt('federation', persisted, { providerId: options.providerId });
     await this.recordAttempt('federation', 'allowed', persisted, { providerId: options.providerId });
     this.startSession(persisted, session, options);
@@ -473,12 +500,13 @@ export class AuthManager {
    * Issue an access token (and optionally a refresh token) for a user.
    */
   private async issueTokenPair(user: AuthUser): Promise<JwtTokenPair> {
+    const userId = this.requireSubjectId(user);
     const jwt = this.config.jwt!;
     const expiresIn = jwt.expiresIn ?? 3600;
     const now = Math.floor(Date.now() / 1000);
 
     const payload: JwtPayload = {
-      sub: user.getAttribute('id'),
+      sub: userId,
       iat: now,
       exp: now + expiresIn,
       ...(jwt.issuer ? { iss: jwt.issuer } : {}),
@@ -499,7 +527,7 @@ export class AuthManager {
       const table = this.tableName(jwt.refreshTable ?? 'refresh_tokens', 'Refresh token table name');
 
       await this.query(table).insert({
-        user_id: user.getAttribute('id'),
+        user_id: userId,
         token: hashedRefresh,
         expires_at: refreshExpiresAt.toISOString(),
         created_at: new Date().toISOString(),
@@ -548,7 +576,7 @@ export class AuthManager {
     if (revoked === 0) return this.deniedAttempt('refresh');
 
     // Resolve user and issue new pair
-    const user = await this.config.model.find(row.user_id);
+    const user = await this.findUser(row.user_id);
     if (!user || !await this.accepts(user, 'refresh')) return this.deniedAttempt('refresh', user);
     await this.recordAttempt('refresh', 'allowed', user);
     const pair = await this.issueTokenPair(user);
@@ -561,6 +589,7 @@ export class AuthManager {
    */
   async revokeRefreshTokens(userId: string | number): Promise<void> {
     if (!this.config.jwt?.refreshTokens) return;
+    if (!this.validIdentity(userId)) throw new TypeError('Refresh token revocation requires a valid user primary key.');
 
     const table = this.tableName(this.config.jwt.refreshTable ?? 'refresh_tokens', 'Refresh token table name');
 
@@ -591,7 +620,7 @@ export class AuthManager {
       return null;
     }
 
-    const user = await this.config.model.find(payload.sub);
+    const user = await this.findUser(payload.sub);
     if (!user || !await this.accepts(user, 'jwt')) return null;
     this.currentUser = user;
     return user;
@@ -604,12 +633,12 @@ export class AuthManager {
     this.beginAuthentication();
     if (session.getActivityStatus?.()?.expired) { this.lastFailure = 'session_expired'; return null; }
     const userId = session.get('auth_user_id');
-    if (!userId) {
+    if (userId == null) {
       this.currentUser = null;
       return null;
     }
 
-    const user = await this.config.model.find(userId);
+    const user = await this.findUser(userId);
     if (session.getActivityStatus?.()?.expired) { this.lastFailure = 'session_expired'; return null; }
     if (!user || !await this.accepts(user, 'session')) {
       session.forget('auth_user_id');
@@ -672,8 +701,8 @@ export class AuthManager {
   /**
    * Get the authenticated user's ID
    */
-  id(): any {
-    return this.currentUser?.getAttribute('id') ?? null;
+  id(): string | number | null {
+    return this.subjectId(this.currentUser);
   }
 
   private tableName(name: string, label: string): string {
@@ -692,13 +721,14 @@ export class AuthManager {
     name: string = 'default',
     options: Omit<CreateKeyOptions, 'name' | 'userId'> = {},
   ): Promise<string> {
-    const persisted = await this.config.model.find(user.getAttribute('id'));
+    const persisted = await this.findUser(this.subjectId(user));
     if (!persisted) throw new AuthEligibilityError('account_disabled');
+    const userId = this.requireSubjectId(persisted);
     const eligibility = await this.checkEligibility(persisted, 'api_token');
     if (!eligibility.eligible) throw new AuthEligibilityError(eligibility.reason);
     const { plainTextKey } = await ApiKeys.create({
       ...options,
-      userId: user.getAttribute('id'),
+      userId,
       name,
       teamId: options.teamId ?? this.config.token?.teamId,
       prefix: options.prefix ?? this.config.token?.prefix,
@@ -728,7 +758,7 @@ export class AuthManager {
 
     let user: AuthUser | null;
     try {
-      user = await this.config.model.find(record.userId);
+      user = await this.findUser(record.userId);
       if (user && await this.accepts(user, 'api_token')) {
         this.currentApiKey = record;
         this.currentUser = user;
@@ -762,7 +792,7 @@ export class AuthManager {
       .where(this.config.identifierColumn, email)
       .first();
 
-    if (!user) return false; // Don't reveal if user exists
+    if (!user || this.subjectId(user) === null) return false; // Don't reveal if user exists
 
     const table = this.tableName(this.config.passwordResets?.table ?? 'password_resets', 'Password resets table name');
     const expiresIn = this.config.passwordResets?.expiresIn ?? 3600;
@@ -822,18 +852,19 @@ export class AuthManager {
       .where(this.config.identifierColumn, email)
       .first();
 
-    if (!user) return false;
+    const userId = this.subjectId(user);
+    if (userId === null) return false;
 
     const hashedPassword = await Hash.make(newPassword);
     await this.config.model
-      .where('id', user.getAttribute('id'))
+      .where(this.primaryKey(), userId)
       .update({ [this.config.passwordColumn]: hashedPassword });
 
     // Delete all reset tokens for this email
     await this.query(table).where('email', email).delete();
 
     // Revoke all refresh tokens
-    await this.revokeRefreshTokens(user.getAttribute('id'));
+    await this.revokeRefreshTokens(userId);
 
     return true;
   }
@@ -845,29 +876,32 @@ export class AuthManager {
    * Generates a token, stores its hash, and sends the email-verification template.
    */
   async sendVerificationEmail(user: AuthUser): Promise<void> {
+    const persisted = await this.findUser(this.subjectId(user));
+    if (!persisted) throw new AuthEligibilityError('account_disabled');
+    const userId = this.requireSubjectId(persisted);
     const table = this.tableName(this.config.emailVerification?.table ?? 'email_verifications', 'Email verifications table name');
     const expiresIn = this.config.emailVerification?.expiresIn ?? 86400;
-    const email = user.getAttribute(this.config.identifierColumn);
+    const email = persisted.getAttribute(this.config.identifierColumn);
 
     // Delete existing tokens for this user
-    await this.query(table).where('user_id', user.getAttribute('id')).delete();
+    await this.query(table).where('user_id', userId).delete();
 
     const token = randomBytes(32).toString('base64url');
     const hashedToken = this.hashToken(token);
     const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
 
     await this.query(table).insert({
-      user_id: user.getAttribute('id'),
+      user_id: userId,
       token: hashedToken,
       expires_at: expiresAt,
       created_at: new Date().toISOString(),
     });
 
     const appUrl = this.config.appUrl ?? process.env.APP_URL ?? 'http://localhost:5173';
-    const verifyUrl = `${appUrl}/verify-email?token=${token}&id=${user.getAttribute('id')}`;
+    const verifyUrl = `${appUrl}/verify-email?token=${token}&id=${encodeURIComponent(String(userId))}`;
 
     await this.sendAuthEmail('email-verification', email, {
-      'user.name': user.getAttribute('name') ?? email,
+      'user.name': persisted.getAttribute('name') ?? email,
       verifyUrl,
     });
   }
@@ -877,6 +911,7 @@ export class AuthManager {
    * Sets the email_verified_at column on the user.
    */
   async verifyEmail(token: string, userId: string | number): Promise<boolean> {
+    if (!this.validIdentity(userId)) return false;
     const table = this.tableName(this.config.emailVerification?.table ?? 'email_verifications', 'Email verifications table name');
     const verifiedColumn = this.config.emailVerification?.verifiedColumn ?? 'email_verified_at';
 
@@ -893,9 +928,10 @@ export class AuthManager {
     }
 
     // Mark email as verified
-    await this.config.model
-      .where('id', userId)
+    const affected = await this.config.model
+      .where(this.primaryKey(), userId)
       .update({ [verifiedColumn]: new Date().toISOString() });
+    if (affected === 0) return false;
 
     // Delete all verification tokens for this user
     await this.query(table).where('user_id', userId).delete();
@@ -926,7 +962,7 @@ export class AuthManager {
       .where(this.config.identifierColumn, email)
       .first();
 
-    if (!user) return false;
+    if (!user || this.subjectId(user) === null) return false;
     if (purpose === 'login' && !await this.accepts(user, 'passwordless')) return false;
 
     const table = this.tableName(this.config.otp?.table ?? 'otp_codes', 'OTP table name');
@@ -1182,7 +1218,7 @@ export class AuthenticateMiddleware extends Middleware {
     ctx.locals.user = user;
     ctx.locals.apiKey = apiKey;
     ctx.locals.authenticatedVia = authenticatedVia;
-    const userId = user?.getAttribute?.('id') ?? user?.id;
+    const userId = typeof authManager.id === 'function' ? authManager.id() : user?.getAttribute?.('id') ?? user?.id;
     if (apiKey?.teamId != null) {
       ApplicationContext.set('teamId', apiKey.teamId);
       ApplicationContext.set('tenantId', apiKey.teamId);
