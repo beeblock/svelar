@@ -7,8 +7,9 @@
 
 import { Command } from '../Command.js';
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { DeployTemplates } from './DeployTemplates.js';
+import { defaultDeploymentManifest } from '../../deployment/BlueGreen.js';
 
 export class MakeDockerCommand extends Command {
   name = 'make:docker';
@@ -65,6 +66,10 @@ export class MakeDockerCommand extends Command {
     }
 
     const files: Array<{ path: string; content: string; label: string }> = [
+      { path: join(cwd, 'svelar.deploy.json'), content: JSON.stringify(defaultDeploymentManifest, null, 2) + '\n', label: 'svelar.deploy.json' },
+      { path: join(cwd, 'scripts', 'svelar-deploy.sh'), content: DeployTemplates.deployScript(), label: 'scripts/svelar-deploy.sh' },
+      { path: join(cwd, 'src', 'routes', 'api', 'ready', '+server.ts'), content: DeployTemplates.readinessEndpoint(), label: 'src/routes/api/ready/+server.ts' },
+      { path: join(cwd, 'src', 'routes', 'api', 'traffic', '+server.ts'), content: DeployTemplates.trafficEndpoint(), label: 'src/routes/api/traffic/+server.ts' },
       {
         path: join(cwd, 'Dockerfile'),
         content: DeployTemplates.dockerfile(),
@@ -141,10 +146,16 @@ export class MakeDockerCommand extends Command {
         skipped++;
         continue;
       }
+      mkdirSync(dirname(file.path), { recursive: true });
       writeFileSync(file.path, file.content);
       this.success(`Created ${file.label}`);
       created++;
     }
+
+    const ignorePath = join(cwd, '.gitignore');
+    const ignore = existsSync(ignorePath) ? readFileSync(ignorePath, 'utf8') : '';
+    const missing = ['.svelar/deployment/', '.svelar-env'].filter(entry => !ignore.split(/\r?\n/).includes(entry));
+    if (missing.length) writeFileSync(ignorePath, `${ignore}${ignore && !ignore.endsWith('\n') ? '\n' : ''}${missing.join('\n')}\n`);
 
 
     this.newLine();
@@ -159,8 +170,9 @@ export class MakeDockerCommand extends Command {
     this.log('  # Development (with hot-reload)');
     this.log('  npx svelar dev:up');
     this.newLine();
-    this.log('  # Production (local build)');
-    this.log('  docker compose up -d --build');
+    this.log('  # Review svelar.deploy.json, start shared infrastructure, and bootstrap core migrations once');
+    this.log('  # Production start-first release');
+    this.log('  npx svelar prod:deploy --image=registry/app:release --compatible-migrations');
     this.newLine();
     this.log('  # Run migrations inside the container');
     this.log('  docker compose exec app npx svelar migrate');
@@ -296,7 +308,7 @@ export class MakeDockerCommand extends Command {
 
     this.appendRuntimeService(lines, {
       name: 'worker',
-      command: '["npx", "svelar", "queue:work", "--queue=default", "--concurrency=${QUEUE_WORKER_CONCURRENCY:-1}"]',
+      command: '["npx", "svelar", "queue:work", "--queue=default", "--concurrency=${QUEUE_WORKER_CONCURRENCY:-1}", "--grace-period=${QUEUE_WORKER_GRACE_PERIOD:-30}"]',
       memoryLimit: '${WORKER_MEMORY_LIMIT:-512M}',
       db,
       redis,
@@ -309,7 +321,7 @@ export class MakeDockerCommand extends Command {
 
     this.appendRuntimeService(lines, {
       name: 'scheduler',
-      command: '["npx", "svelar", "schedule:run"]',
+      command: '["npx", "svelar", "schedule:work"]',
       memoryLimit: '${SCHEDULER_MEMORY_LIMIT:-256M}',
       db,
       redis,
@@ -422,7 +434,7 @@ export class MakeDockerCommand extends Command {
       lines.push('    image: redis:7-alpine');
       lines.push('    restart: unless-stopped');
       lines.push('    # No ports exposed — only reachable by app via Docker network');
-      lines.push('    command: redis-server --requirepass ${REDIS_PASSWORD:-svelarsecret} --save "" --appendonly no --stop-writes-on-bgsave-error no');
+      lines.push('    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-svelarsecret}", "--appendonly", "yes", "--appendfsync", "everysec"]');
       lines.push('    volumes:');
       lines.push('      - redisdata:/data');
       lines.push('    healthcheck:');
@@ -816,8 +828,9 @@ build
 
 # Environment files (mount or use env_file in compose)
 .env
-.env.local
-.env.*.local
+.env.*
+.svelar-env
+.svelar/deployment
 
 # Git
 .git

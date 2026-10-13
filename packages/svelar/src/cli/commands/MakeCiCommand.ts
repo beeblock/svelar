@@ -35,7 +35,9 @@ export class MakeCiCommand extends Command {
     this.success('Created .github/workflows/deploy.yml');
 
     this.newLine();
-    this.info('Workflow steps: build image → push to Docker Hub → SCP compose files → SSH deploy');
+    this.info('Workflow steps: build release/deployer images → push immutable tags → SCP configuration → start-first deploy');
+    this.info('Review expand/contract migrations and bootstrap the deployment lock foundation before the first CI deploy.');
+    this.info('After reviewing compatibility, set the GitHub variable DEPLOY_COMPATIBLE_MIGRATIONS=true.');
     this.newLine();
     this.info('Required GitHub Secrets:');
     this.log('  DOCKER_USERNAME   — Docker Hub username');

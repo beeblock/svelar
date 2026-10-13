@@ -21,6 +21,7 @@ export class MakeDeployCommand extends Command {
 
     const docker = new MakeDockerCommand();
     await docker.handle(args, flags);
+    if (docker.exitCode) { this.exitCode = docker.exitCode; return; }
 
     this.newLine();
     this.log('────────────────────────────────────────');
@@ -28,6 +29,7 @@ export class MakeDeployCommand extends Command {
 
     const ci = new MakeCiCommand();
     await ci.handle(args, flags);
+    if (ci.exitCode) { this.exitCode = ci.exitCode; return; }
 
     this.newLine();
     this.log('────────────────────────────────────────');
@@ -35,6 +37,7 @@ export class MakeDeployCommand extends Command {
 
     const infra = new MakeInfraCommand();
     await infra.handle(args, flags);
+    if (infra.exitCode) { this.exitCode = infra.exitCode; return; }
 
     this.newLine();
     this.success('All deployment files scaffolded!');

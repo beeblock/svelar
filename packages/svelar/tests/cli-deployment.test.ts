@@ -72,8 +72,12 @@ describe('CLI deployment and utility commands', () => {
     expect(workflow).toContain('DOCKER_USERNAME');
     expect(workflow).toContain('DROPLET_SSH_KEY');
     expect(workflow).toContain('ENV_PROD');
-    expect(workflow).toContain('docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm --no-deps app npx svelar migrate --force');
-    expect(workflow).toContain('docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans --wait');
+    expect(workflow).toContain('sh scripts/svelar-deploy.sh --compatible-migrations');
+    expect(workflow).toContain('svelar-ci:$GITHUB_SHA-deployer');
+    expect(workflow).toContain('printf \'%s\\n\' "$ENV_PROD"');
+    expect(workflow).not.toContain('docker compose down');
+    expect(workflow).not.toContain('docker image prune');
+    expect(workflow).not.toContain('docker push $DOCKER_IMAGE:latest');
 
     writeFileSync(workflowPath, 'custom workflow');
     await command.handle([], {});
@@ -143,9 +147,9 @@ describe('CLI deployment and utility commands', () => {
 
     expect(compose).toContain('      target: production');
     expect(compose).toContain('  worker:');
-    expect(compose).toContain('command: ["npx", "svelar", "queue:work", "--queue=default", "--concurrency=${QUEUE_WORKER_CONCURRENCY:-1}"]');
+    expect(compose).toContain('command: ["npx", "svelar", "queue:work", "--queue=default", "--concurrency=${QUEUE_WORKER_CONCURRENCY:-1}", "--grace-period=${QUEUE_WORKER_GRACE_PERIOD:-30}"]');
     expect(compose).toContain('  scheduler:');
-    expect(compose).toContain('command: ["npx", "svelar", "schedule:run"]');
+    expect(compose).toContain('command: ["npx", "svelar", "schedule:work"]');
     expect(compose).toContain('memory: ${WORKER_MEMORY_LIMIT:-512M}');
     expect(compose).toContain('memory: ${SCHEDULER_MEMORY_LIMIT:-256M}');
     expect(compose).not.toContain('pm2');
@@ -153,7 +157,7 @@ describe('CLI deployment and utility commands', () => {
     expect(compose).toContain('- INTERNAL_APP_URL=http://app:3000');
     expect(compose).toContain('AUTH_TYPE: scram-sha-256');
     expect(compose).toContain('PGPASSWORD=${DB_PASSWORD:-secret} pg_isready -h 127.0.0.1 -p 6432 -U ${DB_USER:-svelar} -d ${DB_NAME:-svelar}');
-    expect(compose).toContain('redis-server --requirepass ${REDIS_PASSWORD:-svelarsecret} --save "" --appendonly no --stop-writes-on-bgsave-error no');
+    expect(compose).toContain('"--appendonly", "yes", "--appendfsync", "everysec"');
     expect(compose).toContain('- "${SOKETI_PORT:-5334}:6001"');
     expect(compose).toContain("node -e \\\"require('http').get('http://127.0.0.1:6001'");
     expect(compose).toContain('image: rustfs/rustfs:latest');
@@ -167,6 +171,12 @@ describe('CLI deployment and utility commands', () => {
     expect(composeDev).toContain('- "${RUSTFS_API_PORT:-5335}:9000"');
     expect(devRuntime).toContain("spawn('npx', ['svelar'");
     expect(devRuntime).toContain('PGBOUNCER_HOST_PORT');
+    expect(JSON.parse(readFileSync(join(tmpDir, 'svelar.deploy.json'), 'utf8'))).toMatchObject({ strategy: 'blue-green', readinessPath: '/api/ready' });
+    expect(readFileSync(join(tmpDir, 'src/routes/api/ready/+server.ts'), 'utf8')).toContain('DeploymentController');
+    expect(readFileSync(join(tmpDir, 'scripts/svelar-deploy.sh'), 'utf8')).toContain('prod:deploy --image="$DEPLOY_IMAGE"');
+    expect(readFileSync(join(tmpDir, '.gitignore'), 'utf8')).toContain('.svelar/deployment/');
+    expect(dockerfile).toContain('FROM production AS deployer');
+    expect(dockerfile).toContain('npm prune --omit=dev --ignore-scripts');
   });
 
   it('allows opting out of Meilisearch in generated Docker templates', async () => {
@@ -188,8 +198,8 @@ describe('CLI deployment and utility commands', () => {
     await new DevUpCommand().handle([], { service: 'web' });
     await new DevLogsCommand().handle([], { service: 'postgres_1' });
     await new DevRestartCommand().handle([], {});
-    await new ProdDeployCommand().handle([], { service: 'worker-1' });
-    await new ProdDeployCommand().handle([], {});
+    await expect(new ProdDeployCommand().handle([], { service: 'worker-1' })).rejects.toThrow('complete release');
+    await expect(new ProdDeployCommand().handle([], {})).rejects.toThrow('image');
     await new ProdRestartCommand().handle([], {});
     await new ProdRestartCommand().handle([], { service: 'app', wait: false });
 
@@ -198,18 +208,13 @@ describe('CLI deployment and utility commands', () => {
       'docker compose -f docker-compose.yml -f docker-compose.dev.yml logs -f postgres_1',
       'docker compose -f docker-compose.yml -f docker-compose.dev.yml down',
       'docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build',
-      'docker compose -f docker-compose.yml -f docker-compose.prod.yml pull worker-1',
-      'docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans --wait worker-1',
-      'docker compose -f docker-compose.yml -f docker-compose.prod.yml pull',
-      'docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm --no-deps app npx svelar migrate --force',
-      'docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans --wait',
       'docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --force-recreate --remove-orphans --wait app worker scheduler',
       'docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --force-recreate --remove-orphans app',
     ]);
 
     await new DevUpCommand().handle([], { service: 'web; rm -rf /' });
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid service name'));
-    expect(vi.mocked(execSync).mock.calls).toHaveLength(11);
+    expect(vi.mocked(execSync).mock.calls).toHaveLength(6);
   });
 
   it('reports missing docker compose files before executing runtime commands', async () => {
@@ -219,9 +224,7 @@ describe('CLI deployment and utility commands', () => {
     expect(vi.mocked(execSync)).not.toHaveBeenCalled();
 
     writeFileSync(join(tmpDir, 'docker-compose.yml'), 'services: {}\n');
-    await new ProdDeployCommand().handle([], {});
-
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('docker-compose.prod.yml not found'));
+    await expect(new ProdDeployCommand().handle([], { image: 'registry/app:release', migrate: false })).rejects.toMatchObject({ code: 'ENOENT' });
     expect(vi.mocked(execSync)).not.toHaveBeenCalled();
   });
 

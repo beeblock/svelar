@@ -18,21 +18,17 @@ FROM node:22-alpine AS base
 RUN apk add --no-cache dumb-init
 RUN addgroup -g 1001 sveltekit && adduser -u 1001 -G sveltekit -s /bin/sh -D sveltekit
 
-# ── Dependencies (production only) ───────────────────────
-FROM base AS deps
-WORKDIR /app
-COPY package*.json ./
-COPY .svelar-local ./.svelar-local
-RUN npm ci --omit=dev
-
 # ── Builder (full install + build) ───────────────────────
 FROM base AS builder
 WORKDIR /app
-COPY package*.json ./
 COPY .svelar-local ./.svelar-local
-RUN npm ci
 COPY . .
+RUN npm ci
 RUN npm run build
+
+# Native install scripts run before pruning; do not rerun SvelteKit prepare after removing dev tooling.
+FROM builder AS deps
+RUN npm prune --omit=dev --ignore-scripts
 
 # ── Production ───────────────────────────────────────────
 FROM base AS production
@@ -47,6 +43,8 @@ COPY --chown=sveltekit:sveltekit --from=builder /app/build ./build
 COPY --chown=sveltekit:sveltekit --from=builder /app/src ./src
 COPY --chown=sveltekit:sveltekit --from=builder /app/package.json ./
 COPY --chown=sveltekit:sveltekit --from=builder /app/svelar.database.json ./
+COPY --chown=sveltekit:sveltekit --from=builder /app/tsconfig.json ./
+COPY --chown=sveltekit:sveltekit --from=builder /app/.svelte-kit ./.svelte-kit
 
 RUN mkdir -p storage/logs storage/public && chown -R sveltekit:sveltekit storage
 
@@ -58,6 +56,12 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \\
 
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["node", "build/index.js"]
+
+# Administrative one-shot deployment image. Never mount the Docker socket in app/worker/scheduler.
+FROM production AS deployer
+USER root
+RUN apk add --no-cache docker-cli docker-cli-compose
+CMD ["npx", "svelar", "prod:deploy"]
 
 # ── Development (hot-reload) ─────────────────────────────
 FROM base AS development
@@ -348,6 +352,36 @@ export const GET = () => json({
 `;
   }
 
+  static readinessEndpoint(): string {
+    return `import { DeploymentController } from '@beeblock/svelar/deployment';
+
+const controller = new DeploymentController();
+export const GET = () => controller.ready();
+`;
+  }
+  static trafficEndpoint(): string {
+    return `import { DeploymentController } from '@beeblock/svelar/deployment';
+
+const controller = new DeploymentController();
+export const GET = () => controller.traffic();
+`;
+  }
+
+  static deployScript(): string {
+    return `#!/usr/bin/env sh
+set -eu
+: "\${DEPLOYER_IMAGE:?Set DEPLOYER_IMAGE to the immutable release deployer image}"
+: "\${DEPLOY_IMAGE:?Set DEPLOY_IMAGE to the immutable production release image}"
+case "$DEPLOYER_IMAGE:$DEPLOY_IMAGE" in *:latest*) echo "Release tags or digests are required, not latest" >&2; exit 1;; esac
+# The CLI runs in the administrative image; paths stay identical for the host Docker daemon.
+exec docker run --rm --user 0 \\
+  -v /var/run/docker.sock:/var/run/docker.sock \\
+  -v "$PWD:$PWD" -w "$PWD" \\
+  --entrypoint /app/node_modules/.bin/svelar "$DEPLOYER_IMAGE" \\
+  prod:deploy --image="$DEPLOY_IMAGE" "$@"
+`;
+  }
+
   // ── GitHub Actions workflow ──
 
   static githubActionsWorkflow(): string {
@@ -377,6 +411,10 @@ on:
 env:
   DOCKER_IMAGE: \${{ secrets.DOCKER_USERNAME }}/\${{ secrets.DOCKER_IMAGE_NAME }}
 
+concurrency:
+  group: svelar-production-\${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -397,20 +435,30 @@ jobs:
 
       - name: Define tags
         run: |
-          echo "TIMESTAMP_TAG=\$(date +%s)" >> \$GITHUB_ENV
+          echo "RELEASE_TAG=$GITHUB_SHA" >> "$GITHUB_ENV"
 
       - name: Build Docker image
         run: |
           docker build . --file Dockerfile \\
             --target production \\
-            --tag \$DOCKER_IMAGE:\$TIMESTAMP_TAG \\
-            --tag \$DOCKER_IMAGE:latest
+            --tag "svelar-ci:$GITHUB_SHA"
+          docker build . --file Dockerfile --target deployer --tag "svelar-ci:$GITHUB_SHA-deployer"
 
       - name: Push to Docker Hub
         if: github.event_name == 'push'
         run: |
-          docker push \$DOCKER_IMAGE:\$TIMESTAMP_TAG
-          docker push \$DOCKER_IMAGE:latest
+          docker tag "svelar-ci:$GITHUB_SHA" "$DOCKER_IMAGE:$GITHUB_SHA"
+          docker tag "svelar-ci:$GITHUB_SHA-deployer" "$DOCKER_IMAGE:$GITHUB_SHA-deployer"
+          docker push "$DOCKER_IMAGE:$GITHUB_SHA"
+          docker push "$DOCKER_IMAGE:$GITHUB_SHA-deployer"
+
+      - name: Prepare production environment
+        if: github.event_name == 'push'
+        env:
+          ENV_PROD: \${{ secrets.ENV_PROD }}
+        run: |
+          umask 077
+          printf '%s\\n' "$ENV_PROD" > .svelar-env
 
       - name: Copy compose files to droplet
         if: github.event_name == 'push'
@@ -419,25 +467,35 @@ jobs:
           host: \${{ secrets.DROPLET_HOST }}
           username: \${{ secrets.DROPLET_USER }}
           key: \${{ secrets.DROPLET_SSH_KEY }}
-          source: "docker-compose.yml,docker-compose.prod.yml,docker/"
+          source: "docker-compose.yml,docker-compose.prod.yml,docker/,svelar.deploy.json,scripts/svelar-deploy.sh,.svelar-env"
           target: \${{ secrets.DROPLET_PROJECT }}
 
       - name: Deploy to droplet
         if: github.event_name == 'push'
         uses: appleboy/ssh-action@v1
+        env:
+          DOCKER_USERNAME: \${{ secrets.DOCKER_USERNAME }}
+          DOCKER_TOKEN: \${{ secrets.DOCKER_TOKEN }}
+          DEPLOY_IMAGE: \${{ env.DOCKER_IMAGE }}:\${{ github.sha }}
+          DEPLOYER_IMAGE: \${{ env.DOCKER_IMAGE }}:\${{ github.sha }}-deployer
+          DEPLOY_PROJECT: \${{ secrets.DROPLET_PROJECT }}
+          COMPATIBLE_MIGRATIONS: \${{ vars.DEPLOY_COMPATIBLE_MIGRATIONS }}
         with:
           host: \${{ secrets.DROPLET_HOST }}
           username: \${{ secrets.DROPLET_USER }}
           key: \${{ secrets.DROPLET_SSH_KEY }}
+          envs: DOCKER_USERNAME,DOCKER_TOKEN,DEPLOY_IMAGE,DEPLOYER_IMAGE,DEPLOY_PROJECT,COMPATIBLE_MIGRATIONS
           script: |
-            echo "\${{ secrets.DOCKER_TOKEN }}" | docker login -u "\${{ secrets.DOCKER_USERNAME }}" --password-stdin
-            cd \${{ secrets.DROPLET_PROJECT }}/
-            echo "\${{ secrets.ENV_PROD }}" > .env
-            echo "DOCKER_IMAGE=\${{ secrets.DOCKER_USERNAME }}/\${{ secrets.DOCKER_IMAGE_NAME }}" >> .env
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm --no-deps app npx svelar migrate --force
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans --wait
-            docker image prune -f
+            set -eu
+            test "$COMPATIBLE_MIGRATIONS" = true || { echo 'Review expand/contract migrations and set DEPLOY_COMPATIBLE_MIGRATIONS=true before approving deployment.' >&2; exit 1; }
+            printf '%s' "$DOCKER_TOKEN" | docker login -u "$DOCKER_USERNAME" --password-stdin
+            cd "$DEPLOY_PROJECT"
+            umask 077
+            cp .svelar-env .env
+            rm .svelar-env
+            docker pull "$DEPLOYER_IMAGE"
+            sh scripts/svelar-deploy.sh --compatible-migrations
+            # Retain the previous release image and runtime for explicit rollback.
 `;
   }
 

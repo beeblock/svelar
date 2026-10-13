@@ -2,14 +2,14 @@
  * migrate — Run database migrations
  */
 
-import { Command } from '../Command.js';
+import { Command, type CommandFlag } from '../Command.js';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 export class MigrateCommand extends Command {
   name = 'migrate';
   description = 'Run pending database migrations';
-  flags = [
+  flags: CommandFlag[] = [
     { name: 'rollback', description: 'Rollback the last batch of migrations', type: 'boolean' as const },
     { name: 'reset', description: 'Reset all migrations', type: 'boolean' as const },
     { name: 'refresh', description: 'Reset and re-run all migrations', type: 'boolean' as const },
