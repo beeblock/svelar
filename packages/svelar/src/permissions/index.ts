@@ -32,8 +32,16 @@ import { Middleware, type MiddlewareContext, type NextFunction } from '../middle
 import { QueryBuilder } from '../orm/QueryBuilder.js';
 import { Connection } from '../database/Connection.js';
 import { PermissionAssignments } from './PermissionAssignments.js';
+import type { PermissionManifest } from './PermissionManifest.js';
 
 export { PermissionAssignments } from './PermissionAssignments.js';
+export { PermissionManifest, auditCapabilityBindings, isReservedRoleName } from './PermissionManifest.js';
+export type { PermissionManifestDefinition, CapabilityName, CapabilityScope, CapabilityBinding,
+  PermissionScreen, PermissionAction, SystemPermissionProfile, ManifestCapability, LegacyPermissionAlias } from './PermissionManifest.js';
+export { PermissionProfiles } from './PermissionProfiles.js';
+export type { RoleCapabilityProfile, RoleCapabilityPreview, PermissionSubject } from './PermissionProfiles.js';
+export { CapabilityAuthorizer, CapabilityAuthorizationError } from './CapabilityAuthorizer.js';
+export type { CapabilityAuthorizationInput, CapabilityPrincipal, CapabilityResolver, CapabilityAuthorizerOptions } from './CapabilityAuthorizer.js';
 
 function normalizeTeamId(teamId: string | number): string {
   if ((typeof teamId !== 'string' && typeof teamId !== 'number')
@@ -75,6 +83,11 @@ export interface PermissionCapability {
   screen?: string;
   /** Optional action label such as view, create, update, delete, export, or approve. */
   action?: string;
+  dependencies?: readonly string[];
+  group?: string;
+  label?: string;
+  route?: string;
+  scope?: 'team' | 'platform';
   /** Additional app-owned metadata. Stored in memory, not in the permissions table. */
   metadata?: Record<string, any>;
 }
@@ -120,6 +133,13 @@ class PermissionManager extends PermissionAssignments {
   }
 
   // ── Capability Registry ─────────────────────────────────
+
+  /** Register an explicit validated catalog for the existing permission seeder/sync API. */
+  registerManifest(manifest: PermissionManifest): void {
+    this.registerCapabilities(manifest.capabilities().map((capability) => ({ ...capability, description: capability.label })));
+    this.registerCapabilities(manifest.aliases().map((alias) => ({ name: alias.name, guard: manifest.guard, label: alias.label,
+      scope: alias.scope, description: alias.label, metadata: { deprecated: true, capabilities: [...alias.capabilities] } })));
+  }
 
   registerCapability(capability: PermissionCapability): PermissionCapability {
     const guard = capability.guard ?? 'web';

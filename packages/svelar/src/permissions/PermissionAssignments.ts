@@ -1,6 +1,7 @@
 import { Connection } from '../database/Connection.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
 import type { PermissionRecord, RoleRecord } from './index.js';
+import { isReservedRoleName } from './PermissionManifest.js';
 
 /** Immutable assignment scope. Catalogues are shared; grants never inherit across scopes. */
 export class PermissionAssignments {
@@ -29,6 +30,7 @@ export class PermissionAssignments {
 
   async giveRolePermission(roleId: number, permissionId: number): Promise<void> {
     const role = await new QueryBuilder<RoleRecord>('roles').where('id', roleId).firstOrFail();
+    if (this.teamId !== null && isReservedRoleName(role.name)) throw new Error('Platform owner roles cannot be granted inside a team.');
     const permission = await new QueryBuilder<PermissionRecord>('permissions').where('id', permissionId).firstOrFail();
     if (role.guard !== permission.guard) throw new Error('Role and permission guards must match.');
     await this.pivot('role_has_permissions').upsert(
@@ -61,7 +63,8 @@ export class PermissionAssignments {
   }
 
   async assignRole(modelType: string, modelId: number, roleId: number): Promise<void> {
-    await new QueryBuilder('roles').where('id', roleId).firstOrFail();
+    const role = await new QueryBuilder<RoleRecord>('roles').where('id', roleId).firstOrFail();
+    if (this.teamId !== null && isReservedRoleName(role.name)) throw new Error('Platform owner roles cannot be assigned inside a team.');
     await this.pivot('model_has_roles').upsert(
       this.grant({ model_type: modelType, model_id: modelId, role_id: roleId }),
       this.keys(['model_type', 'model_id', 'role_id']), [],
