@@ -1146,15 +1146,93 @@ export function patchAppPackage(appDir, tarballPath, port, manifest = smokeArtif
 
 function writeCertificationTest(appDir) {
 	const testPath = join(appDir, 'tests', 'feature', 'svelar-certification.test.ts');
-	writeFileSync(testPath, `${certificationTestSource(!existsSync(join(appDir, 'src/lib/modules')))}\n`);
+	writeFileSync(testPath, `${certificationTestSource(!existsSync(join(appDir, 'src/lib/modules')), smokeArtifact.sha256)}\n`);
 }
 
-function certificationTestSource(flat) {
+export function installedHttpBudgetChildSource() {
+	return `import { readFileSync, realpathSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { dirname, relative, resolve, sep } from 'node:path';
+import { pathToFileURL } from 'node:url';
+const config = JSON.parse(process.env.SVELAR_HTTP_BUDGET_PROOF);
+const require = createRequire(config.appManifest);
+let redis;
+let stage = 'archive-provenance';
+try {
+const app = JSON.parse(readFileSync(config.appManifest, 'utf8'));
+const dependency = app.dependencies?.['@beeblock/svelar'];
+if (typeof dependency !== 'string' || !dependency.startsWith('file:')) throw new Error('HTTP proof requires the selected installed archive');
+const archive = resolve(dirname(config.appManifest), dependency.slice(5));
+const archiveBytes = readFileSync(archive);
+const sha256 = createHash('sha256').update(archiveBytes).digest('hex');
+if (sha256 !== config.sha256) throw new Error('HTTP proof archive SHA mismatch');
+const lock = JSON.parse(readFileSync(resolve(dirname(config.appManifest), 'package-lock.json'), 'utf8'));
+const integrity = 'sha512-' + createHash('sha512').update(archiveBytes).digest('base64');
+if (lock.packages?.['node_modules/@beeblock/svelar']?.integrity !== integrity) throw new Error('HTTP proof installed lock integrity mismatch');
+const coreRoot = dirname(require.resolve('@beeblock/svelar/package.json'));
+if (realpathSync(coreRoot) !== resolve(dirname(config.appManifest), 'node_modules/@beeblock/svelar')) throw new Error('HTTP proof refuses a linked core package');
+const manifest = JSON.parse(readFileSync(resolve(coreRoot, 'package.json'), 'utf8'));
+if (manifest.name !== '@beeblock/svelar') throw new Error('HTTP proof installed identity mismatch');
+async function publicEntry(name) {
+  const exported = manifest.exports[name];
+  const entry = typeof exported === 'string' ? exported : exported?.import;
+  if (typeof entry !== 'string' || !entry.startsWith('./')) throw new Error('Missing installed public ESM export');
+  const path = realpathSync(resolve(coreRoot, entry));
+  const suffix = relative(coreRoot, path);
+  if (suffix.startsWith('..' + sep) || suffix === '..') throw new Error('Public export escapes installed core');
+  return { module: await import(pathToFileURL(path).href), path };
+}
+const http = await publicEntry('./http');
+const cache = await publicEntry('./cache');
+const Redis = require('ioredis');
+stage = 'redis-connect';
+redis = new Redis(config.redisUrl, { lazyConnect: true, enableOfflineQueue: false, maxRetriesPerRequest: 1, connectTimeout: 3000, commandTimeout: 3000, retryStrategy: null });
+redis.on('error', () => {});
+  await redis.connect();
+  cache.module.Cache.configure({ default: 'proof', stores: { proof: { driver: 'redis', client: redis, prefix: config.prefix } } });
+  const client = new http.module.HttpClient({ timeout: 3000, budget: {
+    store: cache.module.Cache.store(), namespace: config.phase,
+    limits: [{ scope: 'credential', key: 'proof-credential', limit: config.credentialLimit, window: 60 },
+      { scope: 'account', key: 'proof-account', limit: config.accountLimit, window: 60 }],
+  } }).withHeaders({ 'X-Proof-Pid': String(process.pid) }).retry({ times: config.retry ? 1 : 0, delay: 1, maxDelay: 100, jitter: 'none' });
+  const start = new Promise(resolve => process.once('message', resolve));
+  process.send({ type: 'ready', pid: process.pid, sha256, httpEntry: http.path, cacheEntry: cache.path });
+  await start;
+  stage = 'http-attempts';
+  const outcomes = await Promise.all(Array.from({ length: config.attempts }, async () => {
+    try {
+      const response = await client.get(config.url + '/' + config.phase);
+      return { status: response.status, allowed: true };
+    } catch (error) {
+      if (!(error instanceof http.module.HttpBudgetExceededError)) throw error;
+      return { allowed: false, retryAfter: Number(error.headers.get('Retry-After')) };
+    }
+  }));
+  process.send({ type: 'result', pid: process.pid, outcomes });
+} catch (error) {
+  process.exitCode = 1;
+  const diagnostic = { stage, name: /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(error?.name ?? '') ? error.name : 'Error',
+    code: /^[A-Z][A-Z0-9_]{0,63}$/.test(error?.code ?? '') ? error.code : undefined,
+    status: Number.isInteger(error?.status) && error.status >= 100 && error.status <= 599 ? error.status : undefined };
+  if (process.connected) process.send({ type: 'failure', diagnostic });
+} finally {
+  try { if (redis?.status === 'ready') await redis.quit(); }
+  catch { process.exitCode = 1; if (process.connected) process.send({ type: 'failure', diagnostic: { stage: 'redis-cleanup', name: 'Error' } }); }
+  finally { redis?.disconnect(); if (process.connected) process.disconnect(); }
+}
+`;
+}
+
+export function certificationTestSource(flat, artifactSha256 = null) {
 		return `import { existsSync, readFileSync, rmSync } from 'node:fs';
-		import { createHmac } from 'node:crypto';
+		import { createHmac, randomUUID } from 'node:crypto';
+		import { spawn } from 'node:child_process';
 		import { createServer } from 'node:http';
-		import { join } from 'node:path';
+		import { join, resolve } from 'node:path';
 	import { beforeAll, afterAll, describe, expect, it } from 'vitest';
+	import { error as kitError, redirect as kitRedirect, isHttpError, isRedirect } from '@sveltejs/kit';
+	import { Controller } from '@beeblock/svelar/routing';
 	import Redis from 'ioredis';
 	import { Broadcast } from '@beeblock/svelar/broadcasting';
 	import { Cache } from '@beeblock/svelar/cache';
@@ -1204,6 +1282,35 @@ afterAll(async () => {
 
 describe('Svelar release certification', () => {
   useSvelarTest({ refreshDatabase: true });
+
+  it('preserves installed Controller native Kit errors/redirects and reports unexpected failures safely', async () => {
+    const secret = 'certification-only-private-database-detail';
+    class BoundaryController extends Controller {
+      async missing() { kitError(404, 'Certification record missing'); }
+      async navigate() { kitRedirect(303, '/certification-destination'); }
+      async unexpected() { throw new Error(secret); }
+    }
+    const event = createRequestEvent({ url: 'http://localhost/api/certification-boundaries' });
+    const reported: string[] = [];
+    ErrorHandler.bindForRequest(event, new ErrorHandler({ debug: false, report: async (error) => {
+      await Promise.resolve();
+      reported.push(error.message);
+    } }));
+    const controller = new BoundaryController();
+    const missing = await controller.handle('missing')(event).catch((error: unknown) => error);
+    expect(isHttpError(missing, 404)).toBe(true);
+    expect(missing).toMatchObject({ status: 404, body: { message: 'Certification record missing' } });
+    const redirect = await controller.handle('navigate')(event).catch((error: unknown) => error);
+    expect(isRedirect(redirect)).toBe(true);
+    expect(redirect).toMatchObject({ status: 303, location: '/certification-destination' });
+    expect(reported).toEqual([]);
+    const response = await controller.handle('unexpected')(event);
+    expect(response.status).toBe(500);
+    const payload = await response.json();
+    expect(payload).toEqual({ message: 'Internal server error', incidentId: expect.stringMatching(/^inc_[0-9a-f-]+$/) });
+    expect(JSON.stringify(payload)).not.toContain(secret);
+    expect(reported).toEqual([secret]);
+  });
 
   it('isolates tenant and actor context across installed framework subpaths', async () => {
     class ScopedRecord extends TenantModel { static table = 'certification_scoped_records'; }
@@ -2657,6 +2764,72 @@ describe('Svelar release certification', () => {
 	    await waitForSearchEmpty(SearchCertificationPost, 'certification');
 	  });
 
+  it('bounds real outbound HTTP across installed child processes with shared Redis credential/account quotas', async () => {
+    if (!process.env.REDIS_URL) return;
+    const sha256 = ${JSON.stringify(artifactSha256)};
+    if (!sha256 || !/^[a-f0-9]{64}$/.test(sha256)) throw new Error('HTTP proof requires selected archive SHA256');
+    const prefix = 'svelar-http-budget-proof:' + randomUUID() + ':';
+    const redis = new Redis(process.env.REDIS_URL, { lazyConnect: true, enableOfflineQueue: false, maxRetriesPerRequest: 1, connectTimeout: 3000, commandTimeout: 3000, retryStrategy: null });
+    redis.on('error', () => {});
+    const receiver = await startHttpBudgetReceiver();
+    const children: ReturnType<typeof startHttpBudgetChild>[] = [];
+    let failure: unknown;
+    const cleanupErrors: unknown[] = [];
+    try {
+      await redis.connect();
+      for (const phase of [
+        { phase: 'account', accountLimit: 7, credentialLimit: 25, attempts: 12, allowed: 7, retry: false },
+        { phase: 'credential', accountLimit: 25, credentialLimit: 5, attempts: 12, allowed: 5, retry: false },
+        { phase: 'retry', accountLimit: 4, credentialLimit: 4, attempts: 1, allowed: 2, retry: true },
+      ]) {
+        const config = { ...phase, appManifest: resolve('package.json'), sha256, redisUrl: process.env.REDIS_URL, prefix, url: receiver.url };
+        const peers = [startHttpBudgetChild(config), startHttpBudgetChild(config)];
+        children.push(...peers);
+        const ready = await Promise.all(peers.map(peer => peer.ready));
+        expect(new Set(ready.map(peer => peer.pid)).size).toBe(2);
+        expect(ready.every(peer => peer.pid !== process.pid && peer.sha256 === sha256)).toBe(true);
+        peers.forEach(peer => peer.start());
+        const results = await Promise.all(peers.map(peer => peer.result));
+        const outcomes = results.flatMap(result => result.outcomes);
+        expect(outcomes.filter(outcome => outcome.allowed)).toHaveLength(phase.allowed);
+        expect(outcomes.filter(outcome => outcome.allowed).every(outcome => outcome.status === 200)).toBe(true);
+        expect(outcomes.filter(outcome => !outcome.allowed)).toHaveLength(phase.attempts * 2 - phase.allowed);
+        expect(outcomes.filter(outcome => !outcome.allowed).every(outcome => outcome.retryAfter > 0)).toBe(true);
+        const received = receiver.requests.filter(request => request.phase === phase.phase);
+        expect(received.filter(request => request.status === 200)).toHaveLength(phase.allowed);
+        expect(received.filter(request => request.status === 429)).toHaveLength(phase.retry ? 2 : 0);
+        expect(received.every(request => ready.some(peer => String(peer.pid) === request.pid))).toBe(true);
+        console.log('INSTALLED_HTTP_BUDGET_PROOF', JSON.stringify({ phase: phase.phase, sha256, peers: ready, allowed: phase.allowed, denied: phase.attempts * 2 - phase.allowed, receiverStatuses: received.map(request => request.status) }));
+      }
+      const before = receiver.requests.length;
+      const exhausted = startHttpBudgetChild({ appManifest: resolve('package.json'), sha256, redisUrl: process.env.REDIS_URL,
+        prefix, url: receiver.url, phase: 'retry', accountLimit: 4, credentialLimit: 4, attempts: 1, retry: true });
+      children.push(exhausted);
+      await exhausted.ready; exhausted.start();
+      expect((await exhausted.result).outcomes).toEqual([{ allowed: false, retryAfter: expect.any(Number) }]);
+      expect(receiver.requests).toHaveLength(before);
+    } catch (error) { failure = error; }
+    finally {
+      const stopped = await Promise.allSettled(children.map(child => child.stop()));
+      cleanupErrors.push(...stopped.filter(result => result.status === 'rejected').map(result => (result as PromiseRejectedResult).reason));
+      try {
+        if (redis.status === 'ready') {
+          let cursor = '0';
+          do {
+            const page = await redis.scan(cursor, 'MATCH', prefix + '*', 'COUNT', 100);
+            cursor = page[0];
+            if (page[1].length) await redis.del(...page[1]);
+          } while (cursor !== '0');
+          await redis.quit();
+        }
+      } catch (error) { cleanupErrors.push(error); }
+      finally { redis.disconnect(); }
+      try { await receiver.close(); } catch (error) { cleanupErrors.push(error); }
+    }
+    if (cleanupErrors.length) throw new AggregateError(failure ? [failure, ...cleanupErrors] : cleanupErrors, 'Owned HTTP budget proof cleanup failed');
+    if (failure) throw failure;
+  }, 60_000);
+
 	  it('runs Redis cache, Redis sessions, and BullMQ queues when Redis is configured', async () => {
     if (!process.env.REDIS_URL) return;
 
@@ -2891,6 +3064,86 @@ describe('Svelar release certification', () => {
 function expectPdf(buffer: Buffer): void {
   expect(buffer.subarray(0, 4).toString()).toBe('%PDF');
   expect(buffer.length).toBeGreaterThan(1000);
+}
+
+function startHttpBudgetChild(config: Record<string, unknown>) {
+  const child = spawn(process.execPath, ['--input-type=module', '--eval', ${JSON.stringify(installedHttpBudgetChildSource())}], {
+    cwd: process.cwd(), env: { ...process.env, SVELAR_HTTP_BUDGET_PROOF: JSON.stringify(config) }, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+  });
+  let completed = false;
+  let received: any;
+  let readyReceived = false;
+  let failure: Error | undefined;
+  let readyResolve!: (value: any) => void;
+  let readyReject!: (error: Error) => void;
+  let resultResolve!: (value: any) => void;
+  let resultReject!: (error: Error) => void;
+  let closedResolve!: () => void;
+  let forceTimer: ReturnType<typeof setTimeout> | undefined;
+  const ready = new Promise<any>((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
+  const result = new Promise<any>((resolve, reject) => { resultResolve = resolve; resultReject = reject; });
+  const closed = new Promise<void>(resolve => { closedResolve = resolve; });
+  ready.catch(() => {}); result.catch(() => {});
+  function stop() {
+    if (!completed) {
+      child.kill('SIGTERM');
+      forceTimer ??= setTimeout(() => child.kill('SIGKILL'), 2000);
+    }
+    return closed;
+  }
+  const deadline = setTimeout(() => { failure = new Error('Installed HTTP budget child exceeded 15s'); void stop(); }, 15_000);
+  let bytes = 0;
+  const discard = (chunk: Buffer) => { bytes += chunk.length; if (bytes > 16384) { failure = new Error('Installed HTTP budget child output exceeded bound'); void stop(); } };
+  child.stdout!.on('data', discard); child.stderr!.on('data', discard);
+  child.on('message', (message: any) => {
+    if (message?.type === 'ready') { readyReceived = true; readyResolve(message); }
+    if (message?.type === 'result') received = message;
+    if (message?.type === 'failure') {
+      const diagnostic = message.diagnostic;
+      const stage = ['archive-provenance', 'redis-connect', 'http-attempts', 'redis-cleanup'].includes(diagnostic?.stage) ? diagnostic.stage : 'unknown';
+      const name = /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(diagnostic?.name ?? '') ? diagnostic.name : 'Error';
+      const code = /^[A-Z][A-Z0-9_]{0,63}$/.test(diagnostic?.code ?? '') ? ' code=' + diagnostic.code : '';
+      const status = Number.isInteger(diagnostic?.status) && diagnostic.status >= 100 && diagnostic.status <= 599 ? ' status=' + diagnostic.status : '';
+      failure = new Error('Installed HTTP budget child failed: ' + stage + ' ' + name + code + status);
+    }
+  });
+  child.once('error', () => { failure = new Error('Installed HTTP budget child failed to start'); });
+  child.once('close', (code) => {
+    completed = true; clearTimeout(deadline); clearTimeout(forceTimer);
+    if (failure || code !== 0 || !received || !readyReceived) {
+      const error = failure ?? new Error('Installed HTTP budget child exited without successful evidence');
+      readyReject(error); resultReject(error);
+    } else resultResolve(received);
+    closedResolve();
+  });
+  return { ready, result, start: () => child.send({ type: 'start' }), stop };
+}
+
+async function startHttpBudgetReceiver() {
+  const requests: Array<{ phase: string; pid: string; status: number }> = [];
+  const attempted = new Set<string>();
+  const server = createServer((request, response) => {
+    const phase = (request.url ?? '').slice(1);
+    const pid = String(request.headers['x-proof-pid'] ?? '');
+    const key = phase + ':' + pid;
+    const status = phase === 'retry' && !attempted.has(key) ? 429 : 200;
+    attempted.add(key); requests.push({ phase, pid, status });
+    response.statusCode = status;
+    response.setHeader('Content-Type', 'application/json');
+    if (status === 429) response.setHeader('Retry-After', '0');
+    request.resume(); response.end(JSON.stringify({ received: true }));
+  });
+  server.requestTimeout = 3000; server.headersTimeout = 3000;
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => { server.removeListener('error', reject); resolve(); });
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string' || address.port < 1024) { server.close(); throw new Error('HTTP proof did not bind a non-default loopback port'); }
+  return { url: 'http://127.0.0.1:' + address.port, requests, close: async () => {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  } };
 }
 
 async function startMailProviderServer(): Promise<{
