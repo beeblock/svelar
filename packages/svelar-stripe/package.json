@@ -50,8 +50,8 @@
     "prepublishOnly": "npm run build && npm run test"
   },
   "peerDependencies": {
-    "@beeblock/svelar": ">=0.6.7",
-    "stripe": ">=14.0.0"
+    "@beeblock/svelar": "^0.8.0",
+    "stripe": "^22.2.1 || ^23.0.0"
   },
   "peerDependenciesMeta": {
     "@beeblock/svelar": {
@@ -64,8 +64,9 @@
   "devDependencies": {
     "@types/node": "^22.20.5",
     "stripe": "^23.0.0",
+    "stripe22": "npm:stripe@22.2.1",
     "tsup": "^8.5.0",
-    "typescript": "^5.7.0",
+    "typescript": "^6.0.3",
     "vitest": "^4.1.11"
   }
 }

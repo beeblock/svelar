@@ -61,7 +61,7 @@
     "prepublishOnly": "npm run build && npm run test"
   },
   "peerDependencies": {
-    "@beeblock/svelar": ">=0.6.7",
+    "@beeblock/svelar": "^0.8.0",
     "svelte": "^5.0.0"
   },
   "peerDependenciesMeta": {
@@ -73,7 +73,7 @@
     "@types/node": "^22.20.5",
     "svelte": "^5.57.2",
     "tsup": "^8.5.0",
-    "typescript": "^5.7.0",
+    "typescript": "^6.0.3",
     "vitest": "^4.1.11"
   }
 }
