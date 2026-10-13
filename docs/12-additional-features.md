@@ -70,6 +70,8 @@ Cache.configure({
       password: process.env.REDIS_PASSWORD,
       db: 0,
       prefix: 'svelar_cache:',
+      connectTimeoutMs: 2000,
+      commandTimeoutMs: 2000,
       ttl: 3600,
     },
   },
@@ -77,6 +79,10 @@ Cache.configure({
 ```
 
 The store-level `ttl` is the default TTL in seconds. It applies to `Cache.put()` and direct store calls such as `Cache.store('redis').put()` unless you pass a TTL for that call.
+
+Framework-owned Redis clients connect lazily, share pending startup, and wait for Redis readiness before issuing cache commands. `connectTimeoutMs` and `commandTimeoutMs` default to 2000 and accept integer milliseconds from 1 to 30000. The command deadline applies to each Redis command, not an entire multi-command operation such as `flush()`. Generated app bootstrap reads these settings from `cache.stores.redis.connectTimeoutMs` and `cache.stores.redis.commandTimeoutMs`.
+
+Connection/command failures reject (including `get()`), discard the owned connection and allow a later call to reconnect; they are not cache misses or a memory fallback. Commands are not automatically replayed. A timed-out write may already have reached Redis, so do not blindly retry increments or capacity reservations. Passing `client` borrows a caller-owned Redis client: Svelar does not connect/disconnect it, change its options/listeners or apply these deadlines; its owner must manage bounds and cleanup.
 
 File cache treats missing, expired, and corrupted entries as cache misses and removes corrupted/expired files. Filesystem errors that are not normal cache misses are not swallowed.
 

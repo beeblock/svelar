@@ -14,7 +14,7 @@ export const ownerLabel = 'io.svelar.runtime-certification';
 export const defaultClients = resolve(repository, '../svelar-testing-area/apps/svelar-evolution-candidate-ddd-zod/package.json');
 export const defaultReportDirectory = resolve(repository, '../svelar-testing-area/artifacts/runtime-certification');
 export const nativeGates = Object.freeze([
-  { name: 'redis-coordination', files: ['cache-atomic-redis.test.ts', 'rate-limit-redis-processes.test.ts', 'broadcasting-redis-processes.test.ts'] },
+  { name: 'redis-coordination', files: ['cache-atomic-redis.test.ts', 'cache-redis-lifecycle-native.test.ts', 'rate-limit-redis-processes.test.ts', 'broadcasting-redis-processes.test.ts'] },
   { name: 'queue-lifecycle', files: ['queue-recovery-redis.test.ts'] },
   { name: 'queue-monitoring', files: ['queue-monitoring-redis.test.ts'] },
   { name: 'queue-sql', files: ['queue-monitoring-drivers.test.ts'] },
@@ -111,6 +111,7 @@ export function nativeEnvironment(base, clients, services) {
     SVELAR_TEST_QUEUE_CLIENT: clients, SVELAR_TEST_QUEUE_REDIS_URL: redis,
     SVELAR_TEST_QUEUE_PG_PORT: String(services.postgres), SVELAR_TEST_QUEUE_MYSQL_PORT: String(services.mysql),
     SVELAR_TEST_REDIS_CLIENT: clients, SVELAR_TEST_REDIS_URL: redis,
+    SVELAR_TEST_CACHE_REDIS_DOCKER: '1',
     SVELAR_TEST_SSE_CLIENT: clients, SVELAR_TEST_SSE_REDIS_URL: redis,
     SVELAR_TEST_POSTGRES_CLIENT: clients,
     SVELAR_TEST_SCHEMA_POSTGRES_URL: `postgres://svelar_queue:queue-proof@127.0.0.1:${services.postgres}/schema_proof`,

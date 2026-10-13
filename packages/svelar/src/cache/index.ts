@@ -58,6 +58,10 @@ export interface CacheStoreConfig {
   db?: number;
   /** Redis cache: existing client instance */
   client?: any;
+  /** Owned Redis client startup deadline in milliseconds (default: 2000, maximum: 30000). */
+  connectTimeoutMs?: number;
+  /** Owned Redis client command deadline in milliseconds (default: 2000, maximum: 30000). */
+  commandTimeoutMs?: number;
   /** Key prefix */
   prefix?: string;
 }
@@ -474,6 +478,14 @@ class FileCacheStore implements CacheStore {
 
 // ── Redis Store ──────────────────────────────────────────────
 
+function redisTimeout(value: number | undefined, name: string): number {
+  const timeout = value ?? 2000;
+  if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 30_000) {
+    throw new RangeError(`Redis cache ${name} must be an integer between 1 and 30000 milliseconds.`);
+  }
+  return timeout;
+}
+
 class RedisCacheStore implements CacheStore {
   private redis?: any;
   private connecting?: Promise<any>;
@@ -481,11 +493,17 @@ class RedisCacheStore implements CacheStore {
   private connection?: Record<string, any>;
   private prefix: string;
   private defaultTtl?: number;
+  private readonly owned: boolean;
+  private readonly connectTimeoutMs: number;
+  private readonly commandTimeoutMs: number;
 
   constructor(config: CacheStoreConfig) {
     this.prefix = config.prefix ?? 'svelar_cache:';
     this.defaultTtl = config.ttl;
     if (config.ttl !== undefined) ttlMilliseconds(config.ttl, true);
+    this.owned = !config.client;
+    this.connectTimeoutMs = this.owned ? redisTimeout(config.connectTimeoutMs, 'connectTimeoutMs') : 2000;
+    this.commandTimeoutMs = this.owned ? redisTimeout(config.commandTimeoutMs, 'commandTimeoutMs') : 2000;
     if (config.client) {
       this.redis = config.client;
     } else {
@@ -505,21 +523,86 @@ class RedisCacheStore implements CacheStore {
   }
 
   private async getClient(): Promise<any> {
-    if (this.redis) return this.redis;
+    if (!this.owned) return this.redis;
+    if (this.connecting) return this.connecting;
+    if (this.redis?.status === 'ready') return this.redis;
+    if (this.redis) this.discard(this.redis);
 
-    if (!this.connecting) {
-      this.connecting = (async () => {
-        try {
-          const { default: Redis } = await import('ioredis' as string);
-          this.redis = this.url ? new Redis(this.url) : new Redis(this.connection);
-          return this.redis;
-        } catch {
-          throw new Error('Redis cache requires "ioredis" package. Install it: npm install ioredis');
-        }
-      })();
+    const opening = this.openClient();
+    this.connecting = opening;
+    try {
+      return await opening;
+    } finally {
+      if (this.connecting === opening) this.connecting = undefined;
     }
+  }
 
-    return this.connecting;
+  private async openClient(): Promise<CacheStoreConfig['client']> {
+    const { default: Redis } = await import('ioredis' as string).catch((cause: unknown) => {
+      throw new Error('Redis cache requires "ioredis" package. Install it: npm install ioredis', { cause });
+    });
+    const options = {
+      ...this.connection,
+      lazyConnect: true,
+      enableOfflineQueue: false,
+      maxRetriesPerRequest: 1,
+      connectTimeout: this.connectTimeoutMs,
+      commandTimeout: this.commandTimeoutMs,
+      // Late SDK readiness failures can schedule another disconnect guard after socket close.
+      disconnectTimeout: 1,
+      retryStrategy: () => null,
+      autoResendUnfulfilledCommands: false,
+    };
+    const client = this.url ? new Redis(this.url, options) : new Redis(options);
+    let connectionError: unknown;
+    // The operation reports failures; the listener also prevents SDK error-event spam.
+    client.on('error', (error: unknown) => {
+      connectionError = error;
+      if (this.redis === client) this.discard(client);
+    });
+    client.on('end', () => {
+      if (this.redis === client) this.redis = undefined;
+    });
+    try {
+      await this.bounded(client.connect(), this.connectTimeoutMs, 'connect');
+      if (client.status !== 'ready') throw connectionError ?? new Error('Redis cache connection did not become ready.');
+      this.redis = client;
+      return client;
+    } catch (error) {
+      this.discard(client);
+      throw connectionError ?? error;
+    }
+  }
+
+  private discard(client: CacheStoreConfig['client']): void {
+    if (this.redis === client) this.redis = undefined;
+    if (client.status !== 'end') client.disconnect();
+    // ioredis disconnect() can wait for a half-open peer; failures must release owned sockets now.
+    client.stream?.destroy();
+  }
+
+  private async bounded<T>(operation: Promise<T>, timeoutMs: number, stage: 'connect' | 'command'): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        operation,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`Redis cache ${stage} timed out after ${timeoutMs} milliseconds.`)), timeoutMs);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async command<T>(client: CacheStoreConfig['client'], operation: () => Promise<T>): Promise<T> {
+    if (!this.owned) return operation();
+    try {
+      return await this.bounded(operation(), this.commandTimeoutMs, 'command');
+    } catch (error) {
+      this.discard(client);
+      throw error;
+    }
   }
 
   private serialize(value: any): string {
@@ -533,7 +616,7 @@ class RedisCacheStore implements CacheStore {
 
   async get<T = any>(key: string): Promise<T | null> {
     const client = await this.getClient();
-    const raw = await client.get(this.key(key));
+    const raw = await this.command<string | null>(client, () => client.get(this.key(key)));
     if (raw === null) return null;
 
     try {
@@ -550,16 +633,16 @@ class RedisCacheStore implements CacheStore {
     const payload = this.serialize(value);
     const cacheKey = this.key(key);
     if (ttlMs > 0) {
-      await client.set(cacheKey, payload, 'PX', ttlMs);
+      await this.command(client, () => client.set(cacheKey, payload, 'PX', ttlMs));
       return;
     }
 
-    await client.set(cacheKey, payload);
+    await this.command(client, () => client.set(cacheKey, payload));
   }
 
   async forget(key: string): Promise<boolean> {
     const client = await this.getClient();
-    return (await client.del(this.key(key))) > 0;
+    return (await this.command<number>(client, () => client.del(this.key(key)))) > 0;
   }
 
   async flush(): Promise<void> {
@@ -568,30 +651,30 @@ class RedisCacheStore implements CacheStore {
     let cursor = '0';
 
     do {
-      const [nextCursor, keys] = await client.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+      const [nextCursor, keys] = await this.command<[string, string[]]>(client, () => client.scan(cursor, 'MATCH', pattern, 'COUNT', 100));
       cursor = nextCursor;
       if (keys.length > 0) {
-        await client.del(...keys);
+        await this.command(client, () => client.del(...keys));
       }
     } while (cursor !== '0');
   }
 
   async has(key: string): Promise<boolean> {
     const client = await this.getClient();
-    return (await client.exists(this.key(key))) > 0;
+    return (await this.command<number>(client, () => client.exists(this.key(key)))) > 0;
   }
 
   async increment(key: string, amount: number = 1): Promise<number> {
     validateAmount(amount);
     const client = await this.getClient();
     const cacheKey = this.key(key);
-    const [value] = await client.eval(
+    const [value] = await this.command<[number, number]>(client, () => client.eval(
       REDIS_INCREMENT_SCRIPT,
       1,
       cacheKey,
       String(amount),
       '0',
-    );
+    ));
     return Number(value);
   }
 
@@ -604,13 +687,13 @@ class RedisCacheStore implements CacheStore {
     const ttlDuration = ttlMilliseconds(ttl);
     const client = await this.getClient();
     const cacheKey = this.key(key);
-    const [value, expiration] = await client.eval(
+    const [value, expiration] = await this.command<[number, number]>(client, () => client.eval(
       REDIS_INCREMENT_SCRIPT,
       1,
       cacheKey,
       String(amount),
       String(ttlDuration),
-    );
+    ));
 
     const expiresAt = Number(expiration) > 0 ? Number(expiration) : null;
     return { value: Number(value), expiresAt };
@@ -624,7 +707,7 @@ class RedisCacheStore implements CacheStore {
     const client = await this.getClient();
     let raw = '';
     if (expectedValue !== undefined) {
-      const observed: string | null = await client.get(this.key(key));
+      const observed = await this.command<string | null>(client, () => client.get(this.key(key)));
       if (observed === null || Buffer.byteLength(observed) > 1_048_600) return false;
       try {
         if (serializedValue(this.deserialize(observed)) !== expectedValue) return false;
@@ -634,20 +717,20 @@ class RedisCacheStore implements CacheStore {
     // Compare the exact observed bytes inside Lua, never an unguarded GET/SET pair.
     const effectiveTtl = expectedValue === undefined && ttl === undefined
       ? (this.defaultTtl ? ttlMilliseconds(this.defaultTtl) : -1) : ttlMs;
-    return Number(await client.eval(REDIS_COMPARE_SCRIPT, 1, this.key(key), expectedValue === undefined ? 'missing' : 'value', raw, payload, String(effectiveTtl))) === 1;
+    return Number(await this.command(client, () => client.eval(REDIS_COMPARE_SCRIPT, 1, this.key(key), expectedValue === undefined ? 'missing' : 'value', raw, payload, String(effectiveTtl)))) === 1;
   }
 
   async acquireLock(key: string, owner: string, ttl: number): Promise<boolean> {
     validateAtomicKey(key); validateOwner(owner);
     const ttlMs = ttlMilliseconds(ttl);
     const client = await this.getClient();
-    return Number(await client.eval(REDIS_ACQUIRE_SCRIPT, 1, this.key(lockKey(key)), this.serialize(owner), String(ttlMs))) === 1;
+    return Number(await this.command(client, () => client.eval(REDIS_ACQUIRE_SCRIPT, 1, this.key(lockKey(key)), this.serialize(owner), String(ttlMs)))) === 1;
   }
 
   async releaseLock(key: string, owner: string): Promise<boolean> {
     validateAtomicKey(key); validateOwner(owner);
     const client = await this.getClient();
-    return Number(await client.eval(REDIS_RELEASE_SCRIPT, 1, this.key(lockKey(key)), this.serialize(owner))) === 1;
+    return Number(await this.command(client, () => client.eval(REDIS_RELEASE_SCRIPT, 1, this.key(lockKey(key)), this.serialize(owner)))) === 1;
   }
 
   async reserveCapacity(key: string, capacity: number, ttl: number, amount = 1): Promise<CacheCapacityResult> {
@@ -659,7 +742,7 @@ class RedisCacheStore implements CacheStore {
     const keys = claims.map((claim) => this.key(claim.key));
     const args = claims.flatMap((claim) => [String(claim.capacity), String(ttlMilliseconds(claim.ttl)), String(claim.amount ?? 1)]);
     const client = await this.getClient();
-    const raw: [number, number, number, number][] = await client.eval(REDIS_CAPACITY_SCRIPT, keys.length, ...keys, ...args);
+    const raw = await this.command<[number, number, number, number][]>(client, () => client.eval(REDIS_CAPACITY_SCRIPT, keys.length, ...keys, ...args));
     return raw.map(([allowed, value, remaining, expiration]) => ({
       allowed: Number(allowed) === 1, value: Number(value), remaining: Number(remaining),
       expiresAt: Number(expiration) >= 0 ? Number(expiration) : null,

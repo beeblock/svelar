@@ -828,6 +828,8 @@ const cacheConfig: CacheConfig = {
       db: config.get('cache.stores.redis.db', Number(process.env.REDIS_DB ?? 0)),
       prefix: config.get('cache.stores.redis.prefix', 'svelar_cache:'),
       ttl: config.get('cache.stores.redis.ttl', undefined),
+      connectTimeoutMs: config.get('cache.stores.redis.connectTimeoutMs', 2000),
+      commandTimeoutMs: config.get('cache.stores.redis.commandTimeoutMs', 2000),
     },
   },
 };
