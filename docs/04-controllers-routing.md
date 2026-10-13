@@ -9,10 +9,10 @@ Controllers accept HTTP requests and return responses. They're the glue between 
 ### Creating a Controller
 
 ```bash
-npx svelar make:controller AuthController
+npx svelar make:controller AuthController --module=auth --public
 ```
 
-For a complete write workflow, use `npx svelar make:entity Invoice --module=billing --fields "title:string,total:number" --crud`. `make:controller InvoiceController --resource --model=Invoice --module=billing` also creates the supporting shared schema, FormRequests, DTOs, actions, service, repository, and resource; it skips migration generation. Existing files are preserved. The generated resource controller delegates writes through that flow instead of validating and persisting directly in the controller.
+For a complete write workflow, use `npx svelar make:entity Invoice --module=billing --fields "title:string,total:number" --crud --capability=invoices --scope=team --screen-route=/invoices`. `make:controller InvoiceController --resource --model=Invoice --module=billing --capability=invoices --scope=team --screen-route=/invoices` also creates the supporting shared schema, FormRequests, DTOs, actions, service, repository, and resource; it skips migration generation. Existing files are preserved. The generated resource controller delegates writes through that flow instead of validating and persisting directly in the controller. A reviewed `--public` exemption removes functional RBAC only; it never removes authentication, policies, validation or CSRF.
 
 Artifact generator `--module` values are single directory identifiers starting with a letter, followed by letters, digits, hyphens, or underscores. Nested segments, traversal, absolute paths, quotes, and control characters are rejected in both DDD and flat layouts, even when a flat generator does not use the module. Planned output paths must remain inside their selected directories, including existing symlink targets; multi-file generators preflight all outputs before writing. This does not restrict the deliberate relative project path accepted by `svelar new`.
 

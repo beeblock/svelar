@@ -502,7 +502,9 @@ await plugins.boot();
 
 ## Client-Side: apiFetch
 
-The `apiFetch` function is a drop-in replacement for `fetch` that automatically handles CSRF tokens. It reads the `XSRF-TOKEN` cookie and attaches it as an `X-CSRF-Token` header on mutation requests (POST, PUT, PATCH, DELETE).
+The `apiFetch` function is a drop-in replacement for `fetch` that automatically handles CSRF tokens. It reads the `XSRF-TOKEN` cookie and attaches it as an `X-CSRF-Token` header on same-origin mutation requests (POST, PUT, PATCH, DELETE). It never automatically forwards a browser CSRF credential to another origin, and malformed cookies are treated as missing tokens rather than breaking the UI.
+
+`apiFetch` and `apiFetchJson` read error messages and field errors from resource-style `{ data: null, meta: { message, errors } }` responses. They also accept upstream/SvelteKit's top-level error fields. Use `showToast: false` when Superforms displays validation inline; do not duplicate a field error with a success or error toast. Successful JSON responses remain intact, including both `data` and `meta`; the client helper does not silently discard resource metadata.
 
 ### Import
 

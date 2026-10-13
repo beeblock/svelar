@@ -358,11 +358,11 @@ npx svelar migrate --seed          # Run seeders after migrating
 npx svelar seed:run                # Run database seeders
 
 # Code Generation — Full resource scaffold
-npx svelar make:entity Invoice --module=billing --fields "title:string,total:number,status:enum(draft,paid)" --crud
+npx svelar make:entity Invoice --module=billing --fields "title:string,total:number,status:enum(draft,paid)" --crud --capability=invoices --scope=team --screen-route=/invoices
 
 # Code Generation — Domain modules (goes into layered src/lib/modules/<module>/ folders)
 npx svelar make:model User --module=auth        # domain/models
-npx svelar make:controller User --module=auth   # interface/http/controllers
+npx svelar make:controller User --module=auth --capability=users --scope=platform --screen-route=/admin/users
 npx svelar make:service Billing --module=billing --crud # CRUD Service
 npx svelar make:repository User --module=auth   # infrastructure/repositories
 npx svelar make:action CreateUser --module=auth --dto --request --schema  # action + boundaries
@@ -401,7 +401,7 @@ npx svelar make:config <Name>      # Config file
 # Scaffolding
 npx svelar make:docker             # Docker deployment files
 npx svelar make:broadcasting       # Broadcasting routes + client
-npx svelar make:dashboard          # Admin dashboard routes
+npx svelar make:dashboard --capability=operations --scope=platform
 
 # Plugins
 npx svelar plugin:list             # List plugins

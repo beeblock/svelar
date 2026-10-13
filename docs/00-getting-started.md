@@ -4,6 +4,8 @@ Everything you need to go from zero to a running SaaS app in under 5 minutes.
 
 ## Create Your App
 
+New apps require Node.js 22.12+ on the 22.x line, or Node.js 24+. The generated toolchain uses SvelteKit 2, Svelte 5, Vite 8 and TypeScript 6; incompatible next major versions are not silently selected from registry `latest` tags.
+
 ```bash
 npx @beeblock/svelar new my-app
 cd my-app
@@ -235,11 +237,11 @@ Svelar handles the repetitive SaaS infrastructure. You focus on your core busine
 
 ```bash
 # Create a new resource inside a domain module
-npx svelar make:entity Invoice --module=billing --fields "title:string,total:number,status:enum(draft,paid)" --crud
+npx svelar make:entity Invoice --module=billing --fields "title:string,total:number,status:enum(draft,paid)" --crud --capability=invoices --scope=team --screen-route=/invoices
 
 # Or generate individual artifacts when you only need one file
 npx svelar make:model Invoice --module=billing
-npx svelar make:controller Invoice --module=billing
+npx svelar make:controller Invoice --module=billing --capability=invoices --scope=team --screen-route=/invoices
 npx svelar make:schema Invoice --module=billing
 npx svelar make:dto CreateInvoice --module=billing --input=CreateInvoiceInput --schema=invoice
 

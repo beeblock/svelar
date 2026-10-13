@@ -123,7 +123,7 @@ Most first-party facades are also available from the root package, for example `
 ```bash
 npx @beeblock/svelar new my-app                  # scaffold with shadcn-svelte + all components
 npx svelar update                      # update scaffold files without overwriting
-npx svelar make:entity Invoice --module billing --fields "title:string,total:number" --crud
+npx svelar make:entity Invoice --module billing --fields "title:string,total:number" --crud --capability=invoices --scope=team --screen-route=/invoices
 npx svelar make:model Post -m -c       # model + migration + controller
 npx svelar make:schema Invoice --module billing
 npx svelar make:dto CreateInvoice --module billing --input CreateInvoiceInput --schema invoice
@@ -171,7 +171,7 @@ npm install mysql2
 
 Core and generated apps use a tested TypeScript 6.0.3 toolchain baseline (`^6.0.3`) with Node.js 22 type definitions and explicit ambient types. TypeScript 7 is not the supported baseline: Svelte tooling and compiler-API consumers still require the TypeScript 6 JavaScript API.
 
-- Node.js >= 22
+- Node.js 22.12+ on the 22.x line, or Node.js 24+ for generated Vite 8 apps
 - SvelteKit >= 2.0 and < 3.0
 
 ## License

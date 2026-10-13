@@ -37,14 +37,21 @@ Add Stripe configuration and register your billable models in `src/app.ts`:
 ```typescript
 import { env } from '@beeblock/svelar/config';
 import { Stripe, registerDefaultWebhookHandlers } from '@beeblock/svelar-stripe';
+import type { StripeAdminGuard } from '@beeblock/svelar-stripe';
 import { User } from '$lib/modules/users/domain/models/User.js';
+import { capabilityAccess, resolveCapabilityInput } from '$lib/shared/permissions/access.server.js';
+
+const billingCapabilityGuard: StripeAdminGuard = async (event, capability) => {
+  const input = resolveCapabilityInput(event);
+  return input !== null && await capabilityAccess.can(capability, input);
+};
 
 Stripe.configure({
   secretKey: env('STRIPE_SECRET_KEY'),
   publishableKey: env('STRIPE_PUBLISHABLE_KEY'),
   webhookSecret: env('STRIPE_WEBHOOK_SECRET'),
   currency: 'usd',
-  adminGuard: (event) => event.locals.user?.role === 'admin',
+  adminGuard: billingCapabilityGuard,
 });
 
 // Register every model that can be billed
@@ -56,7 +63,7 @@ registerDefaultWebhookHandlers(Stripe.webhooks());
 ```
 
 `registerBillable()` tells the plugin which ORM Model corresponds to each table name, so all billing queries go through the Svelar ORM — no raw SQL.
-`adminGuard` protects the published admin billing endpoints. Without it, those admin routes deny every request by default.
+Published admin billing routes require request-local Core Auth with an authenticated user, then require `adminGuard` to return boolean `true` for the exact operation. A caller-provided user object alone is insufficient. Register `screen.billing.view`, `action.billing.cancel` and `action.billing.refund` in the application manifest with intended scope/dependencies, then assign grants through seeders or permission management. Adapt the server-only resolver import for a flat app. Never equate a tenant role named `admin` with platform billing authority. Cancel/refund FormRequests independently enforce the operation capability; browser CSRF remains enabled. Signed Stripe webhooks use raw-body signature verification, not this admin guard.
 
 ### 4. Publish & Run Migrations
 
@@ -131,7 +138,7 @@ Stripe.configure({
   webhookSecret: env('STRIPE_WEBHOOK_SECRET'),
 
   // Optional
-  adminGuard: (event) => event.locals.user?.role === 'admin', // Required for admin billing routes
+  adminGuard: billingCapabilityGuard,                 // Explicit per-operation Core Auth/capability guard above
   currency: 'usd',                                    // Default currency for new subscriptions
   trialDays: 14,                                       // Default trial period
   portalReturnUrl: '/dashboard/billing',               // Return URL after Stripe Portal

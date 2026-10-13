@@ -284,7 +284,9 @@ Broadcast.channel('presence-chat.{roomId}', async (user, { roomId }) => {
 });
 ```
 
-The scaffolded auth route at `src/routes/api/broadcasting/auth/+server.ts` handles Pusher/Soketi channel authentication automatically — it calls `Broadcast.authenticatePusher()` which checks your registered channel callbacks and generates the HMAC-SHA256 signature pusher-js expects.
+The scaffolded auth route at `src/routes/api/broadcasting/auth/+server.ts` binds `BroadcastingController.authenticate`, which validates the bounded form-encoded request, checks your registered channel callbacks and returns the exact top-level Pusher signature protocol. Unlike normal resources, this protocol cannot be wrapped in `{ data, meta }`. The default `usePusher()` client reads the latest CSRF cookie through a per-request headers provider for same-origin authorization, including after cookie rotation. Configure `csrfCookieName` and `csrfHeaderName` when using custom browser protection names; browser credentials are never automatically forwarded to an external auth endpoint.
+
+New SSE and internal bridge routes also bind `BroadcastingController`. Streaming preserves `Last-Event-ID` and the request's abort signal. The internal bridge requires the server-only `INTERNAL_SECRET`, uses constant-time credential comparison, validates JSON before dispatch, caps request bodies at 256 KiB and returns safe `{ data, meta }` errors. Never expose that internal credential in client code. Missing configuration and broker failures return a safe unavailable response, not an exception message or stack trace.
 
 ### Broadcasting Events (Server-Side)
 

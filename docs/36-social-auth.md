@@ -30,7 +30,20 @@ Configure providers during app bootstrap:
 ```ts
 // src/app.ts
 import { env } from '@beeblock/svelar/config';
+import type { AuthPresentationConfig } from '@beeblock/svelar/auth';
 import { SvelarSocialAuthPlugin } from '@beeblock/svelar-social-auth/plugin';
+
+const googleConfigured = Boolean(env('GOOGLE_CLIENT_ID') && env('GOOGLE_CLIENT_SECRET'));
+const githubConfigured = Boolean(env('GITHUB_CLIENT_ID') && env('GITHUB_CLIENT_SECRET'));
+export const authPresentation = {
+  providers: [
+    { id: 'google', label: 'Google', protocol: 'oauth2', configured: googleConfigured,
+      available: googleConfigured, loginUrl: '/auth/google/redirect' },
+    { id: 'github', label: 'GitHub', protocol: 'oauth2', configured: githubConfigured,
+      available: githubConfigured, loginUrl: '/auth/github/redirect' },
+  ],
+} satisfies AuthPresentationConfig;
+// Set presentation: authPresentation in the application's existing AuthManager.
 
 export const socialAuth = new SvelarSocialAuthPlugin({
   providers: {
@@ -60,7 +73,9 @@ This publishes:
 - `src/routes/auth/[provider]/redirect/+server.ts`
 - `src/routes/auth/[provider]/callback/+server.ts`
 
-The callback route intentionally returns `501` after verifying the OAuth callback and returning a sanitized provider user summary. Replace the TODO with your app's local user lookup/create flow, set the authenticated user in the session, regenerate the session ID, and redirect.
+The callback route intentionally returns `501` after verifying OAuth and returning a sanitized provider summary. Replace the TODO with your application's FormRequest/DTO/action lookup or explicit account-linking flow, then call `SocialAuthController.login(provider, event, localUser, { remember })` from the server entry. Do not automatically link by unverified email or write session authentication fields directly. A null result means authentication was denied.
+
+The bridge always supplies `providerId` to request-local `event.locals.auth.login()`. The matching provider must be configured and available in both this plugin and Core Auth's `presentation.providers`. Core Auth rereads persisted account state, applies eligibility, rotates the managed session, honors configured remember-me limits and audits the attempt. Never instantiate a second auth manager in a callback or omit provider identity to bypass this policy. Render social buttons from the server's public presentation filtered to available configured Google/GitHub entries, not a hardcoded provider list.
 
 ## Configuration
 

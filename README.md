@@ -2,7 +2,7 @@
 
 Laravel-inspired framework and application scaffold for SvelteKit 2.
 
-Core and generated apps use a tested TypeScript 6.0.3 toolchain baseline (`^6.0.3`) with Node.js 22 type definitions and explicit ambient types. TypeScript 7 is not the supported baseline: Svelte tooling and compiler-API consumers still require the TypeScript 6 JavaScript API.
+Core and generated apps use a tested TypeScript 6.0.3 toolchain baseline (`^6.0.3`) with Node.js 22 type definitions and explicit ambient types. New apps require Node 22.12+ on the 22.x line, or Node 24+, and use Vite 8. TypeScript 7 is not the supported baseline: Svelte tooling and compiler-API consumers still require the TypeScript 6 JavaScript API.
 
 Svelar brings Laravel-style conventions to TypeScript and SvelteKit: a DDD-friendly module structure, Eloquent-like models, migrations, FormRequests, DTOs, actions, services, repositories, policies, queues, scheduler tasks, events, listeners, observers, storage, mail, PDF generation, search, broadcasting, and a project-local Artisan-like CLI.
 
@@ -23,7 +23,7 @@ npx @beeblock/svelar new my-app --validation=valibot
 Use `npx @beeblock/svelar new` when npm needs to fetch the package for a new app. Generated apps install `@beeblock/svelar`, so project-local commands use the shorter binary:
 
 ```bash
-npx svelar make:entity Invoice --module=billing --fields "title:string,total:number,status:enum(draft,paid)" --crud
+npx svelar make:entity Invoice --module=billing --fields "title:string,total:number,status:enum(draft,paid)" --crud --capability=invoices --scope=team --screen-route=/invoices
 npx svelar migrate
 npm run dev:worker
 npm run dev:scheduler
@@ -118,12 +118,12 @@ npx @beeblock/svelar new my-app --flat
 Common project-local commands:
 
 ```bash
-npx svelar make:entity Post --module=posts --fields "title:string,body:text,published:boolean" --crud
+npx svelar make:entity Post --module=posts --fields "title:string,body:text,published:boolean" --crud --capability=posts --scope=team --screen-route=/posts
 npx svelar make:model User
 npx svelar make:migration create_posts_table
 npx svelar make:schema Post --module=posts
 npx svelar make:dto CreatePost --module=posts --input=CreatePostInput --schema=post
-npx svelar make:controller PostController
+npx svelar make:controller PostController --module=posts --capability=posts --scope=team --screen-route=/posts
 npx svelar make:request CreatePostRequest
 npx svelar make:resource PostResource
 npx svelar make:job SendWelcomeEmail
@@ -132,7 +132,7 @@ npx svelar make:event UserRegistered
 npx svelar make:listener SendWelcomeEmailListener
 npx svelar make:observer UserObserver
 npx svelar make:docker
-npx svelar make:dashboard
+npx svelar make:dashboard --capability=operations --scope=platform
 npx svelar make:broadcasting
 npx svelar migrate
 npx svelar seed:run

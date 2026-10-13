@@ -35,7 +35,7 @@ The `new` command generates `.env` with secure random `APP_KEY` and `INTERNAL_SE
 - Roles and permissions display with seeded data
 - Admin guard — non-admin users redirected to `/dashboard`
 - Admin API routes for full CRUD on users, roles, permissions, role-permissions, user-roles, user-permissions, billing
-- Run `npx svelar make:dashboard` for the full monitoring UI (queue, scheduler, logs, system health)
+- Run `npx svelar make:dashboard --capability=operations --scope=platform` for the full monitoring UI (queue, scheduler, logs, system health)
 
 ### API Routes (16 endpoints)
 - Auth: register, login, logout, me
@@ -137,7 +137,7 @@ Follow the DDD pattern established by the scaffold:
 # Generate the files
 npx svelar make:model Invoice
 npx svelar make:migration create_invoices_table
-npx svelar make:controller InvoiceController
+npx svelar make:controller InvoiceController --capability=invoices --scope=team --screen-route=/invoices
 npx svelar make:job ProcessInvoiceJob
 ```
 
@@ -807,7 +807,7 @@ Uploads.configure({ driver: 'database', maxFileSize: 10 * 1024 * 1024 }); // 10M
   docker compose up -d worker scheduler
   ```
 - [ ] In local development, use `npm run dev:worker` and `npm run dev:scheduler`
-- [ ] Run `npx svelar make:dashboard` and use `/admin` to monitor queue and scheduler
+- [ ] Run `npx svelar make:dashboard --capability=operations --scope=platform` and use `/admin` to monitor queue and scheduler
 
 ### Docker Deployment
 
