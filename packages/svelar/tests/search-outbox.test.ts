@@ -131,9 +131,9 @@ describe('Durable transactional search synchronization', () => {
   it('does not mark an asynchronously failed Meilisearch task completed', async () => {
     await Article.create({ title: 'Invalid indexing task' });
     const waitForTask = vi.fn(async () => ({ status: 'failed', error: { code: 'invalid_document_id' } }));
-    vi.mocked(Search.getClient).mockReturnValue({ index: () => ({ addDocuments: async () => ({ taskUid: 7 }) }), waitForTask });
+    vi.mocked(Search.getClient).mockReturnValue({ index: () => ({ addDocuments: async () => ({ taskUid: 7 }) }), tasks: { waitForTask } });
     expect((await Search.processOutbox()).failed).toBe(1);
-    expect(waitForTask).toHaveBeenCalledWith(7, { timeOutMs: 30_000 });
+    expect(waitForTask).toHaveBeenCalledWith(7, { timeout: 30_000 });
     expect((await outboxRows().first()).status).toBe('pending');
   });
 

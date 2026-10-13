@@ -134,6 +134,8 @@ export interface SearchableInstance {
   toSearchableObject(): Record<string, any>;
   searchableAs(): string;
   shouldBeSearchable(): boolean;
+  searchable(): Promise<void>;
+  unsearchable(): Promise<void>;
 }
 
 type Constructor = new (...args: any[]) => any;
@@ -164,17 +166,20 @@ class SearchManager {
     }
 
     if (!this.client) {
-      // Lazy-load meilisearch to avoid requiring it when not used
-      let MeiliSearch: any;
+      // Node 22.12+ can synchronously load the optional ESM SDK without changing getClient().
+      let sdk: typeof import('meilisearch');
       try {
-        ({ MeiliSearch } = requireOptionalPeer('meilisearch'));
-      } catch {
+        sdk = requireOptionalPeer('meilisearch');
+      } catch (cause) {
         throw new Error(
-          'meilisearch package not installed. Run: npm install meilisearch'
+          'Unable to load the Meilisearch SDK. Install meilisearch@^0.62.0 and use Node 22.12+ or 24+.',
+          { cause },
         );
       }
-
-      this.client = new MeiliSearch({
+      if (typeof sdk.Meilisearch !== 'function') {
+        throw new Error('Unsupported Meilisearch SDK. Install meilisearch@^0.62.0.');
+      }
+      this.client = new sdk.Meilisearch({
         host: this.config.host,
         apiKey: this.config.apiKey,
       });
@@ -233,7 +238,7 @@ class SearchManager {
       throw error;
     }
     if (task?.taskUid !== undefined) {
-      const settled = await client.waitForTask(task.taskUid, { timeOutMs: 30_000 });
+      const settled = await client.tasks.waitForTask(task.taskUid, { timeout: 30_000 });
       if (settled.status !== 'succeeded') throw new Error(`Search indexing task ${settled.status}: ${settled.error?.code ?? 'unknown'}`);
     }
   }
@@ -323,9 +328,18 @@ export type { SearchOutboxOptions } from './SearchOutbox.js';
 
 // ── Searchable Mixin ───────────────────────────────────────
 
+export interface SearchableStatic<TModel extends SearchableInstance = SearchableInstance> {
+  new (...args: any[]): TModel;
+  search(this: new () => TModel, query: string, options?: SearchOptions): Promise<SearchResults>;
+  makeAllSearchable(this: new () => TModel, batchSize?: number): Promise<{ indexed: number }>;
+  removeAllFromSearch(this: new () => TModel): Promise<void>;
+  configureSearchIndex(this: new () => TModel, settings: Record<string, unknown>): Promise<void>;
+  searchIndexStats(this: new () => TModel): Promise<Record<string, unknown>>;
+}
+
 export function Searchable<TBase extends Constructor>(
   Base: TBase
-): TBase & (new (...args: any[]) => SearchableInstance) {
+): TBase & SearchableStatic<InstanceType<TBase> & SearchableInstance> {
   class SearchableMixin extends Base {
     /**
      * Get the index name for this model.
@@ -584,5 +598,5 @@ export function Searchable<TBase extends Constructor>(
       }, (this.constructor as any).connection);
     };
   }
-  return SearchableMixin as unknown as TBase & (new (...args: any[]) => SearchableInstance);
+  return SearchableMixin as unknown as TBase & SearchableStatic<InstanceType<TBase> & SearchableInstance>;
 }
