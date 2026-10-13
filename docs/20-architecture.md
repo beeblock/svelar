@@ -59,7 +59,7 @@ The CLI follows this layout automatically:
 For a full resource scaffold, use `make:entity`:
 
 ```bash
-npx svelar make:entity Invoice --module=billing --fields "title:string,total:number,status:enum(draft,paid)" --crud
+npx svelar make:entity Invoice --module=billing --fields "title:string,total:number,status:enum(draft,paid)" --crud --capability=invoices --scope=team --screen-route=/invoices
 ```
 
 This creates the model, contract schema, DTOs, requests, actions, resource, repository, service, controller, and a focused table migration using the layered module layout.

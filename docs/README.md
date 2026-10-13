@@ -340,6 +340,7 @@ STORAGE_DISK=local
 - [Models & ORM](./03-models-orm.md) — define your domain models
 - [Controllers & Routing](./04-controllers-routing.md) — build your API
 - [Authentication](./06-authentication.md) — JWT, refresh tokens, API tokens, request signatures
+- [Permissions & Capabilities](./49-permissions.md) — one manifest, backend guards, team profiles and credential ceilings
 - [Architecture](./20-architecture.md) — DDD module boundaries and patterns
 
 ## Getting Help
