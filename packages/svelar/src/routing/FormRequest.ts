@@ -41,6 +41,7 @@
 import { z, type ZodType } from 'zod/v4';
 import type { BaseIssue, BaseSchema, BaseSchemaAsync, InferOutput } from 'valibot';
 import type { RequestEvent } from './Controller.js';
+import { singleton } from '../support/singleton.js';
 
 export type FormRequestSchema =
   | ZodType
@@ -244,12 +245,23 @@ export abstract class FormRequest<
 
 // ── Error Classes ──────────────────────────────────────────
 
+const validationErrors = singleton('svelar.form-validation-errors', () => new WeakSet<object>());
+const authorizationErrors = singleton('svelar.form-authorization-errors', () => new WeakSet<object>());
+const validationTypes = singleton('svelar.form-validation-types', () => new WeakSet<Function>());
+const authorizationTypes = singleton('svelar.form-authorization-types', () => new WeakSet<Function>());
+
 export class FormValidationError extends Error {
   public readonly statusCode = 422;
 
   constructor(public readonly errors: Record<string, string[]>) {
     super('The given data was invalid.');
     this.name = 'FormValidationError';
+    validationErrors.add(this);
+  }
+
+  static [Symbol.hasInstance](value: unknown): boolean {
+    return value !== null && typeof value === 'object' && validationErrors.has(value)
+      && (validationTypes.has(this) || Function.prototype[Symbol.hasInstance].call(this, value));
   }
 
   toResponse(): Response {
@@ -266,12 +278,20 @@ export class FormValidationError extends Error {
   }
 }
 
+validationTypes.add(FormValidationError);
+
 export class FormAuthorizationError extends Error {
   public readonly statusCode = 403;
 
   constructor(message: string = 'This action is unauthorized.') {
     super(message);
     this.name = 'FormAuthorizationError';
+    authorizationErrors.add(this);
+  }
+
+  static [Symbol.hasInstance](value: unknown): boolean {
+    return value !== null && typeof value === 'object' && authorizationErrors.has(value)
+      && (authorizationTypes.has(this) || Function.prototype[Symbol.hasInstance].call(this, value));
   }
 
   toResponse(): Response {
@@ -284,3 +304,5 @@ export class FormAuthorizationError extends Error {
     );
   }
 }
+
+authorizationTypes.add(FormAuthorizationError);
