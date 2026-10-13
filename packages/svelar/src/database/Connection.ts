@@ -154,7 +154,19 @@ class ConnectionManager {
   private transactionFrames = new AsyncLocalStorage<Map<string, TransactionFrame>>();
   private sqliteTransactions = new Map<string, Promise<void>>();
   private openingConnections = new Map<string, Promise<ActiveConnection>>();
+  private implicitConnection = new AsyncLocalStorage<string>();
   private savepointId = 0;
+
+  /** Scope implicit Schema/QueryBuilder calls without changing the process default. */
+  usingConnection<T>(name: string | undefined, callback: () => T): T {
+    const resolved = this.resolveConnectionName(name);
+    this.getConfig(resolved);
+    return this.implicitConnection.run(resolved, callback);
+  }
+
+  private resolveConnectionName(name?: string): string {
+    return name ?? this.implicitConnection.getStore() ?? this.defaultName;
+  }
 
   /**
    * Initialize the connection manager with configuration
@@ -188,7 +200,7 @@ class ConnectionManager {
    * Get or create a database connection by name
    */
   async connection(name?: string): Promise<DrizzleInstance> {
-    const connName = name ?? this.defaultName;
+    const connName = this.resolveConnectionName(name);
 
     if (this.connections.has(connName)) {
       return this.connections.get(connName)!.drizzle;
@@ -223,7 +235,7 @@ class ConnectionManager {
    * Get the raw client (e.g. better-sqlite3 Database, pg Pool, mysql2 connection)
    */
   async rawClient(name?: string): Promise<any> {
-    const connName = name ?? this.defaultName;
+    const connName = this.resolveConnectionName(name);
     const frame = this.transactionFrames.getStore()?.get(connName);
     for (let ancestor = frame; ancestor; ancestor = ancestor.parent) {
       if (!ancestor.active) throw new Error('This transaction has already ended. Await work before returning from its callback.');
@@ -265,7 +277,7 @@ class ConnectionManager {
           return stmt.run(...safeBindings);
         };
         return this.inTransaction(connectionName) ? execute()
-          : this.serializeSQLite(connectionName ?? this.defaultName, execute);
+          : this.serializeSQLite(this.resolveConnectionName(connectionName), execute);
       }
       case 'postgres': {
         const client = await this.rawClient(connectionName);
@@ -292,7 +304,7 @@ class ConnectionManager {
    * Get connection config
    */
   getConfig(name?: string): DatabaseConfig {
-    const connName = name ?? this.defaultName;
+    const connName = this.resolveConnectionName(name);
     if (!this.config) {
       throw new Error('Database not configured.');
     }
@@ -325,7 +337,7 @@ class ConnectionManager {
    * Check if a connection is active
    */
   isConnected(name?: string): boolean {
-    return this.connections.has(name ?? this.defaultName);
+    return this.connections.has(this.resolveConnectionName(name));
   }
 
   /**
@@ -333,7 +345,7 @@ class ConnectionManager {
    * Automatically commits on success, rolls back on error.
    */
   async transaction<T>(callback: () => Promise<T>, connectionName?: string): Promise<T> {
-    const connName = connectionName ?? this.defaultName;
+    const connName = this.resolveConnectionName(connectionName);
     const driver = this.getDriver(connName);
     const parent = this.transactionFrames.getStore()?.get(connName);
     if (parent && !parent.active) throw new Error('This transaction has already ended.');
@@ -388,14 +400,14 @@ class ConnectionManager {
   }
 
   inTransaction(connectionName?: string): boolean {
-    return this.transactionFrames.getStore()?.get(connectionName ?? this.defaultName)?.active === true;
+    return this.transactionFrames.getStore()?.get(this.resolveConnectionName(connectionName))?.active === true;
   }
 
   /** Register on the current transaction; rolled-back savepoints discard their callbacks. */
   async afterCommit(callback: () => void | Promise<void>, connectionName?: string): Promise<void> {
     const context = ApplicationContext.snapshot();
     const hook = async () => { await ApplicationContext.run(context, callback); };
-    const frame = this.transactionFrames.getStore()?.get(connectionName ?? this.defaultName);
+    const frame = this.transactionFrames.getStore()?.get(this.resolveConnectionName(connectionName));
     if (frame) {
       if (!frame.active) throw new Error('This transaction has already ended.');
       frame.afterCommit.push(hook);
@@ -415,7 +427,7 @@ class ConnectionManager {
 
   /** @internal Isolate recoverable PostgreSQL statements within an existing transaction. */
   async withSavepointIfNeeded<T>(callback: () => Promise<T>, connectionName?: string): Promise<T> {
-    const connName = connectionName ?? this.defaultName;
+    const connName = this.resolveConnectionName(connectionName);
     if (this.getDriver(connName) !== 'postgres') return callback();
 
     const current = this.transactionClients.getStore();

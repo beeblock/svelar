@@ -84,7 +84,7 @@ export class Migrator {
     const migrated: string[] = [];
 
     for (const file of pending) {
-      await file.migration.up();
+      await Connection.usingConnection(this.connectionName, () => file.migration.up());
       await Connection.raw(
         `INSERT INTO ${this.migrationsTable} (migration, batch) VALUES (?, ?)`,
         [file.name, batch],
@@ -117,7 +117,7 @@ export class Migrator {
       const name = record.migration;
       const file = migrations.find((m) => m.name === name);
       if (file) {
-        await file.migration.down();
+        await Connection.usingConnection(this.connectionName, () => file.migration.down());
         await Connection.raw(
           `DELETE FROM ${this.migrationsTable} WHERE migration = ?`,
           [name],

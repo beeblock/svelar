@@ -44,6 +44,8 @@ export { Connection };
 
 Migrations are version-controlled database schema changes. Each migration is a file that defines `up()` and `down()` methods.
 
+`new Migrator('analytics')` runs both migration tracking and implicit schema/query calls inside the selected connection. This also applies to rollback, refresh and fresh. Explicit connection names still take precedence. For infrastructure callbacks, use `Connection.usingConnection('analytics', callback)` to scope implicit calls without mutating the process default; concurrent callbacks remain isolated. This selects a database, not a tenant authorization scope.
+
 ### Creating a Migration
 
 ```bash
