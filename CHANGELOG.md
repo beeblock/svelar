@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **Transactional settlement** - Nested transactions use savepoints across SQLite/PostgreSQL/MySQL; after-commit callbacks preserve application context, run only after the outer commit and are discarded on rollback. Already-committed callback failures are explicitly distinguishable from failed writes. Independent SQLite statements/transactions are serialized, and interleaved savepoints or detached transaction work fail closed.
+
 - **Strict release builds** — declaration emission errors now fail the package build instead of being hidden behind a warning.
 - **Schema index alterations** — `Schema.table()` now applies ordinary/unique indexes and named `dropIndex()`/`dropUnique()` changes with driver-specific SQL and identifier preflight, instead of silently ignoring index declarations.
 

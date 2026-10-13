@@ -1,5 +1,6 @@
 export {
   Connection,
+  AfterCommitError,
   normalizeDatabaseDriver,
   type DatabaseConfig,
   type DatabaseDriver,

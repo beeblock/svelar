@@ -610,3 +610,22 @@ Each connection maintains its own `migrations` table by default, so migration hi
 ---
 
 **Svelar Database Guide** © 2026
+
+## Transactions And After Commit
+
+```typescript
+import { Connection, AfterCommitError } from '@beeblock/svelar/database';
+
+await Connection.transaction(async () => {
+  const invoice = await Invoice.create(validatedData);
+  await Connection.afterCommit(async () => {
+    await Queue.dispatch(new InvoiceNotificationJob(invoice.id));
+  });
+});
+```
+
+Nested transactions use savepoints on SQLite, PostgreSQL and MySQL. After-commit callbacks wait for the outermost commit on their connection; callbacks registered in a rolled-back savepoint are discarded. Their application tenant/actor/correlation context is captured when registered. Outside a transaction, `afterCommit` executes immediately. Explicit named connections keep independent transaction boundaries.
+
+Callbacks run after the write is committed. If a callback fails, the remaining callbacks still run and `AfterCommitError` reports `committed: true`: never blindly retry the original write. For reliable external work, persist an outbox in the same transaction and use callbacks only to signal its processor. Search uses this pattern by default.
+
+SQLite serializes independent asynchronous transactions and normal statements on each shared client. Await nested transactions before starting another nested transaction or issuing parent-context statements: interleaved savepoint lifetimes fail closed instead of silently rolling back another branch's work. Detached async work must not continue using an ended transaction; await every database operation within the callback. Rolled-back database state does not rewind already-mutated Model instances in memory; discard or refresh them before reuse.

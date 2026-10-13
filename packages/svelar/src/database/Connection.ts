@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { ApplicationContext } from '../support/Context.js';
 
 /**
  * Svelar Database Connection
@@ -132,11 +133,28 @@ interface ActiveConnection {
   rawClient: any;
 }
 
+interface TransactionFrame {
+  active: boolean;
+  parent?: TransactionFrame;
+  childActive?: boolean;
+  afterCommit: Array<() => void | Promise<void>>;
+}
+
+/** The transaction committed; retrying the original write can duplicate it. */
+export class AfterCommitError extends AggregateError {
+  readonly committed = true;
+  constructor(errors: unknown[]) { super(errors, 'Transaction committed, but an after-commit callback failed.'); }
+}
+
 class ConnectionManager {
   private connections = new Map<string, ActiveConnection>();
   private config: ConnectionsConfig | null = null;
   private defaultName: string = 'default';
   private transactionClients = new AsyncLocalStorage<Map<string, any>>();
+  private transactionFrames = new AsyncLocalStorage<Map<string, TransactionFrame>>();
+  private sqliteTransactions = new Map<string, Promise<void>>();
+  private openingConnections = new Map<string, Promise<ActiveConnection>>();
+  private savepointId = 0;
 
   /**
    * Initialize the connection manager with configuration
@@ -187,9 +205,18 @@ class ConnectionManager {
       throw new Error(`Database connection "${connName}" is not defined in configuration.`);
     }
 
-    const active = await this.createConnection(dbConfig);
-    this.connections.set(connName, active);
-    return active.drizzle;
+    let opening = this.openingConnections.get(connName);
+    if (!opening) {
+      opening = this.createConnection(dbConfig);
+      this.openingConnections.set(connName, opening);
+    }
+    try {
+      const active = await opening;
+      this.connections.set(connName, active);
+      return active.drizzle;
+    } finally {
+      if (this.openingConnections.get(connName) === opening) this.openingConnections.delete(connName);
+    }
   }
 
   /**
@@ -197,6 +224,11 @@ class ConnectionManager {
    */
   async rawClient(name?: string): Promise<any> {
     const connName = name ?? this.defaultName;
+    const frame = this.transactionFrames.getStore()?.get(connName);
+    for (let ancestor = frame; ancestor; ancestor = ancestor.parent) {
+      if (!ancestor.active) throw new Error('This transaction has already ended. Await work before returning from its callback.');
+    }
+    if (frame?.childActive) throw new Error('Await the nested transaction before issuing statements in its parent context.');
     const transactionClient = this.transactionClients.getStore()?.get(connName);
     if (transactionClient) {
       return transactionClient;
@@ -204,6 +236,11 @@ class ConnectionManager {
 
     // Ensure connection exists
     await this.connection(connName);
+    // SQLite has one synchronous client. Unrelated async executions must not borrow its open transaction.
+    if (this.getDriver(connName) === 'sqlite') {
+      const pending = this.sqliteTransactions.get(connName);
+      if (pending) await pending;
+    }
     return this.connections.get(connName)!.rawClient;
   }
 
@@ -218,18 +255,17 @@ class ConnectionManager {
       case 'sqlite': {
         const client = await this.rawClient(connectionName);
         const safeBindings = normalizeDatabaseBindings(bindings, 'sqlite');
-        const stmt = client.prepare(sql);
-        // DDL and mutation statements don't return rows — use run()
-        // SELECT and PRAGMA return rows — use all()
-        const trimmed = sql.trimStart().toUpperCase();
-        if (
-          trimmed.startsWith('SELECT') ||
-          (trimmed.startsWith('PRAGMA') && !trimmed.includes('=')) ||
-          trimmed.startsWith('WITH')
-        ) {
-          return stmt.all(...safeBindings);
-        }
-        return stmt.run(...safeBindings);
+        const execute = async () => {
+          const stmt = client.prepare(sql);
+          // DDL/mutations use run(); queries use all().
+          const trimmed = sql.trimStart().toUpperCase();
+          if (trimmed.startsWith('SELECT') || (trimmed.startsWith('PRAGMA') && !trimmed.includes('=')) || trimmed.startsWith('WITH')) {
+            return stmt.all(...safeBindings);
+          }
+          return stmt.run(...safeBindings);
+        };
+        return this.inTransaction(connectionName) ? execute()
+          : this.serializeSQLite(connectionName ?? this.defaultName, execute);
       }
       case 'postgres': {
         const client = await this.rawClient(connectionName);
@@ -298,49 +334,83 @@ class ConnectionManager {
    */
   async transaction<T>(callback: () => Promise<T>, connectionName?: string): Promise<T> {
     const connName = connectionName ?? this.defaultName;
-    const config = this.getConfig(connectionName);
-    const client = await this.rawClient(connectionName);
-
-    switch (config.driver) {
-      case 'sqlite': {
-        client.exec('BEGIN');
-        try {
-          const result = await callback();
-          client.exec('COMMIT');
-          return result;
-        } catch (err) {
-          client.exec('ROLLBACK');
-          throw err;
+    const driver = this.getDriver(connName);
+    const parent = this.transactionFrames.getStore()?.get(connName);
+    if (parent && !parent.active) throw new Error('This transaction has already ended.');
+    if (parent?.childActive) throw new Error('Concurrent nested transactions are not supported. Await each nested transaction.');
+    const client = parent ? this.transactionClients.getStore()!.get(connName) : await this.rawClient(connName);
+    const frame: TransactionFrame = { active: true, parent, afterCommit: [] };
+    if (parent) parent.childActive = true;
+    const run = (transactionClient: any) => {
+      const clients = new Map(this.transactionClients.getStore() ?? []);
+      const frames = new Map(this.transactionFrames.getStore() ?? []);
+      clients.set(connName, transactionClient);
+      frames.set(connName, frame);
+      return this.transactionClients.run(clients, () => this.transactionFrames.run(frames, callback));
+    };
+    let result: T;
+    try {
+      if (parent) {
+        if (driver === 'postgres') result = await client.savepoint(run);
+        else {
+          const name = `svelar_${++this.savepointId}`;
+          const sql = async (statement: string) => {
+            if (driver === 'sqlite') client.exec(statement);
+            else await client.execute(statement);
+          };
+          await sql(`SAVEPOINT ${name}`);
+          try { result = await run(client); await sql(`RELEASE SAVEPOINT ${name}`); }
+          catch (error) { await sql(`ROLLBACK TO SAVEPOINT ${name}`); await sql(`RELEASE SAVEPOINT ${name}`); throw error; }
         }
-      }
-      case 'postgres': {
-        return client.begin(async (tx: any) => {
-          const current = this.transactionClients.getStore();
-          const scoped = new Map(current ?? []);
-          scoped.set(connName, tx);
-          return await this.transactionClients.run(scoped, callback);
+      } else if (driver === 'postgres') result = await client.begin(run);
+      else if (driver === 'mysql') {
+        const connection = await client.getConnection();
+        try {
+          await connection.beginTransaction();
+          try { result = await run(connection); await connection.commit(); }
+          catch (error) { await connection.rollback(); throw error; }
+        } finally { connection.release(); }
+      } else {
+        result = await this.serializeSQLite(connName, async () => {
+          client.exec('BEGIN');
+          try { const value = await run(client); client.exec('COMMIT'); return value; }
+          catch (error) { client.exec('ROLLBACK'); throw error; }
         });
       }
-      case 'mysql': {
-        const conn = await client.getConnection();
-        await conn.beginTransaction();
-        try {
-          const current = this.transactionClients.getStore();
-          const scoped = new Map(current ?? []);
-          scoped.set(connName, conn);
-          const result = await this.transactionClients.run(scoped, callback);
-          await conn.commit();
-          conn.release();
-          return result;
-        } catch (err) {
-          await conn.rollback();
-          conn.release();
-          throw err;
-        }
-      }
-      default:
-        throw new Error(`Unsupported driver: ${config.driver}`);
+    } finally { frame.active = false; if (parent) parent.childActive = false; }
+    if (parent) parent.afterCommit.push(...frame.afterCommit);
+    else {
+      const errors: unknown[] = [];
+      for (const hook of frame.afterCommit) { try { await hook(); } catch (error) { errors.push(error); } }
+      if (errors.length) throw new AfterCommitError(errors);
     }
+    return result;
+  }
+
+  inTransaction(connectionName?: string): boolean {
+    return this.transactionFrames.getStore()?.get(connectionName ?? this.defaultName)?.active === true;
+  }
+
+  /** Register on the current transaction; rolled-back savepoints discard their callbacks. */
+  async afterCommit(callback: () => void | Promise<void>, connectionName?: string): Promise<void> {
+    const context = ApplicationContext.snapshot();
+    const hook = async () => { await ApplicationContext.run(context, callback); };
+    const frame = this.transactionFrames.getStore()?.get(connectionName ?? this.defaultName);
+    if (frame) {
+      if (!frame.active) throw new Error('This transaction has already ended.');
+      frame.afterCommit.push(hook);
+    } else await hook();
+  }
+
+  private async serializeSQLite<T>(name: string, callback: () => Promise<T>): Promise<T> {
+    const previous = this.sqliteTransactions.get(name) ?? Promise.resolve();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const tail = previous.then(() => held);
+    this.sqliteTransactions.set(name, tail);
+    await previous;
+    try { return await callback(); }
+    finally { release(); if (this.sqliteTransactions.get(name) === tail) this.sqliteTransactions.delete(name); }
   }
 
   /** @internal Isolate recoverable PostgreSQL statements within an existing transaction. */
@@ -352,11 +422,7 @@ class ConnectionManager {
     const transactionClient = current?.get(connName);
     if (!transactionClient) return callback();
 
-    return transactionClient.savepoint(async (savepointClient: any) => {
-      const scoped = new Map(current);
-      scoped.set(connName, savepointClient);
-      return this.transactionClients.run(scoped, callback);
-    });
+    return this.transaction(callback, connName);
   }
 
   // ── Private ──────────────────────────────────────────────
