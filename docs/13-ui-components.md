@@ -26,6 +26,85 @@ Dark mode is supported out of the box via `mode-watcher`. The `cn()` utility is 
 
 For full component documentation, see [shadcn-svelte.com](https://shadcn-svelte.com/docs/components).
 
+## Operational Patterns
+
+Use `make:ui` to generate optional, app-owned Svelte 5 patterns built on the installed shadcn primitives. Run `npm run ui:install` first if those primitives are missing; the generator reports missing components instead of installing dependencies.
+
+Generate all six with `npx svelar make:ui all` (or `npx svelar make:ui` without arguments). Generate a subset with `npx svelar make:ui select server-table`; comma-separated names are also accepted.
+
+DDD output lives in `src/lib/shared/components/patterns/`, imported through `$lib/shared/components/patterns`. Flat apps use `src/lib/components/patterns/` and `$lib/components/patterns`. Each selection includes shared `contracts.ts` and `helpers.ts`. Existing components are preserved by default. If existing shared contracts/helpers differ, generation stops before writing: review and merge customizations before using `--force`, which overwrites selected components and their shared files.
+
+| CLI Name | Generated Component | Main Props And Bindings |
+|----------|---------------------|-------------------------|
+| `select` | `SearchableSelect` | `options: SelectOption[]`, `label`, bindable `value`; `multiple`, `name`, `disabled`, `loading`, `error`, `onchange`, `onretry` |
+| `dialog` | `ResponsiveDialog` | Bindable `open`, `title`, `description`, `children` snippet, optional `footer` snippet and `pending` |
+| `tabs` | `UrlTabs` | `tabs: UrlTab[]`, `label`, `queryKey` (default `tab`), `children(selectedValue)` snippet; navigation uses the URL |
+| `server-table` | `ServerTable` | `rows`, `columns: TableColumn<Row>[]`, `getRowId`, `query: TableQuery`, `total`, `label`, `onquery`; optional `filters` snippet, `loading`, `error`, `onretry` |
+| `operation-tray` | `OperationTray` | `operations: OperationSummary[]`; optional `loading`, `error`, `onrefresh`, `oncancel(id)`, `onretry(id)` callbacks |
+| `capability-editor` | `CapabilityEditor` | `catalog`, `scope`, `aliases`, bindable `value`; `mode` (`custom` or `system`), `defaults`, bindable `inclusions`/`exclusions`, `disabled`, `error`, `onchange` |
+
+### Bind A Validated Select
+
+This example assumes an authorized page/controller load returns a Superforms `form` and `assigneeOptions` shaped as `SelectOption[]` (`value`, `label`, optional `disabled`/`keywords`). Load options through the scoped application service/repository, not hardcoded browser records. The shared `assignmentSchema` defines a string `assigneeId` and is also used by the write FormRequest; its validated DTO goes to the action/service.
+
+```svelte
+<script lang="ts">
+  import type { PageData } from './$types';
+  import { superForm } from 'sveltekit-superforms';
+  import { zod4Client } from 'sveltekit-superforms/adapters';
+  import { assignmentSchema } from '$lib/modules/tasks/contracts/schemas/assignment.schema.js';
+  import SearchableSelect from '$lib/shared/components/patterns/SearchableSelect.svelte';
+  import { Button } from '$lib/components/ui/button/index.js';
+
+  let { data }: { data: PageData } = $props();
+  const { form, errors, enhance, submitting } = superForm(data.form, {
+    validators: zod4Client(assignmentSchema), dataType: 'json',
+  });
+</script>
+
+<form method="POST" use:enhance novalidate>
+  <SearchableSelect options={data.assigneeOptions} label="Assignee" name="assigneeId"
+    bind:value={() => $form.assigneeId, (value) => { $form.assigneeId = typeof value === 'string' ? value : ''; }}
+    disabled={$submitting} error={$errors.assigneeId?.[0] ?? ''} />
+  <Button type="submit" disabled={$submitting}>Save</Button>
+</form>
+```
+
+Use `valibotClient` with the same app-owned Valibot schema in a Valibot project; flat imports follow that app's schema layout. For multiple selection, define an array in the shared schema and bind that array with `multiple`. Keep the app's CSRF-enabled form setup and server action feedback. See [Forms](./16-forms.md) for shared-schema adapters, inline errors and Superforms submission handling. A disabled option or client validator does not authorize the selected record.
+
+### Load A Server Table
+
+Have the authorized server load/controller return `rows`, `total` and `query`. Its `tableQuery(event.url, allowedSortKeys)` call parses bounded URL input; apply the resulting `TableQuery` through your service/repository with an explicit sortable-column allowlist and tenant/policy filters. The helper is not a database query or an authorization guard.
+
+```svelte
+<script lang="ts">
+  import type { PageData } from './$types';
+  import { page } from '$app/state';
+  import { goto, invalidateAll } from '$app/navigation';
+  import ServerTable from '$lib/shared/components/patterns/ServerTable.svelte';
+  import type { TableColumn } from '$lib/shared/components/patterns/contracts.js';
+  import { tableUrl } from '$lib/shared/components/patterns/helpers.js';
+
+  let { data }: { data: PageData } = $props();
+  const columns: TableColumn<PageData['rows'][number]>[] = [
+    { key: 'name', label: 'Name', text: (row) => row.name, sortable: true, truncate: true },
+  ];
+</script>
+
+<ServerTable rows={data.rows} {columns} getRowId={(row) => row.id}
+  query={data.query} total={data.total} label="Records"
+  onquery={(query) => goto(tableUrl(page.url, query), { keepFocus: true, noScroll: true })}
+  onretry={() => invalidateAll()} />
+```
+
+`TableQuery` carries `page`, `perPage`, `search`, `sort` and `direction`; `tableUrl()` preserves unrelated query parameters. `UrlTabs` uses `tabValue()`/`tabUrl()` for reloadable tab selection. Revalidate parameters and permissions on every server navigation; browser URLs and column definitions are untrusted input.
+
+### Keep Operational State Server-Owned
+
+`OperationTray` renders records; its callbacks do not issue API requests or run jobs. Load the current actor/tenant's durable records through `BackgroundOperation.list()` or the protected `OperationsController`. Register operation handlers and the recovery sweep in the common bootstrap. Authorize the private channel from `BackgroundOperation.currentChannel()`; an `operation.changed` SSE signal should trigger an authorized refetch, including after reconnect, rather than replace server state with a browser guess. Cancellation is a request, not immediate completion. Supply cancel/retry controls only when the corresponding guarded backend operation is implemented, retaining CSRF and failure feedback.
+
+For `CapabilityEditor`, obtain `permissionManifest.capabilities(scope)`, `permissionManifest.aliases(scope)` and the scoped `PermissionProfiles.preview(roleId)` from an authorized server load, not browser-supplied catalogs or scope. System mode presents defaults minus exclusions plus inclusions; custom mode presents an exact selection. Submit validated selections through a FormRequest/DTO/action and enforce scope, dependencies, protected identities and grant authority again on the backend. Selecting all team capabilities never grants platform ownership. See [Permissions & Capabilities](./49-permissions.md) for manifests, profiles and backend guards; UI visibility and selections are presentation, not security.
+
 ## Svelar Built-in Components
 
 Svelar also ships a minimal, composable component library built on Svelte 5 runes used by the dashboard and admin panel. Every component is themed via Tailwind CSS v4 `@theme` tokens.
