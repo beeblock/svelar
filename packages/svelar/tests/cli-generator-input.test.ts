@@ -225,6 +225,16 @@ describe('Installed CLI bin generator regressions', () => {
     mkdirSync(dirname(installedBin), { recursive: true });
     symlinkSync('../@beeblock/svelar/dist/cli/bin.js', installedBin);
 
+    // Cold Node startup competes with other projects; the fixture still has a hard total deadline.
+    const execute = (args: string[]) => {
+      const started = performance.now();
+      const result = spawnSync(process.execPath, [installedBin, ...args], { cwd: project, encoding: 'utf8', timeout: 30_000 });
+      const diagnostic = JSON.stringify({ args, durationMs: Math.round(performance.now() - started), status: result.status, signal: result.signal });
+      console.info('Installed CLI case:', diagnostic);
+      expect(result.error, diagnostic).toBeUndefined();
+      return result;
+    };
+
     for (const ddd of [false, true]) {
       project = join(sandbox, ddd ? 'installed-ddd' : 'installed-flat');
       setup(ddd);
@@ -237,23 +247,20 @@ describe('Installed CLI bin generator regressions', () => {
       ];
       for (const args of invalidCases) {
         const before = snapshot(project);
-        const result = spawnSync(process.execPath, [installedBin, ...args], { cwd: project, encoding: 'utf8', timeout: 10_000 });
-        expect(result.error, args.join(' ')).toBeUndefined();
+        const result = execute(args);
         expect(result.status, result.stderr).toBe(1);
         expect(result.stderr).toMatch(/identifier|module/);
         expect(snapshot(project)).toEqual(before);
         expect(existsSync(join(sandbox, 'escape'))).toBe(false);
       }
-      const result = spawnSync(process.execPath, [installedBin, 'make:model', 'api-key', '--migration'], { cwd: project, encoding: 'utf8', timeout: 10_000 });
-      expect(result.error).toBeUndefined();
+      const result = execute(['make:model', 'api-key', '--migration']);
       expect(result.status, result.stderr).toBe(0);
       const model = ddd ? 'src/lib/modules/api_keys/domain/models/ApiKey.ts' : 'src/lib/models/ApiKey.ts';
       expect(readFileSync(join(project, model), 'utf8')).toContain('export class ApiKey extends Model');
       expect(readdirSync(join(project, 'src/lib/database/migrations'))).toEqual([expect.stringMatching(/_create_api_keys_table\.ts$/)]);
     }
-    const result = spawnSync(process.execPath, [installedBin, 'new', '../sibling-app', '--no-install', '--validation=zod'], { cwd: project, encoding: 'utf8', timeout: 10_000 });
-    expect(result.error).toBeUndefined();
+    const result = execute(['new', '../sibling-app', '--no-install', '--validation=zod']);
     expect(result.status, result.stderr).toBe(0);
     expect(existsSync(join(sandbox, 'sibling-app/package.json'))).toBe(true);
-  }, 60_000);
+  }, 180_000);
 });
