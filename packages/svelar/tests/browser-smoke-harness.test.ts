@@ -6,6 +6,7 @@ import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 
 const source = ts.createSourceFile('browser-smoke.mjs', readFileSync(resolve(process.cwd(), '../../scripts/browser-smoke.mjs'), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+const { authUiMessages } = await import(new URL('../../../scripts/auth-ui-certification.mjs', import.meta.url).href);
 
 function harness(serverScript = 'smoke:serve') {
   const child = Object.assign(new EventEmitter(), {
@@ -74,5 +75,86 @@ describe('Browser smoke process isolation', () => {
     child.signalCode = 'SIGTERM';
     await helpers.stopServer(child);
     expect(process.kill.mock.calls).toEqual([[-1234, 'SIGTERM']]);
+  });
+});
+
+function otpHarness(options: { action?: { type: string; status: number }; alerts?: number; alertVisible?: boolean; code?: string; meStatus?: number } = {}) {
+  const functions = source.statements.filter((node): node is ts.FunctionDeclaration => ts.isFunctionDeclaration(node) && ['assertInvalidOtp', 'visible'].includes(node.name?.text ?? ''));
+  expect(functions).toHaveLength(2);
+  const alertWait = vi.fn(async () => { if (options.alertVisible === false) throw new Error('Alert is hidden'); });
+  const alert = { count: vi.fn(async () => options.alerts ?? 1), waitFor: alertWait };
+  const message = { waitFor: vi.fn(async () => {}) };
+  const code = { inputValue: vi.fn(async () => options.code ?? '') };
+  const button = { click: vi.fn(async () => {}) };
+  const page = {
+    waitForResponse: vi.fn(async (predicate: (response: any) => boolean) => {
+      const response = (path: string, method: string) => ({ url: () => `http://127.0.0.1:5394${path}`, request: () => ({ method: () => method }) });
+      expect(predicate(response('/otp-login', 'GET'))).toBe(false);
+      expect(predicate(response('/api/auth/login', 'POST'))).toBe(false);
+      expect(predicate(response('/otp-login?/verify', 'POST'))).toBe(true);
+      return { json: async () => options.action ?? { type: 'failure', status: 401 } };
+    }),
+    getByRole: vi.fn((role: string, options?: { name: string }) => {
+      if (role === 'alert') return alert;
+      expect(role).toBe('button'); expect(options?.name).toBe('Verify & Sign In'); return button;
+    }),
+    getByText: vi.fn((text: string, options: { exact: boolean }) => {
+      expect(text).toBe(authUiMessages.invalidOtp); expect(options).toEqual({ exact: true }); return message;
+    }),
+    locator: vi.fn((selector: string) => { expect(selector).toBe('input[name="code"]'); return code; }),
+  };
+  const browserApi = vi.fn(async (actual: unknown, path: string) => {
+    expect(actual).toBe(page); expect(path).toBe('/api/auth/me'); return { status: options.meStatus ?? 401 };
+  });
+  const evaluate = new Function('authUiMessages', 'browserApi', `${functions.map((fn) => fn.getText(source)).join('\n')}\nreturn assertInvalidOtp;`);
+  return { assertInvalidOtp: evaluate(authUiMessages, browserApi), page, alert, message, code, button, browserApi };
+}
+
+describe('Browser smoke invalid OTP contract', () => {
+  it('reuses the import-safe Auth UI message and binds the assertion into the existing OTP workflow', () => {
+    expect(authUiMessages.invalidOtp).toBe('Invalid or expired code');
+    const imports = source.statements.filter(ts.isImportDeclaration);
+    expect(imports.some((node) => node.moduleSpecifier.getText(source) === "'./auth-ui-certification.mjs'" && node.importClause?.getText(source).includes('authUiMessages'))).toBe(true);
+    const workflow = source.statements.find((node): node is ts.FunctionDeclaration => ts.isFunctionDeclaration(node) && node.name?.text === 'runAuthPagesBrowserSmoke');
+    expect(workflow?.getText(source)).toContain('await assertInvalidOtp(page)');
+    expect(workflow?.getText(source)).not.toContain('Invalid or expired code. Please try again.');
+  });
+
+  it('requires the real enhanced 401 failure, exact safe message, one visible alert, cleared code and anonymous identity', async () => {
+    const h = otpHarness();
+    await h.assertInvalidOtp(h.page);
+    expect(h.page.waitForResponse).toHaveBeenCalledOnce();
+    expect(h.button.click).toHaveBeenCalledOnce();
+    expect(h.message.waitFor).toHaveBeenCalledWith({ state: 'visible', timeout: 10000 });
+    expect(h.alert.count).toHaveBeenCalledOnce();
+    expect(h.alert.waitFor).toHaveBeenCalledWith({ state: 'visible', timeout: 10000 });
+    expect(h.code.inputValue).toHaveBeenCalledOnce();
+    expect(h.browserApi).toHaveBeenCalledOnce();
+  });
+
+  it.each([{ type: 'success', status: 200 }, { type: 'success', status: 401 }, { type: 'failure', status: 422 }, { type: 'failure', status: 500 }])('rejects a non-authentication action result %j', async (action) => {
+    const h = otpHarness({ action });
+    await expect(h.assertInvalidOtp(h.page)).rejects.toThrow('enhanced action failure with status 401');
+    expect(h.browserApi).not.toHaveBeenCalled();
+  });
+
+  it.each([0, 2])('rejects %i visible alerts', async (alerts) => {
+    const h = otpHarness({ alerts });
+    await expect(h.assertInvalidOtp(h.page)).rejects.toThrow('exactly one visible alert');
+  });
+
+  it('rejects a hidden alert', async () => {
+    const h = otpHarness({ alertVisible: false });
+    await expect(h.assertInvalidOtp(h.page)).rejects.toThrow('single OTP failure alert');
+  });
+
+  it('rejects retained OTP input', async () => {
+    const h = otpHarness({ code: '000000' });
+    await expect(h.assertInvalidOtp(h.page)).rejects.toThrow('retained the code');
+  });
+
+  it.each([200, 403, 500])('rejects an auth/me status of %i instead of accepting a session or hiding an API failure', async (meStatus) => {
+    const h = otpHarness({ meStatus });
+    await expect(h.assertInvalidOtp(h.page)).rejects.toThrow('established an authenticated session');
   });
 });

@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { createServer as createPortProbe } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { assertOperationalBatch, assertSafeOperationalJob, bounded, fixtureSecret, prepareOperationalFixture, validateDeepTarget } from './operational-browser-fixtures.mjs';
+import { authUiMessages } from './auth-ui-certification.mjs';
 
 const args = process.argv.slice(2);
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -470,8 +471,7 @@ async function runAuthPagesBrowserSmoke(page, onRegistered) {
 	await page.getByRole('button', { name: 'Send Code' }).click();
 	await visible(page.getByText('Enter the 6-digit code sent to demo@svelar.dev'), 'otp code sent state');
 	await page.locator('input[name="code"]').fill('000000');
-	await page.getByRole('button', { name: 'Verify & Sign In' }).click();
-	await visible(page.getByText('Invalid or expired code. Please try again.'), 'otp invalid code message');
+	await assertInvalidOtp(page);
 
 	const userEmail = `browser-smoke-${Date.now()}@example.com`;
 	await goto(page, `${baseUrl}/register`);
@@ -496,6 +496,25 @@ async function runAuthPagesBrowserSmoke(page, onRegistered) {
 	]);
 	await visible(page.getByRole('button', { name: 'Login' }), 'logged out after registration');
 	return { id: userId, email: userEmail };
+}
+
+async function assertInvalidOtp(page) {
+	const responsePromise = page.waitForResponse((response) => new URL(response.url()).pathname === '/otp-login' && response.request().method() === 'POST');
+	await page.getByRole('button', { name: 'Verify & Sign In' }).click();
+	const action = await (await responsePromise).json();
+	if (action.type !== 'failure' || action.status !== 401) {
+		throw new Error('Invalid OTP must return an enhanced action failure with status 401.');
+	}
+	await visible(page.getByText(authUiMessages.invalidOtp, { exact: true }), 'otp invalid code message');
+	const alert = page.getByRole('alert');
+	if (await alert.count() !== 1) throw new Error('Invalid OTP must show exactly one visible alert.');
+	await visible(alert, 'single OTP failure alert');
+	if (await page.locator('input[name="code"]').inputValue() !== '') {
+		throw new Error('Invalid OTP retained the code in the enhanced form.');
+	}
+	if ((await browserApi(page, '/api/auth/me')).status !== 401) {
+		throw new Error('Invalid OTP established an authenticated session.');
+	}
 }
 
 async function assertPageWidth(page, name) {
