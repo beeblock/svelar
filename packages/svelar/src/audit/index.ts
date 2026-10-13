@@ -4,10 +4,13 @@
  */
 
 import { randomUUID } from 'crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { singleton } from '../support/singleton.js';
-import { assertSqlIdentifier } from '../database/Connection.js';
+import { assertSqlIdentifier, Connection } from '../database/Connection.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
 import { ApplicationContext } from '../support/Context.js';
+import { Model } from '../orm/Model.js';
+import { auditRecord, auditValues, type AuditValueOptions } from './Values.js';
 
 export interface AuditEntry {
   id: string;
@@ -15,9 +18,9 @@ export interface AuditEntry {
   action: string; // 'created' | 'updated' | 'deleted' | 'viewed' | custom
   modelType: string; // 'User' | 'Post' | etc
   modelId: string | number;
-  oldValues?: Record<string, any>;
-  newValues?: Record<string, any>;
-  metadata?: Record<string, any>; // IP, user agent, etc.
+  oldValues?: Record<string, unknown>;
+  newValues?: Record<string, unknown>;
+  metadata?: Record<string, unknown>; // Actor, tenant, request, integration, etc.
   ipAddress?: string;
   userAgent?: string;
   timestamp: number;
@@ -42,6 +45,7 @@ export interface AuditConfig {
   enabled?: boolean;
   exclude?: string[]; // model types to exclude
   redact?: string[];
+  ignore?: string[];
 }
 
 class AuditManager {
@@ -91,13 +95,14 @@ class AuditManager {
     };
 
     if (this.config.driver === 'memory') {
-      this.entries.push(auditEntry);
-      // Keep ring buffer size manageable
-      if (this.entries.length > this.maxEntries) {
-        this.entries.shift();
-      }
+      const append = () => {
+        this.entries.push(auditEntry);
+        if (this.entries.length > this.maxEntries) this.entries.shift();
+      };
+      if (Connection.inTransaction()) await Connection.afterCommit(append);
+      else append();
     } else if (this.config.driver === 'log') {
-      console.log('[Audit]', JSON.stringify(auditEntry));
+      await Connection.afterCommit(() => { console.log('[Audit]', JSON.stringify(auditEntry)); });
     } else if (this.config.driver === 'database') {
       await this.tableQuery().insert({
         id: auditEntry.id,
@@ -105,8 +110,8 @@ class AuditManager {
         action: auditEntry.action,
         model_type: auditEntry.modelType,
         model_id: String(auditEntry.modelId),
-      old_values: auditEntry.oldValues ? JSON.stringify(this.redact(auditEntry.oldValues)) : null,
-      new_values: auditEntry.newValues ? JSON.stringify(this.redact(auditEntry.newValues)) : null,
+        old_values: auditEntry.oldValues ? JSON.stringify(auditEntry.oldValues) : null,
+        new_values: auditEntry.newValues ? JSON.stringify(auditEntry.newValues) : null,
         metadata: auditEntry.metadata ? JSON.stringify(auditEntry.metadata) : null,
         ip_address: auditEntry.ipAddress ?? null,
         user_agent: auditEntry.userAgent ?? null,
@@ -117,16 +122,23 @@ class AuditManager {
 
   normalizeEntry(entry: Omit<AuditEntry, 'id' | 'timestamp'>): Omit<AuditEntry, 'id' | 'timestamp'> {
     const context = ApplicationContext.snapshot();
+    const userId = entry.userId ?? context.userId ?? null;
     return {
       ...entry,
-      userId: entry.userId ?? context.userId ?? null,
-      oldValues: entry.oldValues ? this.redact(entry.oldValues) : undefined,
-      newValues: entry.newValues ? this.redact(entry.newValues) : undefined,
-      metadata: {
+      userId,
+      oldValues: entry.oldValues ? auditRecord(entry.oldValues, this.config) : undefined,
+      newValues: entry.newValues ? auditRecord(entry.newValues, this.config) : undefined,
+      ipAddress: entry.ipAddress ?? context.ipAddress ?? context.ip,
+      userAgent: entry.userAgent ?? context.userAgent,
+      metadata: auditRecord({
         ...(entry.metadata ?? {}),
+        actorType: context.actorType ?? (userId == null ? 'system' : 'user'),
+        actorId: context.actorId ?? userId,
         ...(context.teamId !== undefined && context.teamId !== null ? { teamId: context.teamId } : {}),
-        ...(context.correlationId ? { correlationId: context.correlationId } : {}),
-      },
+        ...(context.tenantId !== undefined && context.tenantId !== null ? { tenantId: context.tenantId } : context.teamId != null ? { tenantId: context.teamId } : {}),
+        ...Object.fromEntries(['actorId', 'actorType', 'apiKeyId', 'serviceAccountId', 'requestId'].filter((key) => context[key] != null).map((key) => [key, context[key]])),
+        ...(context.correlationId ?? context.requestId ? { correlationId: context.correlationId ?? context.requestId } : {}),
+      }, this.config),
     };
   }
 
@@ -146,10 +158,10 @@ class AuditManager {
       if (filter.modelId !== undefined) {
         query.where('model_id', String(filter.modelId));
       }
-      if (filter.since) {
+      if (filter.since !== undefined) {
         query.where('timestamp', '>=', filter.since);
       }
-      if (filter.until) {
+      if (filter.until !== undefined) {
         query.where('timestamp', '<=', filter.until);
       }
 
@@ -173,10 +185,10 @@ class AuditManager {
     if (filter.modelId !== undefined) {
       results = results.filter((e) => String(e.modelId) === String(filter.modelId));
     }
-    if (filter.since) {
+    if (filter.since !== undefined) {
       results = results.filter((e) => e.timestamp >= filter.since!);
     }
-    if (filter.until) {
+    if (filter.until !== undefined) {
       results = results.filter((e) => e.timestamp <= filter.until!);
     }
 
@@ -186,7 +198,7 @@ class AuditManager {
     const offset = filter.offset || 0;
     const limit = filter.limit || 100;
 
-    return results.slice(offset, offset + limit);
+    return results.slice(offset, offset + limit).map((entry) => structuredClone(entry));
   }
 
   async forModel(
@@ -209,150 +221,109 @@ class AuditManager {
     byModel: Record<string, number>;
   }> {
     if (this.config.driver === 'database') {
-      const rows = await this.tableQuery().select('action', 'model_type').get();
-      const byAction: Record<string, number> = {};
-      const byModel: Record<string, number> = {};
-
-      for (const row of rows) {
-        const action = row.action;
-        const model = row.model_type ?? row.modelType ?? row.modeltype;
-        byAction[action] = (byAction[action] || 0) + 1;
-        byModel[model] = (byModel[model] || 0) + 1;
-      }
-
-      return { total: rows.length, byAction, byModel };
+      const total = await this.tableQuery().count();
+      const actions = await this.tableQuery().select('action').selectRaw('COUNT(*) AS total').groupBy('action').get();
+      const models = await this.tableQuery().select('model_type').selectRaw('COUNT(*) AS total').groupBy('model_type').get();
+      return { total,
+        byAction: Object.fromEntries(actions.map((row) => [row.action, Number(row.total)])),
+        byModel: Object.fromEntries(models.map((row) => [row.model_type, Number(row.total)])),
+      };
     }
 
-    const byAction: Record<string, number> = {};
-    const byModel: Record<string, number> = {};
+    const byAction = new Map<string, number>();
+    const byModel = new Map<string, number>();
 
     for (const entry of this.entries) {
-      byAction[entry.action] = (byAction[entry.action] || 0) + 1;
-      byModel[entry.modelType] = (byModel[entry.modelType] || 0) + 1;
+      byAction.set(entry.action, (byAction.get(entry.action) ?? 0) + 1);
+      byModel.set(entry.modelType, (byModel.get(entry.modelType) ?? 0) + 1);
     }
 
     return {
       total: this.entries.length,
-      byAction,
-      byModel,
+      byAction: Object.fromEntries(byAction),
+      byModel: Object.fromEntries(byModel),
     };
   }
 
-  private redact(values: Record<string, any>): Record<string, any> {
-    const keys = new Set(this.config.redact ?? ['password', 'password_hash', 'token', 'secret', 'api_key']);
-    return Object.fromEntries(
-      Object.entries(values).map(([key, value]) => [
-        key,
-        keys.has(key) ? '[redacted]' : value,
-      ]),
-    );
+  valueOptions(options: AuditValueOptions = {}): AuditValueOptions {
+    return { ignore: [...(this.config.ignore ?? []), ...(options.ignore ?? [])],
+      redact: [...(this.config.redact ?? []), ...(options.redact ?? [])] };
   }
 }
 
 // Helper: auditable() decorator/mixin for models
 // Usage: const User = auditable(BaseUser);
-export function auditable(target: any): any {
-  if (typeof target.observe === 'function') {
-    target.observe({
-      async created(model: any) {
-        await Audit.log(Audit.normalizeEntry({
+export function auditable<T extends typeof Model>(target: T, options: AuditValueOptions = {}): T {
+  if (target !== Model && !(target.prototype instanceof Model)) throw new TypeError('auditable() requires a Svelar Model class.');
+  const forcing = new WeakSet<Model>();
+  const forceDelete = target.prototype.forceDelete;
+  target.prototype.forceDelete = async function (this: Model): Promise<void> {
+    forcing.add(this);
+    try { await forceDelete.call(this); }
+    finally { forcing.delete(this); }
+  };
+  const values = (attributes: Record<string, unknown>): Record<string, unknown> => auditRecord(attributes,
+    Audit.valueOptions({ ...options, ignore: [target.createdAt, target.updatedAt, ...(options.ignore ?? [])] }));
+  target.observe({
+      async created(model) {
+        await Audit.log({
           userId: null,
           action: 'created',
           modelType: target.name,
-          modelId: model.getAttribute?.(target.primaryKey ?? 'id') ?? model.id,
-          newValues: model.getChanges?.() ?? model.getAttributes?.(),
-        }));
+          modelId: model.getAttribute(target.primaryKey),
+          newValues: values(model.getAttributes()),
+        });
       },
-      async updated(model: any) {
-        const changes = model.getChanges?.() ?? {};
-        const previous = model.getPreviousOriginal?.() ?? {};
-        await Audit.log(Audit.normalizeEntry({
+      async updated(model) {
+        const changes = model.getChanges();
+        const previous = model.getPreviousOriginal();
+        const before = target.hydrate(previous);
+        const valueOptions = Audit.valueOptions({ ...options, ignore: [target.createdAt, target.updatedAt, ...(options.ignore ?? [])] });
+        const keys = Object.keys(changes).filter((key) => !isDeepStrictEqual(
+          auditValues({ [key]: before.getAttribute(key) }, valueOptions, false),
+          auditValues({ [key]: model.getAttribute(key) }, valueOptions, false),
+        ));
+        if (!keys.length) return;
+        await Audit.log({
           userId: null,
           action: 'updated',
           modelType: target.name,
-          modelId: model.getAttribute?.(target.primaryKey ?? 'id') ?? model.id,
-          oldValues: Object.fromEntries(Object.keys(changes).map((key) => [key, previous[key]])),
-          newValues: changes,
-        }));
+          modelId: model.getAttribute(target.primaryKey),
+          oldValues: values(Object.fromEntries(keys.map((key) => [key, previous[key]]))),
+          newValues: values(Object.fromEntries(keys.map((key) => [key, changes[key]]))),
+        });
       },
-      async deleted(model: any) {
-        await Audit.log(Audit.normalizeEntry({
+      async deleted(model) {
+        if (forcing.has(model)) return;
+        await Audit.log({
           userId: null,
           action: 'deleted',
           modelType: target.name,
-          modelId: model.getAttribute?.(target.primaryKey ?? 'id') ?? model.id,
-          oldValues: model.getPreviousOriginal?.() ?? model.getOriginal?.(),
-        }));
+          modelId: model.getAttribute(target.primaryKey),
+          oldValues: values(model.getPreviousOriginal()),
+        });
       },
-      async restored(model: any) {
-        await Audit.log(Audit.normalizeEntry({
+      async restored(model) {
+        await Audit.log({
           userId: null,
           action: 'restored',
           modelType: target.name,
-          modelId: model.getAttribute?.(target.primaryKey ?? 'id') ?? model.id,
-          oldValues: model.getPreviousOriginal?.(),
-          newValues: model.getChanges?.(),
-        }));
+          modelId: model.getAttribute(target.primaryKey),
+          oldValues: values(model.getPreviousOriginal()),
+          newValues: values(model.getChanges()),
+        });
       },
-      async forceDeleted(model: any) {
-        await Audit.log(Audit.normalizeEntry({
+      async forceDeleted(model) {
+        forcing.delete(model);
+        await Audit.log({
           userId: null,
           action: 'forceDeleted',
           modelType: target.name,
-          modelId: model.getAttribute?.(target.primaryKey ?? 'id') ?? model.id,
-          oldValues: model.getPreviousOriginal?.() ?? model.getOriginal?.(),
-        }));
+          modelId: model.getAttribute(target.primaryKey),
+          oldValues: values(model.getPreviousOriginal()),
+        });
       },
     });
-    return target;
-  }
-
-  // Returns a proxy class that auto-logs create/update/delete via hooks
-  const originalCreate = target.create || target.insert;
-  const originalUpdate = target.update;
-  const originalDelete = target.delete;
-
-  if (originalCreate) {
-    target.create = async function (data: any) {
-      const instance = await originalCreate.call(this, data);
-      await Audit.log(Audit.normalizeEntry({
-        userId: null,
-        action: 'created',
-        modelType: target.name,
-        modelId: instance.id,
-        newValues: data,
-      }));
-      return instance;
-    };
-  }
-
-  if (originalUpdate) {
-    target.update = async function (id: any, data: any) {
-      const instance = await originalUpdate.call(this, id, data);
-      await Audit.log(Audit.normalizeEntry({
-        userId: null,
-        action: 'updated',
-        modelType: target.name,
-        modelId: id,
-        newValues: data,
-      }));
-      return instance;
-    };
-  }
-
-  if (originalDelete) {
-    target.delete = async function (id: any) {
-      const result = await originalDelete.call(this, id);
-      await Audit.log(Audit.normalizeEntry({
-        userId: null,
-        action: 'deleted',
-        modelType: target.name,
-        modelId: id,
-      }));
-      return result;
-    };
-  }
-
   return target;
 }
 
