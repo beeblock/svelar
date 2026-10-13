@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Connection } from '../src/database/Connection.js';
-import { CreateSvelarJobsTable } from '../src/database/core/00000000_000026_create_svelar_jobs_table.js';
-import { CreateSvelarFailedJobsTable } from '../src/database/core/00000000_000027_create_svelar_failed_jobs_table.js';
+import { svelarCoreMigrations } from '../src/database/CoreMigrations.js';
 import { QueryBuilder } from '../src/orm/QueryBuilder.js';
 import { Job, Queue } from '../src/queue/index.js';
 import { JobMonitor, RedisJobScanLimitError, type JobFilter } from '../src/queue/JobMonitor.js';
@@ -94,8 +93,7 @@ describe.sequential('JobMonitor contracts', () => {
     Connection.configure({
       default: 'sqlite', connections: { sqlite: { driver: 'sqlite', filename: ':memory:' } },
     });
-    await new CreateSvelarJobsTable().up();
-    await new CreateSvelarFailedJobsTable().up();
+    for (const file of svelarCoreMigrations()) await file.migration.up();
     vi.spyOn(Date, 'now').mockReturnValue(now);
     opened = [];
     redisQueues = new Map();
@@ -212,7 +210,8 @@ describe.sequential('JobMonitor contracts', () => {
     await expect(JobMonitor.getJob('reserved', 'emails')).resolves.toMatchObject({ status: 'active', processedAt: 0 });
     await expect(JobMonitor.retryJob('reserved', 'emails')).resolves.toBe(false);
     expect(await new QueryBuilder('svelar_jobs').where('id', 'reserved').first()).toMatchObject({ reserved_at: 0, attempts: 2 });
-    await expect(JobMonitor.deleteJob('reserved', 'emails')).resolves.toBe(true);
+    await expect(JobMonitor.deleteJob('reserved', 'emails')).resolves.toBe(false);
+    expect(await new QueryBuilder('svelar_jobs').where('id', 'reserved').first()).not.toBeNull();
   });
 
   it('re-dispatches a scoped persisted failure to its original database queue', async () => {
@@ -221,7 +220,8 @@ describe.sequential('JobMonitor contracts', () => {
     await failedRow('failed-retry', nowSec - 10, 'emails', 'MonitorRetryJob');
     await expect(JobMonitor.retryJob('failed-retry', 'emails')).resolves.toBe(true);
     expect(await new QueryBuilder('svelar_jobs').first()).toMatchObject({ queue: 'emails' });
-    expect(await new QueryBuilder('svelar_failed_jobs').count()).toBe(0);
+    expect(await new QueryBuilder('svelar_failed_jobs').first()).toMatchObject({ replayed_at: expect.any(Number) });
+    expect(await Queue.failed()).toEqual([]);
   });
 
   it.each(['database', 'redis'] as const)('paginates one stable combined live/failed sequence (%s)', async driver => {

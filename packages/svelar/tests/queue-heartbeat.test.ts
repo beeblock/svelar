@@ -71,6 +71,7 @@ describe.sequential('Distributed BullMQ worker telemetry', () => {
       workers.push(this);
     }
     isRunning() { return this.running; }
+    async run() { this.running = true; }
     isPaused() { return this.paused; }
     toKey(suffix: string) { return `${this.opts.prefix}:${this.name}:${suffix}`; }
     async getNextJob() { return null; }

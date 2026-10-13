@@ -9,6 +9,9 @@ import { assertSqlIdentifier } from '../database/Connection.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
 import { singleton } from '../support/singleton.js';
 import { Queue, type QueueDefinition } from './index.js';
+import { decodeFailedJobPayload } from './FailedJobPayload.js';
+import { redisConnection } from './RedisConnection.js';
+import type { QueueMonitoringAdapter } from './Monitoring.js';
 import {
   defaultWorkerTelemetryLimit, maxWorkerTelemetryLimit, readWorkerTelemetry,
   type WorkerTelemetrySnapshot,
@@ -152,6 +155,9 @@ class JobMonitorService {
     }
     this._config = { ...config };
   }
+
+  /** Production adapter follows Queue configuration, not this legacy facade's default selector. */
+  adapter(queue?: string, connection?: string): QueueMonitoringAdapter { return Queue.adapter(queue, connection); }
 
   private getDefaultQueue(): string {
     return this._config?.connections[this._config.default]?.queue ?? 'default';
@@ -359,7 +365,7 @@ class JobMonitorService {
   }
 
   private failedQuery(): QueryBuilder<any> {
-    return new QueryBuilder(this.getFailedTable());
+    return new QueryBuilder(this.getFailedTable()).whereNull('replayed_at');
   }
 
   private async countFailedJobs(queueName: string): Promise<number> {
@@ -367,14 +373,16 @@ class JobMonitorService {
   }
 
   private failedRowToInfo(row: any): JobInfo {
+    const stored = decodeFailedJobPayload(row.payload);
     return {
       id: String(row.id),
       jobClass: row.job_class ?? 'Unknown',
       queue: row.queue,
       status: 'failed',
       attempts: 0,
-      maxAttempts: 0,
-      payload: row.payload,
+      maxAttempts: stored.maxAttempts ?? 0,
+      metadata: stored.metadata,
+      payload: stored.payload,
       error: row.exception,
       createdAt: (row.failed_at ?? 0) * 1000,
       failedAt: (row.failed_at ?? 0) * 1000,
@@ -440,21 +448,7 @@ class JobMonitorService {
 
   private getRedisConnection(): Record<string, any> {
     const config = this._config?.connections[this._config!.default] ?? {};
-    if (config.url) {
-      const url = new URL(config.url);
-      return {
-        host: url.hostname || 'localhost',
-        port: parseInt(url.port) || 6379,
-        password: url.password || config.password || undefined,
-        db: parseInt(url.pathname?.slice(1) || '0') || config.db || 0,
-      };
-    }
-    return {
-      host: config.host ?? 'localhost',
-      port: config.port ?? 6379,
-      password: config.password,
-      db: config.db ?? 0,
-    };
+    return redisConnection(config);
   }
 
   private async getRedisQueue(queueName: string): Promise<any> {
@@ -548,7 +542,7 @@ class JobMonitorService {
     const queue = await this.getRedisQueue(queueName);
     try {
       const job = await queue.getJob(jobId);
-      if (!job) return false;
+      if (!job || await job.getState() === 'active') return false;
       await job.remove();
       return true;
     } finally {
@@ -693,7 +687,7 @@ class JobMonitorService {
   }
 
   private async _deleteDatabaseJob(jobId: string, queueName: string): Promise<boolean> {
-    const deleted = await this.dbQuery().where('id', jobId).where('queue', queueName).delete();
+    const deleted = await this.dbQuery().where('id', jobId).where('queue', queueName).whereNull('reserved_at').delete();
     return deleted > 0;
   }
 

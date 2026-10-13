@@ -470,6 +470,7 @@ describe('Queue and Job Processing', () => {
       expect(Queue.registeredJobs()).toContain('RegisteredRegistryJob');
       expect(Queue.queues()).toContainEqual({
         name: 'emails',
+        connection: 'sync',
         label: 'Email delivery',
         concurrency: 5,
         metadata: { flow: 'notifications' },

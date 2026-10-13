@@ -34,8 +34,10 @@ export interface WorkerTelemetrySnapshot {
 }
 
 interface HeartbeatStop {
+  id: string | null;
   (): Promise<void>;
   drain(): Promise<void>;
+  refresh(): Promise<void>;
 }
 
 const recordBytes = 2048;
@@ -87,10 +89,22 @@ function integer(value: unknown, min = 0, max = Number.MAX_SAFE_INTEGER): value 
 /** Attach to an actual BullMQ worker; unsupported test doubles publish nothing. */
 export async function startWorkerHeartbeat(worker: any, queue: string, config: WorkerHeartbeatConfig | false = {}): Promise<HeartbeatStop> {
   if (config === false || typeof worker.toKey !== 'function' || !('client' in worker)) {
-    return Object.assign(async () => {}, { drain: async () => {} });
+    return Object.assign(async () => {}, { id: null, drain: async () => {}, refresh: async () => {} });
   }
   const options = heartbeatConfig(config);
-  const client = await worker.client;
+  const workerClient = await worker.client;
+  // Native close disconnects the worker client immediately after drain. Telemetry
+  // must remain usable until cleanup completes, without delaying acquisition stop.
+  const ownsClient = typeof workerClient?.duplicate === 'function';
+  const client = ownsClient ? workerClient.duplicate({
+    lazyConnect: true, enableOfflineQueue: false, maxRetriesPerRequest: 1,
+    connectTimeout: 1000, commandTimeout: 2000, retryStrategy: () => null,
+  }) : workerClient;
+  if (ownsClient) {
+    client.on('error', () => {});
+    try { await client.connect(); }
+    catch { client.disconnect(); throw new Error('Redis worker heartbeat client is unavailable.'); }
+  }
   if (typeof client?.eval !== 'function') throw new Error('Redis worker heartbeat client is unavailable.');
   const id = crypto.randomUUID();
   const index = worker.toKey(namespace);
@@ -136,6 +150,7 @@ export async function startWorkerHeartbeat(worker: any, queue: string, config: W
     await publish();
   } catch {
     await client.eval(removeScript, 2, index, recordKey, id).catch(() => {});
+    if (ownsClient) client.disconnect();
     throw new Error('Redis worker heartbeat publication failed.');
   }
   schedule();
@@ -148,9 +163,22 @@ export async function startWorkerHeartbeat(worker: any, queue: string, config: W
       await client.eval(removeScript, 2, index, recordKey, id);
     } catch {
       throw new Error('Redis worker heartbeat cleanup failed; records will expire.');
+    } finally {
+      if (ownsClient) client.disconnect();
     }
   })();
   return Object.assign(stop, {
+    id,
+    refresh: async () => {
+      if (stopped) return;
+      if (timer) clearTimeout(timer);
+      timer = null;
+      await inFlight;
+      if (stopped) return;
+      inFlight = publish().then(schedule);
+      try { await inFlight; }
+      catch { stopped = true; throw new Error('Redis worker heartbeat publication failed.'); }
+    },
     drain: async () => {
       if (stopped || draining) return;
       draining = true;
