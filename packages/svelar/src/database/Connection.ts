@@ -27,6 +27,10 @@ export interface DatabaseConfig {
   password?: string;
   /** Connection URL (alternative to individual fields) */
   url?: string;
+  /** MySQL pool capacity, 1..1000; an explicit value overrides its URL query option. */
+  connectionLimit?: number;
+  /** MySQL date conversion timezone: local, Z, or a signed HH:MM offset. */
+  timezone?: string;
   /** Enable debug/query logging */
   debug?: boolean;
   /** Enable prepared statements for PostgreSQL. Disable for PgBouncer transaction pooling. */
@@ -540,17 +544,58 @@ class ConnectionManager {
   }
 
   private async createMySQLConnection(config: DatabaseConfig): Promise<ActiveConnection> {
+    const options: Record<string, unknown> = {};
+    const numericOptions = {
+      connectionLimit: [1, 1000], connectTimeout: [1, 60_000], queueLimit: [0, 1_000_000],
+      maxIdle: [0, 1000], idleTimeout: [1, 3_600_000],
+    } as const;
+    const booleanOptions = new Set([
+      'waitForConnections', 'dateStrings', 'supportBigNumbers', 'bigNumberStrings',
+      'decimalNumbers', 'namedPlaceholders', 'multipleStatements', 'jsonStrings',
+    ]);
+    const validTimezone = (value: unknown): value is string => typeof value === 'string' && value === value.trim()
+      && /^(?:local|Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.test(value);
+    if (config.url !== undefined) {
+      try {
+        const url = new URL(config.url);
+        if (url.protocol !== 'mysql:' || !url.hostname || url.hash) throw new Error();
+        const hostname = url.hostname.startsWith('[') ? url.hostname.slice(1, -1) : url.hostname;
+        Object.assign(options, {
+          host: decodeURIComponent(hostname), ...(url.port ? { port: Number(url.port) } : {}),
+          user: decodeURIComponent(url.username), password: decodeURIComponent(url.password),
+          database: decodeURIComponent(url.pathname.slice(1)),
+        });
+        const seen = new Set<string>();
+        for (const [key, raw] of url.searchParams) {
+          if (seen.has(key)) throw new Error();
+          seen.add(key);
+          let value: unknown;
+          try { value = JSON.parse(raw); } catch { value = raw; }
+          if (Object.hasOwn(numericOptions, key)) {
+            const bounds = numericOptions[key as keyof typeof numericOptions];
+            if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < bounds[0] || value > bounds[1]) throw new Error();
+          } else if (booleanOptions.has(key)) {
+            if (typeof value !== 'boolean') throw new Error();
+          } else if (key === 'timezone') {
+            if (!validTimezone(value)) throw new Error();
+          } else throw new Error();
+          options[key] = value;
+        }
+      } catch { throw new TypeError('Invalid MySQL connection URL or query options.'); }
+    } else Object.assign(options, { host: 'localhost', port: 3306 });
+    // mysql2's uri merge replaces falsy credentials; merge defined fields ourselves instead.
+    for (const key of ['host', 'port', 'database', 'user', 'password', 'connectionLimit', 'timezone'] as const) {
+      if (config[key] !== undefined) options[key] = config[key];
+    }
+    if (options.connectionLimit !== undefined && (typeof options.connectionLimit !== 'number' || !Number.isSafeInteger(options.connectionLimit)
+      || options.connectionLimit < 1 || options.connectionLimit > 1000)) throw new RangeError('MySQL connectionLimit must be 1..1000.');
+    if (options.timezone !== undefined && !validTimezone(options.timezone)) throw new TypeError('Invalid MySQL timezone.');
+    if (options.port !== undefined && (typeof options.port !== 'number' || !Number.isSafeInteger(options.port) || options.port < 1 || options.port > 65535)) {
+      throw new RangeError('Invalid MySQL port.');
+    }
     const mysql = await import('mysql2/promise');
     const { drizzle } = await import('drizzle-orm/mysql2');
-
-    const pool = mysql.createPool({
-      host: config.host ?? 'localhost',
-      port: config.port ?? 3306,
-      database: config.database,
-      user: config.user,
-      password: config.password,
-      uri: config.url,
-    });
+    const pool = mysql.createPool(options);
 
     const db = drizzle(pool);
 
