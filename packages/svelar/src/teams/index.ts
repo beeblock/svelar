@@ -5,7 +5,7 @@
 
 import { randomUUID } from 'crypto';
 import { singleton } from '../support/singleton.js';
-import { assertSqlIdentifier } from '../database/Connection.js';
+import { Connection, assertSqlIdentifier } from '../database/Connection.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
 import { ApplicationContext, type ApplicationContextSnapshot } from '../support/Context.js';
 
@@ -37,6 +37,12 @@ export interface TeamInvitation {
   expiresAt: number;
   acceptedAt?: number;
   createdAt: number;
+}
+
+export interface TeamInvitationLookup {
+  invitation: Readonly<TeamInvitation>;
+  team: Readonly<Pick<Team, 'id' | 'name' | 'slug'>>;
+  state: 'pending' | 'expired' | 'accepted';
 }
 
 export type TeamRole = 'owner' | 'admin' | 'member' | 'viewer' | (string & {});
@@ -98,7 +104,12 @@ class TeamManager {
   }
 
   private invitationsQuery(): QueryBuilder<any> {
-    return new QueryBuilder(this.invitationsTable);
+    // These columns store UTC wall-clock values; native drivers otherwise decode them in local time.
+    const textType = Connection.getDriver() === 'mysql' ? 'CHAR' : 'TEXT';
+    return new QueryBuilder(this.invitationsTable).select('id', 'team_id', 'email', 'role', 'token')
+      .selectRaw(`CAST(expires_at AS ${textType}) AS expires_at`)
+      .selectRaw(`CAST(accepted_at AS ${textType}) AS accepted_at`)
+      .selectRaw(`CAST(created_at AS ${textType}) AS created_at`);
   }
 
   private get roles(): string[] {
@@ -116,6 +127,10 @@ class TeamManager {
     if (role === 'owner') {
       throw new Error('The owner role is reserved for the team owner');
     }
+  }
+
+  isAssignableRole(role: string): boolean {
+    return role !== 'owner' && this.roles.includes(role);
   }
 
   private async assertTeamExists(teamId: string | number): Promise<Team> {
@@ -182,10 +197,16 @@ class TeamManager {
       email: row.email,
       role: row.role,
       token: row.token,
-      expiresAt: new Date(row.expires_at).getTime(),
-      acceptedAt: row.accepted_at ? new Date(row.accepted_at).getTime() : undefined,
-      createdAt: new Date(row.created_at).getTime(),
+      expiresAt: this.invitationTimestamp(row.expires_at),
+      acceptedAt: row.accepted_at ? this.invitationTimestamp(row.accepted_at) : undefined,
+      createdAt: this.invitationTimestamp(row.created_at),
     };
+  }
+
+  private invitationTimestamp(value: string): number {
+    const timestamp = value.replace(' ', 'T');
+    return new Date(/(?:Z|[+-]\d{2}(?::?\d{2})?)$/i.test(timestamp)
+      ? timestamp.replace(/([+-]\d{2})$/, '$1:00') : timestamp + 'Z').getTime();
   }
 
   // ── Team CRUD ────────────────────────────────────────────
@@ -484,6 +505,32 @@ class TeamManager {
 
   // ── Invitations ──────────────────────────────────────────
 
+  /** Trusted server lookup. HTTP callers must authorize the recipient and project public fields. */
+  async lookupInvitation(token: string): Promise<TeamInvitationLookup | null> {
+    if (typeof token !== 'string' || !token || token.length > 255) return null;
+    const invitation = this.useDb
+      ? await this.invitationsQuery().where('token', token).first().then((row) => row ? this.rowToInvitation(row) : null)
+      : this.memInvitations.find((item) => item.token === token);
+    if (!invitation || !Number.isFinite(invitation.expiresAt)) return null;
+    const team = await this.findById(invitation.teamId);
+    if (!team) return null;
+    return {
+      invitation: { ...invitation }, team: { id: team.id, name: team.name, slug: team.slug },
+      state: invitation.acceptedAt !== undefined ? 'accepted' : invitation.expiresAt <= Date.now() ? 'expired' : 'pending',
+    };
+  }
+
+  private matchesInvitationEmail(invitation: TeamInvitation, recipientEmail?: string): boolean {
+    return recipientEmail === undefined || typeof recipientEmail === 'string' && recipientEmail.trim().length > 0
+      && invitation.email.trim().toLowerCase() === recipientEmail.trim().toLowerCase();
+  }
+
+  private pendingInvitationQuery(invitation: TeamInvitation): QueryBuilder<any> {
+    return this.invitationsQuery().where('id', invitation.id).where('token', invitation.token)
+      .where('team_id', invitation.teamId).where('email', invitation.email).where('role', invitation.role)
+      .whereNull('accepted_at').where('expires_at', '>', new Date().toISOString());
+  }
+
   async invite(
     teamId: string | number,
     email: string,
@@ -524,35 +571,40 @@ class TeamManager {
 
   async acceptInvitation(
     token: string,
-    userId: string | number
+    userId: string | number,
+    recipientEmail?: string
   ): Promise<boolean> {
-    if (this.useDb) {
-      const nowIso = new Date().toISOString();
-
-      const inv = await this.invitationsQuery()
-        .where('token', token)
-        .whereNull('accepted_at')
-        .first();
-      if (!inv) return false;
-
-      if (new Date(inv.expires_at).getTime() < Date.now()) return false;
-
-      // Add as member
-      await this.addMember(inv.team_id, userId, inv.role);
-
-      // Mark as accepted
-      await this.invitationsQuery().where('id', inv.id).update({ accepted_at: nowIso });
-
+    const lookup = await this.lookupInvitation(token);
+    if (!lookup || lookup.state !== 'pending' || !this.matchesInvitationEmail(lookup.invitation, recipientEmail)) return false;
+    this.assertAssignableRole(lookup.invitation.role);
+    if (this.useDb) return Connection.transaction(async () => {
+      // Claim with the first transaction statement: SQLite needs no read-to-write lock upgrade.
+      const claimed = await this.pendingInvitationQuery(lookup.invitation).update({ accepted_at: new Date().toISOString() });
+      if (claimed !== 1) return false;
+      await this.addMember(lookup.invitation.teamId, userId, lookup.invitation.role);
       return true;
-    }
-
+    });
     const invitation = this.memInvitations.find((i) => i.token === token);
-    if (!invitation) return false;
-    if (invitation.acceptedAt) return false;
-    if (invitation.expiresAt < Date.now()) return false;
-
-    await this.addMember(invitation.teamId, userId, invitation.role);
+    if (!invitation || invitation.acceptedAt !== undefined || invitation.expiresAt <= Date.now()
+      || !this.matchesInvitationEmail(invitation, recipientEmail)) return false;
     invitation.acceptedAt = Date.now();
+    try {
+      await this.addMember(invitation.teamId, userId, invitation.role);
+      return true;
+    } catch (error) {
+      invitation.acceptedAt = undefined;
+      throw error;
+    }
+  }
+
+  async declineInvitation(token: string, recipientEmail: string): Promise<boolean> {
+    const lookup = await this.lookupInvitation(token);
+    if (!lookup || lookup.state !== 'pending' || !recipientEmail || !this.matchesInvitationEmail(lookup.invitation, recipientEmail)) return false;
+    if (this.useDb) return await this.pendingInvitationQuery(lookup.invitation).delete() === 1;
+    const index = this.memInvitations.findIndex((item) => item.token === token && item.acceptedAt === undefined
+      && item.expiresAt > Date.now() && this.matchesInvitationEmail(item, recipientEmail));
+    if (index === -1) return false;
+    this.memInvitations.splice(index, 1);
     return true;
   }
 
@@ -581,7 +633,7 @@ class TeamManager {
     }
 
     return this.memInvitations.filter(
-      (i) => i.teamId === teamId && !i.acceptedAt && i.expiresAt > Date.now()
+      (i) => i.teamId === teamId && i.acceptedAt === undefined && i.expiresAt > Date.now()
     );
   }
 
