@@ -36,6 +36,7 @@
  */
 
 import Pusher from 'pusher-js';
+import { getCsrfToken } from '../http/index.js';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -56,10 +57,28 @@ export interface PusherOptions {
   authEndpoint?: string;
   /** Custom auth headers */
   authHeaders?: Record<string, string>;
+  /** Custom browser CSRF cookie/header names for same-origin channel authorization. */
+  csrfCookieName?: string;
+  csrfHeaderName?: string;
   /** Enable debug logging */
   debug?: boolean;
   /** Enabled transports (default: ['ws', 'wss']) */
   enabledTransports?: string[];
+}
+
+/** Read the latest cookie for each authorization; never forward a browser token to another origin. */
+export function pusherAuthorizationHeaders(options: PusherOptions): Record<string, string> {
+  const headers = { ...options.authHeaders };
+  if (typeof window === 'undefined' || typeof document === 'undefined') return headers;
+  try {
+    const endpoint = new URL(options.authEndpoint ?? '/api/broadcasting/auth', window.location.href);
+    if (endpoint.origin !== window.location.origin) return headers;
+    const name = options.csrfHeaderName ?? 'X-CSRF-Token';
+    if (Object.keys(headers).some((key) => key.toLowerCase() === name.toLowerCase())) return headers;
+    const token = getCsrfToken(options.csrfCookieName);
+    if (token) headers[name] = token;
+  } catch { /* Invalid endpoints/cookies never forward a CSRF credential. */ }
+  return headers;
 }
 
 export interface ChannelInstance {
@@ -129,9 +148,14 @@ export function usePusher(options: PusherOptions): { disconnect: () => void; raw
 
   _pusherOptions = options;
 
+  const endpoint = options.authEndpoint ?? '/api/broadcasting/auth';
   const config: Record<string, any> = {
     cluster: options.cluster ?? 'mt1',
-    authEndpoint: options.authEndpoint ?? '/api/broadcasting/auth',
+    channelAuthorization: {
+      endpoint,
+      transport: 'ajax',
+      headersProvider: () => pusherAuthorizationHeaders(options),
+    },
   };
 
   if (options.wsHost) {
@@ -141,10 +165,6 @@ export function usePusher(options: PusherOptions): { disconnect: () => void; raw
     config.forceTLS = options.forceTLS ?? false;
     config.enabledTransports = options.enabledTransports ?? ['ws', 'wss'];
     config.disableStats = true;
-  }
-
-  if (options.authHeaders) {
-    config.auth = { headers: options.authHeaders };
   }
 
   if (options.debug) {

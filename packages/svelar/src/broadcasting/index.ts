@@ -969,3 +969,5 @@ import { singleton } from '../support/singleton.js';
  * Global Broadcast singleton
  */
 export const Broadcast = singleton('svelar.broadcast', () => new BroadcastManager());
+
+export { BroadcastingController, InternalBroadcastDto, InternalBroadcastRequest, PublishInternalBroadcastAction, internalBroadcastSchema } from './Controller.js';
