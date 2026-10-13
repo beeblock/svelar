@@ -22,6 +22,7 @@ export const nativeGates = Object.freeze([
   { name: 'inbox-operations', files: ['inbox-operation-drivers.test.ts'] },
   { name: 'shared-log-search', files: ['shared-log-search-process.test.ts'] },
   { name: 'deployment-traffic', files: ['deployment-traffic.test.ts'] },
+  { name: 'deployment-active-worker', files: ['deployment-active-worker.test.ts'] },
 ]);
 
 export function parseOptions(args) {
