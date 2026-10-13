@@ -30,6 +30,9 @@ import { nextCronDate } from './cron.js';
 import type { Scheduler, ScheduledTask, TaskResult } from './index.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
 import { singleton } from '../support/singleton.js';
+import type { MissedRunPolicy, SchedulerRunRequest } from './RuntimeStore.js';
+
+type SharedTaskStatus = Awaited<ReturnType<Scheduler['listTaskStatuses']>>[number];
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -69,6 +72,10 @@ export interface TaskInfo {
   isRunning: boolean;
   /** Recent execution history */
   history: TaskRunRecord[];
+  tenantId?: string | null;
+  lockOwner?: string | null;
+  leaseUntil?: Date | null;
+  missedRun?: MissedRunPolicy;
 }
 
 export interface SchedulerHealth {
@@ -82,6 +89,7 @@ export interface SchedulerHealth {
   lastErrors: Array<{ task: string; error: string; timestamp: Date }>;
   /** Scheduler uptime in milliseconds */
   uptime: number;
+  processes?: Array<{ owner: string | null; state: string; heartbeatAt: Date; healthy: boolean; lastError: string | null }>;
 }
 
 interface TaskSetting {
@@ -91,10 +99,17 @@ interface TaskSetting {
 
 // ── Schedule Monitor Service ───────────────────────────────
 
-class ScheduleMonitorService {
+export class ScheduleMonitorService {
   private scheduler: Scheduler | null = null;
   private startTime: Date = new Date();
   private taskEnabled: Map<string, boolean> = new Map();
+
+  /** Use a separate monitor for each explicit tenant scope; never reconfigure a singleton per request. */
+  forScheduler(scheduler: Scheduler): ScheduleMonitorService {
+    const monitor = new ScheduleMonitorService();
+    monitor.configure(scheduler);
+    return monitor;
+  }
 
   /**
    * Configure the monitor with a scheduler instance
@@ -102,6 +117,7 @@ class ScheduleMonitorService {
   configure(scheduler: Scheduler): void {
     this.scheduler = scheduler;
     this.startTime = new Date();
+    this.taskEnabled.clear();
 
     // Initialize enabled state for all current tasks
     for (const task of scheduler.getTasks()) {
@@ -124,6 +140,10 @@ class ScheduleMonitorService {
     const dbHistory = await this.loadHistoryFromDb(
       tasks.map((t) => t.name),
     );
+    if (this.scheduler.hasPersistentRuntime()) {
+      const status = await this.scheduler.listTaskStatuses();
+      return tasks.map((task) => this.createTaskInfo(task, dbHistory.get(task.name) || [], undefined, status.find((row) => row.name === task.name)));
+    }
     const settings = await this.loadSettingsFromDb(tasks.map((t) => t.name));
 
     return tasks.map((task) => this.createTaskInfo(task, dbHistory.get(task.name) || [], settings.get(task.name)));
@@ -141,6 +161,10 @@ class ScheduleMonitorService {
     if (!task) return null;
 
     const dbHistory = await this.loadHistoryFromDb([name]);
+    if (this.scheduler.hasPersistentRuntime()) {
+      const status = (await this.scheduler.listTaskStatuses()).find((row) => row.name === name);
+      return this.createTaskInfo(task, dbHistory.get(name) || [], undefined, status);
+    }
     const settings = await this.loadSettingsFromDb([name]);
     return this.createTaskInfo(task, dbHistory.get(name) || [], settings.get(name));
   }
@@ -161,6 +185,21 @@ class ScheduleMonitorService {
     this.taskEnabled.set(name, false);
   }
 
+  async requestRun(name: string): Promise<SchedulerRunRequest> {
+    if (!this.scheduler) throw new Error('Scheduler not configured');
+    return this.scheduler.requestRun(name);
+  }
+
+  async getRunRequest(name: string, id: string): Promise<SchedulerRunRequest | null> {
+    if (!this.scheduler) throw new Error('Scheduler not configured');
+    return this.scheduler.getRunRequest(name, id);
+  }
+
+  async cancelRunRequest(name: string, id: string): Promise<boolean> {
+    if (!this.scheduler) throw new Error('Scheduler not configured');
+    return this.scheduler.cancelRunRequest(name, id);
+  }
+
   /**
    * Manually trigger a task to run (if not disabled).
    * Persists the result to the database.
@@ -169,6 +208,7 @@ class ScheduleMonitorService {
     if (!this.scheduler) {
       throw new Error('Scheduler not configured');
     }
+    if (this.scheduler.hasPersistentRuntime()) throw new Error('Use requestRun() to enqueue production scheduler execution.');
 
     const settings = await this.loadSettingsFromDb([name]);
     if ((settings.get(name)?.enabled ?? this.taskEnabled.get(name)) === false) {
@@ -210,6 +250,25 @@ class ScheduleMonitorService {
     }
 
     const tasks = this.scheduler.getTasks();
+    if (this.scheduler.hasPersistentRuntime()) {
+      const status = await this.scheduler.listTaskStatuses();
+      const processes = await this.scheduler.getRuntimeStore().processes();
+      return {
+        totalTasks: tasks.length, enabledTasks: status.filter((task) => task.enabled).length,
+        runningTasks: status.filter((task) => task.isRunning).length,
+        lastErrors: (await Promise.all(tasks.map(async (task) => {
+          const history = await this.loadHistoryFromDb([task.name], 5);
+          return (history.get(task.name) ?? []).filter((record) => record.error).map((record) => ({ task: task.name, error: record.error!, timestamp: record.timestamp }));
+        }))).flat().sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()).slice(0, 10),
+        uptime: Date.now() - this.startTime.getTime(),
+        processes: processes.map((process) => ({
+          owner: process.owner ?? process.runtime_key.slice('process:'.length), state: process.state,
+          heartbeatAt: new Date(Number(process.heartbeat_at)),
+          healthy: process.state === 'running' && Date.now() - Number(process.heartbeat_at) < this.scheduler!.getHeartbeatMilliseconds() * 3,
+          lastError: process.last_error,
+        })),
+      };
+    }
     const settings = await this.loadSettingsFromDb(tasks.map((task) => task.name));
     const enabledTasks = tasks.filter(
       (t) => settings.get(t.name)?.enabled ?? this.taskEnabled.get(t.name) ?? true,
@@ -220,7 +279,7 @@ class ScheduleMonitorService {
     // Load recent errors from database
     const lastErrors: Array<{ task: string; error: string; timestamp: Date }> = [];
     try {
-      const rows = await new QueryBuilder('scheduled_task_runs')
+      const rows = await new QueryBuilder('scheduled_task_runs', undefined, this.scheduler?.getRuntimeStore().connectionName)
         .select('task', 'error', 'ran_at')
         .whereNotNull('error')
         .orderBy('ran_at', 'desc')
@@ -262,9 +321,9 @@ class ScheduleMonitorService {
     if (taskNames.length === 0) return result;
 
     for (const task of taskNames) {
-      const rows = await new QueryBuilder('scheduled_task_runs')
+      const rows = await new QueryBuilder('scheduled_task_runs', undefined, this.scheduler?.getRuntimeStore().connectionName)
         .select('task', 'success', 'duration', 'error', 'ran_at')
-        .where('task', task)
+        .where('task', this.scheduler?.hasPersistentRuntime() ? this.scheduler.getRuntimeStore().key(task) : task)
         .orderBy('ran_at', 'desc')
         .limit(limit)
         .get();
@@ -312,6 +371,10 @@ class ScheduleMonitorService {
   }
 
   private async persistTaskSetting(name: string, enabled: boolean): Promise<void> {
+    if (this.scheduler?.hasPersistentRuntime()) {
+      await this.scheduler.configureTask(name, { enabled });
+      return;
+    }
     const payload = {
       task: name,
       enabled,
@@ -324,10 +387,10 @@ class ScheduleMonitorService {
   /**
    * Create a TaskInfo object from a ScheduledTask and its DB history
    */
-  private createTaskInfo(task: ScheduledTask, history: TaskRunRecord[], setting?: TaskSetting): TaskInfo {
+  private createTaskInfo(task: ScheduledTask, history: TaskRunRecord[], setting?: TaskSetting, shared?: SharedTaskStatus): TaskInfo {
     const expression = task.getExpression();
-    const timezone = task.getTimezone();
-    const nextRun = this.getNextRun(expression, timezone);
+    const timezone = shared?.timezone ?? task.getTimezone();
+    const nextRun = shared ? shared.nextRun : this.getNextRun(expression, timezone);
     const lastRecord = history.length > 0 ? history[0] : null;
 
     const enabled =
@@ -338,14 +401,15 @@ class ScheduleMonitorService {
       expression,
       humanReadable: this.humanizeExpression(expression),
       nextRun,
-      nextRunError: nextRun === null ? 'Unable to calculate the next scheduled run' : undefined,
+      nextRunError: nextRun === null && (shared?.enabled ?? enabled) ? 'Unable to calculate the next scheduled run' : undefined,
       timezone,
       lastRun: lastRecord?.timestamp,
       lastDuration: lastRecord?.duration,
       lastStatus: lastRecord ? (lastRecord.success ? 'success' : 'failed') : undefined,
-      enabled,
-      isRunning: task.isRunning(),
+      enabled: shared?.enabled ?? enabled,
+      isRunning: shared?.isRunning ?? task.isRunning(),
       history: history.slice(0, 5),
+      tenantId: shared?.tenantId, lockOwner: shared?.lockOwner, leaseUntil: shared?.leaseUntil, missedRun: shared?.missedRun,
     };
   }
 

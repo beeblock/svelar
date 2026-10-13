@@ -44,7 +44,11 @@
  */
 
 import { QueryBuilder } from '../orm/QueryBuilder.js';
-import { cronMatches, parseCron, scheduleTime, validateTimezone } from './cron.js';
+import { randomUUID } from 'node:crypto';
+import { ApplicationContext } from '../support/Context.js';
+import { cronMatches, nextCronDate, parseCron, scheduleTime, validateTimezone } from './cron.js';
+import { SchedulerLock, SchedulerLeaseLostError } from './SchedulerLock.js';
+import { SchedulerRuntimeStore, schedulerTaskKey, schedulerTenantId, validateMissedRun, type MissedRunPolicy, type SchedulerScope, type SchedulerTaskSettings, type SchedulerRunRequest } from './RuntimeStore.js';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -64,6 +68,34 @@ export interface TaskResult {
   timestamp: Date;
   /** The task did not execute because an overlap lock was already held. */
   skipped?: boolean;
+  tenantId?: string | null;
+  scheduledFor?: Date;
+  requestId?: string;
+}
+
+export interface TaskExecutionContext {
+  signal: AbortSignal;
+  tenantId: string | null;
+  scheduledFor?: Date;
+  requestId?: string;
+}
+
+export interface TaskExecutionOptions {
+  lockKey?: string;
+  connectionName?: string;
+  signal?: AbortSignal;
+  tenantId?: string | null;
+  scheduledFor?: Date;
+  requestId?: string;
+  /** Internal: a persistent scheduler already holds the invocation lease. */
+  leased?: boolean;
+}
+
+export interface SchedulerOptions extends SchedulerScope {
+  connectionName?: string;
+  persistent?: boolean;
+  heartbeatMilliseconds?: number;
+  requestBatchSize?: number;
 }
 
 export interface SchedulerRuntimeStatus {
@@ -73,6 +105,7 @@ export interface SchedulerRuntimeStatus {
   lastErrorAt: Date | null;
   lastError: string | null;
   failures: number;
+  draining?: boolean;
 }
 
 // ── Scheduled Task Base Class ──────────────────────────────
@@ -94,6 +127,7 @@ export abstract class ScheduledTask {
   private _expression: string = '* * * * *';
 
   private _timezone?: string;
+  private _missedRun: MissedRunPolicy = { policy: 'skip', windowMinutes: 60, maxRuns: 10 };
 
   /**
    * Define the schedule for this task.
@@ -242,9 +276,21 @@ export abstract class ScheduledTask {
 
   /** Set the distributed lock TTL (default: 5 minutes). If a task takes longer, increase this. */
   lockExpiresAfter(minutes: number): this {
+    if (!Number.isFinite(minutes) || minutes <= 0 || minutes > 10080) throw new Error('Invalid scheduler lease duration.');
     this._lockTtlMinutes = minutes;
     return this;
   }
+
+  missedRuns(policy: MissedRunPolicy['policy'], options: { windowMinutes?: number; maxRuns?: number } = {}): this {
+    const value = { policy, windowMinutes: options.windowMinutes ?? 60, maxRuns: options.maxRuns ?? 10 };
+    validateMissedRun(value);
+    this._missedRun = value;
+    return this;
+  }
+
+  getMissedRunPolicy(): MissedRunPolicy { this.schedule(); return { ...this._missedRun }; }
+  getLockTtlMinutes(): number { this.schedule(); return this._lockTtlMinutes; }
+  getExecutionContext(): TaskExecutionContext | null { return ApplicationContext.get<TaskExecutionContext>('scheduler') ?? null; }
 
   // ── Internal ───────────────────────────────────────────
 
@@ -272,72 +318,51 @@ export abstract class ScheduledTask {
   }
 
   /** @internal */
-  async executeTask(): Promise<TaskResult> {
+  async executeTask(options: TaskExecutionOptions = {}): Promise<TaskResult> {
+    this.getExpression();
     // Fast-path: local in-memory overlap check
     if (this.withoutOverlapping && this._running) {
       return { task: this.name, success: true, skipped: true, duration: 0, timestamp: new Date() };
     }
 
     const start = Date.now();
-    let lockAcquired = false;
+    let failureNotified = false;
+    const fail = async (error: unknown): Promise<TaskResult> => {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      if (!failureNotified) { failureNotified = true; await this.onFailure(failure); }
+      return { task: this.name, success: false, duration: Date.now() - start, error: failure.message, timestamp: new Date(),
+        tenantId: options.tenantId, scheduledFor: options.scheduledFor, requestId: options.requestId };
+    };
 
     // Mark running before any awaited lock work so concurrent calls in this
     // process cannot both pass the local overlap gate.
     this._running = true;
 
     try {
-      // Distributed lock: acquire before running if preventOverlap is enabled
-      if (this.withoutOverlapping) {
-        try {
-          const { SchedulerLock } = await import('./SchedulerLock.js');
-          lockAcquired = await SchedulerLock.acquire(this.name, this._lockTtlMinutes);
-          if (!lockAcquired) {
-            return { task: this.name, success: true, skipped: true, duration: 0, timestamp: new Date() };
-          }
-        } catch (error: any) {
-          await this.onFailure(error);
-
-          return {
-            task: this.name,
-            success: false,
-            duration: Date.now() - start,
-            error: error?.message ?? String(error),
-            timestamp: new Date(),
-          };
-        }
+      const execute = async (signal: AbortSignal): Promise<TaskResult> => {
+        const context: TaskExecutionContext = { signal, tenantId: options.tenantId ?? null, scheduledFor: options.scheduledFor, requestId: options.requestId };
+        return ApplicationContext.run({ scheduler: context }, async () => {
+          try {
+            signal.throwIfAborted();
+            await this.handle();
+            signal.throwIfAborted();
+            await this.onSuccess();
+            return {
+              task: this.name, success: true, duration: Date.now() - start, timestamp: new Date(),
+              tenantId: context.tenantId, scheduledFor: context.scheduledFor, requestId: context.requestId,
+            };
+          } catch (error) { return fail(error); }
+        });
+      };
+      if (this.withoutOverlapping && !options.leased) {
+        const lease = await SchedulerLock.acquireLease(options.lockKey ?? this.name, this._lockTtlMinutes, options.connectionName);
+        if (!lease) return { task: this.name, success: true, skipped: true, duration: 0, timestamp: new Date() };
+        return await lease.run(execute);
       }
-
-      await this.handle();
-      const duration = Date.now() - start;
-
-      await this.onSuccess();
-
-      return {
-        task: this.name,
-        success: true,
-        duration,
-        timestamp: new Date(),
-      };
-    } catch (error: any) {
-      const duration = Date.now() - start;
-
-      await this.onFailure(error);
-
-      return {
-        task: this.name,
-        success: false,
-        duration,
-        error: error?.message ?? String(error),
-        timestamp: new Date(),
-      };
-    } finally {
+      return await execute(options.signal ?? new AbortController().signal);
+    } catch (error) { return fail(error); }
+    finally {
       this._running = false;
-      if (lockAcquired) {
-        try {
-          const { SchedulerLock } = await import('./SchedulerLock.js');
-          await SchedulerLock.release(this.name);
-        } catch { /* TTL will handle cleanup */ }
-      }
     }
   }
 }
@@ -351,6 +376,17 @@ export class Scheduler {
   private maxHistory = 100;
   private _persistToDb = false;
   private _persistTaskSettings = false;
+  private _persistRuntime = false;
+  private readonly store: SchedulerRuntimeStore;
+  private readonly options: SchedulerOptions;
+  private readonly owner = `${SchedulerLock.getOwnerId()}:${randomUUID()}`;
+  private readonly startedAt = Date.now();
+  private activeRuns = new Set<Promise<TaskResult[]>>();
+  private accepting = true;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private heartbeatWork: Promise<void> | null = null;
+  private stopWork: Promise<void> | null = null;
+  private ticking = false;
   private runtimeStatus: SchedulerRuntimeStatus = {
     running: false,
     lastTickAt: null,
@@ -359,6 +395,56 @@ export class Scheduler {
     lastError: null,
     failures: 0,
   };
+
+  constructor(options: SchedulerOptions = {}) {
+    this.options = { heartbeatMilliseconds: 5000, requestBatchSize: 20, ...options };
+    if (!Number.isInteger(this.options.heartbeatMilliseconds) || this.options.heartbeatMilliseconds! < 10 || this.options.heartbeatMilliseconds! > 60000
+      || !Number.isInteger(this.options.requestBatchSize) || this.options.requestBatchSize! < 1 || this.options.requestBatchSize! > 100) throw new Error('Invalid scheduler runtime bounds.');
+    this.store = new SchedulerRuntimeStore(options, options.connectionName);
+    if (options.persistent || schedulerTenantId(options) !== null) this.persistRuntimeToDatabase();
+  }
+
+  /** Requires settings policy, runtime, requests, locks and history core migrations. */
+  persistRuntimeToDatabase(): this {
+    this._persistRuntime = true;
+    this._persistToDb = true;
+    this._persistTaskSettings = true;
+    return this;
+  }
+
+  hasPersistentRuntime(): boolean { return this._persistRuntime; }
+  getScope(): SchedulerScope { return { ...this.store.scope }; }
+  getRuntimeStore(): SchedulerRuntimeStore { return this.store; }
+  getHeartbeatMilliseconds(): number { return this.options.heartbeatMilliseconds!; }
+
+  async configureTask(name: string, settings: SchedulerTaskSettings): Promise<void> {
+    this.requireTask(name);
+    if (!this._persistRuntime) throw new Error('Persistent scheduler runtime is not enabled.');
+    await this.store.setSettings(name, settings);
+  }
+
+  async requestRun(name: string): Promise<SchedulerRunRequest> {
+    this.requireTask(name);
+    if (!this._persistRuntime) throw new Error('Persistent scheduler runtime is not enabled.');
+    if ((await this.store.settings(name))?.enabled === false) throw new Error(`Task "${name}" is disabled`);
+    return this.store.enqueue(name, ApplicationContext.get('userId'), ApplicationContext.get('correlationId'));
+  }
+
+  async getRunRequest(name: string, id: string): Promise<SchedulerRunRequest | null> {
+    this.requireTask(name);
+    return this.store.request(name, id);
+  }
+
+  async cancelRunRequest(name: string, id: string): Promise<boolean> {
+    this.requireTask(name);
+    return this.store.cancelRequest(name, id);
+  }
+
+  private requireTask(name: string): ScheduledTask {
+    const task = this.tasks.find((value) => value.name === name);
+    if (!task) throw new Error(`Task "${name}" not found`);
+    return task;
+  }
 
   /**
    * Enable database persistence for task run history.
@@ -383,6 +469,8 @@ export class Scheduler {
    */
   register(task: ScheduledTask): this {
     task.getExpression();
+    schedulerTaskKey(task.name, this.store.scope);
+    if (this.tasks.some((registered) => registered.name === task.name)) throw new Error(`Duplicate scheduler task "${task.name}".`);
     this.tasks.push(task);
     return this;
   }
@@ -401,13 +489,29 @@ export class Scheduler {
    * Run all due tasks (call this every minute)
    */
   async run(now?: Date): Promise<TaskResult[]> {
+    if (!this.accepting) return [];
     const date = now ?? new Date();
+    if (!Number.isFinite(date.getTime())) throw new Error('Invalid scheduler date.');
+    const work = Promise.resolve().then(() => this.performRun(date));
+    this.activeRuns.add(work);
+    try { return await work; }
+    finally { this.activeRuns.delete(work); }
+  }
+
+  private async performRun(date: Date): Promise<TaskResult[]> {
     const results: TaskResult[] = [];
+    this.runtimeStatus.lastTickAt = date;
+    if (this._persistRuntime) await this.writeHeartbeat();
 
     for (const task of this.tasks) {
+      if (!this.accepting) break;
+      if (this._persistRuntime) {
+        results.push(...await this.runPersistentTask(task, date));
+        continue;
+      }
       const expression = task.getExpression();
       if (cronMatches(expression, date, task.getTimezone()) && await this.isTaskEnabled(task.name)) {
-        const result = await task.executeTask();
+        const result = await ApplicationContext.runIsolated({ teamId: schedulerTenantId(this.store.scope) }, () => task.executeTask());
         results.push(result);
         if (!result.skipped) await this.addToHistory(result);
       }
@@ -416,12 +520,105 @@ export class Scheduler {
     return results;
   }
 
+  private async runPersistentTask(task: ScheduledTask, date: Date): Promise<TaskResult[]> {
+    const lease = await SchedulerLock.acquireLease(this.store.key(task.name), task.getLockTtlMinutes(), this.options.connectionName);
+    if (!lease) return [{ task: task.name, success: true, skipped: true, duration: 0, timestamp: new Date() }];
+    let activeRequest: string | null = null;
+    const results: TaskResult[] = [];
+    try {
+      await this.store.ensureTask(task.name);
+      await this.store.updateTask(task.name, { owner: lease.owner, lease_until: lease.expiresAt, heartbeat_at: Date.now() });
+      return await lease.run(async (signal) => {
+        const setting = await this.store.settings(task.name);
+        const timezone = setting?.timezone ?? this.store.scope.timezone ?? task.getTimezone();
+        const minute = Math.floor(date.getTime() / 60000) * 60000;
+        const next = nextCronDate(task.getExpression(), new Date(minute), timezone).getTime();
+        if (setting?.enabled === false) {
+          await this.store.updateTask(task.name, { last_checked_at: minute, next_run_at: null, state: 'disabled' }, lease.owner);
+          return results;
+        }
+        const runtime = (await this.store.task(task.name))!;
+        const policy = setting?.missedRun ?? task.getMissedRunPolicy();
+        const slots = this.dueSlots(task, minute, runtime.last_checked_at === null ? null : Number(runtime.last_checked_at), timezone, policy);
+        const execute = async (scheduledFor?: Date, requestId?: string, actor?: string | null, correlationId?: string | null) => {
+          signal.throwIfAborted();
+          await lease.renew();
+          if (requestId && !await this.store.renewRequest(task.name, requestId, lease.owner, lease.expiresAt)) throw new SchedulerLeaseLostError();
+          await this.store.updateTask(task.name, { state: 'running', started_at: Date.now(), heartbeat_at: Date.now(), lease_until: lease.expiresAt, next_run_at: next }, lease.owner);
+          const tenantId = schedulerTenantId(this.store.scope);
+          const result = await ApplicationContext.runIsolated({ teamId: tenantId, userId: actor ?? null, correlationId: correlationId ?? null }, () => task.executeTask({
+            leased: true, signal, tenantId, scheduledFor, requestId,
+          }));
+          signal.throwIfAborted();
+          await lease.renew();
+          if (requestId && !await this.store.renewRequest(task.name, requestId, lease.owner, lease.expiresAt)) throw new SchedulerLeaseLostError();
+          results.push(result);
+          if (!result.skipped) await this.addToHistory(result);
+          if (!await this.store.updateTask(task.name, {
+            state: result.success ? 'succeeded' : 'failed', last_run_at: result.timestamp.getTime(),
+            last_duration: result.duration, last_error: result.error ?? null, heartbeat_at: Date.now(), lease_until: lease.expiresAt,
+          }, lease.owner)) throw new SchedulerLeaseLostError();
+          if (requestId && !await this.store.finishRequest(task.name, requestId, lease.owner, result)) throw new SchedulerLeaseLostError();
+        };
+        for (const slot of slots) {
+          if (!this.accepting) break;
+          await execute(new Date(slot));
+          await this.store.updateTask(task.name, { last_checked_at: slot }, lease.owner);
+        }
+        if (this.accepting) await this.store.updateTask(task.name, { last_checked_at: Math.max(minute, Number(runtime.last_checked_at ?? minute)), next_run_at: next }, lease.owner);
+        for (const request of await this.store.pending(task.name, this.options.requestBatchSize!)) {
+          if (!this.accepting) break;
+          signal.throwIfAborted();
+          if (!await this.store.claim(request, lease.owner, lease.expiresAt)) continue;
+          activeRequest = request.id;
+          await execute(undefined, request.id, request.requested_by, request.correlation_id);
+          activeRequest = null;
+        }
+        return results;
+      }, async () => {
+        if (!await this.store.updateTask(task.name, { heartbeat_at: Date.now(), lease_until: lease.expiresAt }, lease.owner)) throw new SchedulerLeaseLostError();
+        if (activeRequest && !await this.store.renewRequest(task.name, activeRequest, lease.owner, lease.expiresAt)) throw new SchedulerLeaseLostError();
+      });
+    } finally {
+      await this.store.updateTask(task.name, { owner: null, lease_until: null, heartbeat_at: Date.now() }, lease.owner);
+      await lease.release();
+    }
+  }
+
+  private dueSlots(task: ScheduledTask, minute: number, checked: number | null, timezone: string | undefined, policy: MissedRunPolicy): number[] {
+    if (checked !== null && checked >= minute) return [];
+    if (checked === null || policy.policy === 'skip') return cronMatches(task.getExpression(), new Date(minute), timezone) ? [minute] : [];
+    const slots: number[] = [];
+    let cursor = Math.max(checked, minute - policy.windowMinutes * 60000);
+    const limit = policy.policy === 'latest' ? 1 : policy.maxRuns;
+    for (let scanned = 0; scanned <= policy.windowMinutes; scanned++) {
+      cursor = nextCronDate(task.getExpression(), new Date(cursor), timezone).getTime();
+      if (cursor > minute) break;
+      slots.push(cursor);
+      if (slots.length > limit) slots.shift();
+    }
+    return slots;
+  }
+
   /**
    * Start the scheduler, aligned to the top of each minute like crontab.
    */
   start(): void {
     if (this.timer) return;
+    this.accepting = true;
+    this.stopWork = null;
     this.runtimeStatus.running = true;
+    this.runtimeStatus.draining = false;
+
+    if (this._persistRuntime) {
+      this.heartbeatTimer = setInterval(() => {
+        if (this.heartbeatWork) return;
+        this.heartbeatWork = this.writeHeartbeat().catch((error) => this.recordFailure(error)).finally(() => { this.heartbeatWork = null; });
+      }, this.options.heartbeatMilliseconds);
+      this.timer = setInterval(() => { void this.runTick(); }, this.options.heartbeatMilliseconds);
+      void this.runTick();
+      return;
+    }
 
     // Run immediately for the current minute
     void this.runTick();
@@ -444,17 +641,39 @@ export class Scheduler {
    * Stop the scheduler and release all distributed locks held by this process.
    */
   async stop(): Promise<void> {
+    if (this.stopWork) return this.stopWork;
+    this.accepting = false;
+    this.runtimeStatus.draining = true;
+    this.stopWork = this.drain();
+    return this.stopWork;
+  }
+
+  private async drain(): Promise<void> {
     if (this.timer) {
       clearTimeout(this.timer as any);
       clearInterval(this.timer as any);
       this.timer = null;
     }
-    this.runtimeStatus.running = false;
+    let heartbeatFailure: unknown;
+    if (this._persistRuntime) {
+      try { await this.writeHeartbeat(); }
+      catch (error) { heartbeatFailure = error; this.recordFailure(error); }
+    }
+    try {
+      await Promise.allSettled([...this.activeRuns]);
+    } finally {
+      if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+      if (this.heartbeatWork) await this.heartbeatWork;
+      this.runtimeStatus.running = false;
+      this.runtimeStatus.draining = false;
+      if (this._persistRuntime) await this.writeHeartbeat('stopped');
+    }
 
-    if (this.tasks.some((task) => task.usesDistributedLock())) {
-      const { SchedulerLock } = await import('./SchedulerLock.js');
+    if (!this._persistRuntime && this.tasks.some((task) => task.usesDistributedLock())) {
       await SchedulerLock.releaseAll();
     }
+    if (heartbeatFailure) throw heartbeatFailure;
 
     console.log('[Scheduler] Stopped.');
   }
@@ -471,6 +690,30 @@ export class Scheduler {
    */
   getTasks(): ScheduledTask[] {
     return [...this.tasks];
+  }
+
+  async listTaskStatuses(): Promise<Array<{
+    name: string; tenantId: string | null; expression: string; timezone?: string; enabled: boolean;
+    nextRun: Date | null; lastRun: Date | null; lastDuration: number | null; lastStatus: string | null;
+    isRunning: boolean; lockOwner: string | null; leaseUntil: Date | null; missedRun: MissedRunPolicy;
+  }>> {
+    const rows = [];
+    for (const task of this.tasks) {
+      const setting = this._persistRuntime ? await this.store.settings(task.name) : null;
+      const runtime = this._persistRuntime ? await this.store.task(task.name) : null;
+      const timezone = setting?.timezone ?? this.store.scope.timezone ?? task.getTimezone();
+      const enabled = setting?.enabled ?? await this.isTaskEnabled(task.name);
+      const leaseUntil = runtime?.lease_until === null || runtime?.lease_until === undefined ? null : new Date(Number(runtime.lease_until));
+      rows.push({
+        name: task.name, tenantId: schedulerTenantId(this.store.scope), expression: task.getExpression(), timezone, enabled,
+        nextRun: enabled ? runtime?.next_run_at === null || runtime?.next_run_at === undefined ? nextCronDate(task.getExpression(), new Date(), timezone) : new Date(Number(runtime.next_run_at)) : null,
+        lastRun: runtime?.last_run_at === null || runtime?.last_run_at === undefined ? null : new Date(Number(runtime.last_run_at)),
+        lastDuration: runtime?.last_duration ?? null, lastStatus: runtime?.state ?? null,
+        isRunning: runtime ? runtime.state === 'running' && !!leaseUntil && leaseUntil.getTime() > Date.now() : task.isRunning(),
+        lockOwner: runtime?.owner ?? null, leaseUntil, missedRun: setting?.missedRun ?? task.getMissedRunPolicy(),
+      });
+    }
+    return rows;
   }
 
   /**
@@ -519,8 +762,8 @@ export class Scheduler {
   }
 
   private async persistResult(result: TaskResult): Promise<void> {
-    await new QueryBuilder('scheduled_task_runs').insert({
-      task: result.task,
+    await new QueryBuilder('scheduled_task_runs', undefined, this.options.connectionName).insert({
+      task: this.store.key(result.task),
       success: result.success,
       duration: result.duration,
       error: result.error || null,
@@ -531,7 +774,7 @@ export class Scheduler {
   private async isTaskEnabled(taskName: string): Promise<boolean> {
     if (!this._persistTaskSettings) return true;
 
-    const row = await new QueryBuilder('scheduled_task_settings')
+    const row = await new QueryBuilder('scheduled_task_settings', undefined, this.options.connectionName)
       .select('enabled')
       .where('task', taskName)
       .first();
@@ -540,20 +783,46 @@ export class Scheduler {
   }
 
   private async runTick(): Promise<void> {
+    if (this.ticking || !this.accepting) return;
+    this.ticking = true;
     const tickAt = new Date();
     this.runtimeStatus.lastTickAt = tickAt;
 
     try {
-      await this.run(tickAt);
-      this.runtimeStatus.lastSuccessAt = new Date();
-      this.runtimeStatus.lastErrorAt = null;
-      this.runtimeStatus.lastError = null;
-      this.runtimeStatus.failures = 0;
-    } catch (error: any) {
-      this.runtimeStatus.lastErrorAt = new Date();
-      this.runtimeStatus.lastError = error?.message ?? String(error);
-      this.runtimeStatus.failures += 1;
+      const results = await this.run(tickAt);
+      const failed = results.find((result) => !result.success);
+      if (failed) this.recordFailure(new Error(failed.error ?? `Task "${failed.task}" failed`));
+      else {
+        this.runtimeStatus.lastSuccessAt = new Date();
+        this.runtimeStatus.lastErrorAt = null;
+        this.runtimeStatus.lastError = null;
+        this.runtimeStatus.failures = 0;
+      }
+    } catch (error: unknown) {
+      this.recordFailure(error);
+    } finally {
+      this.ticking = false;
+      if (this._persistRuntime) {
+        try { await this.writeHeartbeat(); } catch (error) { this.recordFailure(error); }
+      }
     }
+  }
+
+  private recordFailure(error: unknown): void {
+    this.runtimeStatus.lastErrorAt = new Date();
+    this.runtimeStatus.lastError = error instanceof Error ? error.message : String(error);
+    this.runtimeStatus.failures += 1;
+  }
+
+  private async writeHeartbeat(state?: string): Promise<void> {
+    await this.store.process(this.owner, {
+      state: state ?? (this.runtimeStatus.draining ? 'draining' : this.runtimeStatus.running || this.activeRuns.size > 0 ? 'running' : 'stopped'),
+      started_at: this.startedAt, heartbeat_at: Date.now(),
+      last_tick_at: this.runtimeStatus.lastTickAt?.getTime() ?? null,
+      last_success_at: this.runtimeStatus.lastSuccessAt?.getTime() ?? null,
+      last_error_at: this.runtimeStatus.lastErrorAt?.getTime() ?? null,
+      last_error: this.runtimeStatus.lastError, failures: this.runtimeStatus.failures,
+    });
   }
 }
 
@@ -587,3 +856,5 @@ export function task(
 
 export { parseCron, cronMatches };
 export { SchedulerLock } from './SchedulerLock.js';
+export { SchedulerRuntimeStore, schedulerTaskKey } from './RuntimeStore.js';
+export type { SchedulerScope, SchedulerTaskSettings, SchedulerRunRequest, MissedRunPolicy } from './RuntimeStore.js';
