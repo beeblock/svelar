@@ -280,15 +280,12 @@ describe.sequential('ApiKeys', () => {
     expect(rotated!.plainTextKey).toMatch(/^erp_/);
     await expect(ApiKeys.validate(original.plainTextKey, { ip: '10.0.0.10' })).resolves.toBeNull();
     const deniedIp = ApiKeys.validate(rotated!.plainTextKey, { ip: '10.0.0.11' });
-    if (driver === 'database') await expect(deniedIp).rejects.toMatchObject({ name: 'ApiKeyAccessDeniedError' });
-    else await expect(deniedIp).resolves.toBeNull();
+    await expect(deniedIp).rejects.toMatchObject({ name: 'ApiKeyAccessDeniedError' });
     await expect(ApiKeys.validate(rotated!.plainTextKey, { ip: '10.0.0.10' })).resolves.toMatchObject({
       id: rotated!.record.id, expiresAt: original.record.expiresAt,
     });
-    await expect(ApiKeys.validate(rotated!.plainTextKey, { ip: '10.0.0.10' })).resolves.not.toBeNull();
     const deniedQuota = ApiKeys.validate(rotated!.plainTextKey, { ip: '10.0.0.10' });
-    if (driver === 'database') await expect(deniedQuota).rejects.toBeInstanceOf(ApiKeyRateLimitError);
-    else await expect(deniedQuota).resolves.toBeNull();
+    await expect(deniedQuota).rejects.toBeInstanceOf(ApiKeyRateLimitError);
     await expect(ApiKeys.validate(rotated!.plainTextKey, {
       ip: '10.0.0.10', now: original.record.expiresAt! + 1,
     })).resolves.toBeNull();
