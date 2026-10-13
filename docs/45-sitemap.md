@@ -4,6 +4,8 @@ An XML sitemap generator plugin for Svelar/SvelteKit with a fluent builder API, 
 
 **Package:** `@beeblock/svelar-sitemap`
 
+Requires Node.js `>=22.12.0` and Svelar `^0.8.0`. Sitemap builders and plugin registration are server APIs.
+
 **Install:**
 
 ```bash
@@ -14,7 +16,7 @@ npx svelar plugin:install @beeblock/svelar-sitemap
 
 ```ts
 // Plugin registration
-import { SvelarSitemapPlugin } from '@beeblock/svelar-sitemap/server';
+import SvelarSitemapPlugin from '@beeblock/svelar-sitemap/plugin';
 
 // Core API
 import { Sitemap, SitemapGenerator, SitemapIndex, SitemapUrl } from '@beeblock/svelar-sitemap';
@@ -34,7 +36,7 @@ import type { ChangeFreq, SitemapImage, SitemapUrlOptions, SitemapModelOptions, 
 
 ```ts
 // src/lib/plugins.ts
-import { SvelarSitemapPlugin } from '@beeblock/svelar-sitemap/server';
+import SvelarSitemapPlugin from '@beeblock/svelar-sitemap/plugin';
 
 export const sitemapPlugin = new SvelarSitemapPlugin({
   baseUrl: 'https://example.com',
@@ -61,6 +63,7 @@ export const GET = SitemapController.handle(async (sitemap) => {
     lastmod: (post) => post.updated_at,
     changeFreq: 'weekly',
     priority: 0.7,
+    query: (q) => q.where('published', true),
   });
 
   return sitemap;
@@ -79,10 +82,14 @@ The `SvelarSitemapPlugin` constructor accepts:
 | `defaultChangeFreq` | `ChangeFreq` | `'weekly'` | Default change frequency for entries |
 | `defaultPriority` | `number` | `0.5` | Default priority (0.0 to 1.0) |
 | `outputPath` | `string` | `'static/sitemap.xml'` | File path for static sitemap generation |
-| `maxUrlsPerSitemap` | `number` | `50000` | Max URLs per sitemap before splitting into index |
-| `endpoint` | `string` | `'/sitemap.xml'` | Route path for serving the sitemap |
+| `maxUrlsPerSitemap` | `number` | `50000` | Explicit chunk size, an integer from 1 to 50000 |
+| `endpoint` | `string` | `'/sitemap.xml'` | Stored route preference; the published stub uses `/sitemap.xml` |
 
 **ChangeFreq values:** `'always'`, `'hourly'`, `'daily'`, `'weekly'`, `'monthly'`, `'yearly'`, `'never'`
+
+The plugin extends Svelar's `Plugin` class and default-exports its class from `/plugin`; the named `/server` export remains available. Constructor options are exposed through `.options`, while `.config()` returns the framework descriptor. Move the published route file when using a different endpoint. Facade configuration is shared between the root, plugin, and server entries.
+
+`Sitemap.configure()` and `Sitemap.create()` reject zero, negative, non-integer, non-finite, or over-50000 chunk limits with `RangeError`. Splitting is explicit: use `.splitUrls()`, generate each child sitemap, and build a `SitemapIndex` for those files.
 
 ---
 
@@ -235,6 +242,8 @@ const xml = index.toXml();
 
 Handles dynamic sitemap serving from SvelteKit routes:
 
+Review these GET routes as public functional-RBAC exemptions only for intentionally public URLs. Filter model queries to published/public records and preserve any required tenant boundary. The controller uses public caching; do not place private user-specific URLs or metadata in that response. It returns an empty XML document with status 500 on generation failure without exposing the exception message.
+
 ```ts
 // src/routes/sitemap.xml/+server.ts
 import { SitemapController } from '@beeblock/svelar-sitemap/server';
@@ -260,14 +269,14 @@ export const GET = SitemapController.handleIndex(async () => {
 });
 ```
 
-**Response headers set by the controller:**
+**Response headers set by the controller on success:**
 - `Content-Type: application/xml; charset=utf-8`
 - `Cache-Control: public, max-age=3600, s-maxage=3600`
 - `X-Robots-Tag: noindex`
 
 ### SitemapTask
 
-An abstract `ScheduledTask`-compatible class for scheduled sitemap regeneration. Extend it and implement `buildSitemap()`:
+An abstract class that extends core `ScheduledTask` for scheduled sitemap regeneration. Extend it and implement `buildSitemap()`:
 
 ```ts
 // src/lib/scheduler/GenerateSitemap.ts
@@ -296,7 +305,7 @@ export default class GenerateSitemap extends SitemapTask {
 }
 ```
 
-**Scheduling methods (mirror ScheduledTask API):**
+**Scheduling methods inherited from core `ScheduledTask`:**
 
 | Method | Description |
 |---|---|
@@ -310,9 +319,13 @@ export default class GenerateSitemap extends SitemapTask {
 | `.weekly()` | Run weekly (Sunday at midnight) |
 | `.monthly()` | Run monthly (1st at midnight) |
 | `.cron(expression)` | Set a custom cron expression |
+| `.timezone(name)` | Interpret the schedule in an explicit timezone |
+| `.preventOverlap()` | Use the core distributed overlap lock |
 | `.outputPath(path)` | Set a custom output file path |
 
 The default schedule is `0 3 * * *` (daily at 3 AM). The `handle()` method builds the sitemap and writes it to the configured output path.
+
+Register instances with the application's core `Scheduler`; inherited execution reports failures through the normal task result and callbacks. Distributed locks or persistent scheduling require the corresponding core migrations. The sitemap plugin creates no database tables at runtime. Operator run-now controls should use the configured persistent scheduler request API rather than calling `handle()` from a route.
 
 ---
 
@@ -320,7 +333,7 @@ The default schedule is `0 3 * * *` (daily at 3 AM). The `handle()` method build
 
 ```ts
 // src/lib/plugins.ts
-import { SvelarSitemapPlugin } from '@beeblock/svelar-sitemap/server';
+import SvelarSitemapPlugin from '@beeblock/svelar-sitemap/plugin';
 
 export const sitemapPlugin = new SvelarSitemapPlugin({
   baseUrl: 'https://myapp.com',

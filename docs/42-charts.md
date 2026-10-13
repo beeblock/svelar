@@ -4,6 +4,8 @@ A server-side chart data query builder and SVG chart component library for Svela
 
 **Package:** `@beeblock/svelar-charts`
 
+Requires Node.js `>=22.12.0`, Svelar `^0.8.0`, and Svelte `^5.0.0`. Keep database queries and plugin registration on the server; import browser components from `/ui`.
+
 **Install:**
 
 ```bash
@@ -14,7 +16,7 @@ npx svelar plugin:install @beeblock/svelar-charts
 
 ```ts
 // Plugin registration
-import { SvelarChartsPlugin } from '@beeblock/svelar-charts/server';
+import SvelarChartsPlugin from '@beeblock/svelar-charts/plugin';
 
 // Core API
 import { ChartQuery, ChartDataBuilder } from '@beeblock/svelar-charts';
@@ -37,7 +39,7 @@ import type { ChartData, ChartDataset, TrendChartData, TrendDirection, DateGroup
 
 ```ts
 // src/lib/plugins.ts
-import { SvelarChartsPlugin } from '@beeblock/svelar-charts/server';
+import SvelarChartsPlugin from '@beeblock/svelar-charts/plugin';
 
 export const chartsPlugin = new SvelarChartsPlugin({
   prefix: '/api',
@@ -92,6 +94,8 @@ The `SvelarChartsPlugin` constructor accepts:
 
 Default color palette: `#3B82F6` (blue), `#10B981` (emerald), `#F59E0B` (amber), `#EF4444` (red), `#8B5CF6` (violet), `#EC4899` (pink), `#06B6D4` (cyan), `#F97316` (orange), `#14B8A6` (teal), `#6366F1` (indigo).
 
+The plugin extends Svelar's `Plugin` class and has a default export at `/plugin`; the named `/server` export remains available. Read constructor options through `.options`; `.config()` returns the framework configuration descriptor. Publishing creates the fixed `/api/charts` route stub, which must be configured before use. Constructor options do not change component props automatically.
+
 ---
 
 ## Core API
@@ -116,7 +120,7 @@ const query = ChartQuery.table('orders');
 |---|---|---|
 | `.table(name)` | `ChartQuery` | Static factory -- start a new query on a table |
 | `.connection(name)` | `this` | Use a named database connection |
-| `.select(expr)` | `this` | Set a custom SQL select expression |
+| `.select(expr)` | `this` | Set a trusted server-side raw SQL select expression |
 | `.label(name)` | `this` | Set the dataset label |
 | `.count()` | `this` | Aggregate with `COUNT(*)` |
 | `.sum(column)` | `this` | Aggregate with `SUM(column)` |
@@ -125,10 +129,14 @@ const query = ChartQuery.table('orders');
 | `.groupBy(interval, dateColumn)` | `this` | Group by date interval (`'day'`, `'week'`, `'month'`, `'quarter'`, `'year'`) |
 | `.where(column, value)` | `this` | Add a WHERE clause (`=` operator) |
 | `.where(column, operator, value)` | `this` | Add a WHERE clause with custom operator |
-| `.period(start, end)` | `this` | Filter to a date range (inclusive) |
-| `.compareWith(previousPeriod?)` | `this` | Compare with the previous period (for trends) |
+| `.period(start, end)` | `this` | Filter a date-grouped query to ordered ISO dates, including the entire final day |
+| `.compareWith(previousPeriod?)` | `this` | Store a comparison preference; `.trend()` currently always compares the preceding period |
 | `.get()` | `Promise<ChartData>` | Execute and return `{ labels, datasets }` |
 | `.trend(interval, days)` | `Promise<TrendChartData>` | Execute with trend comparison |
+
+Table and column identifiers are validated; WHERE values remain query bindings. Supported comparison operators are `=`, `!=`, `<>`, `<`, `>`, `<=`, `>=`, `LIKE`, and `NOT LIKE`. UUID/ULID values can be used as filter values or group labels without numeric ID coercion. Keep `.select(expr)` application-owned and never construct it from untrusted URL input.
+
+`.period()` requires valid `YYYY-MM-DD` dates with the end on or after the start and a span of at most 3,660 days. `.trend()` accepts the documented date intervals and an integer `days` from 1 to 3,660. Gap labels use UTC dates; the final-day filter uses an exclusive next-day boundary.
 
 **Examples:**
 
@@ -150,7 +158,7 @@ const revenue = await ChartQuery.table('orders')
   .label('Revenue')
   .get();
 
-// Trend: new users in the last 30 days vs. the previous 30 days
+// Trend: from 30 days ago through today, compared with the preceding range
 const trend = await ChartQuery.table('users')
   .count()
   .label('New Users')
@@ -160,13 +168,15 @@ const trend = await ChartQuery.table('users')
 
 **Date grouping intervals (`DateGrouping`):**
 
-| Interval | SQL Expression | Label Format |
+| Interval | SQLite SQL Expression | Label Format |
 |---|---|---|
 | `'day'` | `strftime('%Y-%m-%d', ...)` | `'Jan 15'` |
 | `'week'` | `strftime('%Y-W%W', ...)` | `'W05'` |
 | `'month'` | `strftime('%Y-%m', ...)` | `'Jan'` |
 | `'quarter'` | derived | `'Q1'` |
 | `'year'` | `strftime('%Y', ...)` | `'2026'` |
+
+PostgreSQL uses `to_char()` date expressions and MySQL uses `DATE_FORMAT()` with a separate quarter expression. Week filling follows SQLite's `%W` buckets, including week zero; PostgreSQL/MySQL use ISO week labels.
 
 ### ChartData
 
@@ -239,6 +249,8 @@ const bar = ChartDataBuilder.fromArray(
 
 Provides static methods for serving chart data as JSON:
 
+These are trusted query helpers. The application must authenticate and check its registered capability before running them, accepting only a literal `true` authorization decision, and add authorized tenant/actor filters where needed. A table allowlist is an additional query boundary. Controller failures currently include the thrown error message, so an application-owned HTTP controller should replace internal 500 responses with a constant public message and retain details only in server logs.
+
 ```ts
 // src/routes/api/charts/users/+server.ts
 import { ChartController } from '@beeblock/svelar-charts/server';
@@ -273,7 +285,7 @@ export const GET = async (event) => {
   return ChartController.handle(event, (query, params) => {
     const groupBy = params.get('group_by') || 'month';
     return query.count().groupBy(groupBy, 'created_at');
-  });
+  }, ['users']);
 };
 ```
 
@@ -281,7 +293,9 @@ export const GET = async (event) => {
 |---|---|
 | `ChartController.serve(query)` | Execute a ChartQuery and return JSON response |
 | `ChartController.serveTrend(query, interval, days)` | Execute a trend query and return JSON response |
-| `ChartController.handle(event, builder)` | Generic handler that builds a query from URL params |
+| `ChartController.handle(event, builder, allowedTables)` | Build a query from URL params using a server-owned table allowlist |
+
+`handle()` reads `?table=...`; it returns 400 when the table is missing and 403 when the table is absent from `allowedTables`. The default allowlist is empty. Validate dynamic grouping/period parameters before invoking the helper; identifier validation does not authorize access to a table.
 
 ---
 

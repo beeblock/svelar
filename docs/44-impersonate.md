@@ -4,6 +4,8 @@ A user impersonation plugin for Svelar/SvelteKit that allows administrators to l
 
 **Package:** `@beeblock/svelar-impersonate`
 
+Requires Node.js `>=22.12.0`, Svelar `^0.8.0`, and Svelte `^5.0.0`. Impersonation requires the request-local `AuthManager`, a Svelar session, and `authenticatedVia: 'session'`; verified Bearer credentials cannot start or continue impersonation.
+
 **Install:**
 
 ```bash
@@ -14,7 +16,7 @@ npx svelar plugin:install @beeblock/svelar-impersonate
 
 ```ts
 // Plugin registration
-import { SvelarImpersonatePlugin } from '@beeblock/svelar-impersonate/server';
+import SvelarImpersonatePlugin from '@beeblock/svelar-impersonate/plugin';
 
 // Core API
 import { Impersonate, ImpersonateService, CanImpersonate, CanBeImpersonated } from '@beeblock/svelar-impersonate';
@@ -55,16 +57,22 @@ Impersonate.configure({
 });
 ```
 
+The default-exported `/plugin` class extends Svelar's `Plugin`; its `boot()` configures this same facade. The named `/server` class export remains available. Use either normal plugin boot or explicit `Impersonate.configure()` in the common server bootstrap. Keep the configured user model consistent with the auth manager's model and eligibility policy.
+
+Bind `guard` to current trusted platform authority and the application's registered support capability. Return a boolean; when adapting a capability resolver, allow only `(await resolverResult) === true`. Tenant-admin grants or client permission snapshots must not establish platform impersonation authority. The built-in role checks are defaults and do not register or seed application capabilities.
+
 ### 2. Add the Middleware
 
 ```ts
 // src/hooks.server.ts
 import { ImpersonateMiddleware } from '@beeblock/svelar-impersonate/server';
+import { CsrfMiddleware } from '@beeblock/svelar/middleware';
 
 export const handle = createSvelarHooks({
   middleware: [
     new SessionMiddleware({ ... }),
     new AuthenticateMiddleware(auth),
+    new CsrfMiddleware(),
     new ImpersonateMiddleware(), // must come after auth
   ],
 });
@@ -121,13 +129,15 @@ The `SvelarImpersonatePlugin` / `Impersonate.configure()` accepts:
 | `guard` | `ImpersonateGuard` | checks for `admin`/`super-admin` role | Function that determines if a user can impersonate |
 | `targetGuard` | `CanBeImpersonatedGuard` | prevents impersonating `admin`/`super-admin` | Function that determines if a user can be impersonated |
 | `redirect` | `string` | `'/dashboard'` | URL to redirect to after starting/stopping impersonation |
-| `userModel` | `any` | `null` | The User model class (must have a static `find(id)` method) |
+| `userModel` | User model or resolver | `null` | `find(id: string \| number)` must return `Promise<AuthUser \| null>` |
 
 **Guard type signatures:**
 
 ```ts
-type ImpersonateGuard = (admin: any) => boolean | Promise<boolean>;
-type CanBeImpersonatedGuard = (target: any) => boolean | Promise<boolean>;
+import type { AuthUser } from '@beeblock/svelar/auth';
+
+type ImpersonateGuard = (admin: AuthUser) => boolean | Promise<boolean>;
+type CanBeImpersonatedGuard = (target: AuthUser) => boolean | Promise<boolean>;
 ```
 
 ---
@@ -153,6 +163,8 @@ import { Impersonate } from '@beeblock/svelar-impersonate';
 | `Impersonate.getImpersonatedUserId(event)` | `string \| number \| null` | Get the impersonated user ID |
 | `Impersonate.getStatus(event)` | `Promise<ImpersonateStatus>` | Get full status for the client |
 
+IDs retain their `string | number` type; UUID/ULID user IDs are supported. The HTTP start request validates a non-empty, trimmed ID of at most 255 characters and passes it to the service without numeric coercion.
+
 **ImpersonateStatus:**
 
 ```ts
@@ -165,10 +177,13 @@ interface ImpersonateStatus {
 ```
 
 **Safety features:**
-- Nested impersonation is prevented (throws an error if already impersonating)
-- Guard checks run before every impersonation start
-- Target user existence is verified
-- Audit logging to console on start/stop
+- Self and nested impersonation are prevented
+- Current persisted admin and target accounts are checked against guards and core eligibility rules
+- Core `AuthManager.login()` rotates the session and synchronizes its stored identity, `auth.user()`, and `event.locals.user`
+- The original admin's eligibility and authority are rechecked before restoration and on subsequent requests
+- A failed post-login guard restores the original identity or revokes authentication; revocation clears authenticated state even if logout auditing fails
+
+Core auth uses its configured audit sink. The plugin does not emit the old console start/stop logs or dispatch its exported `ImpersonateStartEvent`/`ImpersonateStopEvent` interfaces. Add application-owned audit records with the original actor and target when that durable trail is required.
 
 ### ImpersonateService
 
@@ -252,35 +267,42 @@ export const GET = async (event) => ImpersonateController.status(event);
 | `ImpersonateController.status(event)` | `GET /api/admin/impersonate/status` | Get impersonation status |
 
 **Error responses:**
-- `401` -- Unauthenticated
-- `400` -- Missing target ID or general error
-- `403` -- Not authorized to impersonate
+- `401` -- Unauthenticated or missing a required session/auth context
+- `422` -- Invalid or missing target ID
+- `403` -- Guard, account eligibility, or session-only authorization denied
 - `404` -- Target user not found
 - `409` -- Already impersonating / not currently impersonating
+- `503` -- Required user model is not configured
+- `500` -- Unexpected internal failure, returned as the generic `Impersonation failed.` message
+
+The plugin publisher supplies separate start (`[id]`) and stop routes; add the optional status route manually. Keep authentication, capability/policy checks, validation, and CSRF enabled for the write routes.
 
 ### ImpersonateMiddleware
 
-Automatically resolves the impersonated user on every request. When impersonation is active, it replaces `event.locals.user` with the target user and sets `event.locals.impersonating = true`.
+Verifies impersonation on every request using current account data and the core auth engine. It checks that the authenticated session identity matches the stored target and keeps `auth.user()` and `event.locals.user` synchronized.
 
 ```ts
 // src/hooks.server.ts
 import { ImpersonateMiddleware } from '@beeblock/svelar-impersonate/server';
+import { CsrfMiddleware } from '@beeblock/svelar/middleware';
 
 export const handle = createSvelarHooks({
   middleware: [
     new SessionMiddleware({ ... }),
     new AuthenticateMiddleware(auth),
+    new CsrfMiddleware(),
     new ImpersonateMiddleware(), // MUST come after authentication
   ],
 });
 ```
 
 The middleware:
-- Checks if impersonation session keys exist
-- Loads the impersonated user via `config.userModel.find()`
-- Replaces `event.locals.user` with the impersonated user
+- Checks the stored original/target IDs and requires authenticated session context
+- Reloads the original admin and checks current eligibility and authority
+- Reloads and validates the target, then resolves it through the auth manager
+- Restores an eligible, authorized original admin when the target disappears and the session context remains valid
+- Revokes authentication when context or original authority is lost; verification failures do not silently continue
 - Sets `event.locals.impersonating` to `true` or `false`
-- Automatically stops impersonation if the target user no longer exists
 
 ---
 
@@ -321,6 +343,8 @@ Features:
 - Automatically reads CSRF token from cookie
 - Supports custom content via the `children` snippet
 
+Both controls use the standard `XSRF-TOKEN` cookie and `X-CSRF-Token` header. Keep the server CSRF middleware enabled. With custom CSRF names, use an application-owned control that sends the configured header, such as one built on core `apiFetch`; the `csrfToken` prop supplies a token value but does not rename the header.
+
 ### ImpersonateButton
 
 A button to start impersonation for a specific user:
@@ -340,7 +364,7 @@ A button to start impersonation for a specific user:
 | Prop | Type | Default | Description |
 |---|---|---|---|
 | `userId` | `string \| number` | required | ID of the user to impersonate |
-| `startUrl` | `string` | `'/api/admin/impersonate/{userId}'` | API endpoint (auto-generated from userId) |
+| `startUrl` | `string` | `'/api/admin/impersonate/{userId}'` | API endpoint (userId is URI-encoded when generated) |
 | `redirectUrl` | `string` | `undefined` | URL to redirect after starting |
 | `csrfToken` | `string` | `undefined` | CSRF token (reads from cookie by default) |
 | `disabled` | `boolean` | `false` | Disable the button |
@@ -379,11 +403,13 @@ Impersonate.configure({
 // src/hooks.server.ts
 import '$lib/impersonate';
 import { ImpersonateMiddleware } from '@beeblock/svelar-impersonate/server';
+import { CsrfMiddleware } from '@beeblock/svelar/middleware';
 
 export const handle = createSvelarHooks({
   middleware: [
-    new SessionMiddleware({ store: new DatabaseSessionStore(db) }),
+    new SessionMiddleware({ store: new DatabaseSessionStore() }), // run core session migrations first
     new AuthenticateMiddleware(auth),
+    new CsrfMiddleware(),
     new ImpersonateMiddleware(),
   ],
 });

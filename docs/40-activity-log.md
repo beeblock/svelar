@@ -13,11 +13,11 @@ npx svelar plugin:install @beeblock/svelar-activity-log
 **Imports:**
 
 ```ts
-// Plugin registration
-import { SvelarActivityLogPlugin } from '@beeblock/svelar-activity-log/server';
+// Dedicated server-only plugin registration
+import SvelarActivityLogPlugin from '@beeblock/svelar-activity-log/plugin';
 
 // Core API
-import { Activity, ActivityLogger, activity, ActivityService, LogsActivity, setCauserResolver, getCauserResolver } from '@beeblock/svelar-activity-log';
+import { Activity, ActivityLogger, activity, ActivityService, LogsActivity, setCauserResolver, getCauserResolver } from '@beeblock/svelar-activity-log/server';
 
 // Server-side (controller)
 import { ActivityController } from '@beeblock/svelar-activity-log/server';
@@ -26,7 +26,7 @@ import { ActivityController } from '@beeblock/svelar-activity-log/server';
 import { ActivityFeed, ActivityItem, ActivityFilters } from '@beeblock/svelar-activity-log/ui';
 
 // Types
-import type { ActivityRecord, ActivityData, ChangeProperties, ActivityFilterOptions, PaginatedActivities, ActivityLogPluginConfig, ActivityFeedItem, ActivityLogClassNames, LogsActivityConfig } from '@beeblock/svelar-activity-log';
+import type { ActivityRecord, ActivityData, ChangeProperties, ActivityFilterOptions, PaginatedActivities, ActivityLogPluginConfig, ActivityFeedItem, ActivityLogClassNames, LogsActivityConfig, ModelIdentifier, ActivityIdentifiable } from '@beeblock/svelar-activity-log';
 ```
 
 ---
@@ -50,36 +50,21 @@ export const activityLogPlugin = new SvelarActivityLogPlugin({
 
 ### 2. Run the Migration
 
-```sql
-CREATE TABLE IF NOT EXISTS activity_log (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  log_name TEXT DEFAULT 'default',
-  description TEXT NOT NULL,
-  subject_type TEXT,
-  subject_id INTEGER,
-  causer_type TEXT DEFAULT 'users',
-  causer_id INTEGER,
-  properties TEXT DEFAULT '{}',
-  created_at TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_activity_log_subject ON activity_log(subject_type, subject_id);
-CREATE INDEX IF NOT EXISTS idx_activity_log_causer ON activity_log(causer_type, causer_id);
-CREATE INDEX IF NOT EXISTS idx_activity_log_name ON activity_log(log_name);
+```bash
+npx svelar plugin:publish @beeblock/svelar-activity-log
+npx svelar migrate
 ```
 
-You can also retrieve this SQL programmatically:
+The plugin publishes `create_activity_log_table.ts`, which creates the table and indexes through Svelar migrations. `ActivityService.getMigrationSQL()` is not part of the current API. Do not create this table from a route, service, or application bootstrap.
 
-```ts
-import { ActivityService } from '@beeblock/svelar-activity-log';
+`subject_id` and `causer_id` are nullable `VARCHAR(255)` polymorphic references. Accept `string | number` inputs; storage and resources return canonical strings. UUIDs, ULIDs, custom primary keys, case, trailing spaces, and leading zeros retain their identity. A numeric `1` becomes `'1'`, while `'001'` remains distinct. The activity row's own `id` remains numeric. MySQL queries compare both morph type and ID exactly with parameterized binary predicates.
 
-const sql = ActivityService.getMigrationSQL();
-```
+These revised initial migrations belong to the unpublished alpha package. An existing installation must add a reviewed application migration that converts its old numeric morph columns and preserves its indexes and data. Polymorphic references do not add a host-user foreign key. Any application-owned foreign key must match its referenced primary key's actual database type, size, signedness, and collation; changing a column to `VARCHAR` does not make it compatible with a `BIGINT` or native UUID key.
 
 ### 3. Log an Activity
 
 ```ts
-import { activity } from '@beeblock/svelar-activity-log';
+import { activity } from '@beeblock/svelar-activity-log/server';
 
 await activity()
   .causedBy(user)
@@ -92,17 +77,19 @@ await activity()
 
 ## Configuration
 
-The `SvelarActivityLogPlugin` constructor accepts the following options:
+The `SvelarActivityLogPlugin` constructor registers these defaults under the `activity-log` configuration key:
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `prefix` | `string` | `'/api'` | API route prefix |
-| `defaultLogName` | `string` | `'default'` | Default log name for entries |
-| `defaultCauserType` | `string` | `'users'` | Default causer type string |
-| `cleanupDays` | `number` | `90` | Delete activities older than N days during cleanup |
-| `logOnlyDirty` | `boolean` | `true` | Only log attributes that actually changed |
+| `prefix` | `string` | `'/api'` | Route-prefix configuration metadata; bind the actual route in the application |
+| `defaultLogName` | `string` | `'default'` | Configuration default; choose the runtime name with `activity(name)` |
+| `defaultCauserType` | `string` | `'users'` | Configuration default; use `causedBy(id, type)` or `causerType(type)` |
+| `cleanupDays` | `number` | `90` | Retention metadata; pass days to the cleanup request/service |
+| `logOnlyDirty` | `boolean` | `true` | Set `static logOnlyDirty` on the mixed model to control tracking |
 
 ---
+
+The logger, cleanup controller, and model mixin do not automatically read these configuration overrides. Pass the corresponding arguments or model settings explicitly. Publishing creates a migration; it does not bind routes or schedule retention cleanup.
 
 ## Core API
 
@@ -111,7 +98,7 @@ The `SvelarActivityLogPlugin` constructor accepts the following options:
 The primary way to log activities. Create one via the `activity()` factory function:
 
 ```ts
-import { activity } from '@beeblock/svelar-activity-log';
+import { activity } from '@beeblock/svelar-activity-log/server';
 
 // Basic usage
 await activity().log('user signed in');
@@ -128,7 +115,7 @@ await activity('billing')
 
 | Method | Returns | Description |
 |---|---|---|
-| `causedBy(causer, type?)` | `this` | Set who performed the action (model instance or numeric ID) |
+| `causedBy(causer, type?)` | `this` | Set who performed the action (model instance or `string \| number` ID) |
 | `performedOn(subject)` | `this` | Set what was acted upon (model instance or `{ type, id }`) |
 | `onSubject(type, id)` | `this` | Set the subject by type string and ID directly |
 | `withProperties(props)` | `this` | Attach arbitrary key-value metadata (merged with existing) |
@@ -138,7 +125,7 @@ await activity('billing')
 
 ### Activity Class
 
-Wraps a database row into a structured, read-only object:
+A Svelar ORM model with JSON-cast properties and a consistent resource representation:
 
 ```ts
 const entry = await activity().causedBy(user).log('created');
@@ -147,9 +134,9 @@ entry.id;             // number
 entry.logName;        // string
 entry.description;    // string
 entry.subjectType;    // string | null
-entry.subjectId;      // number | null
+entry.subjectId;      // string | null
 entry.causerType;     // string
-entry.causerId;       // number | null
+entry.causerId;       // string | null
 entry.properties;     // Record<string, any>
 entry.createdAt;      // string (ISO)
 ```
@@ -176,7 +163,7 @@ entry.createdAt;      // string (ISO)
 Static service class for querying and managing activity logs:
 
 ```ts
-import { ActivityService } from '@beeblock/svelar-activity-log';
+import { ActivityService } from '@beeblock/svelar-activity-log/server';
 
 // Fluent query builder
 const activities = await ActivityService.query()
@@ -212,7 +199,6 @@ const count = await ActivityService.query()
 | `ActivityService.latest(limit?)` | `Promise<Activity[]>` | Get the latest N activities (default 20) |
 | `ActivityService.cleanOlderThan(days)` | `Promise<number>` | Delete old activities, returns count deleted |
 | `ActivityService.deleteForSubject(type, id)` | `Promise<void>` | Delete all activities for a subject |
-| `ActivityService.getMigrationSQL()` | `string` | Get the migration SQL |
 
 **Query builder methods:**
 
@@ -233,11 +219,13 @@ const count = await ActivityService.query()
 
 ### LogsActivity Mixin
 
+The logger and mixin read a model key with `model.getAttribute(model.constructor.primaryKey)`. Passing a real model also infers its table as the morph type, including custom primary-key names. `setCauserResolver` accepts a real model or `{ id: string | number, type?: string }`.
+
 Automatically logs `created`, `updated`, and `deleted` events on any Model:
 
 ```ts
 import { Model } from '@beeblock/svelar/orm';
-import { LogsActivity } from '@beeblock/svelar-activity-log';
+import { LogsActivity } from '@beeblock/svelar-activity-log/server';
 
 class Post extends LogsActivity(Model) {
   static table = 'posts';
@@ -273,18 +261,24 @@ When a model with `LogsActivity` is created, updated, or deleted, an activity lo
 
 ### Causer Resolver
 
-Set a global causer resolver so `LogsActivity` automatically knows who performed the action:
+Register one resolver at application setup and read the actor from request-scoped context. Do not replace a global resolver with a closure over each request's user.
 
 ```ts
-// In hooks.server.ts
-import { setCauserResolver } from '@beeblock/svelar-activity-log';
+// This wrapper runs after the application's Svelar authentication middleware.
+import { ApplicationContext } from '@beeblock/svelar/support';
+import { setCauserResolver } from '@beeblock/svelar-activity-log/server';
 
-setCauserResolver(() => {
-  // Return the current authenticated user
-  const user = getCurrentUser();
-  return user ? { id: user.id, type: 'users' } : null;
-});
+setCauserResolver(() => ApplicationContext.get('activityCauser') ?? null);
+
+export async function handle({ event, resolve }) {
+  return ApplicationContext.run(
+    { activityCauser: event.locals.auth?.user() ?? null },
+    () => resolve(event),
+  );
+}
 ```
+
+Automatic logs follow instance lifecycle hooks. Hidden fields and `logExcept` are excluded. `withoutLogging` suppresses only its async operation, while `disableLogging` changes the model's shared setting.
 
 ---
 
@@ -292,7 +286,11 @@ setCauserResolver(() => {
 
 ### ActivityController
 
-Handles activity feed API routes with filtering and pagination:
+Handles activity feed API routes with filtering and pagination. Authentication must populate the current user first. Configure the application policies/permissions behind both `activity-log.view` and `activity-log.cleanup` Gate abilities; missing or denied abilities fail closed. Register literal capability manifests and seed their catalogs/profiles when access is user-configurable. Protect the host page/controller with its reviewed capability scope as well.
+
+Generic plugin endpoints reject bearer credentials, so a credential ceiling cannot inherit browser-user authority. POST requests require CSRF. Reads validate the shared filter schema; cleanup uses `CleanupActivitiesRequest` → `CleanupActivitiesDTO` → `CleanupActivitiesAction` → ORM service. Successful reads return `{ data: ActivityData[], meta: { total, page, perPage, lastPage, hasMore } }`; cleanup returns `{ data: { deleted }, meta: {} }`.
+
+Keep route files thin:
 
 ```ts
 // src/routes/api/activities/+server.ts
@@ -316,9 +314,9 @@ export const POST = async (event) => ActivityController.handleCleanup(event);
 |---|---|---|
 | `log_name` | `string` | Filter by log name |
 | `subject_type` | `string` | Filter by subject type |
-| `subject_id` | `number` | Filter by subject ID |
-| `causer_type` | `string` | Filter by causer type |
-| `causer_id` | `number` | Filter by causer ID |
+| `subject_id` | `string \| number` | Exact canonical subject ID; requires `subject_type` |
+| `causer_type` | `string` | Exact causer type; requires `causer_id` |
+| `causer_id` | `string \| number` | Exact canonical causer ID |
 | `description` | `string` | Filter by description |
 | `since` | `string` | Filter from date (ISO) |
 | `until` | `string` | Filter until date (ISO) |
@@ -343,7 +341,7 @@ A timeline feed that displays activity entries with icons, relative timestamps, 
     data: { activities: ActivityData[] };
   }
   let { data }: Props = $props();
-  let activities = $state(data.activities);
+  let activities = $derived(data.activities);
 </script>
 
 <ActivityFeed
@@ -433,7 +431,7 @@ A filter panel with inputs for log name, subject type, causer ID, description, a
 ```ts
 // src/lib/models/Post.ts
 import { Model } from '@beeblock/svelar/orm';
-import { LogsActivity } from '@beeblock/svelar-activity-log';
+import { LogsActivity } from '@beeblock/svelar-activity-log/server';
 
 export class Post extends LogsActivity(Model) {
   static table = 'posts';
@@ -445,12 +443,18 @@ export class Post extends LogsActivity(Model) {
 
 ```ts
 // src/hooks.server.ts
-import { setCauserResolver } from '@beeblock/svelar-activity-log';
+import { ApplicationContext } from '@beeblock/svelar/support';
+import { setCauserResolver } from '@beeblock/svelar-activity-log/server';
 
-setCauserResolver(() => {
-  // Your logic to get the current user
-  return currentUser ? { id: currentUser.id, type: 'users' } : null;
-});
+setCauserResolver(() => ApplicationContext.get('activityCauser') ?? null);
+
+// Run this wrapper after authentication has populated event.locals.auth.
+export async function handle({ event, resolve }) {
+  return ApplicationContext.run(
+    { activityCauser: event.locals.auth?.user() ?? null },
+    () => resolve(event),
+  );
+}
 ```
 
 ```ts
@@ -470,20 +474,22 @@ export const POST = async (event) => ActivityController.handleCleanup(event);
 
 ```ts
 // src/routes/admin/activity/+page.server.ts
-import { ActivityService } from '@beeblock/svelar-activity-log';
+import { error } from '@sveltejs/kit';
+import { ActivityController } from '@beeblock/svelar-activity-log/server';
 
-export async function load() {
-  const result = await ActivityService.query()
-    .latest()
-    .paginate(1, 20);
-
-  return { activities: result.data, total: result.total, hasMore: result.hasMore };
+// Host page authorization and the controller's activity-log.view Gate both apply.
+export async function load(event) {
+  const response = await ActivityController.handle(event);
+  const result = await response.json();
+  if (!response.ok) error(response.status, result.meta?.message ?? 'Unable to load activity.');
+  return { activities: result.data, total: result.meta.total, hasMore: result.meta.hasMore };
 }
 ```
 
 ```svelte
 <!-- src/routes/admin/activity/+page.svelte -->
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { ActivityFeed } from '@beeblock/svelar-activity-log/ui';
   import { apiFetch } from '@beeblock/svelar/http';
   import type { ActivityData, ActivityFilterOptions } from '@beeblock/svelar-activity-log';
@@ -492,36 +498,55 @@ export async function load() {
     data: { activities: ActivityData[]; total: number; hasMore: boolean };
   }
   let { data }: Props = $props();
-  let activities = $state(data.activities);
-  let hasMore = $state(data.hasMore);
+  let activities = $state(untrack(() => data.activities));
+  let hasMore = $state(untrack(() => data.hasMore));
   let page = $state(1);
   let loading = $state(false);
 
-  async function handleFilter(filters: ActivityFilterOptions) {
-    loading = true;
+  let errorMessage = $state('');
+  let currentFilters = $state<ActivityFilterOptions>({});
+
+  async function fetchPage(filters: ActivityFilterOptions, nextPage: number) {
     const res = await apiFetch('/api/activities', {
-      method: 'POST',
-      body: JSON.stringify({ ...filters, page: 1, per_page: 20 }),
+      method: 'POST', showToast: false,
+      body: JSON.stringify({
+        log_name: filters.logName, subject_type: filters.subjectType,
+        subject_id: filters.subjectId, causer_type: filters.causerType,
+        causer_id: filters.causerId, description: filters.description,
+        since: filters.since, until: filters.until, sort: filters.sortDirection,
+        page: nextPage, per_page: 20,
+      }),
     });
     const result = await res.json();
-    activities = result.data;
-    hasMore = result.hasMore;
-    page = 1;
-    loading = false;
+    if (!res.ok) throw new Error(result.meta?.message ?? 'Unable to load activity.');
+    return result;
+  }
+
+  async function handleFilter(filters: ActivityFilterOptions) {
+    if (loading) return;
+    loading = true; errorMessage = '';
+    try {
+      const result = await fetchPage(filters, 1);
+      currentFilters = filters; activities = result.data;
+      hasMore = result.meta.hasMore; page = 1;
+    } catch (error) { errorMessage = error instanceof Error ? error.message : 'Unable to load activity.'; }
+    finally { loading = false; }
   }
 
   async function handleLoadMore() {
-    loading = true;
-    page += 1;
-    const res = await apiFetch(`/api/activities?page=${page}&per_page=20`);
-    const result = await res.json();
-    activities = [...activities, ...result.data];
-    hasMore = result.hasMore;
-    loading = false;
+    if (loading || !hasMore) return;
+    loading = true; errorMessage = '';
+    try {
+      const result = await fetchPage(currentFilters, page + 1);
+      activities = [...activities, ...result.data];
+      hasMore = result.meta.hasMore; page += 1;
+    } catch (error) { errorMessage = error instanceof Error ? error.message : 'Unable to load activity.'; }
+    finally { loading = false; }
   }
 </script>
 
 <h1>Activity Log</h1>
+{#if errorMessage}<p role='alert'>{errorMessage}</p>{/if}
 
 <ActivityFeed
   {activities}
