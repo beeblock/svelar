@@ -305,7 +305,7 @@ import { OriginMiddleware } from '@beeblock/svelar/middleware';
 How it works:
 - **GET/HEAD/OPTIONS** requests pass through unconditionally
 - **POST/PUT/PATCH/DELETE** requests must have an `Origin` or `Referer` header matching the app's host
-- Requests with a `Bearer` token in the `Authorization` header are exempted (API clients don't send Origin headers)
+- Only a `Bearer` credential successfully verified by `AuthenticateMiddleware` is exempt. A forged header does not exempt a cookie-authenticated request. In custom stacks, run authentication before origin/CSRF middleware; `createSvelarApp` does this automatically.
 - `createSvelarApp` enables OriginMiddleware automatically — no extra configuration needed
 
 This is different from CORS (which controls what *other* sites can access) — OriginMiddleware controls what origins can *mutate* your data.
@@ -335,11 +335,13 @@ new CsrfMiddleware({
   tokenLength: 32, // random bytes before hex encoding (64-character token)
   headerName: 'X-CSRF-Token',
   cookieName: 'csrf_token',
-  excludePaths: ['/api/webhooks', '/api/internal/'],
+  excludePaths: ['/api/webhooks/incoming/', '/api/internal/'],
 })
 ```
 
 ## Custom Middleware Example
+
+`createSvelarApp` leaves `/api/webhooks/incoming/` outside Svelar credential resolution through `authExcludePaths`. These routes must authenticate raw provider requests themselves with signatures before persistence. A provider's own `Authorization: Bearer ...` header is not a Svelar token; it remains available to the signature adapter but never establishes a session user or verified Bearer identity. Configure additional independently signed paths explicitly when needed. Authentication exclusions do not disable Origin validation or authorize ordinary CRUD endpoints; configure CSRF exclusions separately and only for independently authenticated machine endpoints.
 
 Here's a custom auth middleware from a scaffolded project:
 

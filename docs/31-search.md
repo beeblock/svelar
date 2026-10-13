@@ -7,8 +7,10 @@ Svelar provides a `Searchable` mixin that integrates your ORM models with [Meili
 ## Installation
 
 ```bash
-npm install meilisearch
+npm install meilisearch@^0.62.0
 ```
+
+Use the current JavaScript SDK on Node 22.12+ or 24+. Svelar lazily loads its public `Meilisearch` constructor while preserving the synchronous `Search.getClient()` API; importing the search module does not require the optional SDK to be installed. Older SDKs with the `MeiliSearch` spelling are not supported. Direct SDK consumers should follow the [official migration guide](https://github.com/meilisearch/meilisearch-js/releases/tag/v0.57.0): releases from 0.57 use ESM-only exports and the `Meilisearch` name.
 
 You need a running Meilisearch instance. The default Docker setup includes Meilisearch:
 

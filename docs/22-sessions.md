@@ -14,6 +14,7 @@ export const { handle, handleError } = createSvelarApp({
   auth,
   sessionStore: new DatabaseSessionStore(),  // persistent sessions
   sessionLifetime: 60 * 60 * 24,             // idle lifetime
+  sessionIdleLifetime: 60 * 60,              // optional distinct authenticated idle timeout
   sessionAbsoluteLifetime: 60 * 60 * 24 * 30, // hard maximum age
   sessionTouchOnActivity: true,              // do not renew on polling/SSE
   sessionTouchThrottle: 300,                 // touch at most every 5 minutes
@@ -34,7 +35,7 @@ export const handle = createSvelarHooks({
       absoluteLifetime: 60 * 60 * 24 * 30,
       touchOnActivity: true,
       touchThrottle: 300,
-      name: 'svelar_session',   // Cookie name
+      cookieName: 'svelar_session',   // Cookie name
     }),
   ],
 });
@@ -42,9 +43,21 @@ export const handle = createSvelarHooks({
 
 ### Sliding Sessions
 
-Set `touchOnActivity: true` when you want sessions to slide based on real user activity. Svelar renews the store TTL for mutations and document navigations, but ignores SSE (`Accept: text/event-stream`) and polling-style requests unless they explicitly send `X-Svelar-Session-Activity: true`.
+Set `touchOnActivity: true` when you want sessions to slide based on real user activity. Svelar renews the store TTL for mutations and document navigations, but ignores SSE (`Accept: text/event-stream`) and polling-style requests. `X-Svelar-Session-Activity: false` can opt out; a client-supplied `true` cannot turn polling into human activity. For a trusted relevant server-side data load, call `event.locals.session.markActivity(true)`, or supply the manual middleware's `activity(ctx)` callback. Status/polling endpoints should call `markActivity(false)`.
 
 Use `absoluteLifetime` for a hard cap that activity cannot extend. `touchThrottle` prevents every click or tab from writing the session store; the default is 300 seconds.
+
+Activity policies require atomic `compareAndSwap` support in the session store. All built-in stores implement it; custom stores must implement it too. Concurrent requests merge their own changes rather than resurrecting a logged-out session or overwriting another tab. An expired idle/absolute session is destroyed, not renewed by polling or a late response. Regular cookies are session cookies unless configured otherwise; remembered logins intentionally get a bounded persistent cookie.
+
+### Remember-Me And Expiry Warning
+
+Configure `sessionRememberLifetime` and `sessionRememberAbsoluteLifetime` in `createSvelarApp`, or `rememberLifetime`/`rememberAbsoluteLifetime` in manual `SessionMiddleware`. Remember-me is unavailable unless configured. Login uses `auth.attempt(credentials, session, { remember: true })`; it rotates the session ID and resets timing from successful authentication. Absolute expiry still requires signing in again. Logout removes remember state and invalidates the stored session.
+
+New apps ship a shared Zod/Valibot boolean `remember` field, inline Superforms validation, password visibility control, disabled/spinning submit state and an authenticated expiry warning. Set `SESSION_REMEMBER_LIFETIME=0` to hide/disable persistent sign-in. Session defaults are configurable in `.env`; regular and remembered idle/absolute limits are independent.
+
+The generated `/api/auth/session` route binds `SessionActivityController`: GET returns `{ data: SessionActivityStatus, meta }` without touching the session; POST explicitly renews a still-valid authenticated session and requires same-origin CSRF. It does not extend absolute expiry. Unknown, forged or expired sessions return 401, not an anonymous renewal. Custom cookie/header names must be supplied to the controller and UI consistently.
+
+`SessionWarning` from `@beeblock/svelar/ui` provides an accessible expiry dialog and a retryable renewal action. Its multitab bus only invalidates state: a tab cannot extend another tab's deadline by broadcasting a message. Only authenticated server responses update timing, with server-clock offset handling. It checks on visibility/warning boundaries, not continuous keep-alive polling. Mount it with the server's `session.getActivityStatus()` and the configured status/renew URLs; use `SessionActivityClient` directly for a custom presentation.
 
 ### Using Sessions
 

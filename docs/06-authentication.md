@@ -22,6 +22,83 @@ export { AuthManager };
 
 The `appUrl` and `appName` are used for generating email links (password reset, email verification) and email template content.
 
+## Account Eligibility
+
+Account status is application-owned. Opt in to the columns and policies present on your user model; add those columns through your application's migrations, never at authentication runtime:
+
+```typescript
+export const auth = new AuthManager({
+  guard: 'session',
+  model: User,
+  eligibility: {
+    disabledAtColumn: 'disabled_at',
+    lockedUntilColumn: 'locked_until',
+    requireVerifiedEmail: true,
+  },
+});
+```
+
+`disabledColumn` and `lockedColumn` support boolean flags; `disabledAtColumn` supports a nullable timestamp, and `lockedUntilColumn` a nullable date or epoch-millisecond deadline. Boolean false, zero, `'0'`, `'false'`, and null mean an unblocked flag. Missing/malformed configured fields fail closed with `temporarily_unavailable`. A required verification value uses `eligibility.verifiedColumn`, then `emailVerification.verifiedColumn`, then `email_verified_at`. No eligibility configuration preserves the ordinary authentication behavior; it does not infer column names or product-specific roles.
+
+An optional async `eligibility.check(user, { method })` can add domain rules. Return `{ eligible: true }` or `{ eligible: false, reason }`; allowed reasons are `account_disabled`, `account_locked`, `email_unverified`, and `temporarily_unavailable`. Built-in denials cannot be overridden by this callback. Invalid callback results deny authentication, and callback failures propagate rather than authenticating the account.
+
+Eligibility is checked after password proof, before session/JWT issuance, when resolving existing sessions and access tokens, on JWT refresh, and for OTP/passwordless and user API-token authentication. It is rechecked against persisted account state, not cached login eligibility. An ineligible session loses its authentication data and rotates its ID. Registering an account that requires verification returns the persisted user but does not authenticate it. Password reset and email verification remain available to recover access; they do not override disabled/locked account state.
+
+`auth.failureReason()` exposes the request-local denial code without retaining a user. Wrong passwords still produce `invalid_credentials`, not account-status information. `authFailurePresentation(reason, retryAfter?)` provides a domain-independent HTTP status contract: credentials/session expiry 401, account denials 403, rate limiting 429, and provider/backend unavailability 503. Applications own translated messages and inline feedback.
+
+For a verified federation callback, use `await auth.login(linkedUser, session, { providerId, remember })` instead of setting `auth_user_id` directly. The caller must first validate the provider response/state and securely link the local user. `login()` rereads persisted account state, checks eligibility and optional configured-provider availability, and rotates the session ID. Direct legacy social-session writes cannot bypass eligibility when `resolveFromSession()` runs.
+
+## Public Auth Presentation
+
+`AuthConfig.presentation` is a server-side contract for branding and real configured federation adapters:
+
+```typescript
+const auth = new AuthManager({
+  guard: 'session',
+  model: User,
+  appName: config.get('app.name'),
+  presentation: {
+    brand: {
+      name: config.get('app.name'),
+      title: config.get('auth.brand.title'),
+      description: config.get('auth.brand.description'),
+      logoUrl: config.get('auth.brand.logoUrl'),
+      accentColor: config.get('auth.brand.accentColor'),
+    },
+    providers: config.get('auth.providers', []),
+  },
+});
+
+const presentation = auth.presentation();
+const availableProviders = presentation.providers.filter((provider) => provider.available);
+```
+
+Brand fields include name, title, description, logo/image URL and alt text, and a hexadecimal accent color. Media URLs must be application-relative or HTTPS without credentials. Each federation entry has `id`, `label`, `protocol` (`oauth2`, `oidc`, or `saml`), an application-relative `loginUrl`, `configured: true`, optional `available`, and optional `iconUrl`. Configuration is explicit: truthy strings do not enable providers.
+
+`auth.presentation()` returns owned public objects, strips extra fields such as client secrets, and omits unconfigured providers. Availability defaults to true for configured providers; a temporarily unavailable provider remains identifiable in the contract without requiring a sign-in button. `auth.federationProvider(id)` returns that public entry or null. Passing an unavailable/unconfigured `providerId` to `login()` returns null with `provider_unavailable`.
+
+Return only this selected presentation data from a page load, never the full server auth/provider configuration. New apps render it through the shared `AuthFrame`: branding appears across authentication pages, and the login page shows only available, configured providers. The contract does not install OAuth/OIDC/SAML adapters; bind each real adapter before configuring its login URL. Existing customized pages require an explicit reviewed update.
+
+New users migrations include nullable `disabled_at` and `locked_until` columns, and their auth configuration explicitly checks them. An existing application's users table is application-owned: add a focused migration before opting into these column checks. Installing a newer package does not silently alter that table or overwrite your auth configuration.
+
+## Verified Bearer Authentication
+
+An explicit Bearer credential takes precedence over a session cookie. Invalid, revoked, restricted, rate-limited, or ineligible Bearer credentials do not fall back to the logged-in session. Authentication middleware sets `event.locals.authenticatedVia` to `'bearer'` only after JWT/API-key verification and eligibility checks, to `'session'` after eligible session resolution, or to null when unauthenticated. A valid service-account key has a machine actor/API key, not its sponsoring user's session identity.
+
+Use the default `createSvelarApp({ auth, ... })` pipeline or place session/authentication before Origin/CSRF middleware in a custom pipeline. A caller-supplied Authorization header is not proof of authentication: Origin/CSRF exemption requires both a Bearer header and the verified `authenticatedVia === 'bearer'` marker. Session-authenticated mutations retain origin and CSRF validation. Never set this marker from submitted data or use it as a replacement for route authorization.
+
+## Authentication Attempt Auditing
+
+Explicit auth attempts delegate to the configured `Audit` sink by default. Enable persistent audit storage at application boot through `Audit.configure({ driver: 'database', enabled: true })` and run the core audit migration. There is no extra template `Audit.log()` call to add.
+
+Source events are `auth.login` (password/session or JWT login), `auth.passwordless` (OTP verification), `auth.federation` (`login()`), `auth.refresh`, denied `auth.bearer`, `auth.logout`, and `auth.tokens.revoked`. Routine session/JWT resolution does not emit per-request events. OTP `attemptOtp()` uses the verification event rather than emitting a duplicate wrapper event. User API-key creation/control events remain in the API-key module.
+
+Events contain method, outcome, target user ID, denial reason and relevant provider/purpose or affected-token count. Passwords, email identifiers, OTP codes, access/refresh tokens and token hashes are not recorded. The audit sink enriches IP, user-agent, actor, tenant and correlation context. Allowed login events identify the proven user in a temporary audit context without replacing the surrounding caller context.
+
+An `allowed` event records the authentication decision before granting session/JWT state; it does not promise that subsequent cookie persistence or token delivery succeeded. Required audit errors propagate, set `failureReason()` to `temporarily_unavailable`, and prevent a new session/JWT grant. Logout records its decision before clearing credentials; an audit failure leaves the action incomplete and must not be presented as successful logout. Default database refresh-token revocation and its audit share a transaction, so a failed audit write rolls revocation back.
+
+`AuthConfig.audit: false` or `{ enabled: false }` disables these events for a manager. Omitting it delegates to the global audit configuration, including its enabled flag. An optional `{ record: async (event) => ... }` overrides the sink with an awaited, immutable, typed `AuthAuditEvent`; application recorders own their storage/transaction behavior. Keep recorders server-only and do not return audit configuration to page loads. Avoid adding template-side copies of events already emitted by these APIs.
+
 ## Generated Auth Pages
 
 New scaffolds use the same Zod or Valibot contract schemas for Superforms and FormRequests. Page actions authorize through the FormRequest and pass narrowed, typed DTO payloads to the existing registration action or auth APIs. Login/logout and recovery/OTP handlers use the request-local `event.locals.auth`; do not use the bootstrap auth manager as mutable user state.
@@ -48,7 +125,7 @@ Post-auth redirects use an internal path from `?redirectTo=/path`, falling back 
 
 ### Session Persistence
 
-There is no functional "remember me" checkbox in the generated scaffold. The existing auth/session APIs do not provide a per-login persistence switch; the signed session cookie uses the configured session lifetime. Configure `SESSION_LIFETIME`, `SESSION_ABSOLUTE_LIFETIME`, `SESSION_TOUCH_ON_ACTIVITY`, and `SESSION_TOUCH_THROTTLE` for app-wide expiry. Do not promise browser-close logout or extended remembered sessions by storing an unused form flag.
+Managed sessions support per-login persistence through `auth.attempt(credentials, session, { remember: true })` or federation `login()`. Configure a `rememberLifetime` on the session middleware (or `sessionRememberLifetime` on `createSvelarApp`) before opting in; otherwise remember-me throws instead of promising an unsupported lifetime. Normal logins pass false, and both paths rotate the session ID. Configure normal idle/absolute lifetimes independently; storing an unused form flag is not remembered authentication.
 
 These template fixes do not replace existing apps' customized auth pages automatically. When upgrading an app, reconcile its auth page/controller/request/schema code and auth settings with the scaffold behavior, retaining application-specific policies and branding.
 
@@ -1108,6 +1185,18 @@ await auth.sendVerificationEmail(user);
 ```
 
 ### Requiring Verified Email
+
+`AuthManager` can enforce verification across session, JWT, refresh, passwordless, and user API-token authentication:
+
+```typescript
+const auth = new AuthManager({
+  guard: 'session',
+  model: User,
+  eligibility: { requireVerifiedEmail: true },
+});
+```
+
+Alternatively, keep authentication permissive and enforce verification only on selected controllers/middleware:
 
 ```typescript
 // In a controller or middleware

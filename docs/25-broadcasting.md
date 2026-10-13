@@ -97,6 +97,50 @@ Broadcast.useBackplane(new MemoryBroadcastBackplane());
 
 If you use Soketi/Pusher as the default driver, events already go through the external WebSocket server and do not need the SSE backplane.
 
+### Durable Background Operations
+
+Use `BackgroundOperation` from `@beeblock/svelar/operations` for a long-running workflow with persisted progress and a result visible to its originating user. Run the `background_operations` migration and register identical handlers in web, worker and scheduler bootstrap. New scaffolds register `BackgroundOperationSweep`; existing apps must add it to their scheduler.
+
+```typescript
+import { BackgroundOperation } from '@beeblock/svelar/operations';
+
+BackgroundOperation.register('reports.export', {
+  maxAttempts: 3,
+  handle: async ({ payload, signal, report, isCancelled }) => {
+    const input = exportContract.parse(payload);
+    for (const [index, batch] of input.batches.entries()) {
+      if (await isCancelled()) return null;
+      await exportAction.run(batch, { signal });
+      await report(index + 1);
+    }
+    return { downloadUrl: authorizedDownloadPath };
+  },
+  notify: async (operation) => ({
+    recipient: await userQuery.findNotifiable(operation.actorId),
+    notification: new ExportSettledNotification(operation),
+  }),
+});
+
+// Inside an authorized action, with trusted tenant/actor context:
+const operation = await BackgroundOperation.dispatch('reports.export', dto, {
+  label: 'Export report', total: dto.batches.length, returnUrl: '/reports', queue: 'exports',
+});
+const page = await BackgroundOperation.list({ limit: 20 });
+await BackgroundOperation.cancel(operation.id);
+```
+
+Public `find`, `list` and `cancel` are scoped by both tenant and actor context. They never expose the stored input payload or context, and cursor pagination includes timestamp plus ID so tied creation times are not skipped. A global operation has a null tenant namespace, not access to every tenant. Resource policies and functional capability guards still belong on the controller/FormRequest that dispatches or inspects work. `process`/`sweep` are infrastructure APIs, never unguarded browser endpoints.
+
+Queue dispatch is a post-commit wake-up; a broker outage cannot lose the durable operation or hold its creation response. A sync queue leaves execution to the scheduler sweep. Workers claim renewable leases, recover interrupted attempts and restore the original tenant/actor/correlation context. Progress cannot decrease or exceed a fixed total. Retries are bounded; errors are redacted. Handlers are at-least-once and must make external side effects idempotent.
+
+Cancellation is cooperative, not forced process termination. Check `signal` or `isCancelled()` inside bounded work units. A cancelled operation cannot settle as success. Completion notifications use Svelar `Notifier` with a durable pending flag; a delivery failure is retried without rerunning the completed handler. Notification delivery is also at-least-once. Retain only safe results, use authorized application download routes and apply a retention policy to the operation table.
+
+Changes broadcast `operation.changed` to `BackgroundOperation.channel(operation)`. Register an authorization callback for the resulting private channel using authenticated ownership and trusted tenant context. A channel hash is not authorization. Realtime is a signal to update/refetch persisted state, not the only copy of progress/result. `returnUrl` must be a safe local path; external URLs and encoded protocol-relative redirects are rejected.
+
+New apps include a personal operations tray in the root layout and thin `OperationsController` routes: `GET /api/operations`, `GET /api/operations/[id]`, and `POST /api/operations/[id]/cancel`. Responses use `{ data, meta }` with `private, no-store` caching. Reads and cancellation require an authenticated human and consistent actor/tenant context; another user's operation returns 404. Cancellation also validates Origin and CSRF, even if a browser submits a Bearer header. These endpoints cannot dispatch jobs or execute sweeps.
+
+The list metadata includes `BackgroundOperation.currentChannel()`, the private channel for the current actor and tenant. Authorize that exact channel against trusted context in your application. The generated tray uses SSE as a refetch signal, with bounded polling as fallback. Its polling sends `X-Svelar-Session-Activity: false`, so an idle tab does not extend authentication. Return links lead to the application's originating screen; the tray does not expose stored inputs or replace that screen's policies.
+
 ### Client-Side Setup
 
 The generated `src/lib/broadcasting.ts` initializes the Pusher connection:

@@ -479,61 +479,60 @@ Commands are auto-discovered from `src/lib/commands/` in flat projects and `src/
 
 ## Admin Dashboard
 
-Scaffold the operational admin dashboard:
+Scaffold the protected operational console:
 
 ```bash
-npx svelar make:dashboard
+npx svelar make:dashboard --capability=operations --scope=platform
 ```
 
-This creates thin API routes (`/api/admin/*`) bound to the public `DashboardController` and a Svelte 5 page at `/admin/dashboard`. The same file manifest is available through `MakeDashboardCommand.files()` for project scaffolding and updates. Existing files are preserved unless `--force` is supplied; review customized routes before overwriting them.
+The generator creates thin `/api/admin/*` routes bound to the public `DashboardController`, a Svelte 5 console at `/admin/dashboard`, and the manifest capabilities for each operation. Every protected endpoint checks its declared capability before controller dispatch and FormRequest parsing. An explicit `--public` exempts functional RBAC only: dashboard authentication, server authorization, validation and CSRF remain. Existing customized files require review before `--force`; updates do not delete app-owned files automatically.
 
-The page and every API operation require an authenticated global admin by default. Configure the server-side authorization callback for a different access policy; hiding a button does not authorize an operation. Mutations also pass through an authorizing FormRequest, validated DTO, and action/service using the public monitors. Disabled dashboards deny page/API access.
+New apps use the same console backend, with an authenticated capability-checked `/admin` redirect that preserves query tabs and queue scope. The minimal admin layout does not duplicate console navigation. `configureDashboard({ authorize, providers })` binds a trusted server authorizer and typed app-owned providers; the custom authorizer replaces the legacy global-admin default and can admit granular platform operators without a physical admin role. Disabled dashboards deny access. Hiding controls or returning a browser permission snapshot never authorizes a request.
 
-```typescript
-import { configureDashboard } from '@beeblock/svelar/dashboard';
-import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
-import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
+Configure named `Queue` connections and queue definitions, the common worker/task registry, persistent scheduler runtime, and the database log/audit drivers in the application bootstrap; run their migrations and capability seeders. Seed initial roles and assignments deliberately. The generator's URLs are fixed: the dashboard plugin's `prefix` setting does not relocate them. Its optional background health collector is separate from the on-demand console; use `refreshInterval: 0` when background collection is not needed.
 
-configureDashboard({
-  enabled: true,
-  authorize: (event, operation) => {
-    // Replace this with your application's server-side permission contract.
-    return event.locals.user?.role === 'admin';
-  },
-});
-```
+The responsive shell keeps the active tab, filters and pagination in the URL. Server loading requests only the selected panels. Browser commands use `apiFetch` with the CSRF token; adding a Bearer header does not exempt this session console from CSRF. Responses use `{ data, meta }` and `Cache-Control: no-store`. Per-action pending state, confirmations, inline errors and explicit refresh prevent duplicate submissions and polling/invalidation loops. Unexpected failures return a safe incident ID rather than a raw driver exception.
 
-Configure `Queue`/`JobMonitor`, load the same scheduler task registry in web and scheduler processes, configure `ScheduleMonitor`, and run migrations before operating the console. The generated URLs are fixed; the dashboard plugin's `prefix` setting does not relocate generated files.
+Queue panels use `Queue.adapter(queue, connection)` for each registered queue, not the default connection or a process-local total. A health request observes at most 100 registered queues and 60 retained metric buckets per queue; truncation and observation errors remain visible. Counts, pause state, worker liveness/active/draining observations, effective concurrency and bounded ready-job age are shown only when the driver can observe them. Incomplete worker coverage, external/unobservable workers and unsupported drivers stay unknown, not zero or healthy. Ready-job age is the adapter's bounded observation, not an unbounded absolute-oldest scan. The console refuses to present volatile memory/null queues as shared monitoring.
 
-The browser uses `apiFetch` to send the `X-CSRF-Token` header from `XSRF-TOKEN`. The controller enforces CSRF for session mutations even if a caller adds a Bearer header. Responses use `{ data, meta }` and `Cache-Control: no-store`; clients migrating from older generated APIs must read `payload.data` and `payload.meta.message`.
+Job queries use indexed metadata filters for tenant/account/resource/correlation/job class and finite pages (`limit` 1-100, bounded non-negative `offset`). Indexed coverage is explicit; it is not a claim that every external BullMQ job has been instrumented. Inspection and mutations retain the exact connection, queue and source (`live` or `dead-letter`), so colliding IDs cannot mutate another queue. The inspector shows redacted payload/progress/error, attempts, retained timeline and lock observations, plus a same-origin resource link supplied by the application. DLQ queries use a bounded lookahead and report unknown filtered totals rather than borrowing an unfiltered count.
 
-When the dashboard plugin is booted with background health collection enabled, it records the latest health snapshot plus last run/success/error metadata. Polling begins on boot, does not overlap slow snapshots, and stops on shutdown. Health collection failures remain visible in dashboard data. Unexpected HTTP operation failures are logged with an incident ID and return a safe error, never the raw driver exception.
+Failed/live and dead-letter retry, bounded selected-record retry/cleanup, and supported queue pause/resume controls use the adapter's state checks. Busy or protected jobs remain retained; batch responses expose partial outcomes. Destructive, batch and pause commands require explicit confirmation. Provider/adapter state remains authoritative after the browser selection.
 
-The overview consumes the public queue registry, counts, and `JobMonitor.getHealth().runtime`. It shows labels/metadata, waiting/active/failed/completed/delayed counts, observed workers, configured versus effective/global concurrency, pause state, and available age metrics without importing BullMQ. Missing telemetry and registry connections outside the monitor's configured connection are shown as unknown, not zero. Redis absolute oldest-job age and effective remote-worker concurrency may be unknown; registry concurrency is only a configuration hint.
+Scheduler panels show persistent settings, available run history, leases and runtime observations. Run-now calls `ScheduleMonitor.requestRun()`: the HTTP response means a durable request was queued, not that the task completed. Inspect its request ID for pending/running/succeeded/failed state. The web process never executes `runTask()` for this control. Missing distributed observations remain unknown.
 
-Jobs have queue/status filters, pagination (`limit` 1-100, non-negative bounded `offset`), redacted payload/metadata/progress, stack errors, attempts, and the timestamps available from the monitor. Inspection, retry, and deletion pass an explicit queue name because Redis job IDs are queue-local. Retry is limited to failed jobs; active deletion is rejected. Destructive deletion requires both browser confirmation and `{ confirmed: true }`. Mutations prevent duplicate clicks and refresh visible state without an invalidation loop. Redis exact listing can refuse a backlog exceeding `JobMonitor.redisScanLimit`; configure that limit deliberately rather than assuming unbounded scans are safe.
+Users and roles are supplied through `DashboardUserProvider` and `DashboardPermissionProvider`, not imports of an application User model into the core console. Optional callbacks expose scoped access snapshots, role creation, role assignment/detachment and direct capability grant/revoke. Missing callbacks report unavailable and disable their controls. Access snapshots must match the requested user/scope exactly and contain at most 100 roles and 10,000 bounded capability names. Role choices and direct-grant displays are paged.
 
-Scheduled task controls persist through `ScheduleMonitor` to `scheduled_task_settings`; history comes from `scheduled_task_runs`. Manual runs report the actual result: overlap skips return 409 and failed runs return a safe 503 with a logged error. Enabled/running checks prevent known invalid runs, but a web process's running flag is not a distributed lock viewer.
+Role creation adds a shared catalog role with an empty custom profile in the explicitly selected platform/team scope; it grants and assigns nothing automatically. The role profile editor preserves custom exact sets versus system defaults minus exclusions plus inclusions, including visible stale selections. Individual grants accept only current canonical capabilities in the selected scope, never wildcard or legacy-alias expansion. Existing stale direct names can be revoked only when present in that scoped snapshot. Dependencies must be granted explicitly; selecting an action alone does not manufacture its screen grant.
 
-Mutations record intent before executing and completion afterwards through `Audit`. Configure a persistent audit driver for production. If intent cannot be recorded, the operation is blocked; if completion audit fails after execution, the response warns not to repeat the operation without checking state. Queue/scheduler side effects and audit persistence are not a single transaction.
+The console's role/grant forms bind Superforms stores and inline errors using `zod4Client` and the public browser-safe `@beeblock/svelar/dashboard/schemas`. Backend FormRequests consume those same framework-owned Zod 4 schemas before DTO/action/service execution. This console contract does not change the application's Zod/Valibot choice for its own user forms. Scope/team identity comes from the validated mutation body; the route user ID cannot be replaced by JSON or query values.
 
-The logs tab has minimum-level/channel/search/tenant/correlation filters and pagination with filtered totals and entry-ID cursors. Payloads, log context, and common credential formats in text are redacted. Invalid/unstructured job payloads are withheld rather than exposed verbatim. Keep secrets out of free-form logs: redaction cannot recognize every arbitrary secret string. The viewer reports its configured scope explicitly: shared database for production or process-local memory. SSE disconnect/cancel paths unsubscribe, bound slow clients, support Last-Event-ID replay and reconnect periodically to recheck authorization.
+Core checks reject self access changes, protected users, reserved platform-owner roles, incompatible guards and unknown/out-of-scope grants. App-owned callbacks must also recheck persisted user protection, self identity, authorized tenant membership and the selected role profile at the transactional write boundary. Assignments must never update a trusted platform-owner identity column or fall back to legacy broad grants. Use an explicitly bound `Permissions.forTeam(teamId)` or `Permissions.global()` facade, and `PermissionProfiles` for role profiles; a team grant cannot become platform authority.
 
-This bounded console does not yet provide batch retry/cleanup, DLQ routing, safe resource deep links, queue pause/resume commands, a distributed scheduler lock inspector, integration kill switches, or a complete user/tenant permission editor. Those require additional public contracts or their owning scaffold surfaces; the UI does not invent telemetry or bypass those boundaries. Shared persistent log queries are provided by the configured database viewer.
+Configured integration kill switches use public `Features` APIs and an explicit bounded name registry. Logs use the configured shared/process-local viewer, filtered pages and entry-ID cursors; authorized SSE tails bound slow clients and periodically recheck access. Payloads, context and common credential text are redacted, but redaction is not a substitute for keeping arbitrary secrets out of logs.
+
+Every mutation records intent through `Audit` before its side effect and completion/failure afterwards, including user/role/capability and assignment scope where applicable. Configure a persistent, non-excluded dashboard audit sink. Intent failure blocks execution; completion-audit failure after execution returns a warning not to repeat blindly. Queue/scheduler effects and the audit sink are not one atomic transaction.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/admin/health` | System health |
-| GET | `/api/admin/queue` | Status-filtered paginated jobs (default: failed) |
-| GET | `/api/admin/queue/[id]?queue=...` | Redacted job inspection |
-| POST | `/api/admin/queue/[id]/retry` | Retry failed job |
-| DELETE | `/api/admin/queue/[id]?queue=...` | Delete non-active job with explicit confirmation |
-| GET | `/api/admin/scheduler` | List scheduled tasks |
-| POST | `/api/admin/scheduler/[name]/run` | Run task manually |
-| POST | `/api/admin/scheduler/[name]/toggle` | Persist boolean enabled state |
-| GET | `/api/admin/logs` | Query logs |
-| GET | `/api/admin/logs/tail` | Authorized, redacted SSE logs from the configured shared/local backend |
-| GET | `/api/admin/stats` | Combined dashboard stats |
+| GET | `/api/admin/console`, `/health`, `/stats` | Authorized shell/access state and bounded observations |
+| GET | `/api/admin/queue` | Indexed, status/source-filtered page |
+| GET / DELETE | `/api/admin/queue/[id]` | Exact scoped inspection / confirmed removal |
+| POST | `/api/admin/queue/[id]/retry` | Exact scoped retry |
+| GET | `/api/admin/queue/[id]/timeline` | Bounded retained history |
+| POST | `/api/admin/queue/batch/retry`, `/queue/batch/cleanup` | Up to 100 explicit references; partial outcomes |
+| POST | `/api/admin/queue/control/pause` | Confirmed pause/resume where supported |
+| GET | `/api/admin/scheduler` | Registered tasks and available persistent runtime |
+| POST | `/api/admin/scheduler/[name]/run`, `/[name]/toggle` | Queue run request / persist enabled state |
+| GET | `/api/admin/scheduler/[name]/requests/[requestId]` | Safe run-request status |
+| GET | `/api/admin/logs`, `/logs/tail` | Filtered logs / authorized SSE |
+| GET | `/api/admin/users`, `/users/[id]/access` | User page / exact scoped role/direct-grant snapshot |
+| POST / DELETE | `/api/admin/users/[id]/roles`, `/users/[id]/capabilities` | Confirmed scoped assign/detach or grant/revoke |
+| POST / DELETE | `/api/admin/users/[id]/reset-password` / `/users/[id]` | Provider-authorized reset / confirmed deletion |
+| GET / POST | `/api/admin/permissions` / `/permissions/roles` | Public catalog/role page / create empty scoped profile |
+| GET / PUT | `/api/admin/permissions/roles/[id]/profile` | Scoped preview / confirmed system or custom profile |
+| DELETE | `/api/admin/permissions/roles/[id]` | Confirmed scoped role/profile/assignment cleanup |
+| GET / PUT | `/api/admin/features` / `/features/[name]` | Registered flags / confirmed boolean change |
 
 ## Plugin System
 
@@ -556,23 +555,37 @@ Track user actions and system changes:
 ```typescript
 import { Audit } from '@beeblock/svelar/audit';
 
-await Audit.log('user:created', {
+Audit.configure({ driver: 'database', table: 'audit_logs', enabled: true });
+
+await Audit.log({
   userId: user.id,
-  email: user.email,
+  action: 'user:created',
+  modelType: 'User',
+  modelId: user.id,
+  newValues: { email: user.email },
   ipAddress: event.getClientAddress(),
 });
 
-const entries = await Audit.query()
-  .where('action', 'user:created')
-  .limit(10)
-  .get();
+const entries = await Audit.query({ action: 'user:created', limit: 10 });
+const stats = await Audit.getStats();
 ```
 
-For ORM models, call `auditable(ModelClass)` once during boot to register a
-model observer. It records `created`, `updated`, `deleted`, `restored`, and
-`forceDeleted` lifecycle events with `getChanges()` / `getPreviousOriginal()`
-diffs, redacts sensitive fields such as passwords and tokens, and includes
-`userId`, `teamId`, and `correlationId` from the Svelar application context.
+Call `auditable(ModelClass, options)` once during boot. The class must extend Svelar `Model`; static duck-typed CRUD wrappers are not supported. The instance observer records `created`, `updated`, `deleted`, `restored`, and `forceDeleted`, with one entry for a force-delete rather than an additional ordinary-delete entry.
+
+```typescript
+import { auditable } from '@beeblock/svelar/audit';
+
+auditable(Invoice, {
+  ignore: ['heartbeat', 'settings.lastCheckedAt'],
+  redact: ['settings.credentials.*'],
+});
+```
+
+Updates compare cast-aware persisted before/after values from `getPreviousOriginal()` and `getChanges()`. Equivalent decimal values such as `400.000` and `400`, and changes containing only ignored fields or the model's created/updated timestamps, do not produce update entries. A real sensitive-field change still produces an entry even when both displayed values are redacted.
+
+`Audit.configure()` also accepts `ignore` and `redact` lists, combined with model options. Matching is case-insensitive and ignores underscores/hyphens; a single field name applies recursively, while dotted paths can use `*` for a path segment. Ignoring removes a field; redaction retains `[redacted]`. Objects, arrays, JSON-valued strings, and metadata are sanitized without mutating caller data. Do not put secrets in arbitrary free-form text.
+
+Application context supplies user/actor identity, actor type, team/tenant, service-account/API-key identity, IP, user-agent, request ID and correlation ID. Database statistics use bounded `COUNT`/`GROUP BY` queries, not a full audit-row read. Database audit writes participate in the current transaction; memory/log events publish only after commit and are discarded on rollback. Memory storage is process-local and bounded to 10,000 entries. Audit filters are not authorization: validate access and scope reads in application code.
 
 ## API Key Management
 
@@ -591,6 +604,37 @@ const { plainTextKey, record } = await ApiKeys.create({
 Keys are hashed and can be revoked at any time. Permissions are deny-by-default: an empty permission list authenticates the key owner but does not pass permission checks. Use `'*'` only for deliberately unrestricted keys.
 
 User-facing revocation must use `await ApiKeys.revokeForUser(keyId, authenticatedUser.id)`. It atomically checks ownership and returns `false` for missing, foreign or already revoked keys. Never accept the owner ID from submitted data. `ApiKeys.revoke(keyId)` is an unrestricted infrastructure operation for already authorized administrative code, not a substitute for ownership authorization. Generated API-key actions use the owner-scoped operation and return an inline 403 failure instead of a 500 for unauthorized revocation.
+
+For machine actors, use a tenant-bound service account:
+
+```typescript
+type IntegrationAbility = 'orders:read' | 'orders:sync';
+
+const credential = await ApiKeys.createServiceAccount<IntegrationAbility>({
+  name: 'Tenant integration',
+  teamId: team.id,
+  abilities: ['orders:read'],
+  allowedIps: integrationConfig.allowedIps,
+  rateLimit: integrationConfig.rateLimit,
+  metadata: { integration: integrationConfig.name },
+});
+
+const allowed = await ApiKeys.runWithKey(
+  submittedToken,
+  { tenantId: authorizedTenant.id, ip: event.getClientAddress() },
+  (authenticated) => ApiKeys.hasAbility(authenticated, 'orders:read'),
+);
+```
+
+Service accounts require a nonempty string or safe-integer team ID and carry a stable service-account actor identity, not the sponsoring user's authority. `abilities` is the typed alias for `permissions`; if both are supplied they must agree. IP restrictions accept exact IP addresses, not CIDR ranges. Missing/wrong IP or tenant raises `ApiKeyAccessDeniedError`; an exhausted quota raises `ApiKeyRateLimitError` with `retryAfter`, for both memory and database drivers. Invalid, expired, disabled, or revoked credentials return `null`. Successful validation records last-use time/address and supplies the actor/tenant context.
+
+`runWithKey()` isolates context for its callback and restores the surrounding context. `hasAbility()` requires the exact record returned by validation plus matching actor, API-key and tenant context; cloned/listed/forged records fail closed. Treat these synchronous snapshots as request-scoped: validate on every request, including on other workers. Committed local rotation/control changes invalidate existing policy snapshots, requiring fresh validation. Tenant credentials cannot claim platform authority.
+
+`await ApiKeys.rotate(id, { overlapSeconds: 30 })` atomically publishes one replacement. The default overlap is zero. During an explicit overlap, the original is accepted strictly before the deadline, capped by absolute expiry. Rotation preserves permissions, tenant, IP restrictions, rate limit, metadata, expiry and disabled state; it never revives a disabled/expired key or resets the lineage's quota budget.
+
+`disable()`, `enable()`, and `revoke()` apply to the complete rotation lineage. Revocation clears overlap and cannot be undone by enabling. These are infrastructure operations requiring application authorization. Creation, rotation, disable/enable and revocation write an audit trail without the plaintext token or stored hash. Persistent audit failures roll back database security mutations.
+
+Run core migration `00000000_000045_add_api_key_rotation_state` before using these database APIs. It adds rotation state and backfills existing keys without replacing them; rollback refuses while an overlap window is live. Configure database storage and a shared Redis cache for multi-process credentials/quotas; memory implementations are process-local.
 
 ## Outgoing Webhooks
 
@@ -617,26 +661,35 @@ Use `WebhookInbox` when your app receives webhooks from payment providers, marke
 ```typescript
 import { WebhookInbox } from '@beeblock/svelar/webhooks';
 
-export const POST = async ({ request }) => {
-  const result = await WebhookInbox.receiveRequest('stripe', request, {
-    event: request.headers.get('stripe-event') ?? undefined,
-    idempotencyKey: request.headers.get('stripe-event-id') ?? undefined,
-    verifier: WebhookInbox.hmacVerifier(process.env.STRIPE_WEBHOOK_SECRET!, {
-      header: 'stripe-signature',
-      prefix: 'sha256',
-    }),
-  });
+// In a registered provider, using application-owned account mapping and action:
+WebhookInbox.configure({ driver: 'database' });
+WebhookInbox.registerSource('partner', {
+  verifier: WebhookInbox.hmacVerifier(signingSecret, { header: 'x-partner-signature', prefix: 'sha256' }),
+  resolveTenant: async (payload, headers) => accountMapping.resolveAuthorizedTenant(payload, headers),
+  idempotencyKey: (payload) => partnerContract.parse(payload).eventId,
+  orderingKey: (payload) => partnerContract.parse(payload).resourceId,
+  version: (payload) => partnerContract.parse(payload).version,
+  ackStatus: 202,
+  maxAttempts: 5,
+  deduplicationWindowSeconds: 3600,
+  handler: async (entry) => incomingPartnerAction.run(partnerDto.from(partnerContract.parse(entry.payload))),
+});
 
-  if (!result.duplicate) {
-    await WebhookInbox.markQueued(result.entry.id);
-    // Dispatch a queue job from here if processing is slow or retryable.
-  }
-
-  return new Response(null, { status: 202 });
-};
+// The generated /api/webhooks/incoming/[source]/+server.ts stays thin:
+import { IncomingWebhookController } from '@beeblock/svelar/webhooks';
+const controller = new IncomingWebhookController();
+export const POST = controller.handle('receive');
 ```
 
-The inbox supports memory and database drivers. Run Svelar core migrations to create `webhook_inbox_entries`, then use `markProcessing()`, `markProcessed()`, `markFailed()`, and `replay()` from workers or admin tooling. Invalid HMAC signatures throw `WebhookSignatureError` before the entry is stored.
+The registered-source processor requires the database driver and all inbox migrations, including `00000000_000037_add_webhook_inbox_processing`. Configure the same sources in web, worker and scheduler bootstrap. New apps register `WebhookInboxSweep`; registered queue jobs wake processing after commit without delaying acknowledgement. A sync queue does not run slow handlers in the receiver: the sweep is the durable fallback. Queue outages do not lose committed receipts.
+
+Source names are bounded identifiers (letters/digits plus `.`, `_`, `-`, up to 128 characters). Signature verification uses exact raw bytes before JSON parsing, tenant mapping or deduplication. Requests are capped at 1 MiB by default (configurable up to 16 MiB). The generic HMAC adapter verifies a body digest, not Stripe's timestamped signature protocol; use the provider's official verifier for provider-specific signatures, replay tolerance and secret rotation. Never substitute a verifier that returns `true` in a public receiver.
+
+Processing claims renewable owner leases, preserves tenant/actor/correlation context and orders events per trusted account/resource key. Older versions are ignored after a newer version has succeeded. `coalesce: true` keeps only the latest waiting state while retaining every receipt; use it for desired-state updates, not independent financial transactions. A failed earlier ordered event blocks later versions until replay or an authorized ignore decision. Retries use bounded backoff; exhausted attempts remain in the DLQ (`failed` without `availableAt`). `replay(id)` resets attempts and wakes the processor but refuses an actively leased entry.
+
+`process(source, limit)`, `stats(source?)`, `reconcile(source)` and `prune(cutoffTimestamp)` are public operational contracts. Stats include status counts and oldest pending age. Configure `redactAfterProcessing` for sensitive payload keys and schedule retention explicitly. Redacted records remain redacted on replay; keep only payload data the integration genuinely needs. Raw storage must be protected, encrypted/backed up according to application requirements and never dumped into public responses. Handler side effects are at-least-once: enforce domain idempotency for external writes because a worker can die after its side effect but before settlement.
+
+The basic `receiveRequest`/`receive` primitives also support memory tests and custom controller workflows. They do not automatically manage leases/retries. `bodyBytes(entry)` restores binary raw-body bytes, including stored base64. Manual status methods remain for unmanaged receipts. Invalid basic HMAC signatures throw `WebhookSignatureError`; the registered-source controller returns safe 401/403/413/422/503 envelopes and acknowledges 200/202/204 only after durable capture.
 
 Capture is idempotent within `(source, tenantId, idempotencyKey)`: concurrent deliveries return one winning entry and retain its original payload. Different tenants can receive the same provider key without sharing entries. Numeric tenant IDs normalize to strings (`42` and `'42'` identify the same tenant); omitted or `null` tenant IDs share a separate global namespace. The visible `idempotencyKey` is unchanged. Database arbitration uses a unique internal SHA-256 hash of the JSON scope tuple, including the global namespace, rather than a nullable tenant column in a composite unique constraint.
 
