@@ -31,7 +31,7 @@ class SearchTestModel {
 const SearchableSearchTestModel = Searchable(SearchTestModel);
 
 function configureSearchClient(index: Record<string, any>): void {
-  Search.configure({ host: 'http://meilisearch.test' });
+  Search.configure({ host: 'http://meilisearch.test', syncDriver: 'inline' });
   (Search as any).client = {
     index() {
       return index;
@@ -41,7 +41,7 @@ function configureSearchClient(index: Record<string, any>): void {
 
 describe('Searchable', () => {
   afterEach(() => {
-    Search.configure({ host: 'http://meilisearch.test' });
+    Search.configure({ host: 'http://meilisearch.test', syncDriver: 'inline' });
     (Search as any).client = null;
     vi.restoreAllMocks();
   });
@@ -136,7 +136,7 @@ describe('Searchable', () => {
 
   it('can fail open for automatic indexing errors', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    Search.configure({ host: 'http://meilisearch.test', syncMode: 'fail-open' });
+    Search.configure({ host: 'http://meilisearch.test', syncDriver: 'inline', syncMode: 'fail-open' });
     (Search as any).client = {
       index() {
         return {
@@ -160,7 +160,7 @@ describe('Searchable', () => {
     expect(model.getSearchableIndex()).toBe('tenant_search_test_models');
   });
 
-  it('streams makeAllSearchable through chunk-capable queries', async () => {
+  it('streams makeAllSearchable through keyset-capable queries', async () => {
     const batches: any[][] = [];
 
     class ChunkedModel {
@@ -178,7 +178,7 @@ describe('Searchable', () => {
       static query() {
         const ModelClass = this as any;
         return {
-          async chunk(_size: number, callback: (records: any[]) => Promise<void>) {
+          async chunkById(_size: number, callback: (records: any[]) => Promise<void>) {
             await callback([new ModelClass({ id: 1, title: 'One' }), new ModelClass({ id: 2, title: 'Two' })]);
             await callback([new ModelClass({ id: 3, title: 'Three' })]);
           },

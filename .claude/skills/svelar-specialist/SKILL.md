@@ -361,6 +361,17 @@ For request/response reads across modules, do not import another module's model/
 - Inspect `ScheduleMonitor.runTask()` results: `skipped` means overlap prevented execution and `success: false` means execution failed. An awaited promise alone is not success.
 - Use callback-scoped `fakeQueue`, `fakeEvents`, `fakeNotifications`, `fakeHttp`, and `fakeMail` from `@beeblock/svelar/testing`; await all work inside the callback so interception is restored reliably.
 
+## Shared Logs And Durable Search
+
+- Configure the database log viewer in the common app bootstrap so web, workers and scheduler see the same entries. Run its migration; never create its table at runtime. Memory viewing is explicitly process-local.
+- Await all LogViewer reads/writes. Use `await LogViewer.page({ cursor, limit, tenantId, correlationId })` and its `{ data, meta }` envelope, not a process-local buffer or client-side filtering as authorization. Schedule `LogViewer.prune()` for retention.
+- Database log tails follow persisted entries from all processes; close subscriptions on disconnect, use entry-ID cursors/Last-Event-ID, and report failures through a different sink. Never log unknown free-form secrets.
+- Search defaults to a durable outbox on the model database. Keep Model writes and indexing intent in one transaction; signal registered queue jobs only after the outer commit. Register `SearchOutboxSweep` in existing apps so failed dispatches/retries are recovered.
+- Meilisearch outages must not make a committed database write look failed. Outbox persistence failure must roll back the write. Inspect `Search.outbox().stats()`, dead-letter/replay and retention instead of swallowing lost synchronization.
+- Inline search delivery is explicit `syncDriver: 'inline'`; use it only when its immediate error/latency semantics are required. Indexing must honor hidden fields or an explicit safe `toSearchableObject()`.
+- Reindex with keyset `chunkById`, not OFFSET or loading all records. Query-builder bulk writes remain eventless; use individual Model writes for observers/audit/outbox effects.
+- `Connection.afterCommit` captures application context and discards callbacks on rollback. `AfterCommitError.committed === true` means the original write must not be blindly repeated. Await database work; detached work cannot reuse an ended transaction.
+
 ## Storage, Uploads, PDF, Mail, Search
 
 - Use `Storage` and `Uploads`; do not expose internal Docker URLs such as `http://rustfs:9000/...` to browser users.

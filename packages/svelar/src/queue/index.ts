@@ -950,6 +950,13 @@ class QueueManager {
     return this.jobRegistry.all();
   }
 
+  getDriver(connection?: string): QueueDriver {
+    const name = connection ?? this.config.default;
+    const config = this.config.connections[name];
+    if (!config) throw new Error(`Queue connection "${name}" is not defined.`);
+    return config.driver;
+  }
+
   /**
    * Register a job class for database driver deserialization.
    *

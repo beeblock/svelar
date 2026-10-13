@@ -658,6 +658,7 @@ import { Queue } from '@beeblock/svelar/queue';
 import { JobMonitor } from '@beeblock/svelar/queue/JobMonitor';
 import { Audit } from '@beeblock/svelar/audit';
 import { Log } from '@beeblock/svelar/logging';
+import { Search } from '@beeblock/svelar/search';
 import { ApiKeys } from '@beeblock/svelar/api-keys';
 import { Webhooks } from '@beeblock/svelar/webhooks';
 	import { Teams } from '@beeblock/svelar/teams';
@@ -785,6 +786,15 @@ const queueConfig = {
 Queue.configure(queueConfig);
 JobMonitor.configure({ driver: queueConfig.connections[queueConfig.default]?.driver ?? queueConfig.default, ...queueConfig });
 
+// Durable search intent uses the model database and is retried by workers/scheduler.
+if (process.env.MEILISEARCH_HOST) {
+  Search.configure({
+    host: config.get('search.host', process.env.MEILISEARCH_HOST),
+    apiKey: config.get('search.apiKey', process.env.MEILISEARCH_KEY),
+    indexPrefix: config.get('search.indexPrefix', process.env.SEARCH_INDEX_PREFIX ?? ''),
+    syncDriver: 'outbox',
+  });
+}
 
 // ── Audit Logging ─────────────────────────────────────────
 Audit.configure({ driver: 'database', table: 'audit_logs', enabled: true });
@@ -1526,6 +1536,17 @@ For request/response reads across modules, do not import another module's model/
 - Pass the queue name to \`JobMonitor.getJob/retryJob/deleteJob\` so job IDs cannot resolve in another queue. Runtime metrics can be unknown; do not replace null with a false healthy value.
 - Inspect \`ScheduleMonitor.runTask()\` results: \`skipped\` means overlap prevented execution and \`success: false\` means execution failed. An awaited promise alone is not success.
 - Use callback-scoped \`fakeQueue\`, \`fakeEvents\`, \`fakeNotifications\`, \`fakeHttp\`, and \`fakeMail\` from \`@beeblock/svelar/testing\`; await all work inside the callback so interception is restored reliably.
+
+## Shared Logs And Durable Search
+
+- Configure the database LogViewer in the common app bootstrap and run migrations. Memory viewing is explicitly process-local; never create log tables at runtime.
+- Await all viewer reads/writes. Use \`LogViewer.page({ cursor, limit, tenantId, correlationId })\` and its \`{ data, meta }\` envelope. A tenant filter is not authorization. Schedule \`LogViewer.prune()\` for retention.
+- Database tails follow persisted entries across processes. Close subscriptions on disconnect, support entry-ID/Last-Event-ID replay, and report failures through a different sink.
+- Search defaults to a durable outbox on the model database. Model writes and indexing intent share a transaction; queue signals occur only after commit. Existing apps register \`SearchOutboxSweep\` to recover failed dispatches and retries.
+- Meilisearch outages must not make committed writes look failed. Outbox persistence failure rolls back the write. Inspect outbox stats, dead letters and replay instead of swallowing lost synchronization.
+- Inline delivery is explicit \`syncDriver: 'inline'\`. Index hidden-safe serialized fields or an explicit safe \`toSearchableObject()\`; never index secrets.
+- Reindex with keyset \`chunkById\`. Bulk query writes are eventless; individual Model writes provide observers/audit/outbox effects.
+- \`Connection.afterCommit\` captures application context and discards rolled-back callbacks. \`AfterCommitError.committed === true\` means never blindly repeat the original write. Await database work; detached work cannot reuse ended transactions.
 
 ## Storage, Uploads, PDF, Mail, Search
 
@@ -3127,6 +3148,7 @@ export type PostResponse = z.infer<typeof postResponseSchema>;
 			['00000000_000033_create_team_model_has_permissions_table.ts', 'CreateTeamModelHasPermissionsTable', 'Team model permissions table'],
 			['00000000_000034_scope_webhook_inbox_idempotency.ts', 'ScopeWebhookInboxIdempotency', 'Tenant-scoped incoming webhook idempotency'],
 			['00000000_000035_create_svelar_logs_table.ts', 'CreateSvelarLogsTable', 'Shared logs for web, workers and scheduler'],
+			['00000000_000036_create_search_outbox_table.ts', 'CreateSearchOutboxTable', 'Durable search synchronization outbox'],
 		] as const;
 
 		return migrations.map(([file, className, label]) => ({
@@ -6406,6 +6428,7 @@ export default class CleanupExpiredTokens extends ScheduledTask {
 	static schedulerIndex(): string {
 		return `import { Scheduler } from '@beeblock/svelar/scheduler';
 import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
+import { SearchOutboxSweep } from '@beeblock/svelar/search';
 import CleanupExpiredTokens from './CleanupExpiredTokens.js';
 import CleanExpiredSessions from './CleanExpiredSessions.js';
 import DailyDigestEmail from './DailyDigestEmail.js';
@@ -6423,6 +6446,7 @@ export function createScheduler(): Scheduler {
     new DailyDigestEmail(),
     new PruneAuditLogs(),
     new QueueHealthCheck(),
+    new SearchOutboxSweep(),
   ]);
 
   ScheduleMonitor.configure(scheduler);

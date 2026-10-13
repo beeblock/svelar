@@ -2371,11 +2371,12 @@ describe('Svelar release certification', () => {
 	  it('runs Meilisearch health, auto-sync, manual indexing, and settings when configured', async () => {
 	    if (!process.env.MEILISEARCH_HOST) return;
 
-	    Search.configure({
+	    const searchConfig = {
 	      host: process.env.MEILISEARCH_HOST,
 	      apiKey: process.env.MEILISEARCH_KEY,
 	      indexPrefix: \`cert_\${Date.now()}_\${Math.random().toString(36).slice(2)}\`,
-	    });
+	    };
+	    Search.configure(searchConfig);
 
 	    const health = await Search.health();
 	    expect(health.status).toBe('available');
@@ -2416,6 +2417,24 @@ describe('Svelar release certification', () => {
 	      user_id: user.id,
 	    });
 	    await waitForSearchHit(SearchCertificationPost, 'alpha certification', 'meilisearch-alpha-certification');
+
+	    const beforeRollback = await SearchCertificationPost.count();
+	    await expect(Connection.transaction(async () => {
+	      await SearchCertificationPost.create({ title: 'Rollback search record', slug: 'rollback-search-record', body: 'Must not index', published: true, user_id: user.id });
+	      throw new Error('certification rollback');
+	    })).rejects.toThrow('certification rollback');
+	    expect(await SearchCertificationPost.count()).toBe(beforeRollback);
+	    await waitForSearchEmpty(SearchCertificationPost, 'rollback search record');
+
+	    Search.configure({ ...searchConfig, host: 'http://127.0.0.1:1' });
+	    const outageRecord = await SearchCertificationPost.create({ title: 'Durable outage recovery', slug: 'durable-outage-recovery', body: 'Committed without Meilisearch', published: true, user_id: user.id });
+	    expect(await SearchCertificationPost.find(outageRecord.id)).not.toBeNull();
+	    expect((await Search.processOutbox()).failed).toBeGreaterThan(0);
+	    Search.configure(searchConfig);
+	    await new QueryBuilder('svelar_search_outbox').where('status', 'pending').update({ available_at: new Date().toISOString() });
+	    await waitForSearchHit(SearchCertificationPost, 'durable outage recovery', 'durable-outage-recovery');
+	    await outageRecord.delete();
+	    await waitForSearchEmpty(SearchCertificationPost, 'durable outage recovery');
 
 	    const filtered = await SearchCertificationPost.search('alpha certification', {
 	      filter: 'published = true',
@@ -2771,6 +2790,8 @@ async function startMailProviderServer(): Promise<{
 }
 
 async function searchHits(ModelClass: any, query: string, options: Record<string, any> = {}): Promise<any[]> {
+  const sync = await Search.processOutbox();
+  if (sync.failed) throw new Error('Search outbox processing failed during certification.');
   try {
     const results = await ModelClass.search(query, options);
     return results.hits;

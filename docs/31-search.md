@@ -43,7 +43,7 @@ Search.configure({
   host: process.env.MEILISEARCH_HOST ?? 'http://localhost:7700',
   apiKey: process.env.MEILISEARCH_KEY,
   indexPrefix: 'myapp', // optional — prefixes all index names
-  syncMode: 'strict', // strict (default) or fail-open
+  syncDriver: 'outbox', // default: durable, after-commit synchronization
 });
 ```
 
@@ -71,30 +71,35 @@ class Post extends Searchable(Model) {
 
 That's it. Every time a `Post` is created, updated, or deleted, the search index updates automatically.
 
-Search auto-sync is part of the model write path. In the default `strict` mode, if Meilisearch is misconfigured, unavailable, or rejects an indexing request, the create/update/delete operation fails instead of silently drifting out of sync. Removing a document that is already missing from the index is treated as a successful no-op.
+### Durable Synchronization
 
-For production writes where database persistence must not fail because search is temporarily down, configure `fail-open` and reconcile with `search:setup --reindex` or your own scheduled reindex job:
+The default `syncDriver: 'outbox'` stores indexing intent in `svelar_search_outbox` in the same database transaction as the Model write. Run migrations before enabling it. Automatic synchronization must use the model's database connection; a separate outbox database cannot make the write atomic and is rejected.
+
+No Meilisearch request is made in the model transaction. Queue publication happens after the outer commit and is discarded on rollback. An unavailable search engine cannot turn a committed model write into a failure. If durable intent cannot be persisted, the database write rolls back rather than silently losing synchronization.
+
+New apps configure search when `MEILISEARCH_HOST` is set and register `SearchOutboxSweep` with their scheduler. Non-sync queues receive the registered `ProcessSearchOutboxJob` after commit; the periodic sweep recovers interrupted or failed dispatches and delayed retries. With a sync queue, run the scheduler or explicitly drain the outbox: the framework will not block a write on synchronous search work.
 
 ```typescript
+import { Search, SearchOutboxSweep } from '@beeblock/svelar/search';
+
 Search.configure({
-  host: process.env.MEILISEARCH_HOST ?? 'http://localhost:7700',
+  host: process.env.MEILISEARCH_HOST!,
   apiKey: process.env.MEILISEARCH_KEY,
-  syncMode: 'fail-open',
+  syncDriver: 'outbox',
+  outbox: { maxAttempts: 10, retrySeconds: 10, leaseSeconds: 60 },
 });
+scheduler.register(new SearchOutboxSweep()); // Existing applications opt in explicitly.
+const result = await Search.processOutbox(undefined, 100);
+const stats = await Search.outbox().stats();
+await Search.outbox().replay(deadEntryId);
+await Search.outbox().prune(retentionCutoff);
 ```
 
-For an outbox or queue-backed workflow, provide a `syncHandler`. Svelar passes the operation and a `next()` callback that performs the default Meilisearch write:
+Claims use transactional row locks with SKIP LOCKED on PostgreSQL/MySQL and serialized SQLite transactions. Owner leases renew during processing and expired claims are recoverable. Operations are ordered per document; a failed/dead earlier operation blocks later operations for that document until replay. Other documents remain processable. Retries use bounded exponential backoff and transition to a visible dead-letter state. Delivery is at least once, so synchronization operations must remain idempotent.
 
-```typescript
-Search.configure({
-  host: process.env.MEILISEARCH_HOST ?? 'http://localhost:7700',
-  syncMode: 'fail-open',
-  async syncHandler(operation, next) {
-    // Persist/enqueue the operation here if your app uses a search outbox.
-    await next();
-  },
-});
-```
+The processor waits for the Meilisearch task to settle before marking an entry completed; an accepted/enqueued task is not proof of successful indexing. Task failures/timeouts stay retryable. [Meilisearch async task contract](https://github.com/meilisearch/meilisearch-js).
+
+Explicit `syncDriver: 'inline'` is available when immediate synchronization is intentionally required. Its `syncMode: 'strict'` propagates errors, while `'fail-open'` reports them and requires later reconciliation. Inline error propagation alone does not roll back an already committed database statement. A `syncHandler(operation, next)` can customize inline delivery; it is not a substitute for the transactional outbox. Removing an already-missing document is a successful no-op.
 
 ### With HasRoles
 
@@ -112,7 +117,7 @@ class User extends Searchable(HasRoles(Model)) {
 
 ## Customizing Indexed Data
 
-By default, all model attributes are indexed. Override `toSearchableObject()` to control what gets sent to Meilisearch:
+By default, the serialized model attributes are indexed, honoring hidden fields. Override `toSearchableObject()` to explicitly select what gets sent to Meilisearch. Never include credentials or private fields in the search document:
 
 ```typescript
 class Post extends Searchable(Model) {
@@ -261,7 +266,7 @@ console.log(`Indexed ${result.indexed} posts`);
 await Post.makeAllSearchable(1000);
 ```
 
-When the model query supports chunking, `makeAllSearchable()` streams records through `query().chunk(batchSize, ...)` instead of loading the full table before indexing. This keeps memory bounded during large reindexes.
+`makeAllSearchable()` streams records through `query().chunkById(batchSize, ..., primaryKey)` rather than OFFSET or loading the full table. Custom UUID/ULID/string primary keys are respected, and modifying already-processed records cannot skip the next page. Query-builder bulk writes are eventless: explicitly reindex afterward or perform individual Model writes when observers, audit and outbox effects are required.
 
 ### Remove All from Index
 

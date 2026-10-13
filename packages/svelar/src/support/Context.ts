@@ -16,6 +16,11 @@ class ApplicationContextManager {
     return this.storage.run({ ...this.current(), ...context }, callback);
   }
 
+  /** Enter an execution boundary without inheriting a previous tenant/actor. */
+  runIsolated<T>(context: ApplicationContextSnapshot, callback: () => T | Promise<T>): T | Promise<T> {
+    return this.storage.run({ ...context }, callback);
+  }
+
   current(): ApplicationContextSnapshot {
     return this.storage.getStore() ?? this.fallback;
   }

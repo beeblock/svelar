@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **Durable search synchronization** - Searchable model writes default to a same-database transactional outbox rather than waiting on Meilisearch. After-commit queue signals and the registered scheduler sweep recover delivery, retries, expired leases and replayable dead letters while preserving per-document order and isolated origin context. Reindexing uses keyset pagination/custom primary keys; hidden model fields stay out of default documents, and soft-delete/restore/force-delete participate in synchronization.
+
 - **Shared persistent log viewer** - Web/worker/scheduler logs can share a migrated database backend with stable cursor pagination, filtered search, database statistics, retention and cross-process resumable SSE tail. Viewer reads/writes are consistently asynchronous; generated apps configure the shared backend, and reviewed historical scaffold codemods add awaited calls. Sensitive context and recognizable credential text are redacted before persistence.
 
 - **Transactional settlement** - Nested transactions use savepoints across SQLite/PostgreSQL/MySQL; after-commit callbacks preserve application context, run only after the outer commit and are discarded on rollback. Already-committed callback failures are explicitly distinguishable from failed writes. Independent SQLite statements/transactions are serialized, and interleaved savepoints or detached transaction work fail closed.

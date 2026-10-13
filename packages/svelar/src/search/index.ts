@@ -46,6 +46,11 @@ import { singleton } from '../support/singleton.js';
 
 import { createRequire } from 'node:module';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { Connection } from '../database/Connection.js';
+import { Job, Queue } from '../queue/index.js';
+import { SearchOutbox, type SearchOutboxOptions } from './SearchOutbox.js';
+import { redactLogText } from '../logging/Redaction.js';
+import { ScheduledTask } from '../scheduler/index.js';
 
 const requireOptionalPeer = createRequire(import.meta.url);
 
@@ -80,6 +85,9 @@ export interface SearchConfig {
   indexPrefix?: string;
   syncMode?: SearchSyncMode;
   syncHandler?: SearchSyncHandler;
+  /** Durable outbox is the default. Inline synchronization is an explicit opt-in. */
+  syncDriver?: 'outbox' | 'inline';
+  outbox?: SearchOutboxOptions;
 }
 
 export type SearchSyncMode = 'strict' | 'fail-open';
@@ -136,10 +144,16 @@ class SearchManager {
   private config: SearchConfig | null = null;
   private client: any = null;
   private syncingContext = new AsyncLocalStorage<{ disabled: boolean }>();
+  private persistenceContext = new AsyncLocalStorage<{ connection?: string }>();
 
   configure(config: SearchConfig): void {
+    if (!config.host) throw new Error('Search host is required.');
+    if (config.syncDriver && !['outbox', 'inline'].includes(config.syncDriver)) throw new Error('Invalid search synchronization driver.');
+    new SearchOutbox(config.outbox);
     this.config = config;
     this.client = null; // Reset client on reconfigure
+    Queue.register(ProcessSearchOutboxJob);
+    if (config.outbox?.queue) Queue.registerQueue({ name: config.outbox.queue, label: 'Search synchronization' });
   }
 
   getClient(): any {
@@ -183,7 +197,59 @@ class SearchManager {
     return this.config?.syncMode ?? 'strict';
   }
 
+  isConfigured(): boolean { return this.config !== null; }
+
+  getSyncDriver(): 'outbox' | 'inline' { return this.config?.syncDriver ?? 'outbox'; }
+
+  /** Keep the model write and its outbox entry in the same database transaction. */
+  async persist<T>(callback: () => Promise<T>, connection?: string): Promise<T> {
+    if (this.isSyncingDisabled() || this.getSyncDriver() === 'inline') return callback();
+    if (!this.config) throw new Error('Search not configured.');
+    const configuredConnection = this.config.outbox?.connection;
+    if (configuredConnection !== undefined && Connection.getConfig(configuredConnection) !== Connection.getConfig(connection)) {
+      throw new Error('Automatic search outbox must use the model database connection.');
+    }
+    return this.persistenceContext.run({ connection }, () => Connection.transaction(callback, connection));
+  }
+
+  async processOutbox(connection?: string, limit = 100) {
+    return this.outbox(connection).drain((operation) => this.execute(operation), limit);
+  }
+
+  outbox(connection?: string): SearchOutbox {
+    if (!this.config) throw new Error('Search not configured.');
+    return new SearchOutbox({ ...this.config.outbox, connection: connection ?? this.config.outbox?.connection });
+  }
+
+  async execute(operation: SearchSyncOperation): Promise<void> {
+    const client = this.getClient();
+    const index = client.index(operation.index);
+    let task: any;
+    try {
+      task = operation.type === 'delete' ? await index.deleteDocument(operation.id)
+        : await index.addDocuments([operation.document], { primaryKey: operation.primaryKey });
+    } catch (error) {
+      if (operation.type === 'delete' && isSearchDocumentMissingError(error)) return;
+      throw error;
+    }
+    if (task?.taskUid !== undefined) {
+      const settled = await client.waitForTask(task.taskUid, { timeOutMs: 30_000 });
+      if (settled.status !== 'succeeded') throw new Error(`Search indexing task ${settled.status}: ${settled.error?.code ?? 'unknown'}`);
+    }
+  }
+
   async sync(operation: SearchSyncOperation, next: () => Promise<void>): Promise<void> {
+    if (this.getSyncDriver() === 'outbox') {
+      const connection = this.persistenceContext.getStore()?.connection ?? this.config?.outbox?.connection;
+      await this.outbox(connection).enqueue(operation);
+      await Connection.afterCommit(async () => {
+        // Sync queues cannot make this asynchronous; the persistent scheduler sweep is the fallback.
+        if (Queue.getDriver() === 'sync') return;
+        try { await Queue.dispatch(new ProcessSearchOutboxJob(connection), { queue: this.config?.outbox?.queue ?? 'default' }); }
+        catch (error) { this.reportSyncFailure(operation, error); }
+      }, connection);
+      return;
+    }
     const run = this.config?.syncHandler
       ? () => this.config!.syncHandler!(operation, next)
       : next;
@@ -221,7 +287,7 @@ class SearchManager {
   private reportSyncFailure(operation: SearchSyncOperation, error: unknown): void {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(
-      `[svelar:search] ${operation.type} sync failed for ${operation.index}:${operation.id}: ${message}`
+      `[svelar:search] ${operation.type} sync failed for ${operation.index}:${operation.id}: ${redactLogText(message)}`
     );
   }
 
@@ -238,6 +304,19 @@ export const Search: SearchManager = singleton(
   'svelar.search',
   () => new SearchManager()
 );
+
+/** A durable outbox remains recoverable even if queue dispatch is temporarily unavailable. */
+export class ProcessSearchOutboxJob extends Job {
+  constructor(readonly connection?: string, readonly batchSize = 100) { super(); }
+  async handle(): Promise<void> { await Search.processOutbox(this.connection, this.batchSize); }
+}
+export class SearchOutboxSweep extends ScheduledTask {
+  name = 'search-outbox-sweep';
+  schedule() { return this.everyMinute().preventOverlap(); }
+  async handle(): Promise<void> { if (Search.isConfigured()) await Search.processOutbox(); }
+}
+export { SearchOutbox } from './SearchOutbox.js';
+export type { SearchOutboxOptions } from './SearchOutbox.js';
 
 // ── Searchable Mixin ───────────────────────────────────────
 
@@ -258,14 +337,15 @@ export function Searchable<TBase extends Constructor>(
      * Get the unique ID for this document in the search index.
      */
     getSearchableId(): string | number {
-      return (this as any).id ?? (this as any).getAttribute?.('id');
+      const primaryKey = (this.constructor as any).primaryKey ?? 'id';
+      return (this as any).getAttribute?.(primaryKey) ?? (this as any)[primaryKey];
     }
 
     /**
      * The name of the primary key field in the search index.
      */
     searchableAs(): string {
-      return 'id';
+      return (this.constructor as any).primaryKey ?? 'id';
     }
 
     /**
@@ -300,7 +380,7 @@ export function Searchable<TBase extends Constructor>(
      * ```
      */
     toSearchableObject(): Record<string, any> {
-      const attrs = (this as any).attributes ?? (this as any).toJSON?.() ?? {};
+      const attrs = (this as any).toJSON?.() ?? (this as any).attributes ?? {};
       // Clone to avoid mutating the model
       return { ...attrs };
     }
@@ -390,6 +470,7 @@ export function Searchable<TBase extends Constructor>(
      * ```
      */
     static async makeAllSearchable(batchSize: number = 500): Promise<{ indexed: number }> {
+      if (!Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 10_000) throw new Error('Invalid search batch size.');
       const instance = new this() as SearchableMixin;
       const client = Search.getClient();
       const index = client.index(instance.getSearchableIndex());
@@ -413,27 +494,7 @@ export function Searchable<TBase extends Constructor>(
       };
 
       const query = (this as any).query();
-      if (typeof query.chunk === 'function') {
-        await query.chunk(batchSize, async (records: any[]) => {
-          await collect(records);
-        });
-        return { indexed };
-      }
-
-      const records: any[] = await query.get();
-      const docs: Record<string, any>[] = [];
-      for (const record of records) {
-        if (record.shouldBeSearchable()) {
-          const doc = record.toSearchableObject();
-          doc[record.searchableAs()] = record.getSearchableId();
-          docs.push(doc);
-        }
-      }
-
-      for (let i = 0; i < docs.length; i += batchSize) {
-        await flush(docs.slice(i, i + batchSize));
-      }
-
+      await query.chunkById(batchSize, collect, (this as any).primaryKey ?? 'id');
       return { indexed };
     }
 
@@ -483,55 +544,42 @@ export function Searchable<TBase extends Constructor>(
     }
   }
 
-  // Register model hooks for auto-syncing
-  // These fire after create/update/delete to keep the index in sync.
-  const origBoot = (Base as any).boot;
-
-  (SearchableMixin as any)._searchableBooted = false;
-
-  // Override save/delete to add search syncing
+  // Wrap persistence, not an external HTTP call, in the model's transaction.
   const origSave = SearchableMixin.prototype.save;
   if (origSave) {
     SearchableMixin.prototype.save = async function (...args: any[]) {
-      const result = await origSave.apply(this, args);
-      if (!Search.isSyncingDisabled()) {
-        await this.searchable();
-      }
-      return result;
+      const connection = args[0] ? args[0].getConnectionName() : (this.constructor as any).connection;
+      return Search.persist(async () => {
+        const result = await origSave.apply(this, args);
+        if (!Search.isSyncingDisabled()) await this.searchable();
+        return result;
+      }, connection);
     };
   }
-
   const origCreate = (SearchableMixin as any).create;
   if (origCreate) {
     (SearchableMixin as any).create = async function (...args: any[]) {
-      const result = await origCreate.apply(this, args);
-      if (!Search.isSyncingDisabled() && result) {
-        await result.searchable();
-      }
-      return result;
+      const connection = args[1]?.query ? args[1].query.getConnectionName() : this.connection;
+      return Search.persist(async () => {
+        const result = await origCreate.apply(this, args);
+        if (!Search.isSyncingDisabled() && result) await result.searchable();
+        return result;
+      }, connection);
     };
   }
-
-  const origDelete = SearchableMixin.prototype.delete;
-  if (origDelete) {
-    SearchableMixin.prototype.delete = async function (...args: any[]) {
-      const id = this.getSearchableId();
-      const indexName = this.getSearchableIndex();
-      const result = await origDelete.apply(this, args);
-      if (!Search.isSyncingDisabled()) {
-        await Search.sync({ type: 'delete', index: indexName, primaryKey: this.searchableAs(), id }, async () => {
-          const client = Search.getClient();
-          const index = client.index(indexName);
-          try {
-            await index.deleteDocument(id);
-          } catch (error) {
-            if (!isSearchDocumentMissingError(error)) throw error;
-          }
-        });
-      }
-      return result;
+  for (const method of ['delete', 'forceDelete', 'restore'] as const) {
+    const original = SearchableMixin.prototype[method];
+    if (!original) continue;
+    SearchableMixin.prototype[method] = async function (...args: any[]) {
+      return Search.persist(async () => {
+        const result = await original.apply(this, args);
+        if (!Search.isSyncingDisabled() && result !== false) {
+          if (method === 'restore') await this.searchable();
+          else await this.unsearchable();
+        }
+        return result;
+      }, (this.constructor as any).connection);
     };
   }
-
   return SearchableMixin as unknown as TBase & (new (...args: any[]) => SearchableInstance);
 }

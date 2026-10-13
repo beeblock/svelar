@@ -40,6 +40,7 @@ import { CreateTeamModelHasRolesTable } from './core/00000000_000032_create_team
 import { CreateTeamModelHasPermissionsTable } from './core/00000000_000033_create_team_model_has_permissions_table.js';
 import { ScopeWebhookInboxIdempotency } from './core/00000000_000034_scope_webhook_inbox_idempotency.js';
 import { CreateSvelarLogsTable } from './core/00000000_000035_create_svelar_logs_table.js';
+import { CreateSearchOutboxTable } from './core/00000000_000036_create_search_outbox_table.js';
 
 export {
   CreateSessionsTable,
@@ -76,6 +77,7 @@ export {
   CreateTeamModelHasPermissionsTable,
   ScopeWebhookInboxIdempotency,
   CreateSvelarLogsTable,
+  CreateSearchOutboxTable,
 };
 
 const coreMigrationDefinitions = [
@@ -113,6 +115,7 @@ const coreMigrationDefinitions = [
   ['00000000_000033_create_team_model_has_permissions_table', CreateTeamModelHasPermissionsTable],
   ['00000000_000034_scope_webhook_inbox_idempotency', ScopeWebhookInboxIdempotency],
   ['00000000_000035_create_svelar_logs_table', CreateSvelarLogsTable],
+  ['00000000_000036_create_search_outbox_table', CreateSearchOutboxTable],
 ] as const;
 
 export function svelarCoreMigrations(): MigrationFile[] {

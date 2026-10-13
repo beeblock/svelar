@@ -100,7 +100,7 @@ describe.sequential('ORM find-or-create model lifecycle', () => {
     vi.restoreAllMocks(); vi.useRealTimers(); ApplicationContext.clear();
     for (const model of models) { model.removeObservers(); model.boot({}); }
     Audit.configure({ driver: 'memory', enabled: true });
-    Search.configure({ host: 'http://meilisearch.test' });
+    Search.configure({ host: 'http://meilisearch.test', syncDriver: 'inline' });
     (Search as any).client = null;
     await Connection.disconnect();
     await rm(root, { recursive: true, force: true });
@@ -319,7 +319,7 @@ describe.sequential('ORM find-or-create model lifecycle', () => {
   it('forwards persistence context through Searchable create/save and indexes only writes', async () => {
     class SearchableTenantFindRecord extends Searchable(TenantFindRecord) {}
     const addDocuments = vi.fn(async (documents: Record<string, any>[]) => ({ taskUid: documents.length }));
-    Search.configure({ host: 'http://meilisearch.test' });
+    Search.configure({ host: 'http://meilisearch.test', syncDriver: 'inline' });
     (Search as any).client = { index: () => ({ addDocuments }) };
     const created = await SearchableTenantFindRecord.withoutTenantScope().firstOrCreate(
       { code: 'indexed', team_id: 'search-team' }, { name: 'Before' },
