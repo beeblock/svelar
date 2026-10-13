@@ -19,6 +19,7 @@ const headed = has('--headed');
 const slowMo = Number(valueFor('--slow-mo') ?? (headed ? 250 : 0));
 const appEnv = loadDotEnv(appDir);
 const internalSecret = process.env.INTERNAL_SECRET ?? appEnv.INTERNAL_SECRET;
+const rateBudgets = new WeakMap();
 
 if (has('--help') || has('-h')) {
 	console.log(`Usage: node scripts/browser-smoke.mjs [options]
@@ -78,11 +79,13 @@ async function runBrowserSmoke() {
 	const serverErrors = [];
 	const recentResponses = [];
 	const page = await browser.newPage();
+	let registeredUser;
 
 	page.on('pageerror', (error) => pageErrors.push(error.message));
 	page.on('response', (response) => {
 		const url = response.url();
 		if (url.startsWith(baseUrl)) {
+			observeRateBudget(page, response);
 			recentResponses.push(`${response.status()} ${url}`);
 			if (recentResponses.length > 20) recentResponses.shift();
 		}
@@ -95,7 +98,7 @@ async function runBrowserSmoke() {
 		await goto(page, baseUrl);
 		await visible(page.getByRole('heading', { name: /Welcome to/i }), 'home heading');
 
-		await runAuthPagesBrowserSmoke(page);
+		registeredUser = await runAuthPagesBrowserSmoke(page, (user) => { registeredUser = user; });
 
 			await goto(page, `${baseUrl}/login`);
 			await page.locator('input[name="email"]').fill('admin@svelar.dev');
@@ -117,6 +120,7 @@ async function runBrowserSmoke() {
 				throw new Error(message);
 			}
 			await visible(page.getByRole('heading', { name: /^Dashboard$/ }), 'dashboard heading');
+			await respectRateBudget(page, 40);
 			await runSseBrowserSmoke(page, internalSecret);
 
 		await goto(page, `${baseUrl}/dashboard/api-keys`);
@@ -144,20 +148,10 @@ async function runBrowserSmoke() {
 		await page.getByRole('button', { name: 'Send Invite' }).click();
 		await visible(page.getByText(`Invitation sent to ${inviteEmail}`), 'team invitation success');
 
-		for (const [tab, expectedText] of [
-			['overview', 'Total Users'],
-			['users', 'Assigned Roles'],
-			['roles', 'Roles'],
-			['permissions', 'Permissions'],
-			['queue', 'Queue Actions'],
-			['scheduler', 'Scheduled Tasks'],
-			['logs', 'Application Logs'],
-		]) {
-			await goto(page, `${baseUrl}/admin?tab=${tab}`);
-			await visible(page.getByRole('heading', { name: /^Admin Dashboard$/ }), `admin ${tab} heading`);
-			await visible(page.getByText(expectedText).first(), `admin ${tab} content`);
-		}
+		await runDashboardConsoleSmoke(page);
+		await runDashboardAccessSmoke(page, registeredUser);
 		await runDashboardResponsiveSmoke(page);
+		await removeRegisteredUser(page, registeredUser);
 
 		await goto(page, `${baseUrl}/dashboard`);
 		await Promise.all([
@@ -167,6 +161,15 @@ async function runBrowserSmoke() {
 		await visible(page.getByRole('button', { name: 'Login' }), 'logged-out login button');
 		await runLoginThrottleSmoke(page);
 	} finally {
+		if (registeredUser && !registeredUser.cleaned) {
+			try {
+				await ensureAdminSession(page);
+				await cleanupRoleProfile(page, registeredUser);
+				await removeRegisteredUser(page, registeredUser);
+			} catch (error) {
+				console.error(`Owned browser fixture cleanup failed for user ${registeredUser.id}/${registeredUser.email}: ${error.message}`);
+			}
+		}
 		await browser.close();
 	}
 
@@ -178,7 +181,7 @@ async function runBrowserSmoke() {
 	}
 }
 
-async function runAuthPagesBrowserSmoke(page) {
+async function runAuthPagesBrowserSmoke(page, onRegistered) {
 	await goto(page, `${baseUrl}/login`);
 	await visible(page.getByRole('heading', { name: /^Sign In$/ }), 'login heading');
 	await visible(page.getByRole('link', { name: 'Forgot your password?' }), 'forgot password link');
@@ -238,11 +241,17 @@ async function runAuthPagesBrowserSmoke(page) {
 		page.getByRole('button', { name: 'Create Account' }).click(),
 	]);
 	await visible(page.getByRole('heading', { name: /^Dashboard$/ }), 'registered user dashboard heading');
+	const registered = await browserApi(page, '/api/auth/me');
+	if (registered.status !== 200 || !registered.body.data?.id) throw new Error('Registration did not expose the authenticated user identity.');
+	const userId = String(registered.body.data.id);
+	onRegistered?.({ id: userId, email: userEmail });
+	console.log(`Registered browser fixture ${userId}: ${userEmail}`);
 	await Promise.all([
 		page.waitForURL(baseUrl + '/', { timeout: 15_000 }),
 		page.getByRole('button', { name: 'Logout' }).click(),
 	]);
 	await visible(page.getByRole('button', { name: 'Login' }), 'logged out after registration');
+	return { id: userId, email: userEmail };
 }
 
 async function assertPageWidth(page, name) {
@@ -256,33 +265,253 @@ async function runDashboardResponsiveSmoke(page) {
 	mkdirSync(screenshots, { recursive: true });
 	try {
 		await page.setViewportSize({ width: 390, height: 844 });
-		for (const tab of ['overview', 'users', 'roles', 'permissions', 'queue', 'scheduler', 'logs']) {
+		for (const tab of ['overview', 'users', 'roles', 'permissions', 'queue', 'scheduler', 'logs', 'features']) {
 			await goto(page, `${baseUrl}/admin?tab=${tab}`);
 			await assertPageWidth(page, `Mobile admin ${tab}`);
+			if (new URL(page.url()).pathname !== '/admin/dashboard') throw new Error('Legacy admin did not redirect to the single console.');
 			if (tab === 'scheduler') await page.screenshot({ path: join(screenshots, 'admin-scheduler-mobile.png'), fullPage: true });
-			const label = { users: 'User management table', permissions: 'Permissions table' }[tab];
+			const label = { users: 'User directory', roles: 'Permission roles', permissions: 'Permission roles', queue: 'Queue jobs', scheduler: 'Scheduler tasks', logs: 'Persistent logs', features: 'Feature switches' }[tab];
 			if (label) {
 				const region = page.getByRole('region', { name: label });
 				await visible(region, `mobile ${label}`);
-				await region.focus();
-				await page.keyboard.press('ArrowRight');
-				await page.waitForFunction((name) => [...document.querySelectorAll('[role="region"]')].some((node) => node.getAttribute('aria-label') === name && node.scrollLeft > 0), label);
+				await assertScrollableRegion(page, region, label);
 			}
 		}
 		await goto(page, `${baseUrl}/admin/dashboard?tab=scheduler`);
 		await assertPageWidth(page, 'Mobile operational scheduler');
-		const table = page.getByRole('region', { name: 'Scheduled tasks table' });
+		const table = page.getByRole('region', { name: 'Scheduler tasks' });
 		await visible(table, 'scheduler scroll region');
-		if (!await table.evaluate((node) => node.scrollWidth > node.clientWidth)) {
-			throw new Error('Mobile scheduler does not provide bounded table scrolling.');
-		}
-		await table.focus();
-		await page.keyboard.press('ArrowRight');
-		await page.waitForFunction(() => document.querySelector('[aria-label="Scheduled tasks table"]')?.scrollLeft > 0);
+		await assertScrollableRegion(page, table, 'Scheduler tasks');
 		await page.screenshot({ path: join(screenshots, 'operational-scheduler-mobile.png'), fullPage: true });
+		await page.getByRole('button', { name: 'Toggle navigation', exact: true }).click();
+		await visible(page.getByRole('navigation', { name: 'Console sections' }), 'mobile console drawer');
+		await page.getByRole('link', { name: 'Users', exact: true }).click();
+		await visible(page.getByRole('heading', { name: 'Users', exact: true }), 'mobile drawer navigation');
+		if (await page.getByRole('navigation', { name: 'Console sections' }).isVisible()) throw new Error('Mobile drawer did not close after navigation.');
+		await page.screenshot({ path: join(screenshots, 'operational-users-mobile.png'), fullPage: true });
 	} finally {
 		if (desktop) await page.setViewportSize(desktop);
 	}
+}
+
+async function assertScrollableRegion(page, region, label) {
+	if (!await region.evaluate((node) => node.scrollWidth > node.clientWidth)) throw new Error(`${label} does not provide bounded mobile table scrolling.`);
+	await region.focus();
+	await page.keyboard.press('ArrowRight');
+	await page.waitForFunction((name) => [...document.querySelectorAll('[role="region"]')].some((node) => node.getAttribute('aria-label') === name && node.scrollLeft > 0), label);
+}
+
+async function browserApi(page, path, options = {}) {
+	await respectRateBudget(page);
+	return page.evaluate(async ({ path, options }) => {
+		const headers = { ...(options.body === undefined ? {} : { 'Content-Type': 'application/json' }), ...options.headers };
+		if (options.csrf) {
+			const cookie = document.cookie.split(';').map((value) => value.trim()).find((value) => value.startsWith('XSRF-TOKEN='));
+			if (!cookie) throw new Error('Authenticated browser has no CSRF cookie.');
+			headers['X-CSRF-Token'] = decodeURIComponent(cookie.slice('XSRF-TOKEN='.length));
+		}
+		const response = await fetch(path, { method: options.method ?? 'GET', headers,
+			...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }) });
+		return { status: response.status, body: await response.json() };
+	}, { path, options });
+}
+
+async function confirmConsoleMutation(page, path, method, expectedStatus = 200) {
+	await respectRateBudget(page);
+	const dialog = page.locator('dialog[aria-labelledby="confirmation-title"]');
+	await visible(dialog, 'explicit console confirmation');
+	const responsePromise = page.waitForResponse((response) => new URL(response.url()).pathname === path && response.request().method() === method);
+	await dialog.getByRole('button', { name: 'Confirm', exact: true }).click();
+	const response = await responsePromise;
+	const body = await response.json();
+	if (response.status() !== expectedStatus) throw new Error(`${method} ${path} returned ${response.status()}: ${JSON.stringify(body)}`);
+	if (!response.request().headers()['x-csrf-token']) throw new Error(`${method} ${path} did not send the browser CSRF token.`);
+	if (body.meta?.auditWarning) throw new Error(`Audit did not complete: ${body.meta.auditWarning}`);
+	await dialog.waitFor({ state: 'hidden' });
+	return body;
+}
+
+async function runDashboardConsoleSmoke(page) {
+	const panels = [
+		['overview', 'Overview', 'Dependency observations'], ['users', 'Users', 'User directory'],
+		['roles', 'Roles & permissions', 'Permission roles'], ['permissions', 'Roles & permissions', 'Capability catalog'],
+		['queue', 'Queues', 'Queue jobs'], ['scheduler', 'Scheduler', 'Scheduler tasks'],
+		['logs', 'Logs', 'Persistent logs'], ['features', 'Features', 'Feature switches'],
+	];
+	for (const [tab, title, region] of panels) {
+		await goto(page, `${baseUrl}/admin?tab=${tab}`);
+		const location = new URL(page.url());
+		if (location.pathname !== '/admin/dashboard' || location.searchParams.get('tab') !== ({ roles: 'permissions', queue: 'queues' }[tab] ?? tab)) throw new Error(`Legacy ${tab} tab was not preserved by its redirect.`);
+		await visible(page.getByRole('heading', { name: title, exact: true }), `console ${tab} heading`);
+		await visible(page.getByRole('region', { name: region }), `console ${tab} region`);
+		await assertPageWidth(page, `Desktop console ${tab}`);
+		if (await page.getByRole('navigation', { name: 'Console sections' }).count() !== 1) throw new Error('Console has duplicated navigation chrome.');
+	}
+	await goto(page, `${baseUrl}/admin?tab=queue&queue=default&connection=database&status=failed&offset=0`);
+	for (const [name, value] of [['queue', 'default'], ['connection', 'database'], ['status', 'failed'], ['offset', '0']]) {
+		if (new URL(page.url()).searchParams.get(name) !== value) throw new Error(`Admin redirect lost queue ${name}.`);
+	}
+	const stats = await browserApi(page, '/api/admin/stats');
+	if (stats.status !== 200) throw new Error('Console stats failed.');
+	for (const queue of stats.body.data.queue.topology) {
+		if (queue.runtime && queue.runtime.workers === null && queue.runtime.effectiveConcurrency !== null) throw new Error('Unknown worker state manufactured effective concurrency.');
+	}
+	await goto(page, `${baseUrl}/admin/dashboard?tab=scheduler`);
+	const scheduler = await browserApi(page, '/api/admin/scheduler');
+	if (scheduler.status !== 200) throw new Error('Scheduler panel failed.');
+	const task = scheduler.body.data.tasks.find((item) => item.enabled && !item.isRunning);
+	if (!task) throw new Error('Scheduler smoke requires a registered enabled task in this generated app.');
+	const row = page.getByRole('region', { name: 'Scheduler tasks' }).getByRole('row').filter({ hasText: task.name });
+	await row.getByRole('button', { name: 'Run now', exact: true }).click();
+	const run = await confirmConsoleMutation(page, '/api/admin/scheduler/' + encodeURIComponent(task.name) + '/run', 'POST');
+	if (!run.data.queued || !run.data.data?.id || !['pending', 'running', 'succeeded'].includes(run.data.data.state)) throw new Error('Run-now did not return a durable queued request.');
+	await row.getByRole('button', { name: 'Refresh run request', exact: true }).click();
+	await visible(row.getByText(/pending|running|succeeded/, { exact: true }), 'persistent run-request state');
+}
+
+async function runDashboardAccessSmoke(page, user) {
+	const roleName = `browser-smoke-${Date.now()}`;
+	const roleLabel = `Browser role ${Date.now()}`;
+	user.roleName = roleName;
+	user.roleLabel = roleLabel;
+	const scope = { scope: 'platform' };
+	const roleBody = { ...scope, name: roleName, label: roleLabel, confirmed: true };
+	const createPath = '/api/admin/permissions/roles';
+	const missingCsrf = await browserApi(page, createPath, { method: 'POST', body: roleBody });
+	if (missingCsrf.status !== 419) throw new Error(`Missing-CSRF console mutation returned ${missingCsrf.status}, expected 419.`);
+	const forged = await browserApi(page, createPath, { method: 'POST', body: roleBody, headers: { Authorization: 'Bearer forged-browser-credential' } });
+	if (![401, 403, 419].includes(forged.status)) throw new Error(`Forged Bearer without CSRF was not denied (${forged.status}).`);
+	const rejected = await browserApi(page, '/api/admin/permissions?search=' + encodeURIComponent(roleName));
+	if (rejected.status !== 200 || rejected.body.data.items.length) throw new Error('A rejected CSRF mutation created a role.');
+	await goto(page, `${baseUrl}/admin/dashboard?tab=permissions`);
+	await page.getByRole('button', { name: 'Create role', exact: true }).click();
+	const modal = page.locator('dialog.management-dialog');
+	await visible(modal, 'role create modal');
+	await modal.getByRole('combobox', { name: 'Assignment scope', exact: true }).selectOption('platform');
+	await modal.getByRole('button', { name: 'Create role', exact: true }).click();
+	await visible(modal.locator('#new-role-name[aria-invalid="true"]'), 'role name inline error');
+	await visible(modal.locator('#new-role-label[aria-invalid="true"]'), 'role label inline error');
+	if (await page.locator('dialog[aria-labelledby="confirmation-title"][open]').count()) throw new Error('Invalid role form opened a confirmation.');
+	await modal.getByLabel(/^Role name/).fill('owner');
+	await modal.getByLabel(/^Label/).fill(roleLabel);
+	await modal.getByRole('button', { name: 'Create role', exact: true }).click();
+	await visible(modal.getByText('Reserved platform identity cannot be created'), 'reserved role inline error');
+	await modal.getByLabel(/^Role name/).fill(roleName);
+	let writes = 0;
+	const countWrite = (request) => { if (new URL(request.url()).pathname === createPath && request.method() === 'POST') writes++; };
+	page.on('request', countWrite);
+	try {
+		await modal.getByRole('button', { name: 'Create role', exact: true }).click();
+		const confirmation = page.locator('dialog[aria-labelledby="confirmation-title"]');
+		await visible(confirmation, 'role confirmation');
+		if (writes !== 0) throw new Error('Role was submitted before confirmation.');
+		await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+		await confirmation.waitFor({ state: 'hidden' });
+		if (writes !== 0) throw new Error('Cancelled confirmation submitted a role.');
+		await modal.getByRole('button', { name: 'Create role', exact: true }).click();
+		const created = await confirmConsoleMutation(page, createPath, 'POST');
+		if (writes !== 1) throw new Error('Role creation submitted more than once.');
+		user.roleId = created.data.data.id;
+	} finally { page.off('request', countWrite); }
+	await modal.waitFor({ state: 'hidden' });
+	const profile = await browserApi(page, `/api/admin/permissions/roles/${user.roleId}/profile?scope=platform`);
+	if (profile.status !== 200 || profile.body.data.profile.kind !== 'custom' || profile.body.data.selected.length) throw new Error('New role did not create an empty exact scoped profile.');
+	const catalog = await browserApi(page, '/api/admin/permissions');
+	const capability = catalog.body.data.catalog.find((item) => item.scope === 'platform' && item.kind === 'screen');
+	if (!capability) throw new Error('Generated console manifest has no platform screen capability.');
+	await goto(page, `${baseUrl}/admin/dashboard?tab=permissions&roleSearch=${encodeURIComponent(roleName)}`);
+	const roleRow = page.getByRole('region', { name: 'Permission roles' }).getByRole('row').filter({ hasText: roleName });
+	await roleRow.getByRole('button', { name: 'Edit permission profile', exact: true }).click();
+	const editor = page.locator('.profile-editor');
+	await editor.getByRole('combobox', { name: 'Scope', exact: true }).selectOption('platform');
+	await editor.getByRole('button', { name: 'Load profile', exact: true }).click();
+	await visible(editor.getByRole('region', { name: 'Capabilities', exact: true }), 'granular capability editor');
+	await editor.getByRole('checkbox', { name: capability.label, exact: true }).check();
+	await editor.getByRole('button', { name: 'Save profile', exact: true }).click();
+	await confirmConsoleMutation(page, `/api/admin/permissions/roles/${user.roleId}/profile`, 'PUT');
+	const selected = await browserApi(page, `/api/admin/permissions/roles/${user.roleId}/profile?scope=platform`);
+	if (selected.body.data.selected.length !== 1 || selected.body.data.selected[0] !== capability.name) throw new Error('Granular custom profile did not save its exact selection.');
+	await goto(page, `${baseUrl}/admin/dashboard?tab=users&userSearch=${encodeURIComponent(user.email)}`);
+	const userRow = page.getByRole('region', { name: 'User directory' }).getByRole('row').filter({ hasText: user.email });
+	await userRow.getByRole('button', { name: 'Manage user access', exact: true }).click();
+	await visible(modal, 'scoped user access modal');
+	await modal.getByRole('combobox', { name: 'Assignment scope', exact: true }).selectOption('platform');
+	await modal.getByRole('button', { name: 'Load access', exact: true }).click();
+	await visible(modal.getByLabel(/^Search roles/), 'user role controls');
+	await modal.getByLabel(/^Search roles/).fill(roleName);
+	await modal.getByRole('button', { name: 'Search', exact: true }).click();
+	await modal.getByRole('combobox', { name: 'Role', exact: true }).locator(`option[value="${user.roleId}"]`).waitFor({ state: 'attached' });
+	await modal.getByRole('combobox', { name: 'Role', exact: true }).selectOption(String(user.roleId));
+	await modal.getByRole('button', { name: 'Assign role', exact: true }).click();
+	await confirmConsoleMutation(page, `/api/admin/users/${user.id}/roles`, 'POST');
+	await visible(modal.getByRole('button', { name: 'Detach ' + roleLabel, exact: true }), 'assigned role detach control');
+	let snapshot = await browserApi(page, `/api/admin/users/${user.id}/access?scope=platform`);
+	if (!snapshot.body.data.roles.some((role) => role.id === user.roleId)) throw new Error('Role assignment was not persisted.');
+	await modal.getByRole('combobox', { name: 'Capability', exact: true }).selectOption(capability.name);
+	await modal.getByRole('button', { name: 'Grant capability', exact: true }).click();
+	await confirmConsoleMutation(page, `/api/admin/users/${user.id}/capabilities`, 'POST');
+	await visible(modal.getByRole('button', { name: 'Revoke ' + capability.name, exact: true }), 'direct capability revoke control');
+	snapshot = await browserApi(page, `/api/admin/users/${user.id}/access?scope=platform`);
+	if (!snapshot.body.data.directCapabilities.includes(capability.name)) throw new Error('Direct capability grant was not persisted.');
+	const me = await browserApi(page, '/api/auth/me');
+	const self = await browserApi(page, `/api/admin/users/${me.body.data.id}/roles`, { method: 'POST', csrf: true, body: { ...scope, roleId: user.roleId, confirmed: true } });
+	if (self.status !== 403) throw new Error('Protected self assignment was not denied.');
+	const unknown = await browserApi(page, `/api/admin/users/${user.id}/capabilities`, { method: 'POST', csrf: true, body: { ...scope, capability: 'unknown.browser.grant', confirmed: true } });
+	if (unknown.status !== 422) throw new Error('Unknown capability grant was not denied.');
+	await modal.getByRole('button', { name: 'Revoke ' + capability.name, exact: true }).click();
+	await confirmConsoleMutation(page, `/api/admin/users/${user.id}/capabilities`, 'DELETE');
+	await modal.getByRole('button', { name: 'Detach ' + roleLabel, exact: true }).click();
+	await confirmConsoleMutation(page, `/api/admin/users/${user.id}/roles`, 'DELETE');
+	snapshot = await browserApi(page, `/api/admin/users/${user.id}/access?scope=platform`);
+	if (snapshot.body.data.directCapabilities.includes(capability.name) || snapshot.body.data.roles.some((role) => role.id === user.roleId)) throw new Error('Scoped detach/revoke did not persist.');
+	await modal.getByRole('button', { name: 'Close access management', exact: true }).click();
+	const directory = await browserApi(page, '/api/admin/users?search=' + encodeURIComponent(user.email));
+	if (directory.body.data.items[0]?.globalRole !== 'user') throw new Error('Configurable grants changed the trusted physical user role.');
+	await cleanupRoleProfile(page, user);
+}
+
+async function cleanupRoleProfile(page, user) {
+	if (!user.roleName || user.roleCleaned) return;
+	const catalog = await browserApi(page, '/api/admin/permissions?search=' + encodeURIComponent(user.roleName));
+	if (catalog.status !== 200) throw new Error('Unable to identify the owned cleanup role.');
+	const role = catalog.body.data.items.find((entry) => entry.name === user.roleName);
+	if (!role) { user.roleCleaned = true; return; }
+	user.roleId = role.id;
+	const current = await browserApi(page, `/api/admin/permissions/roles/${role.id}/profile?scope=platform`);
+	if (current.status !== 200) throw new Error('Unable to inspect the owned cleanup profile.');
+	if (current.body.data.profile === null && !current.body.data.selected.length) { user.roleCleaned = true; return; }
+	await goto(page, `${baseUrl}/admin/dashboard?tab=permissions&roleSearch=${encodeURIComponent(user.roleName)}`);
+	await page.getByRole('region', { name: 'Permission roles' }).getByRole('row').filter({ hasText: user.roleName }).getByRole('button', { name: 'Edit permission profile', exact: true }).click();
+	const editor = page.locator('.profile-editor');
+	await editor.getByRole('combobox', { name: 'Scope', exact: true }).selectOption('platform');
+	await editor.getByRole('button', { name: 'Load profile', exact: true }).click();
+	await visible(editor.getByRole('button', { name: 'Remove role', exact: true }), 'scoped role cleanup');
+	await editor.getByRole('button', { name: 'Remove role', exact: true }).click();
+	await confirmConsoleMutation(page, `/api/admin/permissions/roles/${role.id}`, 'DELETE');
+	const removed = await browserApi(page, `/api/admin/permissions/roles/${role.id}/profile?scope=platform`);
+	if (removed.status !== 200 || removed.body.data.profile !== null || removed.body.data.selected.length) throw new Error('Owned role profile/grants were not cleaned up.');
+	user.roleCleaned = true;
+	console.log(`Cleaned scoped role ${role.id}; shared catalog record retained by the role-removal contract.`);
+}
+
+async function ensureAdminSession(page) {
+	const me = await browserApi(page, '/api/auth/me');
+	if (me.status === 200 && me.body.data?.email === 'admin@svelar.dev') return;
+	await goto(page, `${baseUrl}/login`);
+	await page.locator('input[name="email"]').fill('admin@svelar.dev');
+	await page.locator('input[name="password"]').fill('admin123');
+	await Promise.all([page.waitForURL('**/dashboard'), page.getByRole('button', { name: 'Sign In', exact: true }).click()]);
+}
+
+async function removeRegisteredUser(page, user) {
+	await goto(page, `${baseUrl}/admin/dashboard?tab=users&userSearch=${encodeURIComponent(user.email)}`);
+	const row = page.getByRole('region', { name: 'User directory' }).getByRole('row').filter({ hasText: user.email });
+	await row.getByRole('button', { name: 'Delete user', exact: true }).click();
+	await confirmConsoleMutation(page, `/api/admin/users/${user.id}`, 'DELETE');
+	await row.waitFor({ state: 'hidden' });
+	const users = await browserApi(page, '/api/admin/users?search=' + encodeURIComponent(user.email));
+	if (users.status !== 200 || users.body.data.items.some((entry) => String(entry.id) === user.id)) throw new Error('Owned registered user was not cleaned up.');
+	user.cleaned = true;
 }
 
 async function runLoginThrottleSmoke(page) {
@@ -307,10 +536,12 @@ async function runLoginThrottleSmoke(page) {
 }
 
 async function goto(page, url) {
+	await respectRateBudget(page);
 	let lastError;
 	for (let attempt = 0; attempt < 3; attempt++) {
 		try {
-			await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15_000 });
+			const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15_000 });
+			if (response?.status() === 429) throw new Error(`Unexpected navigation rate limit at ${url}; Retry-After=${response.headers()['retry-after'] ?? 'unknown'}. No failed assertion was retried.`);
 			await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
 			return;
 		} catch (error) {
@@ -320,6 +551,28 @@ async function goto(page, url) {
 		}
 	}
 	throw lastError;
+}
+
+function observeRateBudget(page, response) {
+	const headers = response.headers();
+	if (!headers['x-ratelimit-remaining'] || !headers['x-ratelimit-reset']) return;
+	const remaining = Number(headers['x-ratelimit-remaining']);
+	const resetAt = Number(headers['x-ratelimit-reset']) * 1000;
+	if (!Number.isSafeInteger(remaining) || remaining < 0 || !Number.isSafeInteger(resetAt) || resetAt <= Date.now()) return;
+	const previous = rateBudgets.get(page);
+	if (previous?.resetAt > resetAt) return;
+	rateBudgets.set(page, { remaining: previous?.resetAt === resetAt ? Math.min(previous.remaining, remaining) : remaining, resetAt });
+}
+
+async function respectRateBudget(page, reserve = 25) {
+	const budget = rateBudgets.get(page);
+	if (!budget || budget.remaining >= reserve) return;
+	const delay = budget.resetAt - Date.now() + 500;
+	if (delay <= 0) { rateBudgets.delete(page); return; }
+	if (delay > 120_000) throw new Error('Observed global rate-limit reset exceeds the bounded browser smoke wait.');
+	console.log(`Respecting global rate budget: ${budget.remaining} remaining; waiting ${Math.ceil(delay / 1000)}s before the next workflow.`);
+	await new Promise((resolve) => setTimeout(resolve, delay));
+	rateBudgets.delete(page);
 }
 
 async function visible(locator, label) {
