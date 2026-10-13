@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Connection } from '../src/database/Connection';
 import { Schema } from '../src/database/SchemaBuilder';
+import { Migrator } from '../src/database/Migration';
 import { Mailer } from '../src/mail';
 import { Model } from '../src/orm/Model';
 import {
@@ -70,6 +71,7 @@ describe('testing helpers', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     process.chdir(originalCwd);
     await Connection.disconnect();
     if (tempRoot) {
@@ -213,5 +215,40 @@ export default class CreateWidgetsTable extends Migration {
     mail.reset();
     expect(mail.count()).toBe(0);
     expect(() => mail.assertNothingSent()).not.toThrow();
+  });
+
+  it('does not destroy existing tables when a test migration fails to import', async () => {
+    await createUsersTable();
+    const root = await mkdtemp(join(tmpdir(), 'svelar-broken-test-migrations-'));
+    try {
+      await mkdir(join(root, 'migrations'));
+      await writeFile(join(root, 'migrations', 'broken.mjs.js'), "throw new Error('broken migration');");
+      process.chdir(root);
+      await expect(refreshDatabase({ migrationsPath: 'migrations' })).rejects.toThrow('reset was not performed');
+      expect(await new Schema().hasTable('testing_users')).toBe(true);
+    } finally { process.chdir(originalCwd); await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('fails closed for malformed migration configuration before database reset', async () => {
+    await createUsersTable();
+    const root = await mkdtemp(join(tmpdir(), 'svelar-invalid-test-config-'));
+    try {
+      await writeFile(join(root, 'svelar.database.json'), '{invalid'); process.chdir(root);
+      await expect(refreshDatabase()).rejects.toThrow('Invalid svelar.database.json');
+      expect(await new Schema().hasTable('testing_users')).toBe(true);
+    } finally { process.chdir(originalCwd); await rm(root, { recursive: true, force: true }); }
+  });
+
+  it.each(['postgres', 'mysql'] as const)('requires explicit acknowledgement before resetting a %s database', async (driver) => {
+    const root = await mkdtemp(join(tmpdir(), 'svelar-native-test-ack-'));
+    try {
+      await mkdir(join(root, 'migrations')); process.chdir(root);
+      vi.spyOn(Connection, 'getDriver').mockReturnValue(driver);
+      const fresh = vi.spyOn(Migrator.prototype, 'fresh').mockResolvedValue({ dropped: [], migrated: [] });
+      await expect(refreshDatabase({ migrationsPath: 'migrations' })).rejects.toThrow('allowDestructiveDatabase');
+      expect(fresh).not.toHaveBeenCalled();
+      await refreshDatabase({ migrationsPath: 'migrations', allowDestructiveDatabase: true });
+      expect(fresh).toHaveBeenCalledOnce();
+    } finally { process.chdir(originalCwd); await rm(root, { recursive: true, force: true }); }
   });
 });

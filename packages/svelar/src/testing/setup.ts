@@ -8,11 +8,13 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { Connection } from '../database/Connection.js';
+import { Connection, type DatabaseConfig } from '../database/Connection.js';
 import { Migrator, type MigrationFile } from '../database/Migration.js';
 import { Factory } from './Factory.js';
 
 export interface RefreshDatabaseOptions {
+  /** Explicit acknowledgement before destroying a PostgreSQL/MySQL test database. Never use production credentials. */
+  allowDestructiveDatabase?: boolean;
   /** Database connection name to use. Default: undefined (uses default) */
   connectionName?: string;
   /** Migration directory. Defaults to svelar.database.json, then src/lib/database/migrations */
@@ -22,6 +24,9 @@ export interface RefreshDatabaseOptions {
 }
 
 export interface UseSvelarTestOptions {
+  /** An explicit isolated test database, including PostgreSQL/MySQL driver profiles. */
+  database?: DatabaseConfig;
+  allowDestructiveDatabase?: boolean;
   /** When true, calls refreshDatabase() before each test. Default: false */
   refreshDatabase?: boolean;
   /** Database connection name to use. Default: undefined (uses default) */
@@ -63,6 +68,12 @@ export function useSvelarTest(options: UseSvelarTestOptions = {}): void {
   }
 
   _beforeAll(async () => {
+    if (options.database) {
+      await Connection.disconnect();
+      const name = options.connectionName ?? 'test';
+      Connection.configure({ default: name, connections: { [name]: { ...options.database } } });
+      return;
+    }
     // Configure in-memory SQLite for test isolation
     try {
       Connection.getDriver();
@@ -86,6 +97,7 @@ export function useSvelarTest(options: UseSvelarTestOptions = {}): void {
         connectionName: options.connectionName,
         migrationsPath: options.migrationsPath,
         migrationsTable: options.migrationsTable,
+        allowDestructiveDatabase: options.allowDestructiveDatabase,
       });
     }
   });
@@ -138,12 +150,15 @@ export async function refreshDatabase(
           path: filePath,
           migration: new (MigrationClass as any)(),
         });
-      }
-    } catch {
-      // Skip files that fail to import
+      } else throw new Error('No Migration class was exported.');
+    } catch (cause) {
+      throw new Error(`Could not load test migration ${file}; database reset was not performed.`, { cause });
     }
   }
 
+  if (Connection.getDriver(options.connectionName) !== 'sqlite' && options.allowDestructiveDatabase !== true) {
+    throw new Error('PostgreSQL/MySQL test resets require allowDestructiveDatabase: true and an isolated test database.');
+  }
   await migrator.fresh(migrations);
 }
 
@@ -161,7 +176,7 @@ function loadMigrationConfig(): { table: string; path: string } {
       table: parsed?.migrations?.table ?? defaults.table,
       path: parsed?.migrations?.path ?? defaults.path,
     };
-  } catch {
-    return defaults;
+  } catch (cause) {
+    throw new Error('Invalid svelar.database.json; database reset was not performed.', { cause });
   }
 }

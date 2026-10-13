@@ -71,6 +71,22 @@ describe('UserService', () => {
 | `migrationsPath` | `string` | `svelar.database.json` or `src/lib/database/migrations` | Migration directory |
 | `migrationsTable` | `string` | `svelar.database.json` or `migrations` | Migration repository table |
 
+## Native Database Tests
+
+### PostgreSQL And MySQL Test Profiles
+
+Use an explicitly isolated database when testing native JSONB, locking, partial indexes or migrations. The public helper accepts a driver configuration instead of silently falling back to SQLite:
+
+```typescript
+useSvelarTest({
+  database: { driver: 'postgres', url: process.env.TEST_DATABASE_URL, prepare: false },
+  refreshDatabase: true,
+  allowDestructiveDatabase: true,
+});
+```
+
+MySQL uses `{ driver: 'mysql', url: process.env.TEST_DATABASE_URL }`. Provision a disposable database/container on a non-default local port. Never point `TEST_DATABASE_URL` at production or a shared development database: `refreshDatabase` destroys every table in the selected database. PostgreSQL/MySQL resets require the explicit `allowDestructiveDatabase` acknowledgement, including standalone `refreshDatabase({ allowDestructiveDatabase: true })`. Invalid configuration or failed migration imports abort before any destructive reset. The helper is not safe for parallel tests sharing one database; give each process its own database.
+
 ## Factories
 
 Factories generate model instances with sensible defaults. Extend the `Factory<T>` base class and implement `model()` and `definition()`.
