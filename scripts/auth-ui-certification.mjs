@@ -13,7 +13,8 @@ import { parseEnv } from 'node:util';
 
 const scriptPath = fileURLToPath(import.meta.url);
 const resultPrefix = 'AUTH_UI_FIXTURE_RESULT:';
-export const fixturePolicy = Object.freeze({ idle: 90, absolute: 600, remember: 300, rememberAbsolute: 1200, warning: 20 });
+export const fixturePolicy = Object.freeze({ idle: 90, absolute: 600, remember: 300, rememberAbsolute: 1200, warning: 60 });
+export const fixtureRenewalTiming = Object.freeze({ remainingSeconds: Math.floor(fixturePolicy.warning * 0.75), pacedRequestSlots: 12, intervalMs: 1800, processingSlackMs: 10000 });
 export const authUiMessages = Object.freeze({ invalidOtp: 'Invalid or expired code' });
 export const surfaces = Object.freeze([
   { path: '/login', heading: 'Sign In', form: true },
@@ -74,7 +75,7 @@ export async function withCleanup(work, cleanup) {
   return result;
 }
 
-export function createRequestPacer(intervalMs = 1800, clock = { now: Date.now, sleep: (ms) => new Promise((accept) => setTimeout(accept, ms)) }) {
+export function createRequestPacer(intervalMs = fixtureRenewalTiming.intervalMs, clock = { now: Date.now, sleep: (ms) => new Promise((accept) => setTimeout(accept, ms)) }) {
   let next = 0;
   return async () => {
     const now = clock.now();
@@ -153,8 +154,13 @@ export async function fixtureRecords(dependencies, operation, state, input = {})
     const now = Date.now();
     const idle = payload._svelar_remember ? fixturePolicy.remember : fixturePolicy.idle;
     const absolute = payload._svelar_remember ? fixturePolicy.rememberAbsolute : fixturePolicy.absolute;
-    payload._svelar_created_at = operation === 'session-absolute' ? now - (absolute - 45) * 1000 : now - (idle + 10) * 1000;
-    payload._svelar_last_activity_at = operation === 'session-warning' ? now - (idle - 15) * 1000 : now;
+    if (operation === 'session-absolute') payload._svelar_created_at = now - (absolute - 45) * 1000;
+    payload._svelar_last_activity_at = operation === 'session-warning' ? now - (idle - fixtureRenewalTiming.remainingSeconds) * 1000 : now;
+    if (operation === 'session-warning') {
+      assert(typeof payload._svelar_created_at === 'number' && Number.isFinite(payload._svelar_created_at), 'Owned session is missing its creation timestamp.');
+      // A freshly signed-in fixture must be aged too; activity cannot precede creation.
+      payload._svelar_created_at = Math.min(payload._svelar_created_at, payload._svelar_last_activity_at);
+    }
     payload._svelar_last_touched_at = now;
     await store.write(input.sessionId, payload, 60);
     return { createdAt: payload._svelar_created_at, absoluteExpiresAt: payload._svelar_created_at + absolute * 1000 };
@@ -273,6 +279,15 @@ export function assertCookieDeadline(cookie, status) {
   if (!status.remembered && cookie.expires === -1) return;
   assert(cookie.expires > 0, 'Remembered sessions must have a persistent cookie.');
   assert(cookie.expires * 1000 <= status.expiresAt + 1500, `Cookie exceeded session deadline by ${Math.ceil(cookie.expires * 1000 - status.expiresAt)}ms.`);
+}
+
+export async function assertSessionRenewal(response, before) {
+  assert.equal(response.status(), 200, 'Explicit session renewal must succeed before warning dismissal.');
+  const result = await response.json();
+  assert(result.data && result.data.expired === false && result.data.canRenew === true
+    && result.data.expiresAt > before.expiresAt, 'Renewal response must extend a renewable authenticated idle deadline.');
+  assert.equal(result.data.absoluteExpiresAt, before.absoluteExpiresAt, 'Renewal response changed the absolute deadline.');
+  return result.data;
 }
 
 async function overlayConfig(appDir, name, expression) {
@@ -563,7 +578,11 @@ async function fullCases(browser, options, fixture, state, checks, runtimeErrors
     await warning.getByText('Your session is about to expire', { exact: true }).waitFor();
     await peer.getByRole('dialog').getByText('Your session is about to expire', { exact: true }).waitFor();
     const before = await sessionStatus(page);
+    const renewalResponse = page.waitForResponse((response) => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/auth/session');
     await warning.getByRole('button', { name: 'Stay signed in', exact: true }).click();
+    const response = await renewalResponse;
+    await assertSessionRenewal(response, before);
     await warning.waitFor({ state: 'hidden' });
     await peer.getByRole('dialog').waitFor({ state: 'hidden' });
     const renewed = await sessionStatus(peer);

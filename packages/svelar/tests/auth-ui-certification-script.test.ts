@@ -11,6 +11,7 @@ import { Hash } from '../src/hashing/Hash.js';
 import { Model } from '../src/orm/Model.js';
 import { QueryBuilder } from '../src/orm/QueryBuilder.js';
 import { DatabaseSessionStore } from '../src/session/Session.js';
+import { sessionActivityStatus } from '../src/session/Activity.js';
 import { NewCommandTemplates } from '../src/cli/commands/NewCommandTemplates.js';
 
 const harness = await import(new URL('../../../scripts/auth-ui-certification.mjs', import.meta.url).href);
@@ -76,6 +77,39 @@ describe('Executable auth UI harness options and cleanup', () => {
     const pace = harness.createRequestPacer(1800, { now: () => 10000, sleep: async (delay: number) => { delays.push(delay); } });
     await Promise.all([pace(), pace(), pace(), pace()]);
     expect(delays).toEqual([1800, 3600, 5400]);
+  });
+
+  it('keeps warning renewal inside the warning window with slack for both paced tabs', () => {
+    const timing = harness.fixtureRenewalTiming;
+    expect(timing.remainingSeconds).toBe(Math.floor(harness.fixturePolicy.warning * 0.75));
+    expect(timing.remainingSeconds).toBeGreaterThan(0);
+    expect(timing.remainingSeconds).toBeLessThan(harness.fixturePolicy.warning);
+    expect(harness.fixturePolicy.warning).toBeLessThan(harness.fixturePolicy.idle);
+    expect(timing.remainingSeconds * 1000).toBeGreaterThan(timing.pacedRequestSlots * timing.intervalMs + timing.processingSlackMs);
+    expect(timing.pacedRequestSlots).toBeGreaterThanOrEqual(12);
+    expect(timing.processingSlackMs).toBeGreaterThanOrEqual(10000);
+  });
+
+  it('requires successful renewal with a live extended idle deadline and an unchanged absolute cap', async () => {
+    const before = { expiresAt: 1000, absoluteExpiresAt: 5000 };
+    const data = { expired: false, canRenew: true, expiresAt: 4000, absoluteExpiresAt: 5000 };
+    await expect(harness.assertSessionRenewal({ status: () => 200, json: async () => ({ data }) }, before)).resolves.toEqual(data);
+  });
+
+  it.each([401, 419, 429, 500])('rejects HTTP %i renewal before trying to consume its denial body', async (status) => {
+    let readBody = false;
+    await expect(harness.assertSessionRenewal({ status: () => status, json: async () => { readBody = true; return {}; } }, { expiresAt: 1000, absoluteExpiresAt: 5000 })).rejects.toThrow('must succeed');
+    expect(readBody).toBe(false);
+  });
+
+  it.each([
+    { data: null },
+    { data: { expired: true, canRenew: true, expiresAt: 4000, absoluteExpiresAt: 5000 } },
+    { data: { expired: false, canRenew: false, expiresAt: 4000, absoluteExpiresAt: 5000 } },
+    { data: { expired: false, canRenew: true, expiresAt: 1000, absoluteExpiresAt: 5000 } },
+    { data: { expired: false, canRenew: true, expiresAt: 4000, absoluteExpiresAt: 6000 } },
+  ])('rejects invalid renewal state or changed absolute caps: %j', async (body) => {
+    await expect(harness.assertSessionRenewal({ status: () => 200, json: async () => body }, { expiresAt: 1000, absoluteExpiresAt: 5000 })).rejects.toThrow();
   });
 
   it('cleans up both success and failure and preserves dual failures', async () => {
@@ -228,15 +262,47 @@ describe('Auth UI fixture operations on real SQLite through ORM', () => {
     await harness.fixtureRecords(dependencies, 'create', state);
     const store = new DatabaseSessionStore();
     const id = 'owned-session-1234567890';
-    await store.write(id, { auth_user_id: state.accounts.eligible.id, _svelar_remember: true, custom: 'preserved' }, 1000);
+    const createdAt = Date.now() - 60000;
+    await store.write(id, { auth_user_id: state.accounts.eligible.id, _svelar_remember: true, _svelar_created_at: createdAt, custom: 'preserved' }, 1000);
     const warning = await harness.fixtureRecords(dependencies, 'session-warning', state, { sessionId: id });
     const payload = await store.read(id);
     expect(payload?.custom).toBe('preserved');
     expect(payload?._svelar_created_at).toBe(warning.createdAt);
-    expect(Date.now() - Number(payload?._svelar_last_activity_at)).toBeGreaterThan(280000);
+    expect(warning.createdAt).toBeLessThan(createdAt);
+    expect(warning.createdAt).toBe(Number(payload?._svelar_last_activity_at));
+    expect(warning.absoluteExpiresAt).toBe(warning.createdAt + harness.fixturePolicy.rememberAbsolute * 1000);
+    expect(warning.absoluteExpiresAt).toBeLessThanOrEqual(createdAt + harness.fixturePolicy.rememberAbsolute * 1000);
+    const remaining = Number(payload?._svelar_last_activity_at) + harness.fixturePolicy.remember * 1000 - Date.now();
+    expect(remaining).toBeGreaterThan(harness.fixtureRenewalTiming.remainingSeconds * 1000 - 1000);
+    expect(remaining).toBeLessThanOrEqual(harness.fixtureRenewalTiming.remainingSeconds * 1000);
+    expect(remaining).toBeLessThan(harness.fixturePolicy.warning * 1000);
+    expect(remaining).toBeGreaterThan(harness.fixtureRenewalTiming.pacedRequestSlots * harness.fixtureRenewalTiming.intervalMs + harness.fixtureRenewalTiming.processingSlackMs);
+    expect(sessionActivityStatus(payload!, { idleLifetime: harness.fixturePolicy.idle, absoluteLifetime: harness.fixturePolicy.absolute,
+      rememberLifetime: harness.fixturePolicy.remember, rememberAbsoluteLifetime: harness.fixturePolicy.rememberAbsolute,
+      warningBefore: harness.fixturePolicy.warning, touchThrottle: 0 })).toMatchObject({ expired: false, reason: null, canRenew: true });
     const cap = await harness.fixtureRecords(dependencies, 'session-absolute', state, { sessionId: id });
     expect(cap.absoluteExpiresAt - Date.now()).toBeGreaterThan(40000);
     expect(cap.absoluteExpiresAt - Date.now()).toBeLessThanOrEqual(45000);
+  });
+
+  it.each([false, true])('preserves an already-aged absolute cap and produces a valid warning, remembered=%s', async (remembered) => {
+    await harness.fixtureRecords(dependencies, 'create', state);
+    const store = new DatabaseSessionStore();
+    const id = 'aged-session-1234567890';
+    const createdAt = Date.now() - 400000;
+    await store.write(id, { auth_user_id: state.accounts.eligible.id, _svelar_remember: remembered, _svelar_created_at: createdAt }, 1000);
+    const warning = await harness.fixtureRecords(dependencies, 'session-warning', state, { sessionId: id });
+    const payload = await store.read(id);
+    const policy = { idleLifetime: harness.fixturePolicy.idle, absoluteLifetime: harness.fixturePolicy.absolute,
+      rememberLifetime: harness.fixturePolicy.remember, rememberAbsoluteLifetime: harness.fixturePolicy.rememberAbsolute,
+      warningBefore: harness.fixturePolicy.warning, touchThrottle: 0 };
+    const status = sessionActivityStatus(payload!, policy);
+    expect(warning.createdAt).toBe(createdAt);
+    expect(warning.absoluteExpiresAt).toBe(createdAt + (remembered ? policy.rememberAbsoluteLifetime : policy.absoluteLifetime) * 1000);
+    expect(status).toMatchObject({ createdAt, expired: false, reason: null, canRenew: true, remembered });
+    expect(status.warningAt).toBeLessThan(status.serverTime);
+    expect(status.remainingSeconds).toBeGreaterThan(40);
+    expect(status.remainingSeconds).toBeLessThanOrEqual(harness.fixtureRenewalTiming.remainingSeconds);
   });
 
   it('refuses malformed, foreign and expired session identifiers', async () => {
