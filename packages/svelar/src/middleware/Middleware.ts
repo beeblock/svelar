@@ -17,6 +17,7 @@
  */
 
 import { createHmac } from 'node:crypto';
+import { isIP } from 'node:net';
 import { Cache } from '../cache/index.js';
 
 // ── Types ──────────────────────────────────────────────────
@@ -37,19 +38,24 @@ export type MiddlewareHandler = (ctx: MiddlewareContext, next: NextFunction) => 
 export type TrustedProxy =
   | boolean
   | string[]
+  | { addresses: readonly string[]; maxHops?: number }
   | ((address: string, ctx: MiddlewareContext) => boolean | Promise<boolean>);
 
-async function resolveClientIp(ctx: MiddlewareContext, trustedProxy: TrustedProxy = false): Promise<string> {
+export async function resolveClientIp(ctx: MiddlewareContext, trustedProxy: TrustedProxy = false): Promise<string> {
   const remoteAddress = ctx.event.getClientAddress?.() ?? 'unknown';
-
-  if (!await shouldTrustProxy(remoteAddress, ctx, trustedProxy)) {
-    return remoteAddress;
-  }
-
+  const maximum = typeof trustedProxy === 'object' && !Array.isArray(trustedProxy) ? trustedProxy.maxHops ?? 32 : 32;
+  if (!Number.isSafeInteger(maximum) || maximum < 1 || maximum > 32) throw new RangeError('Trusted proxy maxHops must be 1 to 32.');
+  if (!await shouldTrustProxy(remoteAddress, ctx, trustedProxy)) return remoteAddress;
   const forwarded = ctx.event.request.headers.get('x-forwarded-for');
-  if (!forwarded) return remoteAddress;
-
-  return forwarded.split(',')[0]?.trim() || remoteAddress;
+  if (!forwarded || forwarded.length > 4096) return remoteAddress;
+  const chain = forwarded.split(',').map((address: string) => address.trim());
+  if (chain.length > 32 || chain.some((address: string) => !isIP(address))) return remoteAddress;
+  let address = remoteAddress;
+  for (let index = chain.length - 1, hops = 0; index >= 0 && hops < maximum; index--, hops++) {
+    if (!await shouldTrustProxy(address, ctx, trustedProxy)) break;
+    address = chain[index];
+  }
+  return address;
 }
 
 async function shouldTrustProxy(
@@ -59,6 +65,10 @@ async function shouldTrustProxy(
 ): Promise<boolean> {
   if (typeof trustedProxy === 'boolean') return trustedProxy;
   if (Array.isArray(trustedProxy)) return trustedProxy.includes(remoteAddress);
+  if (typeof trustedProxy === 'object') {
+    if (!trustedProxy || !Array.isArray(trustedProxy.addresses) || trustedProxy.addresses.some((address) => !isIP(address))) throw new TypeError('Trusted proxy addresses must be explicit IP addresses.');
+    return trustedProxy.addresses.includes(remoteAddress);
+  }
   return trustedProxy(remoteAddress, ctx);
 }
 

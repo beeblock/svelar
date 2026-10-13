@@ -209,6 +209,8 @@ new RateLimitMiddleware({
 
 The default in-memory store is suitable for local development and single-process apps. For production apps running multiple Node instances, configure the Redis cache store and use `rateLimitStore: 'cache'` in `createSvelarApp()` or `store: 'cache'` on `RateLimitMiddleware`. Cache-backed limits use `Cache.incrementWithTtl()` so Redis counters are incremented atomically and keep a stable window TTL. `X-Forwarded-For` is ignored unless `trustedProxy` is explicitly enabled.
 
+Trusted address lists are applied to the whole forwarding chain, right to left, stopping at the first untrusted address. This prevents a client from prepending a forged leftmost address through an otherwise trusted edge. For a bounded topology use `trustedProxy: { addresses: ['10.0.0.10', '10.0.0.20'], maxHops: 2 }`. Lists accept explicit IPs, not CIDRs/hostnames; an async callback can implement a validated network policy. Malformed or oversized headers fall back to the transport peer. `trustedProxy: true` trusts every hop and is appropriate only behind an exclusively controlled edge that sanitizes headers and cannot be bypassed; prefer an explicit list. Configure adapter-node's client-address forwarding settings consistently so the transport peer itself is not client-controlled.
+
 ### ThrottleMiddleware
 
 Throttle sensitive routes by IP address and path. Unlike the global rate limiter, throttling only increments when the downstream response is a 4xx failure:

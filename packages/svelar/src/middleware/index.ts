@@ -8,6 +8,8 @@ export {
   OriginMiddleware,
   ThrottleMiddleware,
   SignatureMiddleware,
+  resolveClientIp,
+  type TrustedProxy,
   type MiddlewareContext,
   type NextFunction,
   type MiddlewareHandler,
