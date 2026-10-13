@@ -1108,17 +1108,35 @@ function readBuiltinCommandNames() {
 	return names;
 }
 
-function patchAppPackage(appDir, tarballPath, port) {
+export function alignSmokeRuntimeDependencies(pkg, manifest) {
+	const { validRange, intersects } = createRequire(join(repoRoot, 'package.json'))('semver');
+	const changes = [];
+	for (const name of ['bullmq', 'ioredis', 'meilisearch']) {
+		const required = manifest.peerDependencies?.[name];
+		if (!required || !validRange(required)) throw new Error(`Artifact must declare a valid ${name} peer range.`);
+		const current = pkg.dependencies?.[name];
+		if (current !== undefined && !validRange(current)) throw new Error(`Review the custom ${name} dependency before certification: ${current}`);
+		if (current === undefined || !intersects(current, required)) changes.push({ name, from: current ?? null, to: required });
+	}
+	pkg.dependencies ??= {};
+	for (const change of changes) pkg.dependencies[change.name] = change.to;
+	return changes;
+}
+
+export function patchAppPackage(appDir, tarballPath, port, manifest = smokeArtifact.manifest ?? JSON.parse(readFileSync(join(corePackageRoot, 'package.json'), 'utf8'))) {
 	const packagePath = join(appDir, 'package.json');
-	const pkg = JSON.parse(readFileSync(packagePath, 'utf8'));
+	const original = readFileSync(packagePath);
+	const pkg = JSON.parse(original.toString('utf8'));
 	const localTarball = relative(appDir, tarballPath).replaceAll('\\', '/');
 
 	pkg.dependencies ??= {};
 	pkg.scripts ??= {};
 	pkg.dependencies['@beeblock/svelar'] = `file:${localTarball}`;
-	pkg.dependencies.bullmq ??= '^5.0.0';
-	pkg.dependencies.ioredis ??= '^5.0.0';
-	pkg.dependencies.meilisearch ??= '^0.44.0';
+	const sdkChanges = alignSmokeRuntimeDependencies(pkg, manifest);
+	if (sdkChanges.length) {
+		writeFileSync(`${packagePath}.sdk-upgrade.bak`, original, { flag: 'wx' });
+		console.log('Reviewed runtime SDK dependency changes:', JSON.stringify(sdkChanges));
+	}
 	pkg.scripts['smoke:serve'] = `vite dev --host 127.0.0.1 --port ${port} --strictPort`;
 	pkg.scripts['smoke:serve:prod'] = 'node build';
 

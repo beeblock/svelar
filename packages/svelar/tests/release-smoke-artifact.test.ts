@@ -45,6 +45,45 @@ function archive(manifestChanges: Record<string, unknown> = {}, changes: Record<
 beforeEach(() => { root = realpathSync(mkdtempSync(join(tmpdir(), 'release-artifact-test-'))); });
 afterEach(() => { rmSync(root, { recursive: true, force: true }); vi.restoreAllMocks(); });
 
+describe('Reviewed smoke SDK dependency upgrades', () => {
+  const peers = { peerDependencies: { bullmq: '^5.77.4', ioredis: '^5.0.0', meilisearch: '^0.62.0' } };
+
+  it('aligns an incompatible historical SDK to the selected artifact without touching app dependencies', () => {
+    const pkg = { dependencies: { bullmq: '^5.0.0', ioredis: '^5.0.0', meilisearch: '^0.44.0', custom: 'file:../custom' } };
+    expect(harness.alignSmokeRuntimeDependencies(pkg, peers)).toEqual([{ name: 'meilisearch', from: '^0.44.0', to: '^0.62.0' }]);
+    expect(pkg.dependencies).toEqual({ bullmq: '^5.0.0', ioredis: '^5.0.0', meilisearch: '^0.62.0', custom: 'file:../custom' });
+  });
+
+  it('preserves compatible ranges and derives missing SDKs from the artifact, not repository defaults', () => {
+    const pkg = { dependencies: { meilisearch: '^0.62.2' } };
+    expect(harness.alignSmokeRuntimeDependencies(pkg, peers)).toEqual([
+      { name: 'bullmq', from: null, to: '^5.77.4' }, { name: 'ioredis', from: null, to: '^5.0.0' },
+    ]);
+    expect(harness.alignSmokeRuntimeDependencies(pkg, peers)).toEqual([]);
+    expect(pkg.dependencies.meilisearch).toBe('^0.62.2');
+  });
+
+  it('rejects custom dependency sources and invalid artifact contracts before mutating the manifest', () => {
+    const pkg = { dependencies: { meilisearch: 'file:../custom' } };
+    expect(() => harness.alignSmokeRuntimeDependencies(pkg, peers)).toThrow('Review the custom meilisearch');
+    expect(pkg.dependencies).toEqual({ meilisearch: 'file:../custom' });
+    expect(() => harness.alignSmokeRuntimeDependencies(pkg, { peerDependencies: {} })).toThrow('valid bullmq peer range');
+  });
+
+  it('retains exact manifest bytes before the reviewed SDK change and never replaces an existing backup', () => {
+    const pkg = Buffer.from('{"dependencies":{"meilisearch":"^0.44.0"}}\r\n');
+    const path = join(root, 'package.json');
+    write(path, pkg.toString('utf8'));
+    harness.patchAppPackage(root, join(root, 'candidate.tgz'), 5199, peers);
+    expect(readFileSync(`${path}.sdk-upgrade.bak`)).toEqual(pkg);
+    expect(JSON.parse(readFileSync(path, 'utf8')).dependencies.meilisearch).toBe('^0.62.0');
+    write(path, pkg.toString('utf8'));
+    expect(() => harness.patchAppPackage(root, join(root, 'candidate.tgz'), 5199, peers)).toThrow();
+    expect(readFileSync(path)).toEqual(pkg);
+    expect(readFileSync(`${path}.sdk-upgrade.bak`)).toEqual(pkg);
+  });
+});
+
 describe('Release smoke supplied artifact parsing and preflight', () => {
   it('accepts equals and separate arguments with relative paths and spaces', () => {
     expect(harness.parseTarballArgument(['--tarball=artifact with spaces.tgz'], root)).toBe(join(root, 'artifact with spaces.tgz'));

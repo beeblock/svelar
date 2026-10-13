@@ -4,7 +4,7 @@ Get a new Svelar project up and running in minutes.
 
 ## System Requirements
 
-- **Node.js**: 22.0.0 or higher
+- **Node.js**: 22.12.0 or higher
 - **npm**: 10.0.0 or higher (or pnpm, yarn)
 - **Docker**: Recommended for production (optional for development)
 
@@ -271,6 +271,20 @@ For local development, keep infrastructure in Docker and run the daemons from so
 npm run dev:worker
 npm run dev:scheduler
 ```
+
+## Updating An Existing App
+
+Updating the npm package replaces its installed files, not your application source. Commit or back up your app and database first, inspect the target package's peer dependencies, and update incompatible runtime SDKs in the same install. Do not use `--force` or `--legacy-peer-deps` to hide a conflict.
+
+For the 0.8.0 candidate, apps using Meilisearch need its supported `^0.62.0` SDK; the old `^0.44.0` range cannot satisfy the new core contract:
+
+```bash
+npm view @beeblock/svelar@<target-version> peerDependencies --json
+npm install @beeblock/svelar@<target-version> meilisearch@^0.62.0
+npx svelar update --dry-run
+```
+
+Only include Meilisearch if your app uses it. `svelar update` manages reviewed scaffold files; it does not install npm dependencies. Existing customized source remains app-owned. For recognized historical scaffolds, separately inspect `update --migrate-core --dry-run` and, in Zod apps, `update --migrate-zod4 --dry-run` before approving the respective `--force` migration. These modes retain exact-original backups; customized patterns may require manual changes. Run migrations, type checks, application tests and a production build before deploying, and review worker/scheduler registrations as well as web routes.
 
 ## Manual Setup
 
