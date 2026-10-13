@@ -53,8 +53,10 @@
  * ```
  */
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
+import { createSseStream, assertSseEvent, type BroadcastReplay, type SseConnection, type SseStreamOptions } from './SseStream.js';
+export type { BroadcastReplay, SseStreamOptions } from './SseStream.js';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -84,7 +86,7 @@ export interface BroadcastEvent {
 }
 
 export type BroadcastBackplaneConfig =
-  | { driver: 'redis'; url?: string; channel?: string; client?: any; subscriber?: any }
+  | { driver: 'redis'; url?: string; channel?: string; client?: any; subscriber?: any; historyLimit?: number; historyTtlSeconds?: number }
   | { driver: 'memory' };
 
 export interface BroadcastBackplaneMessage {
@@ -100,6 +102,7 @@ export interface BroadcastBackplane {
   publish(message: BroadcastBackplaneMessage): Promise<void>;
   subscribe(handler: (message: BroadcastBackplaneMessage) => void | Promise<void>): Promise<void>;
   close?(): Promise<void>;
+  replay?(channel: string, afterId: string, limit: number): Promise<BroadcastReplay>;
 }
 
 /** Channel authorization callback */
@@ -115,15 +118,20 @@ export interface PresenceMember {
 }
 
 type Subscriber = {
-  controller: ReadableStreamDefaultController;
+  connection: SseConnection;
   userId?: string | number;
   userInfo?: Record<string, any>;
 };
 
 export class MemoryBroadcastBackplane implements BroadcastBackplane {
   private handlers = new Set<(message: BroadcastBackplaneMessage) => void | Promise<void>>();
+  private history = new Map<string, BroadcastBackplaneMessage[]>();
 
   async publish(message: BroadcastBackplaneMessage): Promise<void> {
+    const history = this.history.get(message.channel) ?? [];
+    history.push(structuredClone(message));
+    if (history.length > 1000) history.shift();
+    this.history.set(message.channel, history);
     for (const handler of this.handlers) {
       await handler(message);
     }
@@ -135,6 +143,14 @@ export class MemoryBroadcastBackplane implements BroadcastBackplane {
 
   async close(): Promise<void> {
     this.handlers.clear();
+    this.history.clear();
+  }
+
+  async replay(channel: string, afterId: string, limit: number): Promise<BroadcastReplay> {
+    const history = this.history.get(channel) ?? [];
+    const index = history.findIndex((message) => message.id === afterId);
+    if (index < 0 || history.length - index - 1 > limit) return { messages: [], reset: true };
+    return { messages: structuredClone(history.slice(index + 1)), reset: false };
   }
 }
 
@@ -145,9 +161,15 @@ export class RedisBroadcastBackplane implements BroadcastBackplane {
   private ownsPublisher = false;
   private ownsSubscriber = false;
   private subscribed = false;
+  private historyLimit: number;
+  private historyTtlSeconds: number;
 
   constructor(config: Extract<BroadcastBackplaneConfig, { driver: 'redis' }> = { driver: 'redis' }) {
     this.channel = config.channel ?? 'svelar:broadcasting:sse';
+    this.historyLimit = config.historyLimit ?? 1000;
+    this.historyTtlSeconds = config.historyTtlSeconds ?? 3600;
+    if (!Number.isSafeInteger(this.historyLimit) || this.historyLimit < 1 || this.historyLimit > 10_000 ||
+      !Number.isSafeInteger(this.historyTtlSeconds) || this.historyTtlSeconds < 1 || this.historyTtlSeconds > 86_400) throw new RangeError('Invalid SSE replay retention.');
     this.publisher = config.client;
     this.subscriber = config.subscriber;
 
@@ -165,7 +187,28 @@ export class RedisBroadcastBackplane implements BroadcastBackplane {
   }
 
   async publish(message: BroadcastBackplaneMessage): Promise<void> {
-    await this.publisher.publish(this.channel, JSON.stringify(message));
+    const payload = JSON.stringify(message);
+    if (Buffer.byteLength(payload) > 1_048_576) throw new RangeError('SSE event exceeds the 1 MiB limit.');
+    message.id = String(await this.publisher.eval(`
+      local id = redis.call('XADD', KEYS[1], 'MAXLEN', '=', ARGV[2], '*', 'message', ARGV[1])
+      redis.call('EXPIRE', KEYS[1], ARGV[3])
+      redis.call('PUBLISH', ARGV[4], '{"id":"' .. id .. '","message":' .. ARGV[1] .. '}')
+      return id
+    `, 1, this.historyKey(message.channel), payload, this.historyLimit, this.historyTtlSeconds, this.channel));
+  }
+
+  async replay(channel: string, afterId: string, limit: number): Promise<BroadcastReplay> {
+    if (!/^\d{1,20}-\d{1,20}$/.test(afterId) || !Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) return { messages: [], reset: true };
+    const key = this.historyKey(channel);
+    const cursor = await this.publisher.xrange(key, afterId, afterId, 'COUNT', 1);
+    if (!cursor.length) return { messages: [], reset: true };
+    const rows = await this.publisher.xrange(key, `(${afterId}`, '+', 'COUNT', limit + 1);
+    if (rows.length > limit) return { messages: [], reset: true };
+    return { reset: false, messages: rows.map(([id, fields]: [string, string[]]) => ({ ...JSON.parse(fields[1]), id })) };
+  }
+
+  private historyKey(channel: string): string {
+    return `${this.channel}:history:${createHash('sha256').update(channel).digest('hex')}`;
   }
 
   async subscribe(handler: (message: BroadcastBackplaneMessage) => void | Promise<void>): Promise<void> {
@@ -174,7 +217,9 @@ export class RedisBroadcastBackplane implements BroadcastBackplane {
     this.subscriber.on('message', async (channel: string, payload: string) => {
       if (channel !== this.channel) return;
       try {
-        await handler(JSON.parse(payload));
+        const decoded = JSON.parse(payload);
+        const message = decoded.message ? { ...decoded.message, id: decoded.id } : decoded;
+        await handler(message);
       } catch {
         // Ignore malformed backplane messages. A bad publisher should not kill subscribers.
       }
@@ -239,10 +284,12 @@ export function channelType(name: string): ChannelType {
 
 class SSEChannel {
   private subscribers: Subscriber[] = [];
+  private history: BroadcastBackplaneMessage[] = [];
   readonly name: string;
   readonly type: ChannelType;
 
-  constructor(name: string) {
+  constructor(name: string, private replay?: (cursor: string, limit: number) => Promise<BroadcastReplay>,
+    private ready?: () => Promise<void>, private feedback?: (kind: 'replay' | 'reset' | 'backpressure', count: number) => void) {
     this.name = name;
     this.type = channelType(name);
   }
@@ -251,82 +298,51 @@ class SSEChannel {
    * Create an SSE streaming response for this channel.
    * For private/presence channels, authorization must be checked BEFORE calling this.
    */
-  stream(userId?: string | number, userInfo?: Record<string, any>): Response {
-    const channel = this;
-    let subscriber: Subscriber | null = null;
-
-    const stream = new ReadableStream({
-      start(controller) {
-        const initPayload: any = { channel: channel.name };
-
-        // For presence channels, include current members
-        if (channel.type === 'presence') {
-          initPayload.members = channel.getMembers();
-        }
-
-        const initData = `event: connected\ndata: ${JSON.stringify(initPayload)}\nid: ${Date.now()}\n\n`;
-        controller.enqueue(new TextEncoder().encode(initData));
-
-        subscriber = { controller, userId, userInfo };
-        channel.subscribers.push(subscriber);
-
-        // Notify other presence subscribers that someone joined
-        if (channel.type === 'presence' && userId !== undefined) {
-          channel.sendInternal('member:joined', { id: userId, ...userInfo }, subscriber);
-        }
+  stream(userId?: string | number, userInfo?: Record<string, any>, options: SseStreamOptions = {}): Response {
+    const initial: Record<string, unknown> = { channel: this.name };
+    if (this.type === 'presence') initial.members = this.getMembers();
+    return createSseStream({ initial, userId, ready: this.ready,
+      replay: (cursor, limit) => this.replay ? this.replay(cursor, limit) : this.localReplay(cursor, limit),
+      onReplay: (count, reset) => this.feedback?.(reset ? 'reset' : 'replay', count),
+      onClose: (reason) => { if (reason === 'backpressure') this.feedback?.('backpressure', 1); },
+      register: (connection) => {
+        const subscriber = { connection, userId, userInfo };
+        this.subscribers.push(subscriber);
+        if (this.type === 'presence' && userId !== undefined) this.sendInternal('member:joined', { id: userId, ...userInfo }, subscriber);
+        return () => {
+          this.subscribers = this.subscribers.filter((entry) => entry !== subscriber);
+          if (this.type === 'presence' && userId !== undefined) this.sendInternal('member:left', { id: userId, ...userInfo });
+        };
       },
-      cancel() {
-        if (subscriber) {
-          channel.subscribers = channel.subscribers.filter((s) => s !== subscriber);
-        }
-
-        if (channel.type === 'presence' && userId !== undefined) {
-          channel.sendInternal('member:left', { id: userId, ...userInfo });
-        }
-      },
-    });
-
-    return new Response(stream, {
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-        'X-Accel-Buffering': 'no',
-      },
-    });
+    }, options);
   }
 
   /**
    * Send an event to all subscribers
    */
-  send(event: string, data: any, targetUserId?: string | number): void {
-    const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\nid: ${Date.now()}\n\n`;
-    const encoded = new TextEncoder().encode(payload);
-
-    for (const subscriber of this.subscribers) {
-      if (targetUserId !== undefined && subscriber.userId !== targetUserId) {
-        continue;
-      }
-      try {
-        subscriber.controller.enqueue(encoded);
-      } catch {
-        // Subscriber disconnected — cleaned up on next prune
-      }
+  send(event: string, data: any, targetUserId?: string | number, id: string = randomUUID()): void {
+    assertSseEvent(event, id);
+    this.history.push({ id, channel: this.name, origin: 'local', event, data: structuredClone(data), targetUserId });
+    if (this.history.length > 1000) this.history.shift();
+    for (const subscriber of [...this.subscribers]) {
+      if (targetUserId !== undefined && String(subscriber.userId) !== String(targetUserId)) continue;
+      subscriber.connection.send({ event, data, id });
     }
   }
 
+  async localReplay(cursor: string, limit: number): Promise<BroadcastReplay> {
+    const index = this.history.findIndex((message) => message.id === cursor);
+    if (index < 0 || this.history.length - index - 1 > limit) return { messages: [], reset: true };
+    return { messages: structuredClone(this.history.slice(index + 1)), reset: false };
+  }
+
+  drain(): void { for (const subscriber of [...this.subscribers]) subscriber.connection.close('drain'); }
+
   /** Internal send that excludes a specific subscriber (for join/leave events) */
   private sendInternal(event: string, data: any, exclude?: Subscriber): void {
-    const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\nid: ${Date.now()}\n\n`;
-    const encoded = new TextEncoder().encode(payload);
-
-    for (const subscriber of this.subscribers) {
+    for (const subscriber of [...this.subscribers]) {
       if (subscriber === exclude) continue;
-      try {
-        subscriber.controller.enqueue(encoded);
-      } catch {
-        // disconnected
-      }
+      subscriber.connection.send({ event, data });
     }
   }
 
@@ -368,16 +384,10 @@ class SSEChannel {
    * Useful for typing indicators, cursor positions, etc.
    */
   whisper(event: string, data: any, fromUserId: string | number): void {
-    const payload = `event: client-${event}\ndata: ${JSON.stringify(data)}\nid: ${Date.now()}\n\n`;
-    const encoded = new TextEncoder().encode(payload);
-
-    for (const subscriber of this.subscribers) {
+    assertSseEvent(`client-${event}`);
+    for (const subscriber of [...this.subscribers]) {
       if (subscriber.userId === fromUserId) continue; // Don't echo back
-      try {
-        subscriber.controller.enqueue(encoded);
-      } catch {
-        // disconnected
-      }
+      subscriber.connection.send({ event: `client-${event}`, data });
     }
   }
 }
@@ -537,6 +547,9 @@ class BroadcastManager {
   private pusherDriver: PusherDriver | null = null;
   private backplane: BroadcastBackplane | null = null;
   private backplaneSubscribed = false;
+  private subscribing?: Promise<void>;
+  private draining = false;
+  private streamMetrics = { replayed: 0, resets: 0, backpressureClosed: 0 };
   private origin = randomUUID();
 
   /**
@@ -553,6 +566,7 @@ class BroadcastManager {
     }
 
     this.config = config;
+    this.draining = false;
     this.pusherDriver = null;
     this.backplaneSubscribed = false;
 
@@ -573,14 +587,27 @@ class BroadcastManager {
   useBackplane(backplane: BroadcastBackplane): void {
     this.backplane = backplane;
     this.backplaneSubscribed = false;
-    void this.ensureBackplaneSubscribed();
+    this.subscribing = undefined;
+    void this.ensureBackplaneSubscribed().catch(() => { console.error('[Broadcast] SSE backplane subscription unavailable.'); });
   }
 
   async closeBackplane(): Promise<void> {
     await this.backplane?.close?.();
     this.backplane = null;
     this.backplaneSubscribed = false;
+    this.subscribing = undefined;
   }
+
+  async ready(): Promise<void> { await this.ensureBackplaneSubscribed(); }
+
+  /** Disconnect SSE streams before terminating a replica; clients reconnect and reauthorize elsewhere. */
+  async drain(): Promise<void> {
+    this.draining = true;
+    for (const channel of this.sseChannels.values()) channel.drain();
+    await this.closeBackplane();
+  }
+
+  metrics() { return { ...this.streamMetrics, subscribers: this.totalSubscribers(), channels: this.sseChannels.size, draining: this.draining }; }
 
   // ── Channel Authorization ──
 
@@ -621,7 +648,14 @@ class BroadcastManager {
 
     // Get or create SSE channel
     if (!this.sseChannels.has(nameOrPattern)) {
-      this.sseChannels.set(nameOrPattern, new SSEChannel(nameOrPattern));
+      if (!nameOrPattern || nameOrPattern.length > 255 || /[\r\n\0]/.test(nameOrPattern)) throw new TypeError('Invalid broadcast channel name.');
+      this.sseChannels.set(nameOrPattern, new SSEChannel(nameOrPattern,
+        async (cursor, limit) => this.backplane?.replay ? this.backplane.replay(nameOrPattern, cursor, limit) : this.sseChannels.get(nameOrPattern)!.localReplay(cursor, limit),
+        () => this.ready(), (kind, count) => {
+          if (kind === 'replay') this.streamMetrics.replayed += count;
+          if (kind === 'reset') this.streamMetrics.resets++;
+          if (kind === 'backpressure') this.streamMetrics.backpressureClosed += count;
+        }));
     }
     return this.sseChannels.get(nameOrPattern)!;
   }
@@ -764,8 +798,15 @@ class BroadcastManager {
         break;
 
       case 'sse':
-        this.sendLocalSse(channelName, event, data, targetUserId);
-        await this.publishBackplane(channelName, event, data, targetUserId);
+        assertSseEvent(event);
+        const encoded = JSON.stringify(data);
+        if (encoded === undefined || Buffer.byteLength(encoded) > 1_048_576) throw new RangeError('SSE payload must be JSON within 1 MiB.');
+        const message: BroadcastBackplaneMessage = { id: randomUUID(), origin: this.origin, channel: channelName, event, data, targetUserId };
+        if (this.backplane) {
+          await this.ensureBackplaneSubscribed();
+          await this.backplane.publish(message);
+        }
+        this.sendLocalSse(channelName, event, data, targetUserId, message.id);
         break;
 
       default:
@@ -796,10 +837,12 @@ class BroadcastManager {
   subscribe(
     channelName: string,
     userId?: string | number,
-    userInfo?: Record<string, any>
+    userInfo?: Record<string, any>,
+    options: SseStreamOptions = {}
   ): Response {
+    if (this.draining) return new Response(null, { status: 503, headers: { 'Retry-After': '1', 'Cache-Control': 'no-store' } });
     const ch = this.channel(channelName) as SSEChannel;
-    return ch.stream(userId, userInfo);
+    return ch.stream(userId, userInfo, options);
   }
 
   // ── Presence Helpers ──
@@ -861,34 +904,21 @@ class BroadcastManager {
     return new RedisBroadcastBackplane(config);
   }
 
-  private sendLocalSse(channelName: string, event: string, data: any, targetUserId?: string | number): void {
-    for (const [, ch] of this.sseChannels) {
-      if (ch.name === channelName) {
-        ch.send(event, data, targetUserId);
-      }
-    }
+  private sendLocalSse(channelName: string, event: string, data: any, targetUserId?: string | number, id?: string): void {
+    (this.channel(channelName) as SSEChannel).send(event, data, targetUserId, id);
   }
 
   private async ensureBackplaneSubscribed(): Promise<void> {
     if (!this.backplane || this.backplaneSubscribed) return;
-    this.backplaneSubscribed = true;
-    await this.backplane.subscribe((message) => {
+    if (this.subscribing) return this.subscribing;
+    const backplane = this.backplane;
+    this.subscribing = backplane.subscribe((message) => {
       if (message.origin === this.origin) return;
-      this.sendLocalSse(message.channel, message.event, message.data, message.targetUserId);
-    });
-  }
-
-  private async publishBackplane(channelName: string, event: string, data: any, targetUserId?: string | number): Promise<void> {
-    if (!this.backplane) return;
-    await this.ensureBackplaneSubscribed();
-    await this.backplane.publish({
-      id: randomUUID(),
-      origin: this.origin,
-      channel: channelName,
-      event,
-      data,
-      targetUserId,
-    });
+      assertSseEvent(message.event, message.id);
+      this.sendLocalSse(message.channel, message.event, message.data, message.targetUserId, message.id);
+    }).then(() => { if (this.backplane === backplane) this.backplaneSubscribed = true; })
+      .finally(() => { if (this.backplane === backplane) this.subscribing = undefined; });
+    return this.subscribing;
   }
 
   // ── Pattern Matching ──

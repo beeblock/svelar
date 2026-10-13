@@ -61,6 +61,14 @@ In Docker Compose the app gets `PUSHER_HOST=soketi` automatically, so Soketi wor
 
 ### Distributed SSE
 
+Streams use stable event IDs, heartbeat comments and bounded buffers. `Broadcast.subscribe(channel, userId, userInfo, { lastEventId, signal })` accepts the request's `Last-Event-ID` and abort signal; generated endpoints forward both. Reconnection replay preserves target-user filtering and never uses synthetic presence/connected events to replace the resume cursor.
+
+Redis backplanes atomically append to a per-channel Redis Stream before pub/sub publication. Retention defaults to 1,000 events and one hour; configure `historyLimit` (up to 10,000) and `historyTtlSeconds` (up to one day). Replays larger than the connection buffer, expired cursors and unknown cursors emit `reset`: refetch authoritative state. This bounded history is not an event store or a guarantee against Redis data loss. Local memory replay is process-local and is lost on restart/pruning. The Redis implementation uses the official [XADD](https://redis.io/docs/latest/commands/xadd/) and [XRANGE](https://redis.io/docs/latest/commands/xrange/) contracts.
+
+Streams default to a 15-second heartbeat and a five-minute reconnect to reauthorize. Configure `heartbeatSeconds`, `maxDurationSeconds`, `maxBufferedEvents` and `retryMilliseconds` per subscription. Slow clients are disconnected rather than growing an unbounded queue; event frames reject newline injection and payloads above 1 MiB. Authorize private/presence subscriptions on every connection, including resume. Replays and a cached client permission snapshot are not authorization credentials.
+
+Call `await Broadcast.ready()` before declaring a replica ready and `await Broadcast.drain()` before termination. Drain closes SSE clients and refuses new subscriptions with 503/Retry-After until reconfiguration. `Broadcast.metrics()` reports process subscriber/channel counts, replay/reset/backpressure counts and drain state. Presence membership is local to each web process, not a distributed online-user directory.
+
 The SSE driver is zero-dependency by default and delivers events to subscribers in the current web process. For multi-process deployments where workers, schedulers, or another web replica must publish to connected SSE clients, configure a backplane:
 
 ```typescript

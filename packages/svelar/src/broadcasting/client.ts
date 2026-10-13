@@ -300,12 +300,12 @@ export function useSSE(channelName: string, baseUrl = '/api/broadcasting'): SSEC
 
   return {
     listen(event: string, callback: (data: any) => void): SSEChannelInstance {
+      const previous = listeners.get(event);
+      if (previous) source.removeEventListener(event, previous);
       const handler = (e: MessageEvent) => {
-        try {
-          callback(JSON.parse(e.data));
-        } catch {
-          callback(e.data);
-        }
+        let data: unknown = e.data;
+        try { data = JSON.parse(e.data); } catch {}
+        callback(data);
       };
       listeners.set(event, handler);
       source.addEventListener(event, handler);
