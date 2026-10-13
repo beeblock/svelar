@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { dirname, join, relative, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
+import { dirname, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { stripVTControlCharacters } from 'node:util';
 import { certifyGenerators, certifyRuntimeCommands, recordVerificationStep } from './cli-certification.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -13,6 +16,8 @@ const testingRoot = resolve(repoRoot, '../svelar-testing-area');
 const appsRoot = join(testingRoot, 'apps');
 const artifactsRoot = join(testingRoot, '.artifacts');
 const dockerConfigRoot = join(testingRoot, '.docker-config');
+const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+let smokeArtifact;
 
 const args = new Set(process.argv.slice(2));
 const appArg = valueFor('--app') ?? 'all';
@@ -40,7 +45,7 @@ const useMeilisearch = args.has('--meilisearch') || args.has('--meili');
 const usePgBouncer = args.has('--pgbouncer') || args.has('--pg-stat-statements');
 const useS3 = args.has('--s3') || args.has('--storage');
 
-if (args.has('--help') || args.has('-h')) {
+if (isMain && (args.has('--help') || args.has('-h'))) {
 	console.log(`Usage: node scripts/release-smoke.mjs [options]
 
 Options:
@@ -49,6 +54,9 @@ Options:
                          Which database driver to test. Default: sqlite.
   --validation zod|valibot|all
                          Validation providers to test. Default: zod.
+  --tarball <existing.tgz>
+                         Use this immutable artifact and its extracted CLI; do not build or pack core.
+                         Also accepts --tarball=<existing.tgz>.
   --cli-execution        Generate artifacts, execute runtime commands and type-check the app.
   --upgrade-from <version>
                          Create/seed an app with a published version before installing the tarball.
@@ -458,42 +466,49 @@ class SmokeServices {
 	}
 }
 
-mkdirSync(appsRoot, { recursive: true });
-mkdirSync(artifactsRoot, { recursive: true });
-
-const services = new SmokeServices();
-
-try {
-	section('Building local @beeblock/svelar');
-	run('npm', ['run', 'build', '-w', 'packages/svelar'], { cwd: repoRoot });
-
-	section('Packing local @beeblock/svelar');
-	const tarballPath = packLocalCore();
-	console.log(`Packed ${tarballPath}`);
+async function main() {
+	const services = new SmokeServices();
+	try {
+		// Complete supplied-artifact preflight before services or existing app folders are touched.
+		smokeArtifact = prepareSmokeArtifact(parseTarballArgument(process.argv.slice(2)));
+		const tarballPath = smokeArtifact.tarballPath;
+		console.log(`${smokeArtifact.supplied ? 'Using immutable' : 'Packed'} ${tarballPath}`);
+		if (smokeArtifact.supplied) console.log(`Artifact @beeblock/svelar@${smokeArtifact.manifest.version}; sha256 ${smokeArtifact.sha256}; CLI ${smokeArtifact.cliPath}`);
+		mkdirSync(appsRoot, { recursive: true });
+		mkdirSync(artifactsRoot, { recursive: true });
 
 		const targets = buildTargets(appArg, dbArg, validationArg);
-			const redisEnv = useRedis ? await services.redisEnv() : {};
-			const gotenbergEnv = useGotenberg ? await services.gotenbergEnv() : {};
-			const meilisearchEnv = useMeilisearch ? await services.meilisearchEnv() : {};
-			const pgBouncerEnv = usePgBouncer ? await services.pgBouncerEnv() : {};
-			const s3Env = useS3 ? await services.s3Env() : {};
+		const redisEnv = useRedis ? await services.redisEnv() : {};
+		const gotenbergEnv = useGotenberg ? await services.gotenbergEnv() : {};
+		const meilisearchEnv = useMeilisearch ? await services.meilisearchEnv() : {};
+		const pgBouncerEnv = usePgBouncer ? await services.pgBouncerEnv() : {};
+		const s3Env = useS3 ? await services.s3Env() : {};
 
-			for (const target of targets) {
-				if (usePgBouncer) {
-					target.env = { ...pgBouncerEnv, ...redisEnv, ...gotenbergEnv, ...meilisearchEnv, ...s3Env };
-				} else if (useServices && target.db !== 'sqlite') {
-					target.env = { ...(await services.envFor(target.db)), ...redisEnv, ...gotenbergEnv, ...meilisearchEnv, ...s3Env };
-				} else {
-					target.env = { ...databaseEnv(target.db), ...redisEnv, ...gotenbergEnv, ...meilisearchEnv, ...s3Env };
-				}
+		for (const target of targets) {
+			verifySmokeArtifact(smokeArtifact);
+			if (usePgBouncer) {
+				target.env = { ...pgBouncerEnv, ...redisEnv, ...gotenbergEnv, ...meilisearchEnv, ...s3Env };
+			} else if (useServices && target.db !== 'sqlite') {
+				target.env = { ...(await services.envFor(target.db)), ...redisEnv, ...gotenbergEnv, ...meilisearchEnv, ...s3Env };
+			} else {
+				target.env = { ...databaseEnv(target.db), ...redisEnv, ...gotenbergEnv, ...meilisearchEnv, ...s3Env };
+			}
 			smokeApp(target, tarballPath);
 		}
 
-	section('Smoke complete');
-	console.log(`Generated apps are in ${appsRoot}`);
-} finally {
-	services.stop();
+		section('Smoke complete');
+		verifySmokeArtifact(smokeArtifact);
+		console.log(`Generated apps are in ${appsRoot}`);
+	} catch (error) {
+		console.error(`\nSmoke failed: ${error instanceof Error ? error.message : String(error)}`);
+		process.exitCode = 1;
+	} finally {
+		try { services.stop(); }
+		finally { smokeArtifact?.cleanup(); }
+	}
 }
+
+if (isMain) await main();
 
 function smokeApp(target, tarballPath) {
 	const appDir = join(appsRoot, target.name);
@@ -513,7 +528,7 @@ function smokeApp(target, tarballPath) {
 	if (existsSync(appDir)) {
 		console.log(`Reusing existing app directory: ${appDir}`);
 	} else {
-		const cliPath = join(corePackageRoot, 'dist/cli/bin.js');
+		const cliPath = smokeArtifact.cliPath;
 		const scaffoldArgs = [cliPath, 'new', target.name, '--no-install', `--validation=${target.validation}`];
 		if (target.flat) scaffoldArgs.push('--flat');
 		if (upgradeFrom) {
@@ -728,6 +743,110 @@ function packLocalCore() {
 	);
 	renameSync(tarballPath, uniqueTarballPath);
 	return uniqueTarballPath;
+}
+
+export function parseTarballArgument(argv, cwd = process.cwd()) {
+	let selected;
+	for (let index = 0; index < argv.length; index++) {
+		const arg = argv[index];
+		if (arg !== '--tarball' && !arg.startsWith('--tarball=')) continue;
+		if (selected !== undefined) throw new Error('Specify --tarball only once.');
+		const value = arg === '--tarball' ? argv[++index] : arg.slice('--tarball='.length);
+		if (!value || value.startsWith('--')) throw new Error('--tarball requires an existing package archive path.');
+		selected = resolve(cwd, value);
+	}
+	return selected;
+}
+
+export function validateTarballPath(path) {
+	const absolute = resolve(path);
+	if (!existsSync(absolute) || !lstatSync(absolute).isFile()) throw new Error(`Tarball must be an existing regular file: ${absolute}`);
+	return realpathSync(absolute);
+}
+
+function artifactCommand(command, commandArgs, options = {}) {
+	const result = spawnSync(command, commandArgs, { encoding: 'utf8', timeout: 30000, maxBuffer: 16 * 1024 * 1024, killSignal: 'SIGKILL', ...options });
+	if (result.error || result.status !== 0) throw new Error(`Artifact preflight ${command} failed: ${result.error?.message ?? result.stderr?.trim() ?? result.status}`);
+	return result.stdout;
+}
+
+export function validateArtifactEntries(names, details) {
+	const paths = names.trimEnd().split('\n');
+	const seen = new Set();
+	for (const path of paths) {
+		const normalized = path.replace(/\/$/, '');
+		if (!normalized || normalized !== 'package' && !normalized.startsWith('package/')
+			|| /[\\\x00-\x1f\x7f]/.test(normalized)
+			|| normalized.split('/').some((part) => !part || part === '.' || part === '..') || seen.has(normalized)) {
+			throw new Error(`Unsafe or duplicate tarball member: ${JSON.stringify(path)}`);
+		}
+		seen.add(normalized);
+	}
+	const kinds = details.trimEnd().split('\n');
+	if (kinds.length !== paths.length || kinds.some((line) => !['-', 'd'].includes(line[0]))) throw new Error('Artifact must contain only regular files/directories, not links or special entries.');
+	if (!seen.has('package/package.json')) throw new Error('Artifact package/package.json is missing.');
+}
+
+export function validateArtifactManifest(manifest, packageRoot) {
+	if (manifest.name !== '@beeblock/svelar') throw new Error('Tarball manifest name must be @beeblock/svelar.');
+	const require = createRequire(join(repoRoot, 'package.json'));
+	const { parse } = require('semver');
+	const parsed = typeof manifest.version === 'string' ? parse(manifest.version) : null;
+	if (!parsed || `${parsed.version}${parsed.build.length ? `+${parsed.build.join('.')}` : ''}` !== manifest.version) throw new Error('Tarball manifest must declare an exact valid semantic version.');
+	function fileTarget(target, label) {
+		if (typeof target !== 'string' || !target || target.includes('\\')) throw new Error(`Missing/invalid artifact ${label}.`);
+		const path = resolve(packageRoot, target);
+		if (!path.startsWith(`${packageRoot}${sep}`) || !existsSync(path) || !lstatSync(path).isFile()) throw new Error(`Artifact ${label} must reference a packaged regular file.`);
+		return path;
+	}
+	const bin = typeof manifest.bin === 'string' ? manifest.bin : manifest.bin?.svelar;
+	return { cliPath: fileTarget(bin, 'svelar bin'), cliModule: fileTarget(manifest.exports?.['./cli']?.import, 'public CLI import export') };
+}
+
+export function extractSmokeArtifact(path, { dependenciesRoot = join(repoRoot, 'node_modules'), temporaryRoot = tmpdir() } = {}) {
+	const tarballPath = validateTarballPath(path);
+	const extractionRoot = mkdtempSync(join(temporaryRoot, 'svelar-smoke-artifact-'));
+	const cleanup = () => rmSync(extractionRoot, { recursive: true, force: true });
+	try {
+		// Validate/extract a byte-identical owned snapshot; never rewrite the supplied package or version.
+		const bytes = readFileSync(tarballPath);
+		const snapshotPath = join(extractionRoot, 'artifact.tgz');
+		writeFileSync(snapshotPath, bytes, { flag: 'wx', mode: 0o400 });
+		const sha256 = createHash('sha256').update(bytes).digest('hex');
+		validateArtifactEntries(artifactCommand('tar', ['-tzf', snapshotPath]), artifactCommand('tar', ['-tvzf', snapshotPath]));
+		artifactCommand('tar', ['-xzf', snapshotPath, '-C', extractionRoot]);
+		const packageRoot = join(extractionRoot, 'package');
+		const manifest = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8'));
+		const { cliPath, cliModule } = validateArtifactManifest(manifest, packageRoot);
+		if (existsSync(join(packageRoot, 'node_modules'))) throw new Error('Artifact must not contain a node_modules override.');
+		if (!existsSync(dependenciesRoot) || !lstatSync(dependenciesRoot).isDirectory()) throw new Error('Install repository CLI dependencies before using --tarball (generation only; apps install the artifact independently).');
+		symlinkSync(dependenciesRoot, join(packageRoot, 'node_modules'), 'dir');
+		const versionOutput = stripVTControlCharacters(artifactCommand(process.execPath, [cliPath, '--version'], { cwd: extractionRoot })).trim();
+		if (versionOutput !== `Svelar v${manifest.version}`) throw new Error(`Artifact CLI version does not match its manifest (${manifest.version}).`);
+		const source = `import { builtinCommandNames } from ${JSON.stringify(pathToFileURL(cliModule).href)}; console.log('ARTIFACT_COMMANDS_JSON', JSON.stringify(typeof builtinCommandNames === 'function' ? builtinCommandNames() : builtinCommandNames));`;
+		const registryOutput = artifactCommand(process.execPath, ['--input-type=module'], { cwd: extractionRoot, input: source });
+		const lines = registryOutput.split('\n').filter((line) => line.startsWith('ARTIFACT_COMMANDS_JSON '));
+		if (lines.length !== 1) throw new Error('Artifact CLI did not expose one built-in command registry.');
+		const commandNames = JSON.parse(lines[0].slice('ARTIFACT_COMMANDS_JSON '.length));
+		if (!Array.isArray(commandNames) || !commandNames.length || commandNames.some((name) => typeof name !== 'string' || !/^[a-z][a-z0-9:-]*$/.test(name))
+			|| new Set(commandNames).size !== commandNames.length || !commandNames.includes('new') || !commandNames.includes('update')) throw new Error('Invalid artifact built-in command registry.');
+		return { supplied: true, tarballPath, sha256, packageRoot, cliPath, commandNames, manifest, extractionRoot, cleanup };
+	} catch (error) { cleanup(); throw error; }
+}
+
+export function prepareSmokeArtifact(tarball, { build = () => {
+	section('Building local @beeblock/svelar');
+	run('npm', ['run', 'build', '-w', 'packages/svelar'], { cwd: repoRoot });
+}, pack = () => { section('Packing local @beeblock/svelar'); return packLocalCore(); }, ...extractionOptions } = {}) {
+	if (tarball !== undefined) return extractSmokeArtifact(tarball, extractionOptions);
+	build();
+	return { supplied: false, tarballPath: pack(), cliPath: join(corePackageRoot, 'dist/cli/bin.js'), cleanup() {} };
+}
+
+export function verifySmokeArtifact(artifact) {
+	if (artifact?.supplied && createHash('sha256').update(readFileSync(artifact.tarballPath)).digest('hex') !== artifact.sha256) {
+		throw new Error('Supplied tarball bytes changed after preflight; refusing mixed-artifact certification.');
+	}
 }
 
 function prepareHistoricalApp(appDir, env) {
@@ -970,6 +1089,7 @@ try {
 }
 
 function readBuiltinCommandNames() {
+	if (typeof smokeArtifact !== 'undefined' && smokeArtifact?.supplied) return smokeArtifact.commandNames;
 	const registryPath = join(repoRoot, 'packages/svelar/src/cli/BuiltinCommands.ts');
 	const source = readFileSync(registryPath, 'utf8');
 	const match = source.match(/export const BUILTIN_COMMANDS[\s\S]*?=\s*\[([\s\S]*?)\];/);
@@ -2887,8 +3007,7 @@ function section(title) {
 }
 
 function fail(message) {
-	console.error(`\nSmoke failed: ${message}`);
-	process.exit(1);
+	throw new Error(message);
 }
 
 function valueFor(name) {
