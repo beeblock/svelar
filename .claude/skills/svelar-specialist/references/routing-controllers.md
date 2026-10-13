@@ -1,263 +1,34 @@
-# Controllers, Resources, FormRequest & Responses
+# Controllers, FormRequests, DTOs And Resources
 
-Full docs: https://svelar.dev/docs/controllers-routing
+Read [controllers/routing](../../../../docs/04-controllers-routing.md), [validation/DTOs](../../../../docs/05-validation-dtos.md), [services/actions/repositories](../../../../docs/08-services-actions-repositories.md), [forms](../../../../docs/16-forms.md), [HTTP](../../../../docs/14-http.md) and [errors](../../../../docs/19-error-handling.md). Outside this repo, use the corresponding https://svelar.dev/docs/<guide> pages.
 
-## Table of Contents
-- [Controller Base Class](#controller-base-class)
-- [Route Binding](#route-binding)
-- [Response Classes](#response-classes)
-- [API Resources](#api-resources)
-- [FormRequest](#formrequest)
+## Generate First
 
-## Controller Base Class
+Use make:entity Invoice --module=billing --fields "title:string,total:number" --crud --capability=invoices --scope=team --screen-route=/invoices. Focused make:controller --resource also scaffolds supporting schema/request/DTO/action/service/repository/resource classes. Supply an explicit capability decision or reviewed --public exemption; public exempts functional RBAC only, not auth, policies, validation or CSRF.
 
-Import: `import { Controller } from '@beeblock/svelar/routing';`
+Do not implement persistence in +server.ts or combine validation, authorization, writes and response shaping in a page action.
 
-### Methods
+## Thin Route
 
-**Response helpers:**
-```typescript
-this.json(data, status?, headers?)     // JSON response
-this.text(content, status?)            // Plain text
-this.html(content, status?)            // HTML
-this.redirect(url, status?)            // Redirect (default 302)
-this.noContent()                       // 204
-this.created(data?)                    // 201 + JSON
-```
-
-**Validation:**
-```typescript
-await this.validate(event, zodSchema)       // body validation
-this.validateQuery(event, zodSchema)        // query params
-this.validateParams(event, zodSchema)       // URL params
-```
-
-**Middleware (in constructor):**
-```typescript
-constructor() {
-  super();
-  this.middleware(MiddlewareInstance);
-  this.middleware(MiddlewareInstance, { only: ['store', 'update'] });
-  this.middleware(MiddlewareInstance, { except: ['index', 'show'] });
-}
-```
-
-### Complete Example
-```typescript
-import { Controller } from '@beeblock/svelar/routing';
-import { RequireAuthMiddleware, GateMiddleware } from '@beeblock/svelar/auth';
-import { z } from '@beeblock/svelar/validation';
-
-export class PostController extends Controller {
-  constructor() {
-    super();
-    this.middleware(new RequireAuthMiddleware());
-    this.middleware(
-      new GateMiddleware('update-post', (ctx) => Post.find(ctx.params.id)),
-      { only: ['update', 'destroy'] }
-    );
-  }
-
-  async index(event) {
-    const posts = await Post.with('author').latest().paginate(
-      Number(event.url.searchParams.get('page') ?? 1),
-      20
-    );
-    return this.json(posts);
-  }
-
-  async show(event) {
-    const post = await Post.with('author', 'comments').findOrFail(event.params.id);
-    return this.json(post);
-  }
-
-  async store(event) {
-    const data = await this.validate(event, {
-      title: z.string().min(5).max(200),
-      content: z.string().min(10),
-    });
-    const post = await Post.create({ ...data, user_id: event.locals.user.id });
-    return this.created(post);
-  }
-
-  async update(event) {
-    const data = await this.validate(event, {
-      title: z.string().min(5).optional(),
-      content: z.string().min(10).optional(),
-    });
-    const post = await Post.findOrFail(event.params.id);
-    await post.update(data);
-    return this.json(post);
-  }
-
-  async destroy(event) {
-    const post = await Post.findOrFail(event.params.id);
-    await post.delete();
-    return this.noContent();
-  }
-}
-```
-
-## Route Binding
-
-### Manual binding
-```typescript
-// src/routes/api/posts/+server.ts
-import { PostController } from '$lib/controllers/PostController';
-const ctrl = new PostController();
-export const GET = ctrl.handle('index');
-export const POST = ctrl.handle('store');
-
-// src/routes/api/posts/[id]/+server.ts
-export const GET = ctrl.handle('show');
-export const PUT = ctrl.handle('update');
-export const DELETE = ctrl.handle('destroy');
-```
-
-### Resource helper
 ```typescript
 import { resource } from '@beeblock/svelar/routing';
-import { PostController } from '$lib/controllers/PostController';
+import { InvoiceController } from '$lib/modules/billing/interface/http/controllers/InvoiceController.js';
 
-// src/routes/api/posts/+server.ts
-export const { GET, POST } = resource(PostController);
-
-// src/routes/api/posts/[id]/+server.ts
-export const { GET, PUT, DELETE } = resource(PostController, true);
+export const { GET, POST, PUT, DELETE } = resource(InvoiceController);
 ```
 
-## Response Classes
+Follow the generator's collection/item route binding; resource controllers use current method names and parameters. Do not invent static Controller.handle calls or bypass instance middleware.
 
-Import: `import { JsonResponse, RedirectResponse, DownloadResponse, StreamedResponse } from '@beeblock/svelar/routing';`
+## Write Contract
 
-### JsonResponse
-```typescript
-JsonResponse.success(data)                          // 200
-JsonResponse.created(data)                          // 201
-JsonResponse.error('Not found', 404)                // error
-JsonResponse.validationError(errors)                // 422
-JsonResponse.noContent()                            // 204
+FormRequest imports the shared schema, authorizes the current event and constructs a typed DTO in passedValidation. The controller delegates to an action/service; repositories own query use cases, models own persistence lifecycle, policies own resource decisions and Resource projects public fields.
 
-// Fluent
-new JsonResponse(data)
-  .status(200)
-  .header('X-Custom', 'value')
-  .toResponse();
-```
+Backend FormRequests and frontend Superforms use the same schema. Respect svelar.validation.json: Zod uses @beeblock/svelar/validation with zod4/zod4Client; Valibot uses @beeblock/svelar/validation/valibot with valibot/valibotClient. A DTO is not a replacement for a FormRequest.
 
-### DownloadResponse
-```typescript
-DownloadResponse.make(buffer, 'report.pdf', 'application/pdf')
-DownloadResponse.json(data, 'export.json')
-DownloadResponse.csv(csvString, 'users.csv')
-```
+## Responses And Errors
 
-### StreamedResponse (SSE)
-```typescript
-StreamedResponse.sse(async function* () {
-  yield { event: 'update', data: JSON.stringify({ progress: 50 }) };
-  yield { event: 'done', data: JSON.stringify({ result: 'ok' }) };
-});
-```
+Use resources and consistent { data, meta } envelopes, including safe messages/field errors. Enhanced page actions return meta.form on success and failures so results update immediately. Render field validation inline; avoid duplicate validation/success toasts. Include loading, disabled/pending, success/error and empty states.
 
-## API Resources
+Browser mutations use apiFetch with same-origin CSRF. Genuine provider protocols such as Pusher signatures/DataTables wire responses are explicit documented exceptions, not permission to invent arbitrary response shapes.
 
-Import: `import { Resource } from '@beeblock/svelar/routing';`
-
-Transform models into consistent API responses:
-
-```typescript
-interface UserData {
-  id: number;
-  name: string;
-  email: string;
-  role: string;
-}
-
-class UserResource extends Resource<User, UserData> {
-  toJSON(): UserData {
-    return {
-      id: this.data.id,
-      name: this.data.name,
-      email: this.data.email,
-      role: this.data.role,
-    };
-  }
-
-  async toWith() {
-    return { permissions: await this.data.getAllPermissions() };
-  }
-
-  toAdditional() {
-    return { timestamp: new Date().toISOString() };
-  }
-}
-
-// Single item: { data: UserData, permissions: [...], timestamp: '...' }
-return UserResource.make(user).toResponse();
-
-// Collection: { data: UserData[], timestamp: '...' }
-return UserResource.collection(users).toResponse();
-
-// Paginated: { data: UserData[], meta: { total, page, per_page, last_page, has_more } }
-return UserResource.paginate(paginationResult).toResponse();
-
-// With extra metadata
-return UserResource.collection(users)
-  .additional({ count: users.length })
-  .status(200)
-  .headers({ 'X-Total': String(users.length) })
-  .toResponse();
-```
-
-## FormRequest
-
-Import: `import { FormRequest } from '@beeblock/svelar/forms';`
-
-Dedicated validation classes with authorization:
-
-```typescript
-class UpdateUserRequest extends FormRequest {
-  rules() {
-    return z.object({
-      name: z.string().min(2).max(100).optional(),
-      email: z.string().email().optional(),
-      avatar: z.string().url().optional(),
-    });
-  }
-
-  authorize(event) {
-    // Return true/false for authorization
-    const user = event.locals.user;
-    const targetId = event.params.id;
-    return user && (user.id === Number(targetId) || user.role === 'admin');
-  }
-
-  messages() {
-    return {
-      'name.min': 'Name must be at least 2 characters',
-      'email.email': 'Invalid email address',
-    };
-  }
-
-  attributes() {
-    return { avatar: 'profile picture' };
-  }
-
-  passedValidation(data) {
-    // Transform after validation
-    if (data.email) data.email = data.email.toLowerCase();
-    return data;
-  }
-}
-
-// Usage in controller
-async update(event) {
-  const data = await UpdateUserRequest.validate(event);
-  // data is validated + authorized + transformed
-}
-```
-
-### Error Responses
-- `FormValidationError` (422): `{ message, errors: { field: ['message'] } }`
-- `FormAuthorizationError` (403): `{ message: 'Unauthorized' }`
+Unknown controller failures use the request-scoped global ErrorHandler. Custom handleError overrides allow Response | Promise<Response> and return/await super.handleError(error, event). Preserve native SvelteKit redirects/HTTP errors and safe production incident IDs; do not expose driver/stack/secret details.

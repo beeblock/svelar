@@ -15,6 +15,9 @@
 
 ## Working Rules
 
+- Controllers, entities, routes and dashboards require `--capability` or an explicit reviewed `--public` exemption. Keep auth, policies, validation and CSRF enabled either way.
+- Register literal capability manifests and seed their catalogs/profiles. User-bound API credentials are a ceiling on current authority; tenant grants must never imply platform ownership.
+- Use public named queue adapters and persistent scheduler requests for operator controls. Treat realtime as a signal over durable state, not the only record of background work.
 - Use Svelar CLI commands to scaffold project artifacts whenever a generator exists.
 - For CRUD/API features, start with `npx svelar make:entity ... --crud` or the focused `make:controller`, `make:request`, `make:schema`, `make:dto`, `make:action`, `make:resource`, `make:repository`, and `make:model` commands. If you skip a generator, explain the reason before editing files.
 - Keep the Laravel-like flow consistent: route -> controller/page action -> FormRequest/shared schema validation -> DTO -> action -> service -> repository -> model/resource -> response and side effects.

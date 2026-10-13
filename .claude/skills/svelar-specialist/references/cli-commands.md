@@ -17,13 +17,13 @@ Confirm the installed command inventory with `npx svelar --help`; release certif
 ### Code Generators
 | Command | Description | Key Flags |
 |---------|-------------|-----------|
-| `make:model <name>` | Create model class | `-m` (migration), `-c` (controller), `-r` (resource), `-a` (all), `--module` |
-| `make:entity <name>` | Generate the layered schema/request/DTO/action/model/repository/controller/resource flow | `--crud`, `--fields`, `--module` |
+| `make:model <name>` | Create model class; controller/all generation requires an access decision | `-m` (migration), `-c` (controller), `-r` (resource), `-a` (all), `--module`, `--capability`/`--public`, `--scope`, `--screen-route` |
+| `make:entity <name>` | Generate the layered schema/request/DTO/action/model/repository/controller/resource flow | `--crud`, `--fields`, `--module`, `--capability`/`--public`, `--scope`, `--screen-route` |
 | `make:dto <name>` | Generate a typed validated payload | `--module`, `--schema`, `--input` |
 | `make:migration <name>` | Create migration file | `--create <table>`, `--table <table>` |
 | `make:seeder <name>` | Create seeder class | |
-| `make:controller <name>` | Create controller class | `-r` (resource), `-m` (model), `--module` |
-| `make:route <path>` | Create route files with controller | `-c`, `-r` (resource), `--api`, `-m` (methods), `--module` |
+| `make:controller <name>` | Create controller class with an explicit access decision | `-r` (resource), `-m` (model), `--module`, `--capability`/`--public`, `--scope`, `--screen-route` |
+| `make:route <path>` | Create thin route files with controller and capability guards | `-c`, `-r` (resource), `--api`, `-m` (methods), `--module`, `--capability`/`--public`, `--scope`, `--screen-route`, `--permission` (non-resource routes only) |
 | `make:request <name>` | Create FormRequest validation class | `--module` |
 | `make:resource <name>` | Create API resource transformer | `--module`, `-m` (model), `-c` (collection) |
 | `make:schema <name>` | Create a shared Zod 4 or Valibot schema using `svelar.validation.json` | `--module` |
@@ -46,7 +46,8 @@ Confirm the installed command inventory with `npx svelar --help`; release certif
 | `make:ci` | Scaffold GitHub Actions CI/CD workflow | `-f` |
 | `make:infra` | Scaffold droplet setup script + env template | `-f` |
 | `make:deploy` | Run make:docker + make:ci + make:infra | `--db`, `--image`, `--port`, `--dev-port`, `-f` |
-| `make:dashboard` | Scaffold admin dashboard | |
+| `make:dashboard` | Scaffold a guarded operational console | `--capability`/`--public`, `--scope`, `--screen-route`, `-f` (force) |
+| `make:ui [pattern...]` | Generate app-owned operational shadcn patterns; defaults to all six | `-f` (force); patterns: `select`, `dialog`, `tabs`, `server-table`, `operation-tray`, `capability-editor`, or `all` |
 
 ### Testing
 | Command | Description | Key Flags |
@@ -61,11 +62,12 @@ Confirm the installed command inventory with `npx svelar --help`; release certif
 | `migrate` | Run pending migrations | `--rollback`, `--reset`, `--refresh`, `--fresh`, `--status`, `--seed`, `--force` |
 | `seed:run` | Run database seeders | `--class` |
 | `search:setup` | Configure model indexes with Meilisearch | `--help` for installed options |
+| `deploy:migrate` | Run forward migrations under exclusive ownership | `--check`, `--connection` |
 
 ### Queue
 | Command | Description | Key Flags |
 |---------|-------------|-----------|
-| `queue:work` | Keep a long-lived worker, or explicitly run finite work | `--queue`, `--concurrency`, `--lock-duration`, `--stalled-interval`, `--grace-period`, `--max-jobs`, `--max-time`, `--sleep`, `--once` |
+| `queue:work` | Run a configured queue/profile worker, or explicitly run finite work | `--queue`, `--connection`, `--profile`, `--concurrency`, `--lock-duration`, `--stalled-interval`, `--max-stalled-count`, `--grace-period`, `--max-jobs`, `--max-time`, `--sleep`, `--once` |
 | `queue:failed` | List failed jobs | |
 | `queue:retry <id>` | Retry failed job | `--all` |
 | `queue:flush` | Delete all failed job records | |
@@ -73,7 +75,9 @@ Confirm the installed command inventory with `npx svelar --help`; release certif
 ### Scheduler
 | Command | Description | Key Flags |
 |---------|-------------|-----------|
-| `schedule:run` | Run the task scheduler | `--once` |
+| `schedule:run` | Run due work or enqueue run-now | `--once`, `--task`, `--sleep`, `--max-time`, `--grace-period` |
+| `schedule:work` | Run the scheduler worker using the registry's persistent/legacy mode | `--once`, `--task`, `--sleep`, `--max-time`, `--grace-period` |
+| `schedule:list` | Read shared task status | `--json` |
 
 ### Plugins
 | Command | Description | Key Flags |
@@ -98,7 +102,7 @@ Confirm the installed command inventory with `npx svelar --help`; release certif
 | `prod:down` | Stop prod containers | `--service` |
 | `prod:logs` | Follow prod container logs | `--service` |
 | `prod:restart` | Recreate runtime services without taking dependencies down | `--service` |
-| `prod:deploy` | Pull images, run migrations, then start and wait for health | `--service` |
+| `prod:deploy` | Start-first immutable release promotion with readiness and retained rollback | `--image` (not `latest`), `--rollback`, `--no-pull`, `--no-migrate`, `--compatible-migrations` |
 
 ### Routes
 | Command | Description | Key Flags |
@@ -113,24 +117,28 @@ Most generators accept `--module <ModuleName>` to place files in a DDD module st
 npx svelar make:model Post --module Blog
 # Creates: src/lib/modules/Blog/domain/models/Post.ts
 
-npx svelar make:controller PostController --module Blog
+npx svelar make:controller PostController --module Blog --capability=posts --scope=team --screen-route=/posts
 # Creates: src/lib/modules/Blog/interface/http/controllers/PostController.ts
 ```
+
+## Access Decisions
+
+Controllers, entities, routes and dashboards require `--capability=<resource>` or an explicitly reviewed `--public` exemption. `make:model --all`/`--controller` forwards that decision. `--scope=team|platform` determines the capability catalog scope; `--screen-route` records the screen's route. `--permission=<canonical capability>` is only for a custom non-resource route, not one broad grant over a CRUD resource. `--public` exempts functional RBAC only; authentication, CSRF, validation and resource policies remain required.
 
 ## Common Workflows
 
 ### New feature (model + full stack)
 ```bash
-npx svelar make:entity Post --module blog --fields "title:string,body:text,published:boolean" --crud
+npx svelar make:entity Post --module blog --fields "title:string,body:text,published:boolean" --crud --capability=posts --scope=team --screen-route=/posts
 # Creates: model, schema, DTOs, FormRequests, actions, resource, repository, service, controller, migration
 ```
 
 ### CRUD API endpoint
 ```bash
-npx svelar make:model Product -a
+npx svelar make:model Product -a --capability=products --scope=team --screen-route=/products
 npx svelar make:request CreateProductRequest
 npx svelar make:request UpdateProductRequest
-npx svelar make:route api/products --resource --controller ProductController
+npx svelar make:route api/products --resource --controller ProductController --capability=products --scope=team --screen-route=/products
 npx svelar migrate
 ```
 
@@ -138,7 +146,23 @@ npx svelar migrate
 ```bash
 npx svelar make:job ProcessOrder
 npx svelar make:task CleanupOldOrders
+npx svelar queue:work --profile=notifications --max-time=3600 --grace-period=30
+npx svelar schedule:work --sleep=1000 --max-time=3600 --grace-period=30
+npx svelar schedule:run --task=cleanup-old-orders
+npx svelar schedule:list --json
 ```
+
+Worker profiles must be registered in application configuration; names are not built-in presets. `schedule:run --task` requires a persistent scheduler registry and enqueues a durable request, not inline execution. Scheduler `--grace-period` warns while draining; it never releases healthy leases before the handler and hooks finish. Scheduler scope/timezone comes from its registry, not a `--profile` flag or ambient HTTP tenant.
+
+### Optional UI patterns
+```bash
+npm run ui:install
+npx svelar make:ui select,dialog
+npx svelar make:ui server-table operation-tray capability-editor
+npx svelar make:ui all
+```
+
+The installer retains all shadcn primitives. Patterns use `$lib/shared/components/patterns` in DDD apps and `$lib/components/patterns` in flat apps, alongside shared `contracts.ts`/`helpers.ts`. No routes, backend writes or demo data are generated. Existing app-owned components are preserved without `--force`; customized shared contracts/helpers require review before forced replacement. UI visibility is not authorization: keep capability checks and shared FormRequest/DTO validation on every server write.
 
 ### Testing setup
 ```bash

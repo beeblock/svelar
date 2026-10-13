@@ -14,6 +14,9 @@
 
 ## Working Rules
 
+- Controllers, entities, routes and dashboards require `--capability` or an explicit reviewed `--public` exemption. Keep auth, policies, validation and CSRF enabled either way.
+- Register literal capability manifests and seed their catalogs/profiles. User-bound API credentials are a ceiling on current authority; tenant grants must never imply platform ownership.
+- Use public named queue adapters and persistent scheduler requests for operator controls. Treat realtime as a signal over durable state, not the only record of background work.
 - Use Svelar CLI commands to scaffold project artifacts whenever a generator exists. Prefer `npx svelar make:entity <Name> --module <module> --fields "<field:type,...>" --crud` for a full resource scaffold, and use focused generators when only one artifact is needed: `make:model`, `make:migration`, `make:controller`, `make:service`, `make:repository`, `make:schema`, `make:dto`, `make:request`, `make:resource`, `make:action`, `make:job`, `make:task`, `make:command`, `make:route`, `make:docker`, `make:dashboard`, and `make:broadcasting`.
 - For CRUD/API features, start with `npx svelar make:entity ... --crud` or the focused `make:controller`, `make:request`, `make:schema`, `make:dto`, `make:action`, `make:resource`, `make:repository`, and `make:model` commands. If you skip a generator, explain the reason before editing files.
 - In DDD apps, module artifacts belong in layered folders: `domain/models`, `domain/events`, `domain/observers`, `domain/policies`, `application/actions`, `application/dto`, `application/listeners`, `application/notifications`, `application/services`, `infrastructure/repositories`, `interface/http/controllers`, `interface/http/requests`, `interface/http/resources`, and `contracts/schemas`.

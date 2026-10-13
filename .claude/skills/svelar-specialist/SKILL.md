@@ -10,7 +10,7 @@ Svelar is a Laravel-inspired TypeScript framework on SvelteKit 2. Treat the docs
 ## Non-Negotiable Rules
 
 - Use Svelar CLI generators before hand-writing artifacts whenever a generator exists.
-- For CRUD/API features, start with `npx svelar make:entity ... --crud` or the focused `make:controller`, `make:request`, `make:schema`, `make:action`, `make:resource`, `make:repository`, and `make:model` commands. If you skip a generator, explain the reason before editing files.
+- For CRUD/API features, start with `npx svelar make:entity ... --crud` or the focused `make:controller`, `make:request`, `make:schema`, `make:dto`, `make:action`, `make:resource`, `make:repository`, and `make:model` commands. If you skip a generator, explain the reason before editing files.
 - Do not bypass Svelar architecture with ad hoc page-only logic for real features.
 - Default app flow is: route -> controller/page action -> FormRequest/shared schema validation -> DTO -> action -> service -> repository -> model/resource -> response.
 - Use controllers for HTTP/API resources. SvelteKit page server actions may orchestrate page forms, but business workflows still go through FormRequest -> DTO -> action/service.
@@ -63,7 +63,7 @@ Svelar is a Laravel-inspired TypeScript framework on SvelteKit 2. Treat the docs
 For a full Laravel-style resource, start here:
 
 ```bash
-npx svelar make:entity Invoice --module=billing --fields "title:string,total:number,status:enum(draft,paid)" --crud
+npx svelar make:entity Invoice --module=billing --fields "title:string,total:number,status:enum(draft,paid)" --crud --capability=invoices --scope=team --screen-route=/invoices
 ```
 
 Use focused generators for individual artifacts:
@@ -72,11 +72,12 @@ Use focused generators for individual artifacts:
 npx svelar make:model Invoice --module=billing
 npx svelar make:migration create_invoices_table
 npx svelar make:schema invoice --module=billing
+npx svelar make:dto CreateInvoice --module=billing --input=CreateInvoiceInput --schema=invoice
 npx svelar make:request CreateInvoiceRequest --module=billing
 npx svelar make:action CreateInvoiceAction --module=billing
 npx svelar make:service InvoiceService --module=billing
 npx svelar make:repository InvoiceRepository --module=billing
-npx svelar make:controller InvoiceController --module=billing
+npx svelar make:controller InvoiceController --module=billing --capability=invoices --scope=team --screen-route=/invoices
 npx svelar make:resource InvoiceResource --module=billing
 npx svelar make:event InvoicePaid --module=billing
 npx svelar make:listener SendInvoiceReceipt --module=billing
@@ -86,7 +87,7 @@ npx svelar make:task PruneOldInvoices
 npx svelar make:command ReconcileInvoices
 npx svelar make:channel TeamChannel
 npx svelar make:broadcasting
-npx svelar make:dashboard
+npx svelar make:dashboard --capability=operations --scope=platform
 npx svelar make:docker
 npx svelar make:test InvoiceService --unit
 ```
@@ -322,6 +323,11 @@ Use `.default(value)`, not `.defaultTo(value)`. Use `addColumn` and `dropColumn`
 
 ## Auth, Policies, Permissions, And Teams
 
+- Controllers, entities, routes and dashboards require an explicit capability decision. Prefer `--capability=<resource>` with the correct team/platform scope and page path. Use `--public` only as a reviewed functional-RBAC exemption; it does not disable auth, policies, validation or CSRF. `make:model --all` forwards the decision too.
+- Use the central literal PermissionManifest and generated access.server resolver. Guard endpoints/page actions before FormRequest parsing; keep model/resource policies afterward. Run `lint:architecture` to catch absent static capabilities and unguarded exports. Read the Permissions & Capabilities guide before implementing a role editor or custom resolver.
+- System profiles evolve as defaults - exclusions + inclusions; custom profiles are exact. A full-product tenant role cannot become platform owner. Verify platform identity from current trusted account data, not tenant-editable grants, browser snapshots or captured job flags.
+- User-bound API credentials are a ceiling on current user authority, not all of their owner's roles. Pass verified `credentialCapabilities`; service accounts need matching tenant/actor context and cannot grant platform capabilities. Client `permissions/client` snapshots are presentation only.
+
 - Use Svelar auth/session/API-token helpers instead of custom auth code.
 - Use FormRequest `authorize` for request-level authorization.
 - Use policies for model/resource decisions.
@@ -345,7 +351,7 @@ Listeners react:
 ```ts
 export class BroadcastBoardChangedListener {
   async handle(event: BoardChanged) {
-    await Broadcast.channel(`boards.${event.boardId}`).event('board.changed', event);
+    await Broadcast.to(`boards.${event.boardId}`).send('board.changed', { boardId: event.boardId });
   }
 }
 ```
@@ -367,6 +373,24 @@ For request/response reads across modules, do not import another module's model/
 - Pass the queue name to `JobMonitor.getJob/retryJob/deleteJob` so job IDs cannot resolve in another queue. Runtime metrics can be unknown; do not replace null with a false healthy value.
 - Inspect `ScheduleMonitor.runTask()` results: `skipped` means overlap prevented execution and `success: false` means execution failed. An awaited promise alone is not success.
 - Use callback-scoped `fakeQueue`, `fakeEvents`, `fakeNotifications`, `fakeHttp`, and `fakeMail` from `@beeblock/svelar/testing`; await all work inside the callback so interception is restored reliably.
+
+## Production Runtime Contracts
+
+- Authenticate before Origin/CSRF. Only verified `authenticatedVia === 'bearer'` credentials can exempt machine requests; a supplied Bearer header cannot bypass browser protections or fall back to a session. Independently signed incoming-webhook paths resolve provider credentials themselves and never borrow a browser identity.
+- Single authenticated endpoints use `csrfExcludeExactPaths`/`excludeExactPaths`; never exempt all `/api/internal/`. Prefix exceptions use path-segment boundaries and handlers still verify their own credentials. Review recognized legacy exclusions through `update --migrate-core` instead of assuming a package update overwrites app hooks.
+- Use configured `AuthManager` eligibility on password, session, token, refresh, OTP and federation paths. Federation callbacks call `auth.login()` after provider/state proof and secure account linking; never write `auth_user_id` directly. Add migrations before enabling new account-status columns in existing apps. Auth APIs already audit attempts: do not emit duplicate template events or record passwords/tokens.
+- Use the configured model primary key and `auth.id()` for identity, not a caller's shadow `user.id`. Match actual foreign-key types through app migrations. Preserve server-validated return paths across login/register/recovery/OTP links; never redirect from unvalidated client input.
+- Unknown controller failures delegate to the current request's configured global ErrorHandler. Allow `Response | Promise<Response>` and return or await `super.handleError(error, event)`; preserve native HTTP errors/redirects and do not dump secrets or bypass incident reporting.
+- Bind public branding through `auth.presentation()`, never expose server auth configuration. Render only real available configured provider buttons; branding slots do not install OAuth/OIDC/SAML adapters. New-app auth uses the generated shared AuthFrame.
+
+- For named/multi-process queue operations, use `Queue.adapter(queue, connection)` or `JobMonitor.adapter`, including source (`live`/`dead-letter`) on references. Use public indexed filters, batch retry/cleanup, durable replay and timelines; never import BullMQ internals in app code. Redact adapter payload/error/context before browser output. Unknown/foreign worker telemetry is null/incomplete, not healthy zero.
+- Define worker profiles explicitly and run `queue:work --profile=...`; a daemon holds one worker and drains on signals. Finite workers are intentional tests, not daemon loops. Register jobs/definitions in the common bootstrap.
+- Use persistent scheduler runtime and `ScheduleMonitor.requestRun()` for operator run-now. A queued request is not a completed task. Scope tenant schedulers immutably, configure timezone/missed-run bounds, and wait for active tasks before releasing their locks.
+- Use Cache atomic counters/CAS/owner locks/reservations for coordination and `Http.budget` for distributed credential/account quotas. Null coordination fails closed; memory is process-local. Trust only the configured proxy chain, not the leftmost forwarded header.
+- Register durable WebhookInbox sources with exact raw-byte provider verification and trusted account mapping. New apps sweep pending receipts; existing apps must add the sweep. Handlers are at-least-once and require domain idempotency. Do not use the generic body-HMAC adapter as a Stripe timestamp verifier. Protect replay/ignore/raw inspections; never acknowledge before durable capture.
+- Use `BackgroundOperation` for persisted progress/result/cancellation and safe local resource links. Register handlers/sweep across processes, enforce tenant+actor ownership and private channel auth. Cancellation is cooperative; queue/realtime are wake-up signals, not the only copy of state.
+- Session renewal comes from real navigation/mutations or trusted server `markActivity`, not client polling headers. Use configured idle/absolute/remember limits and the protected status/renew controller; multitab messages invalidate state only. Shared schemas/Superforms still validate login fields.
+- Use callback-scoped `fakeClock` only in a sequential Vitest test with its public testContext; await ticks and restore real timers. Use explicit `runWithContext`/`withTenant`/`withActor` and real `withWebhookInbox` harnesses. Native DB resets require an isolated test database and explicit destructive acknowledgement.
 
 ## Shared Logs And Durable Search
 
@@ -474,3 +498,9 @@ npm run certify
 ```
 
 For generated app or dogfood verification, create sibling apps under `/Users/rzeradev/projects/beeblock/svelar-testing-area/`, use non-default service ports, and test browser-visible behavior with Postgres/PgBouncer, Redis/BullMQ/cache, RustFS, Gotenberg, Meilisearch, auth/session/API tokens, policies/permissions, teams, webhooks, uploads, PDF, SSE, Soketi/Pusher realtime, logs, audit, exception handling, scheduler, CLI commands, and tinker.
+
+## Isolated Acceptance Tests
+
+- Async factories may await real password hashes in `definition()`. Use `makeAsync`/`makeManyAsync` for non-persisted async definitions; synchronous `make` methods reject them. Never store fake hashes or import production app bootstrap into reset-based tests.
+- Use `withQueueRecovery` with a public shared adapter and caller-owned start/stop/kill fixtures. Await all operations, honor abort signals/deadlines, and clean only owned processes/services. Fake adapters do not prove native Redis/BullMQ recovery.
+- Dashboard queue topology, retained diagnostics, scheduler pages and dependency probes have explicit coverage/truncation/unknown state. Copy cache driver inventory from the actual configuration object. Empty/null reads and subscription readiness are not distributed health or proof of visible realtime delivery.
