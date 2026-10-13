@@ -133,6 +133,83 @@ export class LintArchitectureCommand extends Command {
         }
         return undefined;
       };
+      const declarationFiles = new Map<string, TypeScript.SourceFile>();
+      const frameworkRoles = new Map<string, Role | undefined>();
+      let declarationBytes = 0;
+      let declarationsTruncated = false;
+      const declarationFile = (path: string): TypeScript.SourceFile | undefined => {
+        const cached = declarationFiles.get(path);
+        if (cached) return cached;
+        if (!/\.d\.[cm]?ts$/.test(path) || !existsSync(path)) return undefined;
+        const size = lstatSync(path).size;
+        if (declarationFiles.size >= 128 || size > 2 * 1024 * 1024 || declarationBytes + size > 8 * 1024 * 1024) {
+          declarationsTruncated = true; return undefined;
+        }
+        const source = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true);
+        declarationFiles.set(path, source); declarationBytes += size;
+        return source;
+      };
+      const resolveDeclaration = (module: string, containingFile: string): string | undefined => {
+        if (!module.startsWith('.') && module !== '@beeblock/svelar' && !module.startsWith('@beeblock/svelar/')) return undefined;
+        return ts.resolveModuleName(module, containingFile, { moduleResolution: ts.ModuleResolutionKind.Bundler, module: ts.ModuleKind.ESNext }, ts.sys).resolvedModule?.resolvedFileName;
+      };
+      const declarationRole = (file: string, name: string, depth = 0, seen = new Set<string>()): Role | undefined => {
+        const key = `${file}#${name}`;
+        if (depth > 12) { declarationsTruncated = true; return undefined; }
+        if (seen.has(key)) return undefined;
+        seen = new Set(seen); seen.add(key);
+        const source = declarationFile(file);
+        if (!source) return undefined;
+        const fromModule = (module: string, exported: string) => {
+          const target = resolveDeclaration(module, file);
+          return target ? declarationRole(target, exported, depth + 1, seen) : undefined;
+        };
+        const localRole = (expression: TypeScript.Expression): Role | undefined => {
+          expression = unwrapExpression(ts, expression);
+          if (ts.isCallExpression(expression)) return localRole(expression.expression);
+          const identifier = ts.isIdentifier(expression) ? expression : ts.isPropertyAccessExpression(expression) && ts.isIdentifier(expression.expression) ? expression.expression : undefined;
+          if (!identifier) return undefined;
+          for (const node of source.statements) if (ts.isImportDeclaration(node)) {
+            const module = staticString(ts, node.moduleSpecifier); if (!module) continue;
+            const clause = node.importClause;
+            if (clause?.name?.text === identifier.text) return fromModule(module, 'default');
+            const bindings = clause?.namedBindings;
+            if (bindings && ts.isNamespaceImport(bindings) && bindings.name.text === identifier.text && ts.isPropertyAccessExpression(expression)) return fromModule(module, expression.name.text);
+            if (bindings && ts.isNamedImports(bindings)) {
+              const item = bindings.elements.find(item => item.name.text === identifier.text);
+              if (item) return fromModule(module, (item.propertyName ?? item.name).text);
+            }
+          }
+          return ts.isIdentifier(expression) ? declarationRole(file, expression.text, depth + 1, seen) : undefined;
+        };
+        for (const node of source.statements) {
+          if (ts.isClassDeclaration(node) && (node.name?.text === name || name === 'default' && ts.getModifiers(node)?.some(modifier => modifier.kind === ts.SyntaxKind.DefaultKeyword))) {
+            const base = node.heritageClauses?.find(clause => clause.token === ts.SyntaxKind.ExtendsKeyword)?.types[0]?.expression;
+            if (base) return localRole(base);
+            return node.name ? FRAMEWORK_ROLES[node.name.text] : undefined;
+          }
+          if (ts.isExportAssignment(node) && name === 'default') return localRole(node.expression);
+          if (!ts.isExportDeclaration(node)) continue;
+          const module = staticString(ts, node.moduleSpecifier);
+          if (node.exportClause && ts.isNamedExports(node.exportClause)) {
+            const item = node.exportClause.elements.find(item => item.name.text === name);
+            if (item) return module ? fromModule(module, (item.propertyName ?? item.name).text) : localRole(item.propertyName ?? item.name);
+          } else if (!node.exportClause && module) {
+            const role = fromModule(module, name); if (role) return role;
+          }
+        }
+        // Public barrels can re-export a local import through an export list.
+        return undefined;
+      };
+      const frameworkRole = (module: string, name: string, containingFile: string): Role | undefined => {
+        if (FRAMEWORK_ROLES[name]) return FRAMEWORK_ROLES[name];
+        const key = `${containingFile}:${module}#${name}`;
+        if (frameworkRoles.has(key)) return frameworkRoles.get(key);
+        const target = resolveDeclaration(module, containingFile);
+        const role = target ? declarationRole(target, name) : undefined;
+        frameworkRoles.set(key, role);
+        return role;
+      };
       const imported = (info: SourceInfo, unit: ArchitectureSourceUnit, node: TypeScript.Identifier): { module: string; name: string; target?: SourceInfo } | undefined => {
         const symbol = unit.checker.getSymbolAtLocation(node);
         for (const declaration of symbol?.declarations ?? []) {
@@ -169,6 +246,24 @@ export class LintArchitectureCommand extends Command {
         }
         return undefined;
       };
+      const exportedRole = (info: SourceInfo, name: string, depth = 0): Role | undefined => {
+        if (depth > 8) return undefined;
+        const cls = exportedClass(info, name); if (cls?.cls.role) return cls.cls.role;
+        for (const unit of info.units) for (const node of unit.source.statements) {
+          if (!ts.isExportDeclaration(node) || !node.moduleSpecifier) continue;
+          const module = staticString(ts, node.moduleSpecifier); if (!module) continue;
+          const item = node.exportClause && ts.isNamedExports(node.exportClause) ? node.exportClause.elements.find(item => item.name.text === name) : undefined;
+          if (node.exportClause && !item) continue;
+          const exported = item ? (item.propertyName ?? item.name).text : name;
+          if (module === '@beeblock/svelar' || module.startsWith('@beeblock/svelar/')) {
+            const role = frameworkRole(module, exported, info.absolute); if (role) return role;
+          } else {
+            const target = resolveImport(info, module);
+            const role = target ? exportedRole(target, exported, depth + 1) : undefined; if (role) return role;
+          }
+        }
+        return undefined;
+      };
       const roleOf = (info: SourceInfo, unit: ArchitectureSourceUnit, expression: TypeScript.Expression, depth = 0): Role | undefined => {
         if (depth > 12) return undefined;
         expression = unwrapExpression(ts, expression);
@@ -191,16 +286,17 @@ export class LintArchitectureCommand extends Command {
           }
           if (ts.isIdentifier(object)) {
             const binding = imported(info, unit, object);
-            if (binding?.name === '*' && binding.module.startsWith('@beeblock/svelar')) return FRAMEWORK_ROLES[expression.name.text];
+            if (binding?.name === '*' && (binding.module === '@beeblock/svelar' || binding.module.startsWith('@beeblock/svelar/'))) return frameworkRole(binding.module, expression.name.text, info.absolute);
+            if (binding?.name === '*' && binding.target) return exportedRole(binding.target, expression.name.text);
           }
           return roleOf(info, unit, object, depth + 1);
         }
         if (!ts.isIdentifier(expression)) return undefined;
         const binding = imported(info, unit, expression);
-        if (binding?.module === '@beeblock/svelar' || binding?.module.startsWith('@beeblock/svelar/')) return FRAMEWORK_ROLES[binding.name];
+        if (binding?.module === '@beeblock/svelar' || binding?.module.startsWith('@beeblock/svelar/')) return frameworkRole(binding.module, binding.name, info.absolute);
         if (binding?.target) {
           const declaration = exportedClass(binding.target, binding.name);
-          return declaration ? declaration.cls.role : pathRole(binding.target.path);
+          return declaration?.cls.role ?? exportedRole(binding.target, binding.name) ?? pathRole(binding.target.path);
         }
         const symbol = unit.checker.getSymbolAtLocation(expression);
         for (const declaration of symbol?.declarations ?? []) {
@@ -238,11 +334,95 @@ export class LintArchitectureCommand extends Command {
           if (role) { cls.role = role; info.roles.add(role); }
         }
       }
+      const exportedContract = (info: SourceInfo, name: string, depth = 0): { info: SourceInfo; unit: ArchitectureSourceUnit; node: TypeScript.TypeAliasDeclaration | TypeScript.InterfaceDeclaration } | undefined => {
+        if (depth > 12) return undefined;
+        for (const unit of info.units) for (const node of unit.source.statements) {
+          if ((ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node)) && node.name.text === name) return { info, unit, node };
+          if (!ts.isExportDeclaration(node)) continue;
+          const target = resolveImport(info, staticString(ts, node.moduleSpecifier) ?? '') ?? (!node.moduleSpecifier ? info : undefined);
+          if (!target) continue;
+          if (node.exportClause && ts.isNamedExports(node.exportClause)) {
+            const item = node.exportClause.elements.find(item => item.name.text === name);
+            if (item) {
+              const local = item.propertyName ?? item.name;
+              if (target === info) {
+                const binding = ts.isIdentifier(local) ? imported(info, unit, local) : undefined;
+                if (binding?.target) return exportedContract(binding.target, binding.name, depth + 1);
+              }
+              return exportedContract(target, local.text, depth + 1);
+            }
+          } else if (!node.exportClause && target !== info) {
+            const found = exportedContract(target, name, depth + 1); if (found) return found;
+          }
+        }
+        return undefined;
+      };
+      const dtoType = (info: SourceInfo, unit: ArchitectureSourceUnit, type: TypeScript.TypeNode, depth: number): boolean => {
+        if (depth > 12) return false;
+        if (ts.isParenthesizedTypeNode(type)) return dtoType(info, unit, type.type, depth + 1);
+        if (!ts.isTypeReferenceNode(type)) return false;
+        if (ts.isIdentifier(type.typeName)) {
+          if (['Readonly', 'Partial', 'Required', 'Pick', 'Omit'].includes(type.typeName.text) && type.typeArguments?.[0]) return dtoType(info, unit, type.typeArguments[0], depth + 1);
+          const binding = imported(info, unit, type.typeName);
+          if (binding && ['zod', 'zod/v4', 'valibot', '@beeblock/svelar/validation', '@beeblock/svelar/validation/valibot'].includes(binding.module)
+            && ['infer', 'output', 'InferOutput'].includes(binding.name)) return schemaOutput(info, unit, type);
+          return dtoIdentifier(info, unit, type.typeName, depth + 1);
+        }
+        if (!ts.isQualifiedName(type.typeName) || !ts.isIdentifier(type.typeName.left)) return false;
+        const binding = imported(info, unit, type.typeName.left);
+        if (binding?.name === '*' && binding.target) {
+          if (exportedRole(binding.target, type.typeName.right.text) === 'dto') return true;
+          const contract = exportedContract(binding.target, type.typeName.right.text);
+          if (contract) return /(?:Dto|DTO)$/.test(contract.node.name.text) || pathRole(contract.info.path) === 'dto'
+            || ts.isTypeAliasDeclaration(contract.node) && dtoType(contract.info, contract.unit, contract.node.type, depth + 1);
+        }
+        return !!binding && ['z', 'v', '*', 'default'].includes(binding.name)
+          && ['zod', 'zod/v4', 'valibot', '@beeblock/svelar/validation', '@beeblock/svelar/validation/valibot'].includes(binding.module)
+          && ['infer', 'output', 'InferOutput'].includes(type.typeName.right.text) && schemaOutput(info, unit, type);
+      };
+      const schemaOutput = (info: SourceInfo, unit: ArchitectureSourceUnit, type: TypeScript.TypeReferenceNode): boolean => {
+        const query = type.typeArguments?.[0];
+        return !!query && ts.isTypeQueryNode(query) && ts.isIdentifier(query.exprName)
+          && (roleOf(info, unit, query.exprName) === 'schema' || pathRole(info.path) === 'schema');
+      };
+      const dtoIdentifier = (info: SourceInfo, unit: ArchitectureSourceUnit, identifier: TypeScript.Identifier, depth = 0): boolean => {
+        if (depth > 12) return false;
+        if (roleOf(info, unit, identifier) === 'dto') return true;
+        const binding = imported(info, unit, identifier);
+        const contract = binding?.target ? exportedContract(binding.target, binding.name) : undefined;
+        const declarations = contract ? [contract.node] : unit.checker.getSymbolAtLocation(identifier)?.declarations ?? [];
+        for (const declaration of declarations) {
+          if (!ts.isTypeAliasDeclaration(declaration) && !ts.isInterfaceDeclaration(declaration)) continue;
+          const owner = contract?.info ?? info; const part = contract?.unit ?? unit;
+          if (/(?:Dto|DTO)$/.test(declaration.name.text) || pathRole(owner.path) === 'dto') return true;
+          if (ts.isTypeAliasDeclaration(declaration) && dtoType(owner, part, declaration.type, depth + 1)) return true;
+        }
+        return false;
+      };
+      const payloadType = (info: SourceInfo, unit: ArchitectureSourceUnit, type: TypeScript.TypeNode, depth = 0): boolean => {
+        if (depth > 12) return false;
+        if (dtoType(info, unit, type, depth)) return true;
+        if (ts.isTypeLiteralNode(type)) return type.members.length > 0 && type.members.every(ts.isPropertySignature);
+        if (ts.isParenthesizedTypeNode(type)) return payloadType(info, unit, type.type, depth + 1);
+        if (ts.isArrayTypeNode(type)) return payloadType(info, unit, type.elementType, depth + 1);
+        if (!ts.isTypeReferenceNode(type) || !ts.isIdentifier(type.typeName)) return false;
+        const binding = imported(info, unit, type.typeName);
+        const contract = binding?.target ? exportedContract(binding.target, binding.name) : undefined;
+        const declarations = contract ? [contract.node] : unit.checker.getSymbolAtLocation(type.typeName)?.declarations ?? [];
+        for (const declaration of declarations) {
+          if (ts.isInterfaceDeclaration(declaration) && declaration.members.length > 0 && declaration.members.every(ts.isPropertySignature)) return true;
+          if (ts.isTypeAliasDeclaration(declaration) && payloadType(contract?.info ?? info, contract?.unit ?? unit, declaration.type, depth + 1)) return true;
+        }
+        return false;
+      };
       const usedRoles = (info: SourceInfo, unit: ArchitectureSourceUnit, node: TypeScript.Node): Set<Role> => {
         const roles = new Set<Role>();
-        for (const item of walk(ts, node)) if (ts.isIdentifier(item) && !insideImport(ts, item)) {
+        for (const item of walk(ts, node)) {
+          if (ts.isTypeReferenceNode(item) && dtoType(info, unit, item, 0)) roles.add('dto');
+          if (!ts.isIdentifier(item) || insideImport(ts, item)) continue;
           const role = roleOf(info, unit, item);
           if (role) roles.add(role);
+          if (dtoIdentifier(info, unit, item)) roles.add('dto');
         }
         return roles;
       };
@@ -271,7 +451,12 @@ export class LintArchitectureCommand extends Command {
           for (const item of walk(ts, current.node)) {
             if (!ts.isIdentifier(item) || insideImport(ts, item)) continue;
             const binding = imported(current.info, current.unit, item);
-            if (!binding?.target) continue;
+            if (!binding?.target) {
+              for (const declaration of current.unit.checker.getSymbolAtLocation(item)?.declarations ?? []) {
+                if (ts.isVariableDeclaration(declaration) && declaration.initializer) queue.push({ info: current.info, unit: current.unit, node: declaration.initializer });
+              }
+              continue;
+            }
             const declared = exportedClass(binding.target, binding.name);
             if (declared) {
               if (declared.cls.role) roles.add(declared.cls.role);
@@ -393,7 +578,9 @@ export class LintArchitectureCommand extends Command {
           const pageAction = route && /\+page\.server\.[jt]s$/.test(info.path) && ts.isPropertyAssignment(node) && ts.isObjectLiteralExpression(node.parent)
             && ts.isVariableDeclaration(node.parent.parent) && ts.isIdentifier(node.parent.parent.name) && node.parent.parent.name.text === 'actions';
           const methodName = ts.isMethodDeclaration(node) ? ts.isIdentifier(node.name) ? node.name.text : staticString(ts, node.name) ?? '' : '';
-          const controllerMethod = ts.isMethodDeclaration(node) && info.roles.has('controller') && WRITE_NAMES.test(methodName);
+          let methodOwner: TypeScript.Node | undefined = node.parent;
+          while (methodOwner && !ts.isClassDeclaration(methodOwner)) methodOwner = methodOwner.parent;
+          const controllerMethod = ts.isMethodDeclaration(node) && info.classes.some(cls => cls.node === methodOwner && cls.role === 'controller') && WRITE_NAMES.test(methodName);
           const writeAction = cls?.role === 'action' && (WRITE_NAMES.test(cls.name.charAt(0).toLowerCase() + cls.name.slice(1))
             || walk(ts, cls.node).some((item) => ts.isCallExpression(item) && ts.isPropertyAccessExpression(item.expression)
               && WRITE.has(item.expression.name.text) && ['model', 'query', 'connection', 'repository'].includes(roleOf(info, unit, item.expression.expression) ?? '')));
@@ -404,17 +591,14 @@ export class LintArchitectureCommand extends Command {
           const roles = flowRoles(info, unit, node);
           if (mutationRoute && !roles.has('controller')) add(info, unit, node, 'warning', 'controller-flow', 'Mutating route should delegate through a controller with Request, DTO and action layers.');
           if (mutationRoute && roles.has('controller')) continue;
-          if (writeAction) for (const caller of sources.values()) if (caller.imports.has(info.absolute) && caller.roles.has('controller')) {
-            for (const part of caller.units) for (const method of walk(ts, part.source).filter(ts.isMethodDeclaration)) {
-              const referencesAction = walk(ts, method).some((item) => {
-                if (!ts.isIdentifier(item)) return false;
-                const binding = imported(caller, part, item);
-                return binding?.target && exportedClass(binding.target, binding.name)?.cls.node === node;
-              });
-              if (referencesAction) for (const role of flowRoles(caller, part, method)) roles.add(role);
-            }
+          // Reusable actions accept DTO contracts; HTTP validation belongs to their controller/page caller.
+          if (writeAction) {
+            const typedInput = cls!.node.members.filter(ts.isMethodDeclaration).filter(method => ts.isIdentifier(method.name) && ['execute', 'run'].includes(method.name.text))
+              .some(method => method.parameters[0]?.type && payloadType(info, unit, method.parameters[0].type));
+            if (!roles.has('dto') && !typedInput) add(info, unit, node, 'warning', 'write-flow', 'No linked DTO contract observed for this reusable write action. HTTP callers must separately link FormRequest, DTO and shared schema; unrelated artifacts do not satisfy it.');
+            continue;
           }
-          const missing = (['request', 'dto', 'action', 'schema'] as const).filter((role) => !roles.has(role) && !(role === 'action' && writeAction));
+          const missing = (['request', 'dto', 'action', 'schema'] as const).filter((role) => !roles.has(role));
           if (missing.length) add(info, unit, node, 'warning', 'write-flow', `No linked ${missing.map((role) => role === 'request' ? 'FormRequest' : role === 'dto' ? 'DTO' : role === 'schema' ? 'shared schema' : 'action').join(', ')} observed for this write workflow; unrelated project artifacts do not satisfy it.`);
         }
       }
@@ -425,6 +609,7 @@ export class LintArchitectureCommand extends Command {
             : 'App-owned job has no Queue.register/registerAll entry reachable from app/bootstrap imports; job directories are not auto-registered.');
       }
       if (graphTruncated) findings.push({ severity: 'warning', rule: 'analysis-limit', file: 'src', line: 1, message: 'A workflow/bootstrap graph exceeded 256 nodes; unverified relationships require manual review.' });
+      if (declarationsTruncated) findings.push({ severity: 'warning', rule: 'analysis-limit', file: 'src', line: 1, message: 'Public declaration analysis exceeded its 128-file / 8 MiB / depth-12 bound; unverified library delegates require manual review.' });
       const capabilityProject = { root, files: [...sources.values()].map((info) => info.path) };
       findings.push(...auditProjectCapabilities(capabilityProject));
       if (options.auditCapabilities) findings.push(...options.auditCapabilities(capabilityProject));
