@@ -41,6 +41,18 @@ import { CreateTeamModelHasPermissionsTable } from './core/00000000_000033_creat
 import { ScopeWebhookInboxIdempotency } from './core/00000000_000034_scope_webhook_inbox_idempotency.js';
 import { CreateSvelarLogsTable } from './core/00000000_000035_create_svelar_logs_table.js';
 import { CreateSearchOutboxTable } from './core/00000000_000036_create_search_outbox_table.js';
+import { AddWebhookInboxProcessing } from './core/00000000_000037_add_webhook_inbox_processing.js';
+import { AddQueueJobLeases } from './core/00000000_000038_add_queue_job_leases.js';
+import { AddFailedQueueReplay } from './core/00000000_000039_add_failed_queue_replay.js';
+import { CreateRoleCapabilityProfilesTable } from './core/00000000_000040_create_role_capability_profiles_table.js';
+import { CreateTeamRoleCapabilityProfilesTable } from './core/00000000_000041_create_team_role_capability_profiles_table.js';
+import { CreateQueueEventsTable } from './core/00000000_000043_create_queue_events_table.js';
+import { AddApiKeyRotationState } from './core/00000000_000045_add_api_key_rotation_state.js';
+import { CreateBackgroundOperationsTable } from './core/00000000_000046_create_background_operations_table.js';
+import { AddSchedulerSettingsPolicy } from './core/00000000_000044_add_scheduler_settings_policy.js';
+import { CreateSchedulerRuntimeTable } from './core/00000000_000047_create_scheduler_runtime_table.js';
+import { CreateSchedulerRequestsTable } from './core/00000000_000048_create_scheduler_requests_table.js';
+import { CreateDeploymentLocksTable } from './core/00000000_000049_create_deployment_locks_table.js';
 
 export {
   CreateSessionsTable,
@@ -78,6 +90,18 @@ export {
   ScopeWebhookInboxIdempotency,
   CreateSvelarLogsTable,
   CreateSearchOutboxTable,
+  AddWebhookInboxProcessing,
+  AddQueueJobLeases,
+  AddFailedQueueReplay,
+  CreateRoleCapabilityProfilesTable,
+  CreateTeamRoleCapabilityProfilesTable,
+  CreateQueueEventsTable,
+  AddApiKeyRotationState,
+  CreateBackgroundOperationsTable,
+  AddSchedulerSettingsPolicy,
+  CreateSchedulerRuntimeTable,
+  CreateSchedulerRequestsTable,
+  CreateDeploymentLocksTable,
 };
 
 const coreMigrationDefinitions = [
@@ -116,6 +140,18 @@ const coreMigrationDefinitions = [
   ['00000000_000034_scope_webhook_inbox_idempotency', ScopeWebhookInboxIdempotency],
   ['00000000_000035_create_svelar_logs_table', CreateSvelarLogsTable],
   ['00000000_000036_create_search_outbox_table', CreateSearchOutboxTable],
+  ['00000000_000037_add_webhook_inbox_processing', AddWebhookInboxProcessing],
+  ['00000000_000038_add_queue_job_leases', AddQueueJobLeases],
+  ['00000000_000039_add_failed_queue_replay', AddFailedQueueReplay],
+  ['00000000_000040_create_role_capability_profiles_table', CreateRoleCapabilityProfilesTable],
+  ['00000000_000041_create_team_role_capability_profiles_table', CreateTeamRoleCapabilityProfilesTable],
+  ['00000000_000043_create_queue_events_table', CreateQueueEventsTable],
+  ['00000000_000044_add_scheduler_settings_policy', AddSchedulerSettingsPolicy],
+  ['00000000_000045_add_api_key_rotation_state', AddApiKeyRotationState],
+  ['00000000_000046_create_background_operations_table', CreateBackgroundOperationsTable],
+  ['00000000_000047_create_scheduler_runtime_table', CreateSchedulerRuntimeTable],
+  ['00000000_000048_create_scheduler_requests_table', CreateSchedulerRequestsTable],
+  ['00000000_000049_create_deployment_locks_table', CreateDeploymentLocksTable],
 ] as const;
 
 export function svelarCoreMigrations(): MigrationFile[] {
