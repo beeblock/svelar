@@ -26,7 +26,7 @@
     "release": "node scripts/publish-svelar.mjs",
     "release:dry-run": "node scripts/publish-svelar.mjs --dry-run --skip-validation",
     "smoke": "node scripts/release-smoke.mjs",
-    "smoke:cli": "node scripts/release-smoke.mjs --app all --validation all --cli-execution --skip-cli-help --skip-shadcn",
+    "smoke:cli": "node scripts/release-smoke.mjs --app all --validation all --cli-execution --skip-cli-help",
     "smoke:upgrade": "node scripts/release-smoke.mjs --app all --validation all --upgrade-from=0.7.9 --skip-cli-help --skip-shadcn",
     "smoke:ddd": "node scripts/release-smoke.mjs --app ddd",
     "smoke:flat": "node scripts/release-smoke.mjs --app flat",
@@ -44,6 +44,7 @@
     "certify": "node scripts/certify-release.mjs",
     "certify:fast": "node scripts/certify-release.mjs --fast",
     "certify:inventory": "node scripts/certify-release.mjs --inventory",
+    "certify:runtime": "node scripts/runtime-certification.mjs --clients=../svelar-testing-area/apps/svelar-smoke-ddd/package.json",
     "security:audit": "node scripts/security-audit.mjs --min-severity=high",
     "security:audit:all": "npm audit --workspaces"
   },
@@ -67,6 +68,6 @@
     }
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.12.0"
   }
 }
