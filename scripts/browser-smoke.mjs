@@ -5,21 +5,24 @@ import { dirname, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { createServer as createPortProbe } from 'node:net';
 import { fileURLToPath } from 'node:url';
+import { assertOperationalBatch, assertSafeOperationalJob, bounded, fixtureSecret, prepareOperationalFixture, validateDeepTarget } from './operational-browser-fixtures.mjs';
 
 const args = process.argv.slice(2);
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const defaultAppDir = resolve(repoRoot, '../svelar-testing-area/apps/svelar-smoke-ddd');
 
-const appDir = resolve(valueFor('--app-dir') ?? defaultAppDir);
+let appDir = resolve(valueFor('--app-dir') ?? defaultAppDir);
 const port = Number(valueFor('--port') ?? 5179);
 const baseUrl = valueFor('--base-url') ?? `http://127.0.0.1:${port}`;
 const noServer = has('--no-server');
+const operationalDeep = has('--operational-deep');
 const serverScript = valueFor('--server-script') ?? 'smoke:serve';
 const headed = has('--headed');
 const slowMo = Number(valueFor('--slow-mo') ?? (headed ? 250 : 0));
-const appEnv = loadDotEnv(appDir);
+let appEnv = loadDotEnv(appDir);
 const internalSecret = process.env.INTERNAL_SECRET ?? appEnv.INTERNAL_SECRET;
 const rateBudgets = new WeakMap();
+const rateBudgetRecorders = new WeakMap();
 
 if (has('--help') || has('-h')) {
 	console.log(`Usage: node scripts/browser-smoke.mjs [options]
@@ -29,6 +32,9 @@ Options:
   --port <port>          Port used by npm run smoke:serve. Default: 5179.
   --base-url <url>       Existing app URL. Default: http://127.0.0.1:<port>.
   --no-server            Do not start npm run smoke:serve; test the existing base URL.
+  --operational-deep     Run only populated operational acceptance in an owned disposable SQLite/Redis copy.
+  --evidence-dir <path>  Deep-mode JSON timeline and desktop/mobile screenshots destination.
+  --expected-core-sha256 <sha>  Require the installed lockfile's core tarball to match this immutable SHA.
   --server-script <name> npm script used to start the app. Default: smoke:serve.
   --headed               Open a visible Chromium window instead of running headless.
   --slow-mo <ms>         Delay browser actions. Default: 250 in headed mode, 0 otherwise.
@@ -49,18 +55,256 @@ try {
 }
 
 let server;
+let operationalFixture;
+let smokeFailure;
 try {
-	if (!noServer) {
+	if (operationalDeep) {
+		validateDeepTarget({ noServer, port, baseUrl });
+		await assertPortAvailable(port);
+		operationalFixture = await prepareOperationalFixture(appDir, { baseUrl, evidenceDir: valueFor('--evidence-dir'), expectedCoreSha256: valueFor('--expected-core-sha256') });
+		appDir = operationalFixture.appDir;
+		appEnv = operationalFixture.env;
+		await operationalFixture.start();
+		server = operationalFixture.startWeb(port).child;
+		await operationalFixture.persist();
+	} else if (!noServer) {
 		await assertPortAvailable(port);
 		server = startServer();
 	}
 
 	await waitForServer(baseUrl, server);
-	await runBrowserSmoke();
+	if (operationalDeep) await runOperationalBrowserSmoke(operationalFixture);
+	else await runBrowserSmoke();
 	console.log(`Browser smoke passed for ${baseUrl}`);
+} catch (error) {
+	smokeFailure = error;
+	throw error;
 } finally {
-	if (server) {
+	if (server && !operationalDeep) {
 		await stopServer(server);
+	}
+	if (operationalFixture) {
+		await operationalFixture.close(smokeFailure);
+		console.log(`Operational browser evidence: ${join(operationalFixture.evidenceDir, 'evidence.json')}`);
+	}
+}
+
+async function runOperationalBrowserSmoke(fixture) {
+	const browser = await chromium.launch({ headless: !headed, slowMo });
+	const errors = [];
+	let page, readerPage;
+	try {
+		const operator = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+		const reader = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+		page = await operator.newPage();
+		readerPage = await reader.newPage();
+	} catch (error) { await browser.close(); throw error; }
+	const scope = new URLSearchParams(fixture.evidence.scope);
+	const queueUrl = (extra = {}) => `${baseUrl}/admin/dashboard?` + new URLSearchParams({ tab: 'queues', ...fixture.evidence.scope, status: 'failed', limit: '25', ...extra });
+	const jobs = fixture.evidence.jobs;
+	for (const observed of [page, readerPage]) {
+		rateBudgetRecorders.set(observed, (details) => fixture.record('observed-global-rate-budget-wait', details));
+		observed.on('pageerror', (error) => errors.push(error));
+		observed.on('response', (response) => {
+			if (!response.url().startsWith(baseUrl)) return;
+			for (const budgetPage of [page, readerPage]) observeRateBudget(budgetPage, response);
+			if (response.status() === 429 || response.status() >= 500) errors.push(new Error(`Unexpected ${response.status()} ${response.url()}; no failed request was retried.`));
+		});
+	}
+	async function acceptance(label, run) {
+		const check = { label, startedAt: new Date().toISOString(), status: 'running' };
+		fixture.evidence.checks.push(check);
+		await fixture.persist();
+		try { await run(); check.status = 'passed'; }
+		catch (error) {
+			check.status = 'failed'; check.error = error.message; errors.push(error);
+			await screenshot(page, `failed-check-${fixture.evidence.checks.length}`).catch(() => {});
+		}
+		check.finishedAt = new Date().toISOString();
+		await fixture.persist();
+	}
+	async function screenshot(target, name) {
+		const path = join(fixture.evidenceDir, name + '.png');
+		await target.screenshot({ path, fullPage: true });
+		fixture.evidence.screenshots.push(path);
+	}
+	async function open(target, url) {
+		await respectRateBudget(target, 15);
+		const response = await target.goto(url, { waitUntil: 'domcontentloaded' });
+		if (!response || response.status() >= 400) throw new Error(`Operational navigation returned ${response?.status()}: ${url}`);
+		await visible(target.getByRole('heading', { level: 1 }), 'operational page heading');
+	}
+	async function login(target, credentials) {
+		await open(target, `${baseUrl}/login`);
+		await target.getByLabel('Email', { exact: true }).fill(credentials.email);
+		await target.getByLabel('Password', { exact: true }).fill(credentials.password);
+		await Promise.all([target.waitForURL('**/dashboard'), target.getByRole('button', { name: 'Sign In', exact: true }).click()]);
+	}
+	async function inspect(target) {
+		await open(target, queueUrl());
+		const row = target.getByRole('region', { name: 'Queue jobs', exact: true }).getByRole('row').filter({ has: target.getByRole('checkbox', { name: 'Select ' + jobs.inspect, exact: true }) });
+		await visible(row, 'actual retained failed job');
+		const response = target.waitForResponse((response) => new URL(response.url()).pathname === '/api/admin/queue/' + jobs.inspect);
+		await row.getByRole('button', { name: 'Inspect job', exact: true }).click();
+		const result = await response;
+		if (result.status() !== 200) throw new Error('Failed job inspection was not accepted.');
+		const body = await result.json();
+		fixture.record('failed-job-contract-observed', { id: body.data?.id, traceCount: body.data?.stacktrace?.length ?? null,
+			redacted: !JSON.stringify(body).includes(fixtureSecret), status: body.data?.status });
+		assertSafeOperationalJob(body.data);
+		fixture.record('safe-failed-job-inspected', { id: body.data.id, ...fixture.evidence.scope,
+			stacktraceMeta: body.data.stacktraceMeta, traceCount: body.data.stacktrace.length });
+		const inspector = target.locator('section[aria-label="Job inspection"]');
+		await visible(inspector.getByRole('heading', { name: 'Retained stack traces', exact: true }), 'visible retained stack diagnostics');
+		await visible(inspector.getByText(/Operational fixture mail failure/).first(), 'safe visible failure');
+		if ((await inspector.innerText()).includes(fixtureSecret)) throw new Error('Inspector rendered a private fixture credential.');
+		if (new URL(target.url()).searchParams.get('job') !== jobs.inspect) throw new Error('Inspection did not keep its named job URL.');
+		await assertPageWidth(target, 'Populated failed-job inspection');
+	}
+	async function batch(remove) {
+		const operation = remove ? 'cleanup' : 'retry';
+		const source = remove ? 'dead-letter' : 'live';
+		const acceptedId = remove ? fixture.evidence.deadLetters['cleanup-safe'] : jobs['retry-safe'];
+		const busyId = remove ? fixture.evidence.deadLetters['cleanup-busy'] : jobs['retry-busy'];
+		const path = '/api/admin/queue/batch/' + operation;
+		await open(page, queueUrl({ status: remove ? 'dead-letter' : 'failed' }));
+		for (const id of [acceptedId, busyId]) await page.getByRole('checkbox', { name: 'Select ' + id, exact: true }).check();
+		const command = page.getByRole('button', { name: remove ? 'Remove selected' : 'Retry selected', exact: true });
+		const dialog = page.locator('dialog[aria-labelledby="confirmation-title"]');
+		let writes = 0;
+		const countWrite = (request) => { if (new URL(request.url()).pathname === path && request.method() === 'POST') writes++; };
+		page.on('request', countWrite);
+		let release;
+		const gate = new Promise((done) => { release = done; });
+		let intercepted;
+		const captured = new Promise((done) => { intercepted = done; });
+		let forwarded;
+		let rejectRoute;
+		const routeFailure = new Promise((_, reject) => { rejectRoute = reject; });
+		routeFailure.catch(() => {});
+		const routePattern = new RegExp('/api/admin/queue/batch/' + operation + '\\?');
+		const routeHandler = (route) => {
+			forwarded = (async () => {
+				try { intercepted(); await gate; await fixture.makeBusy(busyId, source); await route.continue(); }
+				catch (error) { rejectRoute(error); await route.abort('failed'); }
+			})();
+			return forwarded;
+		};
+		let responsePromise;
+		try {
+			await command.click();
+			await visible(dialog, 'batch explicit confirmation');
+			if (writes !== 0) throw new Error('Batch submitted before confirmation.');
+			await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+			await dialog.waitFor({ state: 'hidden' });
+			if (writes !== 0) throw new Error('Cancelled batch submitted a request.');
+			fixture.record('batch-cancelled', { operation, writes, viewport: page.viewportSize() });
+			await page.route(routePattern, routeHandler);
+			await command.click();
+			await visible(dialog, 'batch reconfirmation');
+			responsePromise = page.waitForResponse((response) => new URL(response.url()).pathname === path && response.request().method() === 'POST', { timeout: 45000 });
+			responsePromise.catch(() => {});
+			await dialog.getByRole('button', { name: 'Confirm', exact: true }).click();
+			await bounded(() => captured, 15000, 'Actual batch request interception');
+			await visible(page.getByRole('status').filter({ hasText: 'Processing queue-batch' }), 'batch loading feedback');
+			if (!await command.isDisabled()) throw new Error('Pending batch command remained enabled.');
+			await screenshot(page, `batch-${operation}-loading-${page.viewportSize().width}`);
+			release();
+			const response = await Promise.race([responsePromise, routeFailure]);
+			const body = await response.json();
+			if (response.status() !== 200 || !response.request().headers()['x-csrf-token']) throw new Error('Confirmed batch did not reach the real controller with valid CSRF.');
+			if (body.meta?.auditWarning) throw new Error('Batch completion audit failed.');
+			assertOperationalBatch(body, acceptedId, busyId, source);
+			if (writes !== 1) throw new Error('Confirmed batch submitted more than once.');
+			await visible(page.getByRole('status').filter({ hasText: '1 accepted; 1 not accepted.' }), 'partial batch success feedback');
+			await visible(page.getByRole('alert').filter({ hasText: 'Some records were not accepted.' }), 'partial batch busy feedback');
+			const state = await fixture.state();
+			if (state.replays[remove ? 'cleanup-busy' : 'retry-busy']?.status !== 'active') throw new Error('Busy replay was not retained.');
+			if (remove && state.deadLetters['cleanup-safe'] !== null || !remove && state.replays['retry-safe']?.status !== 'waiting') throw new Error('Accepted batch result did not persist.');
+			fixture.record('batch-partial-outcome', { operation, results: body.data.data.results, viewport: page.viewportSize(), writes });
+			await assertPageWidth(page, 'Populated batch feedback');
+			await screenshot(page, `batch-${operation}-feedback-${page.viewportSize().width}`);
+		} finally {
+			release();
+			if (forwarded) await forwarded;
+			if (responsePromise) await responsePromise.catch(() => {});
+			await page.unroute(routePattern, routeHandler);
+			page.off('request', countWrite);
+		}
+	}
+	try {
+		await login(page, fixture.credentials.operator);
+		await acceptance('Populated same-connection multiworker observations', async () => {
+			await open(page, queueUrl());
+			const stats = await browserApi(page, '/api/admin/stats');
+			const queue = stats.body.data?.queue?.topology?.find((entry) => entry.name === 'default' && entry.connection === 'redis');
+			if (stats.status !== 200 || queue?.runtime?.workers?.observed?.live < 2 || queue?.counts?.active < 2
+				|| queue.runtime.observedConcurrency < 2 || queue.runtime.effectiveConcurrency !== null) throw new Error('Dashboard did not expose actual observed workers without manufacturing full-pool capacity.');
+			const row = page.getByRole('region', { name: 'Registered queues', exact: true }).getByRole('row').filter({ hasText: 'default / redis' });
+			await visible(row, 'populated named Redis topology');
+			await visible(row.getByText(/2 \/ 2 \/ 0/), 'two live and active worker observations');
+			fixture.record('browser-worker-observations', { runtime: queue.runtime, counts: queue.counts });
+			await screenshot(page, 'operational-queues-desktop');
+		});
+		await acceptance('Desktop redacted failed-job error and retained stack', async () => { await inspect(page); await screenshot(page, 'operational-inspector-desktop'); });
+		await acceptance('Actual failed-job pagination keeps the queue and connection', async () => {
+			await open(page, queueUrl({ limit: '2' }));
+			const first = await page.getByRole('region', { name: 'Queue jobs', exact: true }).getByRole('checkbox').evaluateAll((nodes) => nodes.map((node) => node.getAttribute('aria-label')));
+			if (first.length !== 2) throw new Error('Pagination requires two actual first-page jobs.');
+			await page.getByRole('button', { name: 'Next jobs', exact: true }).click();
+			await page.waitForURL('**/admin/dashboard?**offset=2');
+			const url = new URL(page.url());
+			if (url.searchParams.get('connection') !== 'redis' || url.searchParams.get('queue') !== 'default') throw new Error('Job pagination lost the named scope.');
+			const second = await page.getByRole('region', { name: 'Queue jobs', exact: true }).getByRole('checkbox').evaluateAll((nodes) => nodes.map((node) => node.getAttribute('aria-label')));
+			if (second.length !== 2 || second.some((id) => first.includes(id))) throw new Error('Job pagination did not display the next actual retained records.');
+			fixture.record('job-pagination', { first, second, offset: 2, ...fixture.evidence.scope });
+		});
+		await acceptance('Desktop batch retry cancel, loading, partial busy outcome', () => batch(false));
+		await page.setViewportSize({ width: 390, height: 844 });
+		await acceptance('Mobile 390 populated inspector and bounded scrolling', async () => {
+			await inspect(page);
+			await assertScrollableRegion(page, page.getByRole('region', { name: 'Queue jobs', exact: true }), 'Queue jobs');
+			await screenshot(page, 'operational-inspector-mobile');
+		});
+		await acceptance('Mobile 390 batch cleanup cancel, loading, partial busy outcome', () => batch(true));
+		await login(readerPage, fixture.credentials.reader);
+		for (const width of [1280, 390]) {
+			await readerPage.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+			await acceptance(`Read-only role mutation controls at ${width}px`, async () => {
+				await open(readerPage, queueUrl());
+				await readerPage.getByRole('checkbox', { name: 'Select ' + jobs.inspect, exact: true }).check();
+				for (const name of ['Retry selected', 'Remove selected', 'Retry job', 'Remove job', 'Pause queue']) {
+					const buttons = readerPage.getByRole('button', { name, exact: true });
+					for (const button of await buttons.all()) if (await button.isVisible() && !await button.isDisabled()) throw new Error(`Read-only ${name} remained actionable.`);
+				}
+				await assertPageWidth(readerPage, 'Populated read-only console');
+				await screenshot(readerPage, `operational-reader-${width}`);
+			});
+		}
+		await acceptance('Read-only direct HTTP mutations are 403 with valid browser CSRF', async () => {
+			const before = await fixture.state();
+			const references = [{ id: jobs.inspect, source: 'live' }];
+			const denied = [];
+			for (const [path, method, body] of [
+				['/api/admin/queue/' + jobs.inspect + '/retry?' + scope, 'POST', undefined],
+				['/api/admin/queue/' + jobs.inspect + '?' + scope, 'DELETE', { confirmed: true }],
+				['/api/admin/queue/batch/retry?' + scope, 'POST', { references, confirmed: true }],
+				['/api/admin/queue/batch/cleanup?' + scope, 'POST', { references, confirmed: true }],
+				['/api/admin/queue/control/pause?' + scope, 'POST', { paused: true, confirmed: true }],
+			]) {
+				const responsePromise = readerPage.waitForResponse((response) => new URL(response.url()).pathname === new URL(path, baseUrl).pathname && response.request().method() === method);
+				const result = await browserApi(readerPage, path, { method, body, csrf: true });
+				const response = await responsePromise;
+				if (result.status !== 403 || !response.request().headers()['x-csrf-token']) throw new Error(`Read-only ${method} ${path} did not return 403 with valid CSRF (${result.status}).`);
+				denied.push({ path, method, status: result.status, csrfSent: true });
+			}
+			const after = await fixture.state();
+			if (JSON.stringify(before.jobs) !== JSON.stringify(after.jobs) || before.runtime.paused !== after.runtime.paused) throw new Error('Denied read-only requests mutated queue state.');
+			fixture.record('read-only-direct-http', { denied, mutationOccurred: false });
+		});
+		if (errors.length) throw new AggregateError(errors, errors.map((error) => error.message).join('\n'));
+	} finally {
+		await browser.close();
 	}
 }
 
@@ -571,6 +815,7 @@ async function respectRateBudget(page, reserve = 25) {
 	if (delay <= 0) { rateBudgets.delete(page); return; }
 	if (delay > 120_000) throw new Error('Observed global rate-limit reset exceeds the bounded browser smoke wait.');
 	console.log(`Respecting global rate budget: ${budget.remaining} remaining; waiting ${Math.ceil(delay / 1000)}s before the next workflow.`);
+	rateBudgetRecorders.get(page)?.({ remaining: budget.remaining, waitMs: delay, resetAt: budget.resetAt, reserve });
 	await new Promise((resolve) => setTimeout(resolve, delay));
 	rateBudgets.delete(page);
 }
