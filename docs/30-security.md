@@ -113,19 +113,25 @@ For single-process development the default in-memory limiter is fine. In product
 
 ### 3. CSRF Protection (`CsrfMiddleware`)
 
-Validates CSRF tokens on state-changing requests (POST, PUT, DELETE). Automatically excluded for:
+Validates CSRF tokens on state-changing requests (POST, PUT, PATCH, DELETE). Default exceptions are:
 
-- API routes using Bearer token auth
-- Internal API paths (`/api/internal/`)
+- Verified Bearer credentials after Svelar authentication, never a caller-supplied header alone.
+- The independently authenticated internal broadcast endpoint, exactly `/api/internal/broadcast`.
+- The signed incoming-provider namespace `/api/webhooks/incoming/`, whose handlers verify provider credentials before persistence.
+
+Other internal/webhook routes, lookalikes and children of the exact bridge stay protected. Explicit prefix exclusions use path-segment boundaries; single-endpoint exceptions use `csrfExcludeExactPaths`/`excludeExactPaths`. These exceptions do not disable Origin validation or the endpoint's own credential check. Review recognized legacy scaffold exclusions through `svelar update --migrate-core --dry-run`; package installation alone does not overwrite an app-owned hooks file.
 
 ### 4. Request Signatures (`SignatureMiddleware`)
 
 For API-to-API communication, verify request integrity with HMAC signatures:
 
 ```typescript
+const internalSecret = process.env.INTERNAL_SECRET;
+if (!internalSecret) throw new Error('INTERNAL_SECRET is required.');
+
 new SignatureMiddleware({
-  secret: env.INTERNAL_SECRET,
-  paths: ['/api/internal/'],
+  secret: internalSecret,
+  onlyPaths: ['/api/partner/'],
 })
 ```
 

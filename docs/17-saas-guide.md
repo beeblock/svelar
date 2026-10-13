@@ -894,7 +894,8 @@ export const { handle, handleError } = createSvelarApp({
   auth,
   secret: process.env.APP_KEY!,
   sessionStore: new DatabaseSessionStore(),
-  csrfExcludePaths: ['/api/webhooks', '/api/internal/'],
+  csrfExcludePaths: ['/api/webhooks/incoming/'],
+  csrfExcludeExactPaths: ['/api/internal/broadcast'],
   i18n: { paraglideMiddleware, getTextDirection },
 });
 ```

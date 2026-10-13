@@ -100,7 +100,8 @@ export const { handle, handleError } = createSvelarApp({
   rateLimitStore: 'cache',             // use Redis via Cache for multi-instance production apps
   rateLimitCacheStore: 'redis',
   csrfPaths: ['/api/'],
-  csrfExcludePaths: ['/api/webhooks', '/api/internal/'],
+  csrfExcludePaths: ['/api/webhooks/incoming/'],
+  csrfExcludeExactPaths: ['/api/internal/broadcast'],
   authThrottleAttempts: 10,
   authThrottleDecay: 5,
   authThrottleStore: 'cache',          // defaults to rateLimitStore
@@ -335,11 +336,14 @@ new CsrfMiddleware({
   tokenLength: 32, // random bytes before hex encoding (64-character token)
   headerName: 'X-CSRF-Token',
   cookieName: 'csrf_token',
-  excludePaths: ['/api/webhooks/incoming/', '/api/internal/'],
+  excludePaths: ['/api/webhooks/incoming/'],
+  excludeExactPaths: ['/api/internal/broadcast'],
 })
 ```
 
 ## Custom Middleware Example
+
+CSRF prefix options match path-segment boundaries, not similarly named routes. Use `excludeExactPaths` (or `csrfExcludeExactPaths` in `createSvelarApp`) for a single independently authenticated endpoint. The default internal exception is exactly `/api/internal/broadcast`; sibling routes, lookalikes and children remain protected. Do not exempt all `/api/internal/` or `/api/webhooks/`. Excluded handlers still need their own server/provider credential verification, and Origin validation remains enabled.
 
 `createSvelarApp` leaves `/api/webhooks/incoming/` outside Svelar credential resolution through `authExcludePaths`. These routes must authenticate raw provider requests themselves with signatures before persistence. A provider's own `Authorization: Bearer ...` header is not a Svelar token; it remains available to the signature adapter but never establishes a session user or verified Bearer identity. Configure additional independently signed paths explicitly when needed. Authentication exclusions do not disable Origin validation or authorize ordinary CRUD endpoints; configure CSRF exclusions separately and only for independently authenticated machine endpoints.
 
