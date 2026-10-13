@@ -242,11 +242,14 @@ class SearchManager {
     if (this.getSyncDriver() === 'outbox') {
       const connection = this.persistenceContext.getStore()?.connection ?? this.config?.outbox?.connection;
       await this.outbox(connection).enqueue(operation);
-      await Connection.afterCommit(async () => {
-        // Sync queues cannot make this asynchronous; the persistent scheduler sweep is the fallback.
-        if (Queue.getDriver() === 'sync') return;
-        try { await Queue.dispatch(new ProcessSearchOutboxJob(connection), { queue: this.config?.outbox?.queue ?? 'default' }); }
-        catch (error) { this.reportSyncFailure(operation, error); }
+      const queue = this.config?.outbox?.queue ?? 'default';
+      await Connection.afterCommit(() => {
+        try {
+          // A stalled producer connection must not hold an already-committed HTTP response.
+          if (Queue.getDriver() === 'sync') return;
+          void Queue.dispatch(new ProcessSearchOutboxJob(connection), { queue, context: {} })
+            .catch((error) => this.reportSyncFailure(operation, error));
+        } catch (error) { this.reportSyncFailure(operation, error); }
       }, connection);
       return;
     }

@@ -74,6 +74,20 @@ describe('Durable transactional search synchronization', () => {
     expect(add).toHaveBeenCalledOnce();
   });
 
+  it('does not hold the committed write response while a Redis producer is disconnected', async () => {
+    Queue.configure({ default: 'memory', connections: { memory: { driver: 'memory' } } });
+    let deliver!: (id: string) => void;
+    const pending = new Promise<string>((resolve) => { deliver = resolve; });
+    vi.spyOn(Queue, 'dispatch').mockReturnValue(pending);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const deadline = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Committed write response blocked')), 1000); });
+      await expect(Promise.race([Article.create({ title: 'Do not wait for Redis' }), deadline])).resolves.toBeInstanceOf(Article);
+      expect(await Article.count()).toBe(1);
+      expect((await Search.outbox().stats()).pending).toBe(1);
+    } finally { clearTimeout(timer); deliver('eventually-published'); }
+  });
+
   it('orders mutations per document, blocks later writes behind DLQ and supports replay', async () => {
     Search.configure({ host: 'http://search.test', outbox: { maxAttempts: 1 } });
     const article = await Article.create({ title: 'First' });

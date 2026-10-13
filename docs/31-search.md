@@ -79,6 +79,8 @@ No Meilisearch request is made in the model transaction. Queue publication happe
 
 New apps configure search when `MEILISEARCH_HOST` is set and register `SearchOutboxSweep` with their scheduler. Non-sync queues receive the registered `ProcessSearchOutboxJob` after commit; the periodic sweep recovers interrupted or failed dispatches and delayed retries. With a sync queue, run the scheduler or explicitly drain the outbox: the framework will not block a write on synchronous search work.
 
+Queue publication is a nonblocking wake-up signal after commit. A stalled or unavailable producer cannot hold the already-committed HTTP response; failed publication is reported and the durable sweep recovers it. The sweep job uses explicit system context and restores each outbox entry's own origin while processing, rather than borrowing the most recent request identity.
+
 ```typescript
 import { Search, SearchOutboxSweep } from '@beeblock/svelar/search';
 
