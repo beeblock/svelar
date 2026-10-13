@@ -9,6 +9,7 @@ export {
   type DrizzleInstance,
 } from './Connection.js';
 export { Schema, schema, TableBuilder, ColumnBuilder, ForeignKeyBuilder, type ColumnDefinition } from './SchemaBuilder.js';
+export type { SchemaExpression, SchemaDefault, IndexColumn, IndexOptions, DropIndexOptions, ColumnChangeOptions } from './SchemaBuilder.js';
 export { Migration, Migrator, type MigrationFile } from './Migration.js';
 export * from './CoreMigrations.js';
 export { Seeder } from './Seeder.js';

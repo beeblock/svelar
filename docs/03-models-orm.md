@@ -81,7 +81,7 @@ export class Customer extends Model {
 ```
 
 ```typescript
-await Schema.createTable('customers', (table) => {
+await this.schema.createTable('customers', (table) => {
   table.id();
   table.uuid('uuid').unique();
   table.string('name');
@@ -123,7 +123,7 @@ export class Post extends SoftDeletes(Model) {
 ```
 
 ```typescript
-await Schema.createTable('posts', (table) => {
+await this.schema.createTable('posts', (table) => {
   table.id();
   table.string('title');
   table.timestamps();

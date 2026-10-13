@@ -149,6 +149,27 @@ await this.schema.table('posts', (table) => {
 
 `index()` and `uniqueIndex()` work when creating or altering tables. `dropIndex(name)` and `dropUnique(name)` require the explicit existing index name. Svelar validates all identifiers before issuing the alteration statements and uses driver-specific index-removal SQL for SQLite, PostgreSQL and MySQL. Indexes are dropped before column changes and created afterward. Validation preflight is not a transaction guarantee: data/schema failures and MySQL's implicit DDL commits still require migration review and backups.
 
+### PostgreSQL Production Schema
+
+```typescript
+await this.schema.table('customers', (table) => {
+  table.uniqueIndex(
+    [Schema.expression('lower(email)')],
+    'customers_active_email_unique',
+    { where: Schema.expression('deleted_at IS NULL'), include: ['id'], concurrently: true },
+  );
+  table.check('customers_credit_nonnegative', Schema.expression('credit >= 0'));
+  table.decimal('credit', 16, 2).nullable().default(0).change();
+  table.alterColumn('nickname').notNullable().dropDefault();
+});
+```
+
+`Schema.expression(sql)` is an opaque, explicitly trusted migration expression, not a way to pass request values or DDL placeholders. Expression keys require an explicit index name. Ordinary `index`/`uniqueIndex` support `where`, `include` and `concurrently`; `dropIndex(name, { concurrently: true })` is also available. PostgreSQL concurrent indexes reject active transactions before any preceding schema statement is issued. Use a dedicated nontransactional migration when required.
+
+Named `check(name, expression)`/`dropCheck(name)` are supported on PostgreSQL and MySQL (enforced CHECK requires MySQL 8.0.16+). PostgreSQL column `change({ using: Schema.expression(...) })` supports explicit type conversion; omitted nullability/default modifiers are preserved. `alterColumn(name)` changes only explicit modifiers. Related PostgreSQL column changes use one ALTER so a failed combined change is not partially applied.
+
+MySQL type/nullability replacement must explicitly opt into `replaceDefinition: true` and provide nullability plus default/dropDefault: omitted definition attributes are replaced, not preserved. Default-only alterations are safe without this opt-in. SQLite column/check alterations and unsupported driver-specific index features reject before issuing DDL; they are never silently ignored. Definition callbacks are synchronous.
+
 ### Adding Columns
 
 ```typescript

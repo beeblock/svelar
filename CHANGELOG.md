@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **Production schema operations** - PostgreSQL supports trusted expression/partial/INCLUDE/concurrent indexes, named checks and explicit type/null/default alterations with preserved modifiers. Concurrent DDL rejects active transactions before changes. SQLite/unsupported features fail preflight; MySQL full-definition replacement requires explicit opt-in instead of silently dropping attributes.
+
 - **Global scopes and semantic casts** - Models support inherited named condition-only scopes with protected OR grouping and explicit removal. Scoped helper mutations and stale instances fail closed; insert scope values are explicit rather than inferred. Exact decimal/custom casts and deep mutable snapshots preserve meaningful dirty/audit diffs. Custom primary keys, keyset OR boundaries and aggregate raw-binding isolation are respected.
 
 - **Durable search synchronization** - Searchable model writes default to a same-database transactional outbox rather than waiting on Meilisearch. After-commit queue signals and the registered scheduler sweep recover delivery, retries, expired leases and replayable dead letters while preserving per-document order and isolated origin context. Reindexing uses keyset pagination/custom primary keys; hidden model fields stay out of default documents, and soft-delete/restore/force-delete participate in synchronization.
