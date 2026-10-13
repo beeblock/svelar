@@ -225,7 +225,7 @@ export function profileOverrides(catalog: readonly ManifestCapability[], selecte
     finally { pending = false; }
   }
 </script>
-<Tabs.Root bind:value={active} onValueChange={select} aria-busy={pending} class="min-w-0">
+<Tabs.Root bind:value={active} onValueChange={select} aria-busy={pending} class="flex min-w-0 flex-col">
   <Tabs.List aria-label={label} class="h-auto max-w-full justify-start overflow-x-auto rounded-md">{#each tabs as tab (tab.value)}<Tabs.Trigger value={tab.value} disabled={tab.disabled || pending} class="shrink-0 flex-none px-3 py-2">{tab.label}</Tabs.Trigger>{/each}</Tabs.List>
   {#each tabs as tab (tab.value)}<Tabs.Content value={tab.value} class="min-w-0">{@render children(tab.value)}</Tabs.Content>{/each}
 </Tabs.Root>
