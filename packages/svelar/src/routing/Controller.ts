@@ -40,6 +40,7 @@ import { z, type ZodObject } from 'zod/v4';
 
 type ZodRawShape = z.core.$ZodShape;
 import { MiddlewareStack, type MiddlewareHandler, Middleware } from '../middleware/Middleware.js';
+import { ErrorHandler } from '../errors/Handler.js';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -284,7 +285,7 @@ export abstract class Controller {
 
   // ── Error Handling ───────────────────────────────────────
 
-  protected handleError(error: any, event: RequestEvent): Response {
+  protected handleError(error: any, event: RequestEvent): Response | Promise<Response> {
     if (error && typeof error.toResponse === 'function') {
       return error.toResponse();
     }
@@ -311,14 +312,7 @@ export abstract class Controller {
       return this.json({ message: error.message || 'Forbidden' }, 403);
     }
 
-    // Generic server error
-    console.error(`[Svelar] Controller error:`, error);
-    return this.json(
-      {
-        message: process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message,
-      },
-      500
-    );
+    return ErrorHandler.forRequest(event).handle(error, event);
   }
 
   // ── Private ──

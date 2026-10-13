@@ -315,6 +315,8 @@ export function createSvelarApp(appConfig: SvelarAppConfig = {}) {
       const correlationId = acceptedId(event.request?.headers?.get('x-correlation-id')) ?? requestId;
 
       return ApplicationContext.runIsolated({ requestId, correlationId }, async () => {
+        event.locals ??= {};
+        ErrorHandler.bindForRequest(event, errorHandler);
         const response = await finalHandle({ event, resolve });
         try {
           response.headers.set('x-request-id', requestId);

@@ -25,6 +25,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { Log } from '../logging/index.js';
+import { singleton } from '../support/singleton.js';
 import { ApplicationContext } from '../support/Context.js';
 
 // ── Error Classes ──────────────────────────────────────────
@@ -215,6 +216,15 @@ export class ErrorHandler {
     };
   }
 
+  static bindForRequest(event: { locals?: unknown }, handler: ErrorHandler): void {
+    if (event.locals !== null && typeof event.locals === 'object') requestHandlers.set(event.locals, handler);
+  }
+
+  static forRequest(event?: { locals?: unknown }): ErrorHandler {
+    return event?.locals !== null && typeof event?.locals === 'object'
+      ? requestHandlers.get(event.locals) ?? new ErrorHandler() : new ErrorHandler();
+  }
+
   /**
    * Handle an error and return a Response
    */
@@ -305,19 +315,20 @@ export class ErrorHandler {
       incidentId: resolvedIncidentId,
       error: error.name,
       status: errorStatus(error) ?? 500,
-      ...(event?.url ? { url: event.url.toString() } : {}),
+      ...(event?.url ? { url: event.url.origin + event.url.pathname } : {}),
       ...(event?.request?.method ? { method: event.request.method } : {}),
       ...(error.stack ? { stack: error.stack } : {}),
     };
 
-    await Log.error(error.message, context);
+    try { await Log.error(error.message, context); }
+    catch { console.error('Svelar incident log unavailable', { incidentId: resolvedIncidentId }); }
 
     // Custom reporter (Sentry, Datadog, etc.)
     if (this.config.report) {
       try {
         await this.config.report(error, event ? {
           incidentId: resolvedIncidentId,
-          url: event.url?.toString(),
+          url: event.url ? event.url.origin + event.url.pathname : undefined,
           method: event.request?.method,
           ...ApplicationContext.snapshot(),
         } : { incidentId: resolvedIncidentId, ...ApplicationContext.snapshot() });
@@ -379,6 +390,8 @@ export class ErrorHandler {
 }
 
 // ── Helpers ────────────────────────────────────────────────
+
+const requestHandlers = singleton('svelar.request-error-handlers', () => new WeakMap<object, ErrorHandler>());
 
 function getDefaultMessage(statusCode: number): string {
   const messages: Record<number, string> = {
