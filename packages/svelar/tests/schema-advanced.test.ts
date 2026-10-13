@@ -11,6 +11,13 @@ function mockDriver(driver: DatabaseDriver) {
 }
 
 describe('Advanced schema indexes', () => {
+  it.each(['sqlite', 'postgres', 'mysql'] as DatabaseDriver[])('supports large text payload storage on %s', async (driver) => {
+    const raw = mockDriver(driver);
+    await new Schema().createTable('payloads', (table) => { table.longText('raw_body'); });
+    expect(raw.mock.calls[0][0]).toContain(driver === 'mysql' ? 'LONGTEXT' : 'TEXT');
+    if (driver !== 'mysql') expect(raw.mock.calls[0][0]).not.toContain('LONGTEXT');
+  });
+
   it('compiles a concurrent unique expression/partial/covering index without value bindings', async () => {
     const raw = mockDriver('postgres');
     await new Schema().table('records', (table) => {

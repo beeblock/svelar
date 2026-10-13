@@ -224,6 +224,8 @@ export class TableBuilder {
     return this.addColumn(name, 'TEXT');
   }
 
+  longText(name: string): ColumnBuilder { return this.addColumn(name, 'LONGTEXT'); }
+
   integer(name: string): ColumnBuilder {
     return this.addColumn(name, 'INTEGER');
   }
@@ -553,7 +555,7 @@ export class TableBuilder {
 
   private columnTypeSQL(col: ColumnDefinition, driver: DatabaseDriver): string {
     const type = col.type;
-    if (!['INTEGER', 'BIGINT', 'TEXT', 'FLOAT', 'BOOLEAN', 'DATE', 'DATETIME', 'TIMESTAMP', 'JSON', 'JSONB', 'BLOB', 'UUID', 'ULID', 'ENUM'].includes(type) &&
+    if (!['INTEGER', 'BIGINT', 'TEXT', 'LONGTEXT', 'FLOAT', 'BOOLEAN', 'DATE', 'DATETIME', 'TIMESTAMP', 'JSON', 'JSONB', 'BLOB', 'UUID', 'ULID', 'ENUM'].includes(type) &&
         !/^VARCHAR\([1-9][0-9]*\)$/.test(type) && !/^DECIMAL\([1-9][0-9]*,[0-9]+\)$/.test(type)) {
       throw new TypeError('Column types must come from the schema type builders.');
     }
@@ -567,6 +569,7 @@ export class TableBuilder {
   }
 
   private mapSQLiteType(type: string, col: ColumnDefinition): string {
+    if (type === 'LONGTEXT') return 'TEXT';
     if (type === 'BOOLEAN') return 'INTEGER';
     if (type === 'UUID' || type === 'ULID') return 'TEXT';
     if (type.startsWith('ENUM')) return 'TEXT';
@@ -576,6 +579,7 @@ export class TableBuilder {
   }
 
   private mapPostgresType(type: string, col: ColumnDefinition): string {
+    if (type === 'LONGTEXT') return 'TEXT';
     if (col.autoIncrement && type === 'INTEGER') return 'SERIAL';
     if (col.autoIncrement && type === 'BIGINT') return 'BIGSERIAL';
     if (type === 'DATETIME') return 'TIMESTAMP';

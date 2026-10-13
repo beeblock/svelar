@@ -5,7 +5,11 @@
 
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import { singleton } from '../support/singleton.js';
-import { assertSqlIdentifier } from '../database/Connection.js';
+import { assertSqlIdentifier, Connection } from '../database/Connection.js';
+import { WebhookInboxProcessor, readWebhookBody, type IncomingWebhookSource } from './InboxProcessor.js';
+import { Job, Queue } from '../queue/index.js';
+import { ScheduledTask } from '../scheduler/index.js';
+import { redactLogText } from '../logging/Redaction.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
 import { normalizeWebhookInboxTenantId, webhookInboxDeduplicationKey } from './InboxIdentity.js';
 
@@ -54,10 +58,12 @@ export interface WebhookInboxEntry {
   tenantId?: string | number;
   actorId?: string | number;
   idempotencyKey: string;
+  deduplicationKey?: string;
   digest: string;
   status: WebhookInboxStatus;
   headers: Record<string, string>;
   rawBody: string;
+  rawBodyEncoding?: 'utf8' | 'base64';
   payload?: any;
   metadata?: Record<string, any>;
   attempts: number;
@@ -66,6 +72,9 @@ export interface WebhookInboxEntry {
   error?: string;
   createdAt: number;
   updatedAt: number;
+  managed?: boolean;
+  orderingKey?: string | null;
+  version?: number | null;
 }
 
 export interface WebhookInboxReceiveInput {
@@ -79,6 +88,9 @@ export interface WebhookInboxReceiveInput {
   metadata?: Record<string, any>;
   verifier?: WebhookInboxVerifier;
   status?: WebhookInboxStatus;
+  managed?: boolean;
+  orderingKey?: string | null;
+  version?: number | null;
 }
 
 export interface WebhookInboxReceiveResult {
@@ -89,6 +101,7 @@ export interface WebhookInboxReceiveResult {
 export type WebhookInboxVerifier = (input: {
   source: string;
   rawBody: string;
+  rawBytes?: Uint8Array;
   headers: Record<string, string>;
 }) => boolean | Promise<boolean>;
 
@@ -96,6 +109,7 @@ export interface WebhookInboxConfig {
   driver: 'database' | 'memory';
   table?: string;
   redactedHeaders?: string[];
+  maxBodyBytes?: number;
 }
 
 class WebhookManager {
@@ -451,6 +465,37 @@ class WebhookInboxManager {
     table: 'webhook_inbox_entries',
   };
   private entries: WebhookInboxEntry[] = [];
+  private processor = new WebhookInboxProcessor({ durable: () => this.config.driver === 'database',
+    query: () => this.query(), table: () => this.table(), hydrate: (row) => this.rowToEntry(row), receive: (input) => this.receive(input) });
+
+  registerSource(name: string, definition: IncomingWebhookSource): void {
+    this.processor.register(name, definition);
+    Queue.register(ProcessIncomingWebhookJob);
+  }
+  sources(): string[] { return this.processor.names(); }
+  hasSource(name: string): boolean { return this.processor.hasSource(name); }
+  acknowledgementStatus(name: string): 200 | 202 | 204 { return this.processor.ackStatus(name); }
+  async capture(name: string, request: Request) {
+    const result = await this.processor.capture(name, request);
+    await Connection.afterCommit(() => this.signal(name));
+    return result;
+  }
+  async process(name: string, limit = 100) { return this.processor.process(name, limit); }
+  async reconcile(name: string) { return this.processor.reconcile(name); }
+  async prune(before: number) { return this.processor.prune(before); }
+  async stats(name?: string) { return this.processor.stats(name); }
+  bodyBytes(entry: WebhookInboxEntry): Uint8Array { return new Uint8Array(Buffer.from(entry.rawBody, entry.rawBodyEncoding === 'base64' ? 'base64' : 'utf8')); }
+
+  private signal(name: string): void {
+    try {
+      if (Queue.getDriver() === 'sync') return;
+      void Queue.dispatch(new ProcessIncomingWebhookJob(name), { context: {} }).catch((error) => {
+        console.warn('Webhook queue signal failed; the inbox sweep will recover it.', redactLogText(error instanceof Error ? error.message : String(error)));
+      });
+    } catch (error) {
+      console.warn('Webhook queue signal failed; the inbox sweep will recover it.', redactLogText(error instanceof Error ? error.message : String(error)));
+    }
+  }
 
   configure(config: WebhookInboxConfig): void {
     this.config = { ...this.config, ...config };
@@ -465,8 +510,11 @@ class WebhookInboxManager {
     if (!source) throw new Error('Webhook inbox source is required.');
 
     const rawBody = bodyToString(input.rawBody);
+    const rawBytes = typeof input.rawBody === 'string' ? new TextEncoder().encode(input.rawBody)
+      : input.rawBody instanceof ArrayBuffer ? new Uint8Array(input.rawBody) : new Uint8Array(input.rawBody);
+    const binary = !Buffer.from(rawBody, 'utf8').equals(Buffer.from(rawBytes));
     const tenantId = normalizeWebhookInboxTenantId(input.tenantId);
-    const digest = createHash('sha256').update(rawBody).digest('hex');
+    const digest = createHash('sha256').update(rawBytes).digest('hex');
     const idempotencyKey = input.idempotencyKey ?? `${source}:${digest}`;
     const deduplicationKey = webhookInboxDeduplicationKey(source, tenantId, idempotencyKey);
     const verificationHeaders = normalizeHeaders(input.headers);
@@ -476,7 +524,7 @@ class WebhookInboxManager {
     const query = this.config.driver === 'database' ? this.query() : undefined;
 
     if (verifier) {
-      const valid = await verifier({ source, rawBody, headers: verificationHeaders });
+      const valid = await verifier({ source, rawBody, rawBytes, headers: verificationHeaders });
       if (!valid) throw new WebhookSignatureError(source);
     }
 
@@ -488,15 +536,20 @@ class WebhookInboxManager {
       tenantId,
       actorId,
       idempotencyKey,
+      deduplicationKey,
       digest,
       status: status ?? 'received',
       headers,
-      rawBody,
-      payload: parseJsonOrUndefined(rawBody),
+      rawBody: binary ? Buffer.from(rawBytes).toString('base64') : rawBody,
+      ...(binary ? { rawBodyEncoding: 'base64' as const } : {}),
+      payload: binary ? undefined : parseJsonOrUndefined(rawBody),
       metadata,
       attempts: 0,
       createdAt: now,
       updatedAt: now,
+      managed: input.managed,
+      orderingKey: input.orderingKey,
+      version: input.version,
     };
 
     if (!query) {
@@ -509,7 +562,7 @@ class WebhookInboxManager {
     }
 
     try {
-      await query.insert(this.entryToRow(entry));
+      await Connection.withSavepointIfNeeded(() => query.insert(this.entryToRow(entry)));
       return { entry: cloneEntry(entry), duplicate: false };
     } catch (error) {
       if (!isInboxUniqueConflict(error)) throw error;
@@ -528,7 +581,7 @@ class WebhookInboxManager {
     return this.receive({
       ...options,
       source,
-      rawBody: await request.text(),
+      rawBody: await readWebhookBody(request, this.config.maxBodyBytes ?? 1_048_576),
       headers: request.headers,
     });
   }
@@ -538,11 +591,11 @@ class WebhookInboxManager {
     algorithm?: string;
     prefix?: string;
   } = {}): WebhookInboxVerifier {
-    return ({ rawBody, headers }) => this.verifyHmac(rawBody, headers, secret, options);
+    return ({ rawBody, rawBytes, headers }) => this.verifyHmac(rawBytes ?? rawBody, headers, secret, options);
   }
 
   verifyHmac(
-    rawBody: string,
+    rawBody: string | Uint8Array,
     headers: Headers | Record<string, string | string[] | undefined> | Array<[string, string]> | undefined,
     secret: string,
     options: { header?: string; algorithm?: string; prefix?: string } = {},
@@ -552,6 +605,7 @@ class WebhookInboxManager {
     const normalized = normalizeHeaders(headers);
     const received = normalized[header];
     if (!received) return false;
+    if (options.prefix && !received.startsWith(`${options.prefix}=`)) return false;
 
     const expected = createHmac(algorithm, secret).update(rawBody).digest('hex');
     const receivedDigest = options.prefix && received.startsWith(`${options.prefix}=`)
@@ -591,12 +645,22 @@ class WebhookInboxManager {
     return this.transition(id, 'failed', { error: message });
   }
 
+  /** Authorized operators may unblock an ordered DLQ group without executing the failed side effect. */
+  async ignore(id: string, reason: string): Promise<WebhookInboxEntry | null> {
+    if (typeof reason !== 'string' || !reason.trim() || reason.length > 2000) throw new TypeError('Webhook ignore requires a bounded reason.');
+    return this.transition(id, 'ignored', { processedAt: Date.now(), availableAt: undefined,
+      error: redactLogText(reason) }, ['received', 'queued', 'failed']);
+  }
+
   async replay(id: string, availableAt?: number): Promise<WebhookInboxEntry | null> {
-    return this.transition(id, 'received', {
+    const entry = await this.transition(id, 'received', {
       availableAt,
       processedAt: undefined,
       error: undefined,
-    });
+      attempts: 0,
+    }, ['failed', 'processed', 'ignored']);
+    if (entry?.managed) await Connection.afterCommit(() => this.signal(entry.source));
+    return entry;
   }
 
   async find(id: string): Promise<WebhookInboxEntry | null> {
@@ -641,9 +705,11 @@ class WebhookInboxManager {
     return new QueryBuilder(this.table());
   }
 
-  private async transition(id: string, status: WebhookInboxStatus, changes: Partial<WebhookInboxEntry>): Promise<WebhookInboxEntry | null> {
+  private async transition(id: string, status: WebhookInboxStatus, changes: Partial<WebhookInboxEntry>, allowed?: readonly WebhookInboxStatus[]): Promise<WebhookInboxEntry | null> {
     const current = await this.find(id);
     if (!current) return null;
+    if (allowed && !allowed.includes(current.status)) return null;
+    if (current.managed && current.status === 'processing') return null;
 
     const updated: WebhookInboxEntry = {
       ...current,
@@ -659,8 +725,9 @@ class WebhookInboxManager {
       return cloneEntry(updated);
     }
 
-    await this.query().where('id', id).update(this.entryToRow(updated, false));
-    return updated;
+    const count = await this.query().where('id', id).where('status', current.status)
+      .where('updated_at', current.updatedAt).where('attempts', current.attempts).update(this.entryToRow(updated, false));
+    return count === 1 ? updated : null;
   }
 
   private entryToRow(entry: WebhookInboxEntry, includeId = true): Record<string, any> {
@@ -671,11 +738,12 @@ class WebhookInboxManager {
       tenant_id: entry.tenantId == null ? null : String(entry.tenantId),
       actor_id: entry.actorId == null ? null : String(entry.actorId),
       idempotency_key: entry.idempotencyKey,
-      deduplication_key: webhookInboxDeduplicationKey(entry.source, entry.tenantId, entry.idempotencyKey),
+      deduplication_key: entry.deduplicationKey ?? webhookInboxDeduplicationKey(entry.source, entry.tenantId, entry.idempotencyKey),
       digest: entry.digest,
       status: entry.status,
       headers: JSON.stringify(entry.headers),
       raw_body: entry.rawBody,
+      ...(entry.rawBodyEncoding === 'base64' ? { raw_body_encoding: 'base64' } : {}),
       payload: entry.payload === undefined ? null : JSON.stringify(entry.payload),
       metadata: entry.metadata ? JSON.stringify(entry.metadata) : null,
       attempts: entry.attempts,
@@ -684,10 +752,17 @@ class WebhookInboxManager {
       error: entry.error ?? null,
       created_at: entry.createdAt,
       updated_at: entry.updatedAt,
+      ...(entry.managed === undefined ? {} : { managed: entry.managed, ordering_key: entry.orderingKey ?? null, event_version: entry.version ?? null }),
     };
   }
 
   private rowToEntry(row: any): WebhookInboxEntry {
+    const timestamp = (value: unknown): number | undefined => {
+      if (value == null) return undefined;
+      const number = Number(value);
+      if (!Number.isSafeInteger(number) || number < 0) throw new Error('Invalid stored webhook timestamp.');
+      return number;
+    };
     return {
       id: row.id,
       source: row.source,
@@ -695,18 +770,23 @@ class WebhookInboxManager {
       tenantId: row.tenant_id ?? row.tenantId ?? undefined,
       actorId: row.actor_id ?? row.actorId ?? undefined,
       idempotencyKey: row.idempotency_key ?? row.idempotencyKey,
+      deduplicationKey: row.deduplication_key,
       digest: row.digest,
       status: row.status,
       headers: JSON.parse(row.headers),
       rawBody: row.raw_body ?? row.rawBody,
+      ...(row.raw_body_encoding === 'base64' ? { rawBodyEncoding: 'base64' as const } : {}),
       payload: row.payload ? JSON.parse(row.payload) : undefined,
       metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
       attempts: Number(row.attempts ?? 0),
-      availableAt: row.available_at ?? row.availableAt ?? undefined,
-      processedAt: row.processed_at ?? row.processedAt ?? undefined,
+      availableAt: timestamp(row.available_at ?? row.availableAt),
+      processedAt: timestamp(row.processed_at ?? row.processedAt),
       error: row.error ?? undefined,
-      createdAt: row.created_at ?? row.createdAt,
-      updatedAt: row.updated_at ?? row.updatedAt,
+      createdAt: timestamp(row.created_at ?? row.createdAt)!,
+      updatedAt: timestamp(row.updated_at ?? row.updatedAt)!,
+      managed: row.managed === undefined ? undefined : row.managed === true || row.managed === 1 || row.managed === '1',
+      orderingKey: row.ordering_key ?? undefined,
+      version: row.event_version == null ? undefined : Number(row.event_version),
     };
   }
 }
@@ -757,6 +837,7 @@ function parseJsonOrUndefined(rawBody: string): any | undefined {
 }
 
 function timingSafeHexEqual(expected: string, received: string): boolean {
+  if (expected.length !== received.length || !/^[a-f0-9]+$/i.test(received)) return false;
   try {
     const expectedBuffer = Buffer.from(expected, 'hex');
     const receivedBuffer = Buffer.from(received, 'hex');
@@ -784,3 +865,20 @@ export const WebhookInbox = singleton(
   'svelar.webhookInbox',
   () => new WebhookInboxManager()
 );
+
+export { IncomingWebhookError } from './InboxProcessor.js';
+export type { IncomingWebhookSource } from './InboxProcessor.js';
+export { IncomingWebhookController, IncomingWebhookRequest, IncomingWebhookDto, ReceiveIncomingWebhookAction,
+  IncomingWebhookResource, incomingWebhookSchema } from './IncomingWebhookController.js';
+export type { IncomingWebhookReceipt } from './IncomingWebhookController.js';
+
+export class ProcessIncomingWebhookJob extends Job {
+  constructor(readonly source = '', readonly batchSize = 100) { super(); }
+  async handle(): Promise<void> { await WebhookInbox.process(this.source, this.batchSize); }
+}
+
+export class WebhookInboxSweep extends ScheduledTask {
+  name = 'webhook-inbox-sweep';
+  schedule() { return this.everyMinute().preventOverlap(); }
+  async handle(): Promise<void> { for (const source of WebhookInbox.sources()) await WebhookInbox.process(source); }
+}
