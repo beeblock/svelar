@@ -26,6 +26,8 @@ export interface QueueJobSnapshot {
   jobClass: string;
   status: QueueJobStatus;
   attempts: number;
+  /** Native starts, including stalled attempts; distinct from completed/failed attempts. */
+  attemptsStarted?: number;
   maxAttempts: number;
   stalledCount: number;
   createdAt: number;
@@ -36,6 +38,9 @@ export interface QueueJobSnapshot {
   progress?: unknown;
   payload: string;
   error?: string;
+  /** Redacted diagnostic traces, oldest to newest, bounded to the latest five / 32 KiB. */
+  stacktrace?: readonly string[];
+  stacktraceMeta?: { total: number; truncated: boolean };
   replayRecordId?: string;
   lock: QueueLockObservation;
 }

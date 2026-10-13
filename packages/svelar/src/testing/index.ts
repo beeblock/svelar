@@ -36,3 +36,5 @@ export { FakeClock, fakeClock, type FakeClockAdapter, type FakeClockOptions } fr
 export { runWithContext, withTenant, withActor, createContextRequestEvent, assertApplicationContext,
   type TestApplicationContext } from './context.js';
 export { WebhookInboxHarness, withWebhookInbox, type WebhookInboxHarnessTarget, type InboxAcceptanceRecord } from './inbox.js';
+export { QueueRecoveryHarness, withQueueRecovery, type QueueRecoveryHarnessTarget,
+  type QueueRecoveryHarnessOptions, type QueueRecoveryExpectation } from './QueueRecoveryHarness.js';

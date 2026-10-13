@@ -9,6 +9,7 @@ import { svelarCoreMigrations } from '../src/database/CoreMigrations.js';
 import { ApplicationContext } from '../src/support/Context.js';
 
 export { Queue, Connection, replayJobId };
+export { QueueRecoveryHarness } from '../src/testing/QueueRecoveryHarness.js';
 let redis: any;
 export class MonitoringProcessJob extends Job {
   retryDelay = 0;

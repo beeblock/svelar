@@ -10,8 +10,11 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 const url = process.env.SVELAR_TEST_QUEUE_REDIS_URL;
 const manifest = process.env.SVELAR_TEST_QUEUE_CLIENT;
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-async function until<T>(callback: () => T | Promise<T>, timeout = 15000): Promise<T> {
-  const start = Date.now(); while (Date.now() - start < timeout) { const result = await callback(); if (result) return result; await sleep(25); }
+async function until<T>(callback: () => T | Promise<T>, timeout = 15000, signal?: AbortSignal): Promise<T> {
+  const start = Date.now(); while (Date.now() - start < timeout) {
+    if (signal?.aborted) throw signal.reason;
+    const result = await callback(); if (result) return result; await sleep(25);
+  }
   throw new Error('Native queue monitor condition timed out.');
 }
 
@@ -55,6 +58,11 @@ describe.skipIf(!url || !manifest)('Native named queue operations and durable re
     children.push(entry); return entry;
   }
   async function stop(entry: ReturnType<typeof spawn>) { entry.child.kill('SIGTERM'); expect(await entry.exit, entry.output).toEqual({ code: 0, signal: null }); }
+  async function exitWithSignal(entry: ReturnType<typeof spawn>, signal: AbortSignal) {
+    const abort = () => { entry.child.kill('SIGKILL'); };
+    if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
+    try { return await entry.exit; } finally { signal.removeEventListener('abort', abort); }
+  }
   async function fail(connection = 'alpha') {
     await source.Queue.dispatch(new source.MonitoringProcessJob('failure-service'), { queue: 'orders', connection, maxAttempts: 1,
       context: { teamId: 'original-team', userId: 'original-actor' }, metadata: { accountId: 'account', resourceId: 'resource', correlationId: 'trace' } });
@@ -71,6 +79,15 @@ describe.skipIf(!url || !manifest)('Native named queue operations and durable re
     expect((await alpha.list({ tenantId: 'beta' })).items).toEqual([]); expect((await beta.get('same-id')).metadata.correlationId).toBe('beta');
     expect((await source.Queue.discoverQueues('beta')).some((queue: any) => queue.name === 'orders' && queue.connection === 'beta')).toBe(true);
     expect((await alpha.runtime()).oldestWaitingAt).not.toBeNull(); await alpha.resume();
+    const before = source.Queue.queues(); const names: string[] = []; let cursor: string | undefined;
+    for (let index = 0; index < 10; index++) {
+      const page = await source.Queue.discoverQueuesPage('alpha', { limit: 1, cursor });
+      expect(page.queues.length).toBeLessThanOrEqual(1); expect(page.total).toBeNull();
+      names.push(...page.queues.map((queue: any) => queue.name));
+      if (page.complete) { cursor = undefined; break; } cursor = page.nextCursor;
+    }
+    expect(cursor).toBeUndefined(); expect([...new Set(names)].sort()).toEqual(['default', 'orders']);
+    expect(source.Queue.queues()).toEqual(before);
   });
 
   it('observes real workers, renewed lock leases, five-way concurrency, active-delete refusal and metrics from another process', async () => {
@@ -92,9 +109,17 @@ describe.skipIf(!url || !manifest)('Native named queue operations and durable re
 
   it('reports an expired killed-worker lease and native stalled recovery in the public snapshot/timeline', async () => {
     await source.Queue.dispatch(new source.MonitoringProcessJob('killed', 1400), { queue: 'orders', connection: 'alpha', jobId: 'killed' });
-    const first = spawn('worker'); await until(() => first.events.some(event => event.event === 'started')); first.child.kill('SIGKILL'); await first.exit;
-    await sleep(1000); const adapter = source.Queue.adapter('orders', 'alpha'); expect((await adapter.get('killed')).lock.state).toBe('expired');
-    const replacement = spawn('worker'); await until(() => replacement.events.some(event => event.event === 'finished')); await stop(replacement);
+    const adapter = source.Queue.adapter('orders', 'alpha'); let consumer: ReturnType<typeof spawn>;
+    const harness = new source.QueueRecoveryHarness({ adapter,
+      start: async (signal: AbortSignal) => { consumer = spawn('worker'); await until(() => consumer.events.some(event => event.event === 'ready'), 15000, signal); },
+      stop: async (signal: AbortSignal) => { consumer.child.kill('SIGTERM'); expect(await exitWithSignal(consumer, signal), consumer.output).toEqual({ code: 0, signal: null }); },
+      kill: async (signal: AbortSignal) => { consumer.child.kill('SIGKILL'); expect(await exitWithSignal(consumer, signal)).toEqual({ code: null, signal: 'SIGKILL' }); },
+    });
+    await harness.run(async (scope: any) => {
+      await scope.start(); await scope.waitForJob('killed', { status: 'active', lock: 'observed' }); await scope.kill();
+      await scope.waitForJob('killed', { lock: 'expired' });
+      await scope.start(); await scope.waitForJob('killed', { status: 'completed', stalledCountAtLeast: 1, attemptsStartedAtLeast: 2 });
+    });
     expect((await adapter.get('killed')).stalledCount).toBeGreaterThanOrEqual(1);
     expect((await adapter.timeline({ source: 'live', id: 'killed' })).map((event: any) => event.event)).toContain('stalled');
   }, 20000);
@@ -115,6 +140,13 @@ describe.skipIf(!url || !manifest)('Native named queue operations and durable re
 
   it('allows one replay winner across independent admin processes and preserves original execution context/policy', async () => {
     const record = await fail();
+    const failed = await source.Queue.adapter('orders', 'alpha').get(record.originalJobId);
+    expect(failed).toMatchObject({ status: 'failed', attempts: 1, attemptsStarted: 1, stacktraceMeta: { total: 1, truncated: false } });
+    expect(failed.stacktrace[0]).toContain('MonitoringProcessJob.handle');
+    expect(failed.stacktrace[0]).toContain('Fixture service unavailable');
+    expect(failed.processedAt).toBeGreaterThan(0); expect(failed.finishedAt).toBeGreaterThanOrEqual(failed.processedAt);
+    expect((await source.Queue.adapter('orders', 'alpha').timeline({ source: 'live', id: record.originalJobId }))
+      .some((event: any) => event.event === 'failed' && event.at > 0 && event.attempt === 1)).toBe(true);
     const admins = Array.from({ length: 5 }, () => spawn('replay', 'alpha', [], { SVELAR_QUEUE_REPLAY_ID: record.id }));
     for (const admin of admins) expect(await admin.exit, admin.output).toEqual({ code: 0, signal: null });
     expect(admins.flatMap(admin => admin.events).filter(event => event.event === 'result' && event.result.outcome === 'accepted')).toHaveLength(1);
@@ -154,12 +186,20 @@ describe.skipIf(!url || !manifest)('Native named queue operations and durable re
   }, 15000);
 
   it('recovers a database reservation after a real worker SIGKILL in another process', async () => {
-    await source.Queue.dispatch(new source.MonitoringProcessJob('sql-killed', 1800), { queue: 'orders', connection: 'sql', maxAttempts: 3 });
-    const first = spawn('worker', 'sql', ['--once']); await until(() => first.events.some(event => event.event === 'started'));
-    first.child.kill('SIGKILL'); await first.exit; await sleep(450);
-    const adapter = source.Queue.adapter('orders', 'sql'); expect((await adapter.runtime()).expiredLocks).toBe(1);
-    const replacement = spawn('worker', 'sql', ['--once']); expect(await replacement.exit, replacement.output).toEqual({ code: 0, signal: null });
-    expect(replacement.events.filter(event => event.event === 'finished')).toHaveLength(1);
+    const id = await source.Queue.dispatch(new source.MonitoringProcessJob('sql-killed', 1800), { queue: 'orders', connection: 'sql', maxAttempts: 3 });
+    const adapter = source.Queue.adapter('orders', 'sql'); let consumer: ReturnType<typeof spawn>;
+    const harness = new source.QueueRecoveryHarness({ adapter,
+      start: async (signal: AbortSignal) => { consumer = spawn('worker', 'sql', ['--once']); await until(() => consumer.events.some(event => event.event === 'ready'), 15000, signal); },
+      stop: async (signal: AbortSignal) => { expect(await exitWithSignal(consumer, signal), consumer.output).toEqual({ code: 0, signal: null }); },
+      kill: async (signal: AbortSignal) => { consumer.child.kill('SIGKILL'); expect(await exitWithSignal(consumer, signal)).toEqual({ code: null, signal: 'SIGKILL' }); },
+    });
+    await harness.run(async (scope: any) => {
+      await scope.start(); await scope.waitForJob(id, { status: 'active', lock: 'observed' }); await scope.kill();
+      await scope.waitForJob(id, { lock: 'expired' }); expect((await adapter.runtime()).expiredLocks).toBe(1);
+      expect(await scope.recover()).toBe(1); expect(await scope.recover()).toBe(0);
+      await scope.start(); await scope.waitForMissing(id);
+    });
+    expect(consumer!.events.filter(event => event.event === 'finished')).toHaveLength(1);
     expect((await adapter.metrics()).completed).toBe(1);
   }, 20000);
 });

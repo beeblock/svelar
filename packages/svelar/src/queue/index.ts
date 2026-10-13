@@ -57,7 +57,7 @@ import { QueueEventStore } from './EventStore.js';
 import { RedisQueueOperations } from './RedisOperations.js';
 import { redisConnection } from './RedisConnection.js';
 import { databaseAdapter, redisAdapter, volatileAdapter, type AdapterServices } from './Adapters.js';
-import type { QueueMonitoringAdapter } from './Monitoring.js';
+import { boundedLimit, pageOptions, QueueCapabilityError, type QueueMonitoringAdapter } from './Monitoring.js';
 export type { FailedJobRecord } from './FailedJobStore.js';
 export * from './Monitoring.js';
 
@@ -211,6 +211,60 @@ export interface QueueDefinition {
   concurrency?: number;
   metadata?: Record<string, any>;
   workerProfile?: string;
+}
+
+export interface QueueConnectionCatalogEntry {
+  name: string;
+  driver: QueueDriver | 'unknown';
+  queue: string;
+  isDefault: boolean;
+}
+export interface QueueConnectionCatalogPage {
+  connections: QueueConnectionCatalogEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+}
+export interface QueueDiscoveryOptions { limit?: number; cursor?: string; }
+export interface QueueDiscoveryPage {
+  queues: QueueDefinition[];
+  total: null;
+  /** End of this weakly consistent registry scan, not proof of foreign broker coverage. */
+  complete: boolean;
+  nextCursor: string | null;
+  coverage: 'instrumented';
+}
+
+interface QueueDiscoveryPosition { scan?: string; skip?: number; after?: string; }
+interface QueueDiscoveryBatch { names: string[]; position: QueueDiscoveryPosition | null; }
+
+function discoveryCursor(cursor: string | undefined, connection: string, driver: QueueDriver, limit: number): QueueDiscoveryPosition {
+  if (cursor === undefined) return {};
+  if (typeof cursor !== 'string' || cursor.length > 4096 || !/^[A-Za-z0-9_-]+$/.test(cursor)) throw new TypeError('Invalid queue discovery cursor.');
+  let value: any;
+  try {
+    const buffer = Buffer.from(cursor, 'base64url');
+    if (buffer.toString('base64url') !== cursor) throw new Error('Invalid encoding');
+    value = JSON.parse(buffer.toString('utf8'));
+  } catch { throw new TypeError('Invalid queue discovery cursor.'); }
+  if (value?.version !== 1 || value.connection !== connection || value.driver !== driver || value.limit !== limit || !value.position
+    || typeof value.position !== 'object' || Array.isArray(value.position)) throw new TypeError('Queue discovery cursor does not match its connection, driver and limit.');
+  const position = value.position;
+  if (driver === 'redis') {
+    if (typeof position.scan !== 'string' || !/^\d{1,20}$/.test(position.scan) || BigInt(position.scan) > 18_446_744_073_709_551_615n
+      || !Number.isSafeInteger(position.skip) || position.skip < 0 || !Number.isSafeInteger(position.skip + limit)
+      || Object.keys(position).some(key => !['scan', 'skip'].includes(key))) throw new TypeError('Invalid Redis queue discovery cursor.');
+  } else if (typeof position.after !== 'string' || !position.after || Buffer.byteLength(position.after) > 1024
+    || Object.keys(position).some(key => key !== 'after')) throw new TypeError('Invalid database queue discovery cursor.');
+  return position;
+}
+
+function discoveredNames(names: unknown[]): string[] {
+  if (names.some(name => typeof name !== 'string' || !name || Buffer.byteLength(name) > 1024 || name.includes(':') || name.includes('\0'))) {
+    throw new TypeError('Invalid shared queue registry entry.');
+  }
+  return names as string[];
 }
 
 export type QueueProgressValue = number | string | Record<string, any>;
@@ -515,7 +569,12 @@ class DatabaseDriver implements QueueDriverInterface {
   adapter(services: AdapterServices): QueueMonitoringAdapter {
     return databaseAdapter(services, () => this.query(), this.events(), () => this.recover(services.queue));
   }
-  async discover(): Promise<string[]> { return (await this.query().select('queue').distinct().get()).map(row => row.queue); }
+  async discoverPage(position: QueueDiscoveryPosition, limit: number): Promise<QueueDiscoveryBatch> {
+    const query = this.query().select('queue').distinct().orderBy('queue').limit(limit + 1);
+    if (position.after !== undefined) query.where('queue', '>', position.after);
+    const names = discoveredNames((await query.get()).map(row => row.queue));
+    return { names: names.slice(0, limit), position: names.length > limit ? { after: names[limit - 1] } : null };
+  }
 
   async push(job: QueuedJob): Promise<void> {
     await Connection.transaction(async () => {
@@ -740,9 +799,16 @@ class RedisDriver implements QueueDriverInterface {
   adapter(services: AdapterServices): QueueMonitoringAdapter {
     return redisAdapter(services, () => this.getQueue(services.queue), this.operations(services.queue), this.config.monitoringCoverage ?? 'instrumented');
   }
-  async discover(): Promise<string[]> {
+  async discoverPage(position: QueueDiscoveryPosition, limit: number): Promise<QueueDiscoveryBatch> {
     const queue = await this.getQueue(this.config.queue ?? 'default');
-    return (await queue.client).smembers(`${this.config.prefix ?? 'svelar'}:svelar:registered-queues:v1`);
+    const scan = position.scan ?? '0';
+    const skip = position.skip ?? 0;
+    const [next, batch] = await (await queue.client).sscan(`${this.config.prefix ?? 'svelar'}:svelar:registered-queues:v1`, scan, 'COUNT', limit);
+    const names = discoveredNames(batch);
+    const end = skip + limit;
+    // COUNT is a Redis hint. Replay an oversized bucket rather than silently dropping its tail.
+    return { names: names.slice(skip, end), position: end < names.length ? { scan, skip: end }
+      : next !== '0' ? { scan: next, skip: 0 } : null };
   }
 
   private async getBullMQ(): Promise<any> {
@@ -1341,6 +1407,18 @@ class QueueManager {
     return config.driver;
   }
 
+  /** Safe configuration inventory; reading it never acquires a database or Redis client. */
+  configuredConnections(options: { limit?: number; offset?: number } = {}): QueueConnectionCatalogPage {
+    const { limit, offset } = pageOptions({ limit: options.limit ?? 100, offset: options.offset });
+    const names = Object.keys(this.config.connections).sort();
+    const connections = names.slice(offset, offset + limit).map(name => {
+      const config = this.config.connections[name];
+      return { name, driver: ['sync', 'memory', 'database', 'redis'].includes(config.driver) ? config.driver : 'unknown' as const,
+        queue: config.queue ?? 'default', isDefault: name === this.config.default };
+    });
+    return { connections, total: names.length, limit, offset, hasMore: offset + connections.length < names.length };
+  }
+
   adapter(queue?: string, connection?: string): QueueMonitoringAdapter {
     const name = connection ?? (queue ? this.queueDefinition(queue)?.connection : undefined) ?? this.config.default;
     const config = this.config.connections[name];
@@ -1354,9 +1432,34 @@ class QueueManager {
     return volatileAdapter(services, config.driver as 'sync' | 'memory');
   }
 
-  async discoverQueues(connection = this.config.default): Promise<QueueDefinition[]> {
+  async discoverQueuesPage(connection = this.config.default, options: QueueDiscoveryOptions = {}): Promise<QueueDiscoveryPage> {
+    const limit = boundedLimit(options.limit ?? 100);
+    const kind = this.getDriver(connection);
+    if (kind !== 'redis' && kind !== 'database') throw new QueueCapabilityError('Shared queue discovery', kind);
+    const position = discoveryCursor(options.cursor, connection, kind, limit);
     const driver = this.resolveDriver(connection);
-    const discovered = driver instanceof RedisDriver || driver instanceof DatabaseDriver ? await driver.discover() : [];
+    if (!(driver instanceof RedisDriver || driver instanceof DatabaseDriver)) throw new QueueCapabilityError('Shared queue discovery', kind);
+    const batch = await driver.discoverPage(position, limit);
+    const queues = [...new Set(batch.names)].map(name => ({ ...this.queueDefinition(name, connection), name, connection }));
+    const nextCursor = batch.position === null ? null : Buffer.from(JSON.stringify({ version: 1, connection, driver: kind, limit, position: batch.position })).toString('base64url');
+    return { queues, total: null, complete: nextCursor === null, nextCursor, coverage: 'instrumented' };
+  }
+
+  /** Compatibility inventory is bounded; pollers should use the read-only cursor API. */
+  async discoverQueues(connection = this.config.default): Promise<QueueDefinition[]> {
+    const kind = this.getDriver(connection);
+    if (!['redis', 'database', 'memory', 'sync'].includes(kind)) throw new QueueCapabilityError('Queue discovery', kind);
+    const discovered = new Set<string>();
+    if (kind === 'redis' || kind === 'database') {
+      let cursor: string | undefined;
+      for (let page = 0; page < 10; page++) {
+        const result = await this.discoverQueuesPage(connection, { limit: 100, cursor });
+        for (const queue of result.queues) discovered.add(queue.name);
+        if (result.complete) { cursor = undefined; break; }
+        cursor = result.nextCursor!;
+      }
+      if (cursor !== undefined) throw new RangeError('Queue discovery exceeds the compatibility scan limit. Continue with discoverQueuesPage().');
+    }
     for (const name of discovered) if (!this.queueDefinition(name, connection)) this.registerQueue({ name, connection });
     return this.queues().filter(queue => queue.connection === connection);
   }

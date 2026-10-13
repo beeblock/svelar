@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { redactLogText } from '../logging/Redaction.js';
 import { indexedMetadata, metadataFields, metadataKeys, metadataValue } from './Metadata.js';
 import { boundedLimit, pageOptions, type QueueJobFilter, type QueueJobPage, type QueueJobSnapshot, type QueueJobStatus, type QueueTimelineEvent } from './Monitoring.js';
 
@@ -52,6 +53,36 @@ function status(value: string): QueueJobStatus | null {
   return ['waiting', 'active', 'completed', 'failed', 'delayed'].includes(normalized) ? normalized as QueueJobStatus : null;
 }
 
+const stackBudget = 32 * 1024;
+const inputBudget = 128 * 1024;
+
+function diagnostic(value: string, budget: number): { text: string; truncated: boolean } {
+  if (Buffer.byteLength(value) > inputBudget) return { text: '[REDACTED: diagnostic exceeds input limit]', truncated: true };
+  // Redact complete values before truncation, including quoted values with spaces.
+  const safe = redactLogText(value
+    .replace(/-----BEGIN [\w ]*PRIVATE KEY-----[\s\S]*?-----END [\w ]*PRIVATE KEY-----/g, '[REDACTED]')
+    .replace(/(\b(?:authorization|cookie|set-cookie)\s*:\s*)[^\r\n]*/gi, '$1[REDACTED]')
+    .replace(/(["']?[\w.-]*(?:password|passwd|secret|token|authorization|cookie|credential|api[_-]?key|signature|session[_-]?id)[\w.-]*["']?\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;&}\]]+)/gi, '$1[REDACTED]'));
+  if (Buffer.byteLength(safe) <= budget) return { text: safe, truncated: false };
+  const marker = '\n[truncated]';
+  const prefix = Buffer.from(safe).subarray(0, budget - Buffer.byteLength(marker)).toString('utf8').replace(/\uFFFD$/, '');
+  return { text: prefix + marker, truncated: true };
+}
+
+function stackDiagnostics(value: unknown): Pick<QueueJobSnapshot, 'stacktrace' | 'stacktraceMeta'> {
+  if (!Array.isArray(value) || value.length === 0) return {};
+  const retained = value.slice(-5);
+  let truncated = value.length > retained.length;
+  const budget = Math.floor(stackBudget / retained.length);
+  const stacktrace = retained.map(trace => {
+    if (typeof trace !== 'string') { truncated = true; return '[REDACTED: invalid diagnostic]'; }
+    const result = diagnostic(trace, budget);
+    truncated ||= result.truncated;
+    return result.text;
+  });
+  return { stacktrace, stacktraceMeta: { total: value.length, truncated } };
+}
+
 /** Svelar-owned Redis indexes only; no BullMQ private keys or lock tokens. */
 export class RedisQueueOperations {
   constructor(private provider: () => Promise<any>, readonly connection: string, readonly queueName: string) {}
@@ -68,12 +99,14 @@ export class RedisQueueOperations {
     const info: QueueJobSnapshot = {
       id: String(job.id), connection: this.connection, queue: this.queueName, jobClass: job.data?.jobClass ?? job.name,
       status: current, attempts: job.attemptsMade ?? 0, maxAttempts: job.opts?.attempts ?? 3,
+      attemptsStarted: Number.isSafeInteger(job.attemptsStarted) && job.attemptsStarted >= 0 ? job.attemptsStarted : undefined,
       stalledCount: job.stalledCounter ?? 0, createdAt: Number(job.timestamp),
       processedAt: job.processedOn, finishedAt: job.finishedOn,
       delayedUntil: job.delay ? job.timestamp + job.delay : undefined,
       metadata: job.data?.metadata, progress: job.progress,
       payload: typeof job.data?.payload === 'string' ? job.data.payload : JSON.stringify(job.data ?? {}),
-      error: job.failedReason || undefined, replayRecordId: job.data?.replayRecordId,
+      error: typeof job.failedReason === 'string' && job.failedReason ? diagnostic(job.failedReason, 8 * 1024).text : undefined,
+      ...stackDiagnostics(job.stacktrace), replayRecordId: job.data?.replayRecordId,
       lock: { source: 'unavailable', state: current === 'active' ? 'unknown' : 'none', expiresAt: null, owner: null },
     };
     const indexKeys = [`${prefix}:all`, `${prefix}:status:${current}`,
