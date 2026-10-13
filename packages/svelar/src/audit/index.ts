@@ -9,7 +9,7 @@ import { singleton } from '../support/singleton.js';
 import { assertSqlIdentifier, Connection } from '../database/Connection.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
 import { ApplicationContext } from '../support/Context.js';
-import { Model } from '../orm/Model.js';
+import { Model, isModelClass } from '../orm/Model.js';
 import { auditRecord, auditValues, type AuditValueOptions } from './Values.js';
 
 export interface AuditEntry {
@@ -254,7 +254,7 @@ class AuditManager {
 // Helper: auditable() decorator/mixin for models
 // Usage: const User = auditable(BaseUser);
 export function auditable<T extends typeof Model>(target: T, options: AuditValueOptions = {}): T {
-  if (target !== Model && !(target.prototype instanceof Model)) throw new TypeError('auditable() requires a Svelar Model class.');
+  if (!isModelClass(target)) throw new TypeError('auditable() requires a Svelar Model class.');
   const forcing = new WeakSet<Model>();
   const forceDelete = target.prototype.forceDelete;
   target.prototype.forceDelete = async function (this: Model): Promise<void> {

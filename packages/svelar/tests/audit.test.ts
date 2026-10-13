@@ -134,7 +134,7 @@ describe('Audit', () => {
         modelType: 'Post',
         modelId: '99',
         newValues: { title: 'Hello' },
-        metadata: { module: 'blog' },
+        metadata: expect.objectContaining({ module: 'blog', actorId: 7, actorType: 'user' }),
       }),
     ]);
     await expect(Audit.forModel('Post', 100)).resolves.toEqual([
@@ -154,9 +154,7 @@ describe('Audit', () => {
     await expect(Audit.query({})).rejects.toThrow('Audit table name');
   });
 
-  it('wraps create, update, and delete methods with auditable hooks', async () => {
-    const baseAction = action('auditable');
-
+  it('rejects static CRUD wrappers that do not extend Model', () => {
     class AuditPost {
       static async create(data: any) {
         return { id: data.id, ...data };
@@ -171,24 +169,7 @@ describe('Audit', () => {
       }
     }
 
-    Audit.configure({ driver: 'memory', enabled: true });
-    auditable(AuditPost);
-
-    const created = await (AuditPost as any).create({ id: `${baseAction}-1`, title: 'Created' });
-    const updated = await (AuditPost as any).update(`${baseAction}-1`, { title: 'Updated' });
-    const deleted = await (AuditPost as any).delete(`${baseAction}-1`);
-
-    expect(created.title).toBe('Created');
-    expect(updated.title).toBe('Updated');
-    expect(deleted.deleted).toBe(`${baseAction}-1`);
-
-    await expect(Audit.forModel('AuditPost', `${baseAction}-1`)).resolves.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ action: 'created', newValues: { id: `${baseAction}-1`, title: 'Created' } }),
-        expect.objectContaining({ action: 'updated', newValues: { title: 'Updated' } }),
-        expect.objectContaining({ action: 'deleted' }),
-      ]),
-    );
+    expect(() => auditable(AuditPost as unknown as typeof Model)).toThrow('requires a Svelar Model class');
   });
 
   it('audits model instance lifecycle events with changes and context metadata', async () => {

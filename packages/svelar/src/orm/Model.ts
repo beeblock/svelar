@@ -30,6 +30,7 @@ import { HasOne, HasMany, BelongsTo, BelongsToMany } from './Relationship.js';
 import { type ModelObserver, type ModelEventName, MODEL_EVENTS } from './Observer.js';
 import { Event } from '../events/index.js';
 import { ulid, uuidv7 } from '../support/uuid.js';
+import { singleton } from '../support/singleton.js';
 import { ApplicationContext } from '../support/Context.js';
 
 // ── Types ──────────────────────────────────────────────────
@@ -107,6 +108,17 @@ export interface ModelHooks {
 }
 
 // ── Model Base Class ───────────────────────────────────────
+
+const modelClasses = singleton('svelar.orm.modelClasses', () => new WeakSet<Function>());
+
+export function isModelClass(value: unknown): value is typeof Model {
+  let constructor = value;
+  while (typeof constructor === 'function') {
+    if (modelClasses.has(constructor)) return value === constructor || constructor.prototype.isPrototypeOf((value as Function).prototype);
+    constructor = Object.getPrototypeOf(constructor);
+  }
+  return false;
+}
 
 export class Model {
   // ── Static Configuration ──
@@ -909,6 +921,8 @@ export class Model {
 export function generateUuidV7(): string {
   return uuidv7();
 }
+
+modelClasses.add(Model);
 
 export function generateUlid(): string {
   return ulid();
