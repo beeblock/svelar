@@ -1028,6 +1028,8 @@ Available hooks: `creating`, `created`, `updating`, `updated`, `saving`, `saved`
 
 When a model has many lifecycle concerns (sending emails, logging, syncing caches), inline hooks become unwieldy. Observers let you group all lifecycle logic for a model into a dedicated class.
 
+Hooks and observers are registered by the actual Model constructor, not its class name. Two modules can each define a `User` model without sharing observers or removing each other's registrations. Register observers on each concrete model that needs them.
+
 ### Creating an Observer
 
 ```bash

@@ -161,10 +161,10 @@ export class Model {
   static requireTenantContext: boolean = true;
 
   /** Registered model hooks */
-  private static hooks: Map<string, ModelHooks> = new Map();
+  private static hooks = new WeakMap<Function, ModelHooks>();
 
   /** Registered model observers */
-  private static observers: Map<string, ModelObserver[]> = new Map();
+  private static observers = new WeakMap<Function, ModelObserver[]>();
 
   private static scopeRegistry = new WeakMap<typeof Model, Map<string, GlobalScope>>();
 
@@ -718,26 +718,26 @@ export class Model {
 
   /** Register hooks for this model class */
   static boot(hooks: ModelHooks): void {
-    this.hooks.set(this.name, hooks);
+    this.hooks.set(this, hooks);
   }
 
   /** Register an observer for this model class */
   static observe(observer: ModelObserver): void {
-    const existing = this.observers.get(this.name) ?? [];
+    const existing = this.observers.get(this) ?? [];
     existing.push(observer);
-    this.observers.set(this.name, existing);
+    this.observers.set(this, existing);
   }
 
   /** Remove all observers for this model class */
   static removeObservers(): void {
-    this.observers.delete(this.name);
+    this.observers.delete(this);
   }
 
   private async fireHook(event: keyof ModelHooks): Promise<void> {
     const ctor = this.constructor as typeof Model;
 
     // Inline hooks (from static boot())
-    const hooks = Model.hooks.get(ctor.name);
+    const hooks = Model.hooks.get(ctor);
     if (hooks?.[event]) {
       await hooks[event]!(this);
     }
@@ -748,7 +748,7 @@ export class Model {
     }
 
     // Observer methods
-    const observers = Model.observers.get(ctor.name) ?? [];
+    const observers = Model.observers.get(ctor) ?? [];
     for (const observer of observers) {
       const method = observer[event as ModelEventName];
       if (typeof method === 'function') {
@@ -774,7 +774,7 @@ export class Model {
     }
 
     // Call observer method if it exists
-    const observers = Model.observers.get(ctor.name) ?? [];
+    const observers = Model.observers.get(ctor) ?? [];
     for (const observer of observers) {
       const method = (observer as any)[eventName];
       if (typeof method === 'function') {
