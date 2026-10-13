@@ -45,11 +45,13 @@ export const GET: RequestHandler = async (event) => {
   try {
     const socialUser = await SocialAuthController.callback(provider, event);
 
-    // TODO: Find or create your local user, regenerate the session ID, then redirect.
+    // TODO: Map the verified identity through your FormRequest/DTO/action flow, then log in.
+    // Also configure this Google/GitHub provider in Core Auth presentation.providers;
+    // the bridge requires configured + available and always passes providerId.
     // Example:
     // const user = await UpsertSocialUserAction.handle(SocialLoginDto.from(provider, socialUser));
-    // event.locals.session.set('auth_user_id', user.id);
-    // event.locals.session.regenerateId();
+    // const authenticated = await SocialAuthController.login(provider, event, user);
+    // if (!authenticated) return json({ data: null, meta: { message: 'Unable to sign in' } }, 403);
     // throw redirect(303, '/dashboard');
 
     return json({
@@ -70,7 +72,7 @@ export const GET: RequestHandler = async (event) => {
     return json({
       data: null,
       meta: {
-        message: error instanceof Error ? error.message : 'OAuth callback failed',
+        message: 'Social sign-in failed. Please try again.',
         provider,
       },
     }, oauthErrorStatus(error));

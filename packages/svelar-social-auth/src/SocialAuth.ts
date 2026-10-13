@@ -2,13 +2,14 @@ import type { SocialAuthConfig, ProviderName, ProviderConfig } from './types.js'
 import type { Provider } from './providers/Provider.js';
 import { GoogleProvider } from './providers/GoogleProvider.js';
 import { GitHubProvider } from './providers/GitHubProvider.js';
+import { singleton } from '@beeblock/svelar/support';
 
 const providerFactories: Record<ProviderName, new (config: ProviderConfig, cookieName?: string, cookieMaxAge?: number) => Provider> = {
   google: GoogleProvider,
   github: GitHubProvider,
 };
 
-let globalConfig: SocialAuthConfig | null = null;
+const shared = singleton('svelar.social-auth.config', () => ({ config: null as SocialAuthConfig | null }));
 
 export class SocialAuth {
   static supportedProviders(): ProviderName[] {
@@ -16,18 +17,18 @@ export class SocialAuth {
   }
 
   static isProviderName(name: string): name is ProviderName {
-    return name in providerFactories;
+    return Object.hasOwn(providerFactories, name);
   }
 
   private static getConfig(): SocialAuthConfig {
-    if (!globalConfig) {
+    if (!shared.config) {
       throw new Error('SocialAuth not configured. Call SocialAuth.configure() first.');
     }
-    return globalConfig;
+    return shared.config;
   }
 
   static configure(config: SocialAuthConfig): void {
-    globalConfig = config;
+    shared.config = config;
   }
 
   static driver(name: ProviderName): Provider {
@@ -60,11 +61,11 @@ export class SocialAuth {
   }
 
   static isConfigured(name: ProviderName): boolean {
-    if (!globalConfig) return false;
-    return name in globalConfig.providers;
+    if (!shared.config) return false;
+    return Object.hasOwn(shared.config.providers, name) && shared.config.providers[name] !== undefined;
   }
 
   static reset(): void {
-    globalConfig = null;
+    shared.config = null;
   }
 }

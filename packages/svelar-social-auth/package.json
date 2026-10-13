@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "OAuth social authentication plugin for Svelar — Google and GitHub",
   "type": "module",
+  "engines": { "node": ">=22.12.0" },
   "keywords": [
     "svelar-plugin",
     "social-auth",
@@ -75,5 +76,9 @@
     "tsup": "^8.5.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.11"
+  },
+  "overrides": {
+    "@sveltejs/kit": { "cookie": "^0.7.2" },
+    "tsup": { "esbuild": "^0.28.2" }
   }
 }
