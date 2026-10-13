@@ -106,6 +106,32 @@ await Cache.flush();
 const exists = await Cache.has('user:1:posts');
 ```
 
+### Atomic Coordination
+
+Use atomic cache operations for distributed limits and work coordination; never implement a limiter with get/calculate/put:
+
+```typescript
+const store = Cache.store('redis');
+await store.incrementWithTtl(counterKey, 60);
+const changed = await store.compareAndSet(stateKey, expectedState, nextState, 60);
+const owner = crypto.randomUUID();
+if (await store.acquireLock(lockKey, owner, 30)) {
+  try { await executeBoundedWork(); }
+  finally { await store.releaseLock(lockKey, owner); }
+}
+const claim = await store.reserveCapacity(quotaKey, 100, 60, 1);
+const batch = await store.reserveCapacityMany([
+  { key: credentialQuotaKey, capacity: 100, ttl: 60 },
+  { key: accountQuotaKey, capacity: 1000, ttl: 60 },
+]);
+```
+
+CAS compares canonical JSON values; expected `undefined` means the key must be absent. Omitting its TTL preserves the current expiry. Atomic TTLs are positive, from 0.001 seconds to one year. Lock owners must be fresh unpredictable tokens for each lease: a stale owner cannot release another owner's lock. Locks expire; this API does not renew them automatically.
+
+Capacity reservation is all-or-none (up to 16 distinct keys). Failed reservations do not consume any quota. The first successful claim establishes the window; later claims keep its TTL. Redis uses server time for expiry metadata. Redis Cluster batch keys must share a hash slot. Keep application/server clocks synchronized when interpreting expiry timestamps.
+
+Memory coordination is process-local. File coordination uses proper-lockfile serialization and a recovery journal across processes; storage failures can conservatively consume capacity but cannot expose a partially committed batch. Null stores reject atomic coordination with `CacheAtomicUnavailableError` rather than silently allowing protected work. Configure Redis for horizontally scaled applications. This lock/reservation API is infrastructure, not authorization.
+
 ## Logging
 
 Log messages for debugging and monitoring.
@@ -493,7 +519,7 @@ Mutations record intent before executing and completion afterwards through `Audi
 
 The logs tab has minimum-level/channel/search/tenant/correlation filters and pagination with filtered totals and entry-ID cursors. Payloads, log context, and common credential formats in text are redacted. Invalid/unstructured job payloads are withheld rather than exposed verbatim. Keep secrets out of free-form logs: redaction cannot recognize every arbitrary secret string. The viewer reports its configured scope explicitly: shared database for production or process-local memory. SSE disconnect/cancel paths unsubscribe, bound slow clients, support Last-Event-ID replay and reconnect periodically to recheck authorization.
 
-This bounded console does not yet provide batch retry/cleanup, DLQ routing, safe resource deep links, queue pause/resume commands, a distributed scheduler lock inspector, persistent shared log queries, integration kill switches, or a complete user/tenant permission editor. Those require additional public contracts or their owning scaffold surfaces; the UI does not invent telemetry or bypass those boundaries.
+This bounded console does not yet provide batch retry/cleanup, DLQ routing, safe resource deep links, queue pause/resume commands, a distributed scheduler lock inspector, integration kill switches, or a complete user/tenant permission editor. Those require additional public contracts or their owning scaffold surfaces; the UI does not invent telemetry or bypass those boundaries. Shared persistent log queries are provided by the configured database viewer.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|

@@ -20,10 +20,19 @@
  * ```
  */
 
-import { readFile, writeFile, unlink, readdir, mkdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { readFile, writeFile, unlink, readdir, mkdir, rename, rm } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { serializeFileCache } from './FileSerialization.js';
+import {
+  CacheAtomicUnavailableError, MAX_CAPACITY_CLAIMS, capacityPlan, lockKey, serializedValue, ttlMilliseconds,
+  validateAmount, validateAtomicKey, validateClaims, validateCompare, validateOwner,
+  REDIS_COMPARE_SCRIPT, REDIS_ACQUIRE_SCRIPT, REDIS_RELEASE_SCRIPT, REDIS_CAPACITY_SCRIPT,
+  type CacheCapacityRequest, type CacheCapacityResult,
+} from './Atomic.js';
+
+export { CacheAtomicUnavailableError };
+export type { CacheCapacityRequest, CacheCapacityResult };
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -67,6 +76,14 @@ interface CacheStore {
   increment(key: string, amount?: number): Promise<number>;
   decrement(key: string, amount?: number): Promise<number>;
   incrementWithTtl(key: string, ttl: number, amount?: number): Promise<CacheIncrementResult>;
+  /** JSON value equality; undefined expects absence. Omitted TTL preserves an existing expiry. */
+  compareAndSet(key: string, expected: unknown, next: unknown, ttl?: number): Promise<boolean>;
+  /** Use a fresh, unpredictable owner token for each lease; acquiring again does not renew. */
+  acquireLock(key: string, owner: string, ttl: number): Promise<boolean>;
+  releaseLock(key: string, owner: string): Promise<boolean>;
+  reserveCapacity(key: string, capacity: number, ttl: number, amount?: number): Promise<CacheCapacityResult>;
+  /** At most 16 distinct keys, all-or-none. Redis Cluster keys must share a hash slot. */
+  reserveCapacityMany(claims: readonly CacheCapacityRequest[]): Promise<CacheCapacityResult[]>;
 }
 
 interface CacheEntry {
@@ -91,13 +108,25 @@ async function unlinkIfExists(path: string): Promise<void> {
   }
 }
 
+function expiry(ttl?: number): number | null {
+  return ttl === undefined || ttl === 0 ? null : Date.now() + ttlMilliseconds(ttl);
+}
+
+function incrementValue(entry: CacheEntry | null, amount: number): number {
+  const value = (Number(entry?.value) || 0) + amount;
+  if (!Number.isSafeInteger(value)) throw new RangeError('Cache counter exceeds the safe integer range.');
+  return value;
+}
+
 const REDIS_INCREMENT_SCRIPT = `
+local timestamp = redis.call('TIME')
+local now = tonumber(timestamp[1]) * 1000 + math.floor(tonumber(timestamp[2]) / 1000)
 local raw = redis.call('GET', KEYS[1])
 local current = 0
 
 if raw then
   local ok, decoded = pcall(cjson.decode, raw)
-  if ok and decoded and decoded['value'] ~= nil then
+  if ok and type(decoded) == 'table' and decoded['value'] ~= nil then
     current = tonumber(decoded['value']) or 0
   else
     current = tonumber(raw) or 0
@@ -105,23 +134,26 @@ if raw then
 end
 
 local value = current + tonumber(ARGV[1])
+if value ~= math.floor(value) or math.abs(value) > 9007199254740991 then
+  return redis.error_reply('Cache counter exceeds the safe integer range')
+end
 local ttl = tonumber(ARGV[2])
 local existingTtl = redis.call('PTTL', KEYS[1])
 
 if ttl > 0 then
-  if existingTtl > 0 then
-    ttl = existingTtl
+  if existingTtl >= 0 then
+    ttl = math.max(1, existingTtl)
   end
-  redis.call('SET', KEYS[1], cjson.encode({ value = value }), 'PX', ttl)
-  return { value, ttl }
+  redis.call('SET', KEYS[1], '{"value":' .. string.format('%.0f', value) .. '}', 'PX', ttl)
+  return { value, now + ttl }
 end
 
-if existingTtl > 0 then
-  redis.call('SET', KEYS[1], cjson.encode({ value = value }), 'PX', existingTtl)
-  return { value, existingTtl }
+if existingTtl >= 0 then
+  redis.call('SET', KEYS[1], '{"value":' .. string.format('%.0f', value) .. '}', 'PX', math.max(1, existingTtl))
+  return { value, now + math.max(1, existingTtl) }
 end
 
-redis.call('SET', KEYS[1], cjson.encode({ value = value }))
+redis.call('SET', KEYS[1], '{"value":' .. string.format('%.0f', value) .. '}')
 return { value, -1 }
 `;
 
@@ -130,23 +162,29 @@ return { value, -1 }
 class MemoryCacheStore implements CacheStore {
   private store = new Map<string, CacheEntry>();
 
-  constructor(private defaultTtl?: number) {}
+  constructor(private defaultTtl?: number) {
+    if (defaultTtl !== undefined) ttlMilliseconds(defaultTtl, true);
+  }
 
-  async get<T = any>(key: string): Promise<T | null> {
+  private liveEntry(key: string): CacheEntry | null {
     const entry = this.store.get(key);
-    if (!entry) return null;
-    if (entry.expiresAt && Date.now() > entry.expiresAt) {
+    if (entry?.expiresAt !== null && entry?.expiresAt !== undefined && entry.expiresAt <= Date.now()) {
       this.store.delete(key);
       return null;
     }
-    return entry.value as T;
+    return entry ?? null;
+  }
+
+  async get<T = any>(key: string): Promise<T | null> {
+    const entry = this.liveEntry(key);
+    return entry ? entry.value as T : null;
   }
 
   async put(key: string, value: any, ttl?: number): Promise<void> {
     const effectiveTtl = ttl ?? this.defaultTtl;
     this.store.set(key, {
       value,
-      expiresAt: effectiveTtl ? Date.now() + effectiveTtl * 1000 : null,
+      expiresAt: expiry(effectiveTtl),
     });
   }
 
@@ -159,21 +197,15 @@ class MemoryCacheStore implements CacheStore {
   }
 
   async has(key: string): Promise<boolean> {
-    const entry = this.store.get(key);
-    if (!entry) return false;
-    if (entry.expiresAt && Date.now() > entry.expiresAt) {
-      this.store.delete(key);
-      return false;
-    }
-    return true;
+    return this.liveEntry(key) !== null;
   }
 
   async increment(key: string, amount: number = 1): Promise<number> {
-    const current = (await this.get<number>(key)) ?? 0;
-    const newVal = current + amount;
-    const entry = this.store.get(key);
-    await this.put(key, newVal, entry?.expiresAt ? Math.ceil((entry.expiresAt - Date.now()) / 1000) : undefined);
-    return newVal;
+    validateAmount(amount);
+    const entry = this.liveEntry(key);
+    const value = incrementValue(entry, amount);
+    this.store.set(key, { value, expiresAt: entry ? entry.expiresAt : expiry(this.defaultTtl) });
+    return value;
   }
 
   async decrement(key: string, amount: number = 1): Promise<number> {
@@ -181,18 +213,49 @@ class MemoryCacheStore implements CacheStore {
   }
 
   async incrementWithTtl(key: string, ttl: number, amount: number = 1): Promise<CacheIncrementResult> {
-    const now = Date.now();
-    const existing = this.store.get(key);
-    const expiresAt = existing?.expiresAt && existing.expiresAt > now
-      ? existing.expiresAt
-      : now + ttl * 1000;
-    const current = existing && (!existing.expiresAt || existing.expiresAt > now)
-      ? Number(existing.value) || 0
-      : 0;
-    const value = current + amount;
-
+    validateAtomicKey(key);
+    validateAmount(amount);
+    const ttlMs = ttlMilliseconds(ttl);
+    const existing = this.liveEntry(key);
+    const expiresAt = existing?.expiresAt ?? Date.now() + ttlMs;
+    const value = incrementValue(existing, amount);
     this.store.set(key, { value, expiresAt });
     return { value, expiresAt };
+  }
+
+  async compareAndSet(key: string, expected: unknown, next: unknown, ttl?: number): Promise<boolean> {
+    validateCompare(key, expected, next, ttl);
+    const entry = this.liveEntry(key);
+    if (expected === undefined ? entry !== null : !entry || serializedValue(entry.value) !== serializedValue(expected)) return false;
+    this.store.set(key, { value: JSON.parse(serializedValue(next)), expiresAt: ttl === undefined && entry ? entry.expiresAt : expiry(ttl ?? this.defaultTtl) });
+    return true;
+  }
+
+  async acquireLock(key: string, owner: string, ttl: number): Promise<boolean> {
+    validateAtomicKey(key); validateOwner(owner);
+    const ttlMs = ttlMilliseconds(ttl);
+    const internalKey = lockKey(key);
+    if (this.liveEntry(internalKey)) return false;
+    this.store.set(internalKey, { value: owner, expiresAt: Date.now() + ttlMs });
+    return true;
+  }
+
+  async releaseLock(key: string, owner: string): Promise<boolean> {
+    validateAtomicKey(key); validateOwner(owner);
+    const internalKey = lockKey(key);
+    if (this.liveEntry(internalKey)?.value !== owner) return false;
+    return this.store.delete(internalKey);
+  }
+
+  async reserveCapacity(key: string, capacity: number, ttl: number, amount = 1): Promise<CacheCapacityResult> {
+    return (await this.reserveCapacityMany([{ key, capacity, ttl, amount }]))[0];
+  }
+
+  async reserveCapacityMany(claims: readonly CacheCapacityRequest[]): Promise<CacheCapacityResult[]> {
+    validateClaims(claims);
+    const result = capacityPlan(claims, claims.map((claim) => this.liveEntry(claim.key)), Date.now());
+    if (result[0].allowed) claims.forEach((claim, index) => this.store.set(claim.key, { value: result[index].value, expiresAt: result[index].expiresAt }));
+    return result;
   }
 }
 
@@ -205,6 +268,7 @@ class FileCacheStore implements CacheStore {
   constructor(config: CacheStoreConfig) {
     this.basePath = config.path ?? 'storage/cache';
     this.defaultTtl = config.ttl;
+    if (config.ttl !== undefined) ttlMilliseconds(config.ttl, true);
   }
 
   private filePath(key: string): string {
@@ -212,19 +276,24 @@ class FileCacheStore implements CacheStore {
     return join(this.basePath, hash.slice(0, 2), hash);
   }
 
-  async get<T = any>(key: string): Promise<T | null> {
+  private async readEntry(key: string, assertOwned: () => void, strict = false): Promise<CacheEntry | null> {
     const path = this.filePath(key);
     try {
       const content = await readFile(path, 'utf-8');
       const entry: CacheEntry = JSON.parse(content);
-      if (entry.expiresAt && Date.now() > entry.expiresAt) {
+      if (strict && (!entry || typeof entry !== 'object' || !Object.hasOwn(entry, 'value') ||
+        (entry.expiresAt !== null && (!Number.isSafeInteger(entry.expiresAt) || entry.expiresAt < 0)))) throw new TypeError('Invalid file-cache entry for atomic coordination.');
+      if (entry.expiresAt !== null && entry.expiresAt <= Date.now()) {
+        assertOwned();
         await unlinkIfExists(path);
         return null;
       }
-      return entry.value as T;
+      return entry;
     } catch (error) {
       if (isNodeError(error, 'ENOENT')) return null;
       if (error instanceof SyntaxError) {
+        if (strict) throw error;
+        assertOwned();
         await unlinkIfExists(path);
         return null;
       }
@@ -232,58 +301,104 @@ class FileCacheStore implements CacheStore {
     }
   }
 
-  async put(key: string, value: any, ttl?: number): Promise<void> {
-    const path = this.filePath(key);
-    const effectiveTtl = ttl ?? this.defaultTtl;
-    const entry: CacheEntry = {
-      value,
-      expiresAt: effectiveTtl ? Date.now() + effectiveTtl * 1000 : null,
-    };
+  private async writeAtomic(path: string, content: string, assertOwned: () => void): Promise<void> {
     await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, JSON.stringify(entry));
+    const temporary = `${path}.${randomUUID()}.tmp`;
+    try {
+      assertOwned();
+      await writeFile(temporary, content, { flag: 'wx', mode: 0o600 });
+      assertOwned();
+      await rename(temporary, path);
+    } finally {
+      await unlinkIfExists(temporary);
+    }
+  }
+
+  private journalPath(): string { return join(this.basePath, '.atomic-reservations.json'); }
+
+  private async recover(assertOwned: () => void): Promise<void> {
+    let content: string;
+    try {
+      content = await readFile(this.journalPath(), 'utf-8');
+    } catch (error) {
+      if (isNodeError(error, 'ENOENT')) return;
+      throw error;
+    }
+    const parsed: unknown = JSON.parse(content);
+    if (!Array.isArray(parsed) || parsed.length < 1 || parsed.length > MAX_CAPACITY_CLAIMS) throw new Error('Invalid file-cache reservation journal.');
+    const entries: { key: string; value: number; expiresAt: number }[] = [];
+    const keys = new Set<string>();
+    for (const item of parsed as unknown[]) {
+      if (!item || typeof item !== 'object') throw new Error('Invalid file-cache reservation journal.');
+      const record = item as Record<string, unknown>;
+      if (typeof record.key !== 'string' || typeof record.value !== 'number' || typeof record.expiresAt !== 'number' ||
+        !Number.isSafeInteger(record.value) || record.value < 0 || !Number.isSafeInteger(record.expiresAt) || record.expiresAt < 0 || keys.has(record.key)) throw new Error('Invalid file-cache reservation journal.');
+      validateAtomicKey(record.key);
+      keys.add(record.key);
+      entries.push({ key: record.key, value: record.value, expiresAt: record.expiresAt });
+    }
+    // Publishing one journal commits the whole batch. Every observer replays it under the same lock.
+    for (const item of entries) {
+      await this.writeAtomic(this.filePath(item.key), JSON.stringify({ value: item.value, expiresAt: item.expiresAt }), assertOwned);
+    }
+    assertOwned();
+    await unlinkIfExists(this.journalPath());
+  }
+
+  private async serialized<T>(operation: (assertOwned: () => void) => Promise<T>): Promise<T> {
+    return serializeFileCache(this.basePath, async (assertOwned) => {
+      await this.recover(assertOwned);
+      assertOwned();
+      return operation(assertOwned);
+    });
+  }
+
+  async get<T = any>(key: string): Promise<T | null> {
+    return this.serialized(async (guard) => {
+      const entry = await this.readEntry(key, guard);
+      return entry ? entry.value as T : null;
+    });
+  }
+
+  async put(key: string, value: any, ttl?: number): Promise<void> {
+    if (ttl !== undefined) ttlMilliseconds(ttl, true);
+    return this.serialized((guard) => this.writeAtomic(this.filePath(key), JSON.stringify({ value, expiresAt: expiry(ttl ?? this.defaultTtl) }), guard));
   }
 
   async forget(key: string): Promise<boolean> {
-    try {
-      await unlink(this.filePath(key));
-      return true;
-    } catch (error) {
-      if (!isNodeError(error, 'ENOENT')) throw error;
-      return false;
-    }
+    return this.serialized(async (guard) => {
+      try {
+        guard();
+        await unlink(this.filePath(key));
+        return true;
+      } catch (error) {
+        if (!isNodeError(error, 'ENOENT')) throw error;
+        return false;
+      }
+    });
   }
 
   async flush(): Promise<void> {
-    const { rm } = await import('node:fs/promises');
-    await rm(this.basePath, { recursive: true, force: true });
-    await mkdir(this.basePath, { recursive: true });
+    return this.serialized(async (guard) => {
+      for (const name of await readdir(this.basePath)) {
+        guard();
+        await rm(join(this.basePath, name), { recursive: true, force: true });
+      }
+    });
   }
 
   async has(key: string): Promise<boolean> {
-    const path = this.filePath(key);
-    try {
-      const content = await readFile(path, 'utf-8');
-      const entry: CacheEntry = JSON.parse(content);
-      if (entry.expiresAt && Date.now() > entry.expiresAt) {
-        await unlinkIfExists(path);
-        return false;
-      }
-      return true;
-    } catch (error) {
-      if (isNodeError(error, 'ENOENT')) return false;
-      if (error instanceof SyntaxError) {
-        await unlinkIfExists(path);
-        return false;
-      }
-      throw error;
-    }
+    return this.serialized(async (guard) => (await this.readEntry(key, guard)) !== null);
   }
 
   async increment(key: string, amount: number = 1): Promise<number> {
-    const current = (await this.get<number>(key)) ?? 0;
-    const newVal = current + amount;
-    await this.put(key, newVal);
-    return newVal;
+    validateAmount(amount);
+    return this.serialized(async (guard) => {
+      const entry = await this.readEntry(key, guard, true);
+      const value = incrementValue(entry, amount);
+      await this.writeAtomic(this.filePath(key), JSON.stringify({ value, expiresAt: entry ? entry.expiresAt : expiry(this.defaultTtl) }), guard);
+      return value;
+    });
   }
 
   async decrement(key: string, amount: number = 1): Promise<number> {
@@ -291,27 +406,69 @@ class FileCacheStore implements CacheStore {
   }
 
   async incrementWithTtl(key: string, ttl: number, amount: number = 1): Promise<CacheIncrementResult> {
-    const now = Date.now();
-    const path = this.filePath(key);
-    let entry: CacheEntry | null = null;
+    validateAtomicKey(key); validateAmount(amount);
+    const ttlMs = ttlMilliseconds(ttl);
+    return this.serialized(async (guard) => {
+      const entry = await this.readEntry(key, guard, true);
+      const result = { value: incrementValue(entry, amount), expiresAt: entry?.expiresAt ?? Date.now() + ttlMs };
+      await this.writeAtomic(this.filePath(key), JSON.stringify(result), guard);
+      return result;
+    });
+  }
 
-    try {
-      entry = JSON.parse(await readFile(path, 'utf-8'));
-    } catch (error) {
-      if (!isNodeError(error, 'ENOENT') && !(error instanceof SyntaxError)) throw error;
-    }
+  async compareAndSet(key: string, expected: unknown, next: unknown, ttl?: number): Promise<boolean> {
+    validateCompare(key, expected, next, ttl);
+    const expectedValue = expected === undefined ? undefined : serializedValue(expected);
+    const nextValue = serializedValue(next);
+    return this.serialized(async (guard) => {
+      const entry = await this.readEntry(key, guard, true);
+      if (expectedValue === undefined ? entry !== null : !entry || serializedValue(entry.value) !== expectedValue) return false;
+      const expiresAt = ttl === undefined && entry ? entry.expiresAt : expiry(ttl ?? this.defaultTtl);
+      await this.writeAtomic(this.filePath(key), JSON.stringify({ value: JSON.parse(nextValue), expiresAt }), guard);
+      return true;
+    });
+  }
 
-    const expiresAt = entry?.expiresAt && entry.expiresAt > now
-      ? entry.expiresAt
-      : now + ttl * 1000;
-    const current = entry && (!entry.expiresAt || entry.expiresAt > now)
-      ? Number(entry.value) || 0
-      : 0;
-    const value = current + amount;
+  async acquireLock(key: string, owner: string, ttl: number): Promise<boolean> {
+    validateAtomicKey(key); validateOwner(owner);
+    const ttlMs = ttlMilliseconds(ttl);
+    return this.serialized(async (guard) => {
+      const internalKey = lockKey(key);
+      if (await this.readEntry(internalKey, guard, true)) return false;
+      await this.writeAtomic(this.filePath(internalKey), JSON.stringify({ value: owner, expiresAt: Date.now() + ttlMs }), guard);
+      return true;
+    });
+  }
 
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, JSON.stringify({ value, expiresAt }));
-    return { value, expiresAt };
+  async releaseLock(key: string, owner: string): Promise<boolean> {
+    validateAtomicKey(key); validateOwner(owner);
+    return this.serialized(async (guard) => {
+      const internalKey = lockKey(key);
+      if ((await this.readEntry(internalKey, guard, true))?.value !== owner) return false;
+      guard();
+      await unlink(this.filePath(internalKey));
+      return true;
+    });
+  }
+
+  async reserveCapacity(key: string, capacity: number, ttl: number, amount = 1): Promise<CacheCapacityResult> {
+    return (await this.reserveCapacityMany([{ key, capacity, ttl, amount }]))[0];
+  }
+
+  async reserveCapacityMany(claims: readonly CacheCapacityRequest[]): Promise<CacheCapacityResult[]> {
+    validateClaims(claims);
+    claims = claims.map((claim) => ({ ...claim }));
+    return this.serialized(async (guard) => {
+    const entries: (CacheEntry | null)[] = [];
+      for (const claim of claims) entries.push(await this.readEntry(claim.key, guard, true));
+      const result = capacityPlan(claims, entries, Date.now());
+      if (result[0].allowed) {
+        const journal = claims.map((claim, index) => ({ key: claim.key, value: result[index].value, expiresAt: result[index].expiresAt }));
+        await this.writeAtomic(this.journalPath(), JSON.stringify(journal), guard);
+        await this.recover(guard);
+      }
+      return result;
+    });
   }
 }
 
@@ -328,6 +485,7 @@ class RedisCacheStore implements CacheStore {
   constructor(config: CacheStoreConfig) {
     this.prefix = config.prefix ?? 'svelar_cache:';
     this.defaultTtl = config.ttl;
+    if (config.ttl !== undefined) ttlMilliseconds(config.ttl, true);
     if (config.client) {
       this.redis = config.client;
     } else {
@@ -386,13 +544,13 @@ class RedisCacheStore implements CacheStore {
   }
 
   async put(key: string, value: any, ttl?: number): Promise<void> {
+    const effectiveTtl = ttl ?? this.defaultTtl;
+    const ttlMs = effectiveTtl === undefined ? 0 : ttlMilliseconds(effectiveTtl, true);
     const client = await this.getClient();
     const payload = this.serialize(value);
     const cacheKey = this.key(key);
-    const effectiveTtl = ttl ?? this.defaultTtl;
-
-    if (effectiveTtl && effectiveTtl > 0) {
-      await client.set(cacheKey, payload, 'EX', Math.ceil(effectiveTtl));
+    if (ttlMs > 0) {
+      await client.set(cacheKey, payload, 'PX', ttlMs);
       return;
     }
 
@@ -424,6 +582,7 @@ class RedisCacheStore implements CacheStore {
   }
 
   async increment(key: string, amount: number = 1): Promise<number> {
+    validateAmount(amount);
     const client = await this.getClient();
     const cacheKey = this.key(key);
     const [value] = await client.eval(
@@ -441,26 +600,70 @@ class RedisCacheStore implements CacheStore {
   }
 
   async incrementWithTtl(key: string, ttl: number, amount: number = 1): Promise<CacheIncrementResult> {
+    validateAtomicKey(key); validateAmount(amount);
+    const ttlDuration = ttlMilliseconds(ttl);
     const client = await this.getClient();
     const cacheKey = this.key(key);
-    const [value, ttlMs] = await client.eval(
+    const [value, expiration] = await client.eval(
       REDIS_INCREMENT_SCRIPT,
       1,
       cacheKey,
       String(amount),
-      String(Math.max(1, Math.ceil(ttl)) * 1000),
+      String(ttlDuration),
     );
 
-    const expiresAt = ttlMs > 0 ? Date.now() + Number(ttlMs) : null;
+    const expiresAt = Number(expiration) > 0 ? Number(expiration) : null;
     return { value: Number(value), expiresAt };
   }
 
-  private safeDeserialize(raw: string): any {
-    try {
-      return this.deserialize(raw);
-    } catch {
-      return raw;
+  async compareAndSet(key: string, expected: unknown, next: unknown, ttl?: number): Promise<boolean> {
+    validateCompare(key, expected, next, ttl);
+    const expectedValue = expected === undefined ? undefined : serializedValue(expected);
+    const payload = `{"value":${serializedValue(next)}}`;
+    const ttlMs = ttl === undefined ? -1 : ttlMilliseconds(ttl);
+    const client = await this.getClient();
+    let raw = '';
+    if (expectedValue !== undefined) {
+      const observed: string | null = await client.get(this.key(key));
+      if (observed === null || Buffer.byteLength(observed) > 1_048_600) return false;
+      try {
+        if (serializedValue(this.deserialize(observed)) !== expectedValue) return false;
+      } catch { return false; }
+      raw = observed;
     }
+    // Compare the exact observed bytes inside Lua, never an unguarded GET/SET pair.
+    const effectiveTtl = expectedValue === undefined && ttl === undefined
+      ? (this.defaultTtl ? ttlMilliseconds(this.defaultTtl) : -1) : ttlMs;
+    return Number(await client.eval(REDIS_COMPARE_SCRIPT, 1, this.key(key), expectedValue === undefined ? 'missing' : 'value', raw, payload, String(effectiveTtl))) === 1;
+  }
+
+  async acquireLock(key: string, owner: string, ttl: number): Promise<boolean> {
+    validateAtomicKey(key); validateOwner(owner);
+    const ttlMs = ttlMilliseconds(ttl);
+    const client = await this.getClient();
+    return Number(await client.eval(REDIS_ACQUIRE_SCRIPT, 1, this.key(lockKey(key)), this.serialize(owner), String(ttlMs))) === 1;
+  }
+
+  async releaseLock(key: string, owner: string): Promise<boolean> {
+    validateAtomicKey(key); validateOwner(owner);
+    const client = await this.getClient();
+    return Number(await client.eval(REDIS_RELEASE_SCRIPT, 1, this.key(lockKey(key)), this.serialize(owner))) === 1;
+  }
+
+  async reserveCapacity(key: string, capacity: number, ttl: number, amount = 1): Promise<CacheCapacityResult> {
+    return (await this.reserveCapacityMany([{ key, capacity, ttl, amount }]))[0];
+  }
+
+  async reserveCapacityMany(claims: readonly CacheCapacityRequest[]): Promise<CacheCapacityResult[]> {
+    validateClaims(claims);
+    const keys = claims.map((claim) => this.key(claim.key));
+    const args = claims.flatMap((claim) => [String(claim.capacity), String(ttlMilliseconds(claim.ttl)), String(claim.amount ?? 1)]);
+    const client = await this.getClient();
+    const raw: [number, number, number, number][] = await client.eval(REDIS_CAPACITY_SCRIPT, keys.length, ...keys, ...args);
+    return raw.map(([allowed, value, remaining, expiration]) => ({
+      allowed: Number(allowed) === 1, value: Number(value), remaining: Number(remaining),
+      expiresAt: Number(expiration) >= 0 ? Number(expiration) : null,
+    }));
   }
 }
 
@@ -474,7 +677,29 @@ class NullCacheStore implements CacheStore {
   async has(): Promise<boolean> { return false; }
   async increment(): Promise<number> { return 0; }
   async decrement(): Promise<number> { return 0; }
-  async incrementWithTtl(): Promise<CacheIncrementResult> { return { value: 0, expiresAt: null }; }
+  async incrementWithTtl(key: string, ttl: number, amount = 1): Promise<CacheIncrementResult> {
+    validateAtomicKey(key); ttlMilliseconds(ttl); validateAmount(amount);
+    throw new CacheAtomicUnavailableError();
+  }
+  async compareAndSet(key: string, expected: unknown, next: unknown, ttl?: number): Promise<boolean> {
+    validateCompare(key, expected, next, ttl);
+    throw new CacheAtomicUnavailableError();
+  }
+  async acquireLock(key: string, owner: string, ttl: number): Promise<boolean> {
+    validateAtomicKey(key); validateOwner(owner); ttlMilliseconds(ttl);
+    throw new CacheAtomicUnavailableError();
+  }
+  async releaseLock(key: string, owner: string): Promise<boolean> {
+    validateAtomicKey(key); validateOwner(owner);
+    throw new CacheAtomicUnavailableError();
+  }
+  async reserveCapacity(key: string, capacity: number, ttl: number, amount = 1): Promise<CacheCapacityResult> {
+    return (await this.reserveCapacityMany([{ key, capacity, ttl, amount }]))[0];
+  }
+  async reserveCapacityMany(claims: readonly CacheCapacityRequest[]): Promise<CacheCapacityResult[]> {
+    validateClaims(claims);
+    throw new CacheAtomicUnavailableError();
+  }
 }
 
 // ── Cache Manager ──────────────────────────────────────────
@@ -523,6 +748,17 @@ class CacheManager {
   async decrement(key: string, amount?: number): Promise<number> { return this.store().decrement(key, amount); }
   async incrementWithTtl(key: string, ttl: number, amount?: number): Promise<CacheIncrementResult> {
     return this.store().incrementWithTtl(key, ttl, amount);
+  }
+  async compareAndSet(key: string, expected: unknown, next: unknown, ttl?: number): Promise<boolean> {
+    return this.store().compareAndSet(key, expected, next, ttl);
+  }
+  async acquireLock(key: string, owner: string, ttl: number): Promise<boolean> { return this.store().acquireLock(key, owner, ttl); }
+  async releaseLock(key: string, owner: string): Promise<boolean> { return this.store().releaseLock(key, owner); }
+  async reserveCapacity(key: string, capacity: number, ttl: number, amount?: number): Promise<CacheCapacityResult> {
+    return this.store().reserveCapacity(key, capacity, ttl, amount);
+  }
+  async reserveCapacityMany(claims: readonly CacheCapacityRequest[]): Promise<CacheCapacityResult[]> {
+    return this.store().reserveCapacityMany(claims);
   }
 
   /**

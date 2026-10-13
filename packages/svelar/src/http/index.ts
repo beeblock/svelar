@@ -424,6 +424,23 @@ export interface HttpCircuitBreakerConfig {
   statuses?: number[];
 }
 
+export interface HttpBudgetLimit {
+  scope: 'credential' | 'account';
+  /** Stable application-owned identity, not automatically inferred from request credentials. */
+  key: string;
+  limit: number;
+  /** Fixed window in seconds, starting with the first successful claim. */
+  window: number;
+  amount?: number;
+}
+
+export interface HttpBudgetConfig {
+  store: Pick<import('../cache/index.js').CacheStore, 'reserveCapacityMany'>;
+  /** Stable integration namespace; include tenant identity when appropriate. */
+  namespace: string;
+  limits: readonly HttpBudgetLimit[];
+}
+
 export interface HttpClientConfig {
   baseUrl?: string;
   headers?: Record<string, string>;
@@ -433,6 +450,7 @@ export interface HttpClientConfig {
   retry?: HttpRetryConfig;
   idempotencyKey?: string;
   circuitBreaker?: HttpCircuitBreakerConfig;
+  budget?: HttpBudgetConfig;
 }
 
 interface CircuitBreakerState {
@@ -490,6 +508,8 @@ export class HttpClient {
   private _errorHooks: HttpErrorHook[] = [];
   private _idempotencyKey?: string;
   private _circuitBreaker?: Required<Omit<HttpCircuitBreakerConfig, 'key'>> & { key?: string };
+  private _budget?: HttpBudgetConfig;
+  private _budgetKeys?: Promise<string[]>;
 
   constructor(config?: HttpClientConfig) {
     if (config?.baseUrl) this._baseUrl = config.baseUrl;
@@ -500,6 +520,7 @@ export class HttpClient {
     if (config?.retry) this._retry = this.normalizeRetry(config.retry);
     if (config?.idempotencyKey) this._idempotencyKey = config.idempotencyKey;
     if (config?.circuitBreaker) this._circuitBreaker = this.normalizeCircuitBreaker(config.circuitBreaker);
+    if (config?.budget) this._budget = this.normalizeBudget(config.budget);
   }
 
   private clone(): HttpClient {
@@ -514,6 +535,8 @@ export class HttpClient {
     c._errorHooks = [...this._errorHooks];
     c._idempotencyKey = this._idempotencyKey;
     c._circuitBreaker = this._circuitBreaker ? { ...this._circuitBreaker } : undefined;
+    c._budget = this._budget ? { ...this._budget, limits: this._budget.limits.map((limit) => ({ ...limit })) } : undefined;
+    c._budgetKeys = this._budgetKeys;
     return c;
   }
 
@@ -593,6 +616,14 @@ export class HttpClient {
     return c;
   }
 
+  /** Claims every configured scope atomically before each transport attempt, including retries. */
+  budget(config: HttpBudgetConfig): HttpClient {
+    const c = this.clone();
+    c._budget = c.normalizeBudget(config);
+    c._budgetKeys = undefined;
+    return c;
+  }
+
   query(params: Record<string, string | number | boolean | undefined | null>): HttpClient {
     const c = this.clone();
     for (const [key, value] of Object.entries(params)) {
@@ -662,6 +693,8 @@ export class HttpClient {
           await hook(prepared);
         }
 
+        await this.claimBudget();
+
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), this._timeout);
 
@@ -705,6 +738,10 @@ export class HttpClient {
         this.recordCircuitSuccess(url, circuitStates);
         return { data, status: response.status, headers: response.headers, ok: true };
       } catch (err: any) {
+        if (err instanceof HttpBudgetExceededError || err instanceof HttpBudgetUnavailableError) {
+          await this.runErrorHooks(prepared, err);
+          throw err;
+        }
         if (err instanceof HttpRequestError) {
           this.recordCircuitFailure(url, circuitStates, err.status);
           await this.runErrorHooks(prepared, err);
@@ -777,6 +814,60 @@ export class HttpClient {
       cooldown: Math.max(1, config.cooldown ?? 30_000),
       statuses: config.statuses ?? DEFAULT_CIRCUIT_STATUSES,
     };
+  }
+
+  private normalizeBudget(config: HttpBudgetConfig): HttpBudgetConfig {
+    const validKey = (value: string) => typeof value === 'string' && value.length > 0 && new TextEncoder().encode(value).length <= 1024;
+    if (!validKey(config.namespace) || typeof config.store?.reserveCapacityMany !== 'function') throw new TypeError('HTTP budgets require a namespace and an atomic capacity store.');
+    if (!Array.isArray(config.limits) || config.limits.length < 1 || config.limits.length > 16) throw new RangeError('HTTP budgets require 1 to 16 limits.');
+    const identities = new Set<string>();
+    for (const limit of config.limits) {
+      if (!['credential', 'account'].includes(limit.scope) || !validKey(limit.key)) throw new TypeError('Invalid HTTP budget identity.');
+      const identity = JSON.stringify([limit.scope, limit.key]);
+      if (identities.has(identity)) throw new TypeError('HTTP budgets cannot repeat a scope identity.');
+      identities.add(identity);
+      const amount = limit.amount ?? 1;
+      if (!Number.isSafeInteger(limit.limit) || limit.limit < 1 || !Number.isSafeInteger(amount) || amount < 1 || amount > limit.limit) throw new RangeError('Invalid HTTP budget capacity or amount.');
+      if (!Number.isFinite(limit.window) || limit.window < 0.001 || limit.window > 31_536_000) throw new RangeError('HTTP budget windows must be 0.001 to 31536000 seconds.');
+    }
+    return { store: config.store, namespace: config.namespace, limits: config.limits.map((limit) => ({ ...limit })) };
+  }
+
+  private async claimBudget(): Promise<void> {
+    const config = this._budget;
+    if (!config) return;
+    let results: import('../cache/index.js').CacheCapacityResult[];
+    try {
+      if (!this._budgetKeys) {
+        this._budgetKeys = (async () => {
+          const digest = async (value: string) => {
+            const bytes = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+            return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, '0')).join('');
+          };
+          const namespace = await digest(config.namespace);
+          const keys: string[] = [];
+          for (const limit of config.limits) keys.push(`http:budget:{${namespace}}:${limit.scope}:${await digest(limit.key)}`);
+          return keys;
+        })();
+      }
+      const keys = await this._budgetKeys;
+      results = await config.store.reserveCapacityMany(config.limits.map((limit, index) => ({ key: keys[index], capacity: limit.limit, ttl: limit.window, amount: limit.amount ?? 1 })));
+      if (!Array.isArray(results) || results.length !== config.limits.length || results.some((result, index) =>
+        typeof result?.allowed !== 'boolean' || result.allowed !== results[0].allowed ||
+        !Number.isSafeInteger(result.value) || result.value < 0 || !Number.isSafeInteger(result.remaining) || result.remaining < 0 ||
+        result.remaining !== Math.max(0, config.limits[index].limit - result.value) ||
+        (result.expiresAt !== null && (!Number.isSafeInteger(result.expiresAt) || result.expiresAt < 0)) ||
+        (result.allowed && (result.value > config.limits[index].limit || result.value < (config.limits[index].amount ?? 1) || result.expiresAt === null)))) throw new Error('Invalid atomic capacity response.');
+    } catch {
+      // Store errors can contain credentials or URLs; do not propagate them through HTTP hooks.
+      throw new HttpBudgetUnavailableError();
+    }
+    if (!results[0].allowed) {
+      const blocked = results.filter((result, index) => result.remaining < (config.limits[index].amount ?? 1));
+      const retryAt = blocked.length && blocked.every((result) => result.expiresAt !== null)
+        ? Math.max(...blocked.map((result) => result.expiresAt!)) : null;
+      throw new HttpBudgetExceededError(retryAt);
+    }
   }
 
   private async shouldRetry(context: HttpRetryContext): Promise<boolean> {
@@ -895,6 +986,22 @@ export class HttpCircuitOpenError extends HttpRequestError {
   constructor(message: string, public readonly retryAt: number) {
     super(message, 0, null);
     this.name = 'HttpCircuitOpenError';
+  }
+}
+
+export class HttpBudgetExceededError extends HttpRequestError {
+  constructor(public readonly retryAt: number | null) {
+    const headers = new Headers();
+    if (retryAt !== null) headers.set('Retry-After', String(Math.max(0, Math.ceil((retryAt - Date.now()) / 1000))));
+    super('HTTP request budget exceeded.', 429, null, headers);
+    this.name = 'HttpBudgetExceededError';
+  }
+}
+
+export class HttpBudgetUnavailableError extends HttpRequestError {
+  constructor() {
+    super('HTTP request budget is unavailable.', 503, null);
+    this.name = 'HttpBudgetUnavailableError';
   }
 }
 

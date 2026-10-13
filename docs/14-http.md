@@ -187,7 +187,28 @@ const client = Http
   });
 ```
 
-The circuit is process-local and is meant as a fast safety primitive. If an app needs a distributed circuit or quota budget per credential/account, put that logic in a service using Svelar cache/locks and the HTTP request hooks.
+The circuit is process-local and is meant as a fast safety primitive. Distributed credential/account quotas use the budget API below; a distributed circuit can be composed with cache coordination when needed.
+
+### Distributed Credential Budgets
+
+```typescript
+import { Cache } from '@beeblock/svelar/cache';
+import { Http } from '@beeblock/svelar/http';
+
+const client = Http.baseUrl(integrationUrl).budget({
+  store: Cache.store('redis'),
+  namespace: `billing:${team.id}`,
+  limits: [
+    { scope: 'credential', key: credential.public_id, limit: 100, window: 60 },
+    { scope: 'account', key: account.public_id, limit: 1000, window: 60 },
+  ],
+});
+const response = await client.get('/records');
+```
+
+Every actual transport attempt, including retries, reserves all applicable limits atomically after request hooks. There are no refunds: failed upstream requests can consume provider quota too. Identifiers are hashed into stable namespaced keys, with a shared Redis Cluster hash slot. Supply application-owned credential/account identities explicitly; the client does not infer them from secret token headers.
+
+`HttpBudgetExceededError` reports quota exhaustion with a retry time. `HttpBudgetUnavailableError` reports failed coordination. Both fail closed before transport and do not trigger retries or open the circuit. Memory budgets are process-local; Redis budgets coordinate web/worker/scheduler and replicas. A configured budget requires an explicit capable cache store.
 
 ### Hooks & Telemetry
 
@@ -289,6 +310,7 @@ await postmarkClient.post('/email', {
 | `Http.withIdempotencyKey(key?)` | Add an `Idempotency-Key` header to mutation requests |
 | `Http.circuitBreaker(options?)` | Enable a process-local circuit breaker for failing integrations |
 | `Http.beforeRequest(fn)` | Register a request hook |
+| `Http.budget(config)` | Atomically reserve distributed credential/account quota for each transport attempt |
 | `Http.afterResponse(fn)` | Register a response hook |
 | `Http.onError(fn)` | Register an error hook |
 | `Http.query(params)` | Add URL query parameters |
