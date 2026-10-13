@@ -5,11 +5,13 @@
 
 import { randomBytes, createHash, timingSafeEqual } from 'crypto';
 import { randomUUID } from 'crypto';
+import { isIP } from 'node:net';
 import { singleton } from '../support/singleton.js';
 import { assertSqlIdentifier, Connection } from '../database/Connection.js';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
 import { Cache } from '../cache/index.js';
 import { ApplicationContext } from '../support/Context.js';
+import { Audit } from '../audit/index.js';
 
 export type ApiKeyActorType = 'user' | 'service_account' | 'system';
 
@@ -18,7 +20,7 @@ export interface ApiKeyRateLimit {
   window: number;
 }
 
-export interface ApiKeyRecord {
+export interface ApiKeyRecord<TAbility extends string = string> {
   id: string;
   userId?: string | number;
   teamId?: string | number;
@@ -31,16 +33,20 @@ export interface ApiKeyRecord {
   lastUsedAt?: number;
   lastUsedIp?: string;
   expiresAt?: number;
-  permissions?: string[];
+  permissions?: TAbility[];
+  abilities?: TAbility[];
   allowedIps?: string[];
   rateLimit?: ApiKeyRateLimit;
   metadata?: Record<string, any>;
   createdAt: number;
   revokedAt?: number;
   disabledAt?: number;
+  rotationId?: string;
+  rotatedAt?: number;
+  overlapUntil?: number;
 }
 
-export interface CreateKeyOptions {
+export interface CreateKeyOptions<TAbility extends string = string> {
   name: string;
   userId?: string | number;
   teamId?: string | number;
@@ -48,14 +54,15 @@ export interface CreateKeyOptions {
   actorId?: string | number;
   serviceAccountId?: string;
   prefix?: string; // default: 'sk_'
-  permissions?: string[];
+  permissions?: readonly TAbility[];
+  abilities?: readonly TAbility[];
   allowedIps?: string[];
   rateLimit?: ApiKeyRateLimit;
   expiresIn?: number; // seconds
   metadata?: Record<string, any>;
 }
 
-export interface CreateServiceAccountOptions extends Omit<CreateKeyOptions, 'actorType' | 'actorId' | 'serviceAccountId'> {
+export interface CreateServiceAccountOptions<TAbility extends string = string> extends Omit<CreateKeyOptions<TAbility>, 'actorType' | 'actorId' | 'serviceAccountId'> {
   teamId: string | number;
   actorId?: string | number;
   serviceAccountId?: string;
@@ -65,6 +72,23 @@ export interface ApiKeyValidationContext {
   ip?: string;
   now?: number;
   consumeRateLimit?: boolean;
+  tenantId?: string | number;
+  teamId?: string | number;
+  userAgent?: string;
+  correlationId?: string;
+}
+
+export interface ApiKeyRotationOptions { overlapSeconds?: number; }
+
+export interface ApiKeyPolicyContext {
+  apiKeyId?: string;
+  teamId?: string | number | null;
+  tenantId?: string | number | null;
+  actorId?: string | number | null;
+  actorType?: string;
+  serviceAccountId?: string;
+  userId?: string | number | null;
+  platform?: boolean;
 }
 
 export interface ApiKeyConfig {
@@ -95,7 +119,8 @@ export class ApiKeyAccessDeniedError extends Error {
 class ApiKeyManager {
   private config: ApiKeyConfig = { driver: 'memory', prefix: 'sk_' };
   private keys: ApiKeyRecord[] = []; // memory driver
-  private sqliteRotationTail: Promise<void> = Promise.resolve();
+  private memoryTail: Promise<void> = Promise.resolve();
+  private validatedRecords = new WeakMap<ApiKeyRecord, ApiKeyRecord>();
 
   configure(config: ApiKeyConfig): void {
     this.config = config;
@@ -145,12 +170,16 @@ class ApiKeyManager {
       lastUsedIp: row.last_used_ip ?? row.lastUsedIp ?? row.lastusedip ?? undefined,
       expiresAt: this.databaseTimestamp(row.expires_at ?? row.expiresAt ?? row.expiresat, 'expires_at'),
       permissions: row.permissions ? JSON.parse(row.permissions) : [],
+      abilities: row.permissions ? JSON.parse(row.permissions) : [],
       allowedIps: row.allowed_ips ? JSON.parse(row.allowed_ips) : [],
       rateLimit: row.rate_limit ? JSON.parse(row.rate_limit) : undefined,
       metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
       createdAt,
       revokedAt: this.databaseTimestamp(row.revoked_at ?? row.revokedAt ?? row.revokedat, 'revoked_at'),
       disabledAt: this.databaseTimestamp(row.disabled_at ?? row.disabledAt ?? row.disabledat, 'disabled_at'),
+      rotationId: row.rotation_id ?? row.id,
+      rotatedAt: this.databaseTimestamp(row.rotated_at, 'rotated_at'),
+      overlapUntil: this.databaseTimestamp(row.overlap_until, 'overlap_until'),
     };
   }
 
@@ -164,29 +193,48 @@ class ApiKeyManager {
   }
 
   /** Generate a new API key. Returns the PLAIN TEXT key (only shown once!) */
-  async create(
-    options: CreateKeyOptions
-  ): Promise<{ record: ApiKeyRecord; plainTextKey: string }> {
+  async create<TAbility extends string = string>(
+    options: CreateKeyOptions<TAbility>
+  ): Promise<{ record: ApiKeyRecord<TAbility>; plainTextKey: string }> {
     const generated = this.generateKey(options);
-    await this.persistKey(generated.record);
-    return generated;
+    await this.mutate(async () => {
+      await this.persistKey(generated.record);
+      await this.auditControl('created', generated.record);
+    });
+    return { ...generated, record: structuredClone(generated.record) };
   }
 
-  private generateKey(options: CreateKeyOptions): { record: ApiKeyRecord; plainTextKey: string } {
+  private generateKey<TAbility extends string = string>(options: CreateKeyOptions<TAbility>): { record: ApiKeyRecord<TAbility>; plainTextKey: string } {
     if (options.actorType !== 'service_account' && options.userId === undefined) {
       throw new Error('API keys require userId unless actorType is service_account.');
     }
-    if (options.actorType === 'service_account' && options.teamId === undefined) {
+    if (options.actorType === 'service_account' && !validIdentity(options.teamId)) {
       throw new Error('Service account API keys require teamId.');
     }
+    if (options.userId !== undefined && !validIdentity(options.userId)) throw new TypeError('Invalid API key userId.');
+    if (options.teamId !== undefined && !validIdentity(options.teamId)) throw new TypeError('Invalid API key teamId.');
+    if (options.actorId !== undefined && !validIdentity(options.actorId)) throw new TypeError('Invalid API key actorId.');
+    if (options.serviceAccountId !== undefined && !validIdentity(options.serviceAccountId)) throw new TypeError('Invalid API key serviceAccountId.');
+    if (!options.name.trim()) throw new TypeError('API key name is required.');
+    if (options.actorType !== undefined && !['user', 'service_account', 'system'].includes(options.actorType)) throw new TypeError('Invalid API key actorType.');
+    if (options.permissions !== undefined && !Array.isArray(options.permissions)
+      || options.abilities !== undefined && !Array.isArray(options.abilities)) throw new TypeError('API key abilities must be an array.');
+    const permissions = [...(options.abilities ?? options.permissions ?? [])];
+    if (permissions.some((ability) => typeof ability !== 'string' || !/^(\*|[A-Za-z0-9_.:-]+)$/.test(ability))) throw new TypeError('API key abilities must be nonempty capability names.');
+    if (options.abilities && options.permissions && JSON.stringify(options.abilities) !== JSON.stringify(options.permissions)) throw new TypeError('API key abilities and permissions must agree.');
+    if (options.allowedIps?.some((ip) => typeof ip !== 'string' || !isIP(ip))) throw new TypeError('API key allowedIps must contain exact IP addresses.');
+    if (options.rateLimit && !validRateLimit(options.rateLimit)) throw new TypeError('Invalid API key rate limit.');
+    if (options.expiresIn !== undefined && !Number.isSafeInteger(options.expiresIn * 1000)) throw new TypeError('Invalid API key expiry.');
 
     const prefix = options.prefix || this.config.prefix || 'sk_';
     const plainTextKey = `${prefix}${this.generateRandomKey(32)}`;
     const hashedKey = this.hashKey(plainTextKey);
     const serviceAccountId = options.serviceAccountId ?? (options.actorType === 'service_account' ? randomUUID() : undefined);
 
-    const record: ApiKeyRecord = {
-      id: randomUUID(),
+    const id = randomUUID();
+    const record: ApiKeyRecord<TAbility> = {
+      id,
+      rotationId: id,
       userId: options.userId,
       teamId: options.teamId,
       actorType: options.actorType ?? 'user',
@@ -195,12 +243,13 @@ class ApiKeyManager {
       name: options.name,
       key: hashedKey,
       prefix: prefix,
-      permissions: options.permissions || [],
-      allowedIps: options.allowedIps ?? [],
-      rateLimit: options.rateLimit,
-      metadata: options.metadata,
+      permissions,
+      abilities: [...permissions],
+      allowedIps: [...(options.allowedIps ?? [])],
+      rateLimit: options.rateLimit ? { ...options.rateLimit } : undefined,
+      metadata: options.metadata ? structuredClone(options.metadata) : undefined,
       createdAt: Date.now(),
-      expiresAt: options.expiresIn
+      expiresAt: options.expiresIn !== undefined
         ? Date.now() + options.expiresIn * 1000
         : undefined,
     };
@@ -232,102 +281,60 @@ class ApiKeyManager {
         created_at: record.createdAt,
         revoked_at: record.revokedAt ?? null,
         disabled_at: record.disabledAt ?? null,
+        rotation_id: record.rotationId ?? record.id,
+        rotated_at: record.rotatedAt ?? null,
+        overlap_until: record.overlapUntil ?? null,
       });
     }
   }
 
   /** Generate a tenant-bound service account API key. */
-  async createServiceAccount(
-    options: CreateServiceAccountOptions,
-  ): Promise<{ record: ApiKeyRecord; plainTextKey: string }> {
+  async createServiceAccount<TAbility extends string = string>(
+    options: CreateServiceAccountOptions<TAbility>,
+  ): Promise<{ record: ApiKeyRecord<TAbility>; plainTextKey: string }> {
+    const serviceAccountId = options.serviceAccountId ?? randomUUID();
     return this.create({
       ...options,
       actorType: 'service_account',
-      actorId: options.actorId ?? options.serviceAccountId ?? randomUUID(),
-      serviceAccountId: options.serviceAccountId,
+      actorId: options.actorId ?? serviceAccountId,
+      serviceAccountId,
     });
   }
 
   /** Validate a key and return the associated record */
   async validate(plainTextKey: string, context: ApiKeyValidationContext = {}): Promise<ApiKeyRecord | null> {
+    context = { ...context };
+    this.clearCredentialContext();
     const hashedKey = this.hashKey(plainTextKey);
-
-    if (this.config.driver === 'database') {
-      const row = await this.query().where('key', hashedKey).whereNull('revoked_at').first();
-      if (!row) return null;
-
-      const record = this.rowToRecord(row);
-      if (!await this.isUsable(record, context)) return null;
-
-      record.lastUsedAt = context.now ?? Date.now();
+    const found = this.config.driver === 'memory'
+      ? this.keys.find((record) => equalHash(record.key, hashedKey))
+      : await this.query().where('key', hashedKey).first().then((row) => row ? this.rowToRecord(row) : null);
+    if (!found) return null;
+    const validated = await this.withRecord(found.id, async (record) => {
+      if (!equalHash(record.key, hashedKey) || !await this.isUsable(record, context)) return null;
+      record.lastUsedAt = Math.max(record.lastUsedAt ?? 0, context.now ?? Date.now());
       record.lastUsedIp = context.ip ?? record.lastUsedIp;
-      await this.query().where('id', record.id).update({
-        last_used_at: record.lastUsedAt,
-        last_used_ip: record.lastUsedIp ?? null,
+      if (this.config.driver === 'database') await this.query().where('id', record.id).update({
+        last_used_at: record.lastUsedAt, last_used_ip: record.lastUsedIp ?? null,
       });
-      this.applyContext(record);
-      return record;
+      return structuredClone(record);
+    });
+    if (validated) {
+      this.validatedRecords.set(validated, structuredClone(validated));
+      this.applyContext(validated, context);
     }
-
-    for (const record of this.keys) {
-      if (record.revokedAt != null) continue;
-
-      // Use timing-safe comparison to prevent timing attacks
-      try {
-        if (
-          timingSafeEqual(
-            Buffer.from(record.key),
-            Buffer.from(hashedKey)
-          )
-        ) {
-          if (!await this.isUsable(record, context)) {
-            return null;
-          }
-          // Update lastUsedAt
-          record.lastUsedAt = context.now ?? Date.now();
-          record.lastUsedIp = context.ip ?? record.lastUsedIp;
-          this.applyContext(record);
-          return record;
-        }
-      } catch {
-        // Timing safe equal throws if buffers are different lengths
-        continue;
-      }
-    }
-
-    return null;
+    return validated;
   }
 
   /** Revoke a key */
   async revoke(keyId: string): Promise<boolean> {
-    if (this.config.driver === 'database') {
-      const existing = await this.findById(keyId);
-      if (!existing || existing.revokedAt != null) return false;
-
-      await this.query().where('id', keyId).whereNull('revoked_at').update({ revoked_at: Date.now() });
-      return true;
-    }
-
-    const key = this.keys.find((k) => k.id === keyId);
-    if (!key) return false;
-
-    key.revokedAt = Date.now();
-    return true;
+    return await this.control(keyId, 'revoked') ?? false;
   }
 
   /** Revoke an active key only when it belongs to the authenticated user. */
   async revokeForUser(keyId: string, userId: string | number): Promise<boolean> {
-    if (this.config.driver === 'database') {
-      const affected = await this.query().where('id', keyId)
-        .where('user_id', String(userId)).whereNull('revoked_at')
-        .update({ revoked_at: Date.now() });
-      return affected > 0;
-    }
-
-    const key = this.keys.find((record) => record.id === keyId && String(record.userId) === String(userId) && record.revokedAt == null);
-    if (!key) return false;
-    key.revokedAt = Date.now();
-    return true;
+    if (!validIdentity(userId)) return false;
+    return await this.control(keyId, 'revoked', userId) ?? false;
   }
 
   /** List keys for a user */
@@ -342,41 +349,35 @@ class ApiKeyManager {
     }
 
     return this.keys
-      .filter((k) => k.userId === userId && k.revokedAt == null)
-      .map((k) => ({ ...k })); // Return copies without plaintext
+      .filter((k) => String(k.userId) === String(userId) && k.revokedAt == null)
+      .map((key) => structuredClone(key));
   }
 
   /** Atomically replace a key without extending expiry or clearing disabled state. */
   async rotate(
-    keyId: string
+    keyId: string,
+    options: ApiKeyRotationOptions = {},
   ): Promise<{ record: ApiKeyRecord; plainTextKey: string } | null> {
-    if (this.config.driver === 'memory') {
-      const oldKey = this.keys.find((key) => key.id === keyId);
-      if (!oldKey || oldKey.revokedAt != null) return null;
+    const overlapSeconds = options.overlapSeconds ?? 0;
+    if (!Number.isSafeInteger(overlapSeconds) || overlapSeconds < 0 || !Number.isSafeInteger(overlapSeconds * 1000)) throw new TypeError('Rotation overlapSeconds must be a nonnegative safe integer.');
+    return this.withRecord(keyId, async (oldKey) => {
+      if (oldKey.revokedAt != null || oldKey.rotatedAt != null) return null;
       const generated = this.generateRotation(oldKey);
-      // Prepare both changes before publishing a new memory snapshot, with no await in between.
-      this.keys = this.keys.map((key) => key === oldKey ? { ...key, revokedAt: Date.now() } : key)
-        .concat(generated.record);
-      return generated;
-    }
-
-    const replace = () => Connection.transaction(async () => {
-      // The conditional write locks/claims the old row before reading its current controls.
-      const claimed = await this.query().where('id', keyId).whereNull('revoked_at')
-        .update({ revoked_at: Date.now() });
-      if (claimed === 0) return null;
-      const oldKey = await this.findById(keyId);
-      if (!oldKey) throw new Error('API key disappeared during rotation.');
-      const generated = this.generateRotation(oldKey);
+      const rotatedAt = Date.now();
+      const deadline = rotatedAt + overlapSeconds * 1000;
+      if (!Number.isSafeInteger(deadline)) throw new TypeError('Invalid rotation overlap deadline.');
+      const overlapUntil = Math.min(deadline, oldKey.expiresAt ?? deadline);
+      const prior = structuredClone(oldKey);
+      if (this.config.driver === 'database') {
+        const claimed = await this.query().where('id', keyId).whereNull('revoked_at').whereNull('rotated_at')
+          .update({ revoked_at: rotatedAt, rotated_at: rotatedAt, overlap_until: overlapUntil });
+        if (claimed === 0) return null;
+      } else Object.assign(oldKey, { revokedAt: rotatedAt, rotatedAt, overlapUntil });
       await this.persistKey(generated.record);
-      return generated;
+      await this.auditControl('rotated', generated.record, prior, { replacementKeyId: generated.record.id, overlapUntil });
+      await this.invalidateAuthorizationSnapshots();
+      return { ...generated, record: structuredClone(generated.record) };
     });
-
-    if (Connection.getDriver() !== 'sqlite') return replace();
-    // SQLite uses one connection; overlapping BEGIN statements must not share a transaction.
-    const pending = this.sqliteRotationTail.then(replace);
-    this.sqliteRotationTail = pending.then(() => {}, () => {});
-    return pending;
   }
 
   private generateRotation(oldKey: ApiKeyRecord): { record: ApiKeyRecord; plainTextKey: string } {
@@ -395,58 +396,45 @@ class ApiKeyManager {
     });
     generated.record.expiresAt = oldKey.expiresAt;
     generated.record.disabledAt = oldKey.disabledAt;
+    generated.record.rotationId = oldKey.rotationId ?? oldKey.id;
     return generated;
   }
 
   /** Check if a key has a specific permission */
   async hasPermission(
     plainTextKey: string,
-    permission: string
+    permission: string,
+    context: ApiKeyValidationContext = {},
   ): Promise<boolean> {
-    const record = await this.validate(plainTextKey, { consumeRateLimit: false });
+    const record = await this.validate(plainTextKey, { ...context, consumeRateLimit: false });
     if (!record) return false;
 
-    if (!record.permissions || record.permissions.length === 0) return false;
-    if (record.permissions.includes('*')) return true;
-
-    return record.permissions.includes(permission);
+    return this.hasAbility(record, permission);
   }
 
   /** Disable a key without deleting audit history. */
   async disable(keyId: string): Promise<boolean> {
-    const disabledAt = Date.now();
-    if (this.config.driver === 'database') {
-      const existing = await this.findById(keyId);
-      if (!existing || existing.disabledAt != null || existing.revokedAt != null) return false;
-      await this.query().where('id', keyId).whereNull('revoked_at').update({ disabled_at: disabledAt });
-      return true;
-    }
-
-    const key = this.keys.find((k) => k.id === keyId);
-    if (!key || key.disabledAt != null || key.revokedAt != null) return false;
-    key.disabledAt = disabledAt;
-    return true;
+    return await this.control(keyId, 'disabled') ?? false;
   }
 
   /** Re-enable a disabled key. Revoked keys cannot be enabled. */
   async enable(keyId: string): Promise<boolean> {
-    if (this.config.driver === 'database') {
-      const existing = await this.findById(keyId);
-      if (!existing || existing.revokedAt != null) return false;
-      await this.query().where('id', keyId).whereNull('revoked_at').update({ disabled_at: null });
-      return true;
-    }
-
-    const key = this.keys.find((k) => k.id === keyId);
-    if (!key || key.revokedAt != null) return false;
-    key.disabledAt = undefined;
-    return true;
+    return await this.control(keyId, 'enabled') ?? false;
   }
 
   private async isUsable(record: ApiKeyRecord, context: ApiKeyValidationContext): Promise<boolean> {
     const now = context.now ?? Date.now();
+    if (!Number.isSafeInteger(now) || now < 0) throw new TypeError('Invalid API key validation timestamp.');
+    if (!this.isActive(record, now)) return false;
     if (record.disabledAt != null) return false;
-    if (record.expiresAt != null && record.expiresAt < now) return false;
+    if (record.expiresAt != null && record.expiresAt <= now) return false;
+    if (record.actorType === 'service_account' && (!validIdentity(record.teamId) || !validIdentity(record.actorId) || !validIdentity(record.serviceAccountId))) return false;
+    if (record.actorType !== undefined && !['user', 'service_account', 'system'].includes(record.actorType)) return false;
+    if (record.actorType !== 'service_account' && !validIdentity(record.userId)) return false;
+    if (!Array.isArray(record.permissions) || record.permissions.some((ability) => typeof ability !== 'string' || !/^(\*|[A-Za-z0-9_.:-]+)$/.test(ability))) return false;
+    if (!Array.isArray(record.allowedIps) || record.allowedIps.some((ip) => typeof ip !== 'string' || !isIP(ip))) return false;
+    if (context.tenantId !== undefined && !sameIdentity(record.teamId, context.tenantId)
+      || context.teamId !== undefined && !sameIdentity(record.teamId, context.teamId)) throw new ApiKeyAccessDeniedError('API key does not belong to the requested tenant.', record);
 
     if (record.allowedIps?.length) {
       if (!context.ip || !record.allowedIps.includes(context.ip)) {
@@ -454,10 +442,11 @@ class ApiKeyManager {
       }
     }
 
+    if (record.rateLimit && !validRateLimit(record.rateLimit)) throw new ApiKeyAccessDeniedError('API key has an invalid rate limit.', record);
     if (context.consumeRateLimit !== false && record.rateLimit) {
       const ttl = Math.max(1, record.rateLimit.window);
       const bucket = Math.floor(now / (ttl * 1000));
-      const counter = await Cache.incrementWithTtl(`svelar:api-key:${record.id}:rate:${bucket}`, ttl);
+      const counter = await Cache.incrementWithTtl(`svelar:api-key:${record.rotationId ?? record.id}:rate:${bucket}`, ttl);
       if (counter.value > record.rateLimit.limit) {
         const retryAfter = counter.expiresAt ? Math.max(1, Math.ceil((counter.expiresAt - now) / 1000)) : ttl;
         throw new ApiKeyRateLimitError('API key rate limit exceeded.', record, retryAfter);
@@ -467,12 +456,12 @@ class ApiKeyManager {
     return true;
   }
 
-  private applyContext(record: ApiKeyRecord): void {
+  private applyContext(record: ApiKeyRecord, context: ApiKeyValidationContext): void {
     if (record.teamId != null) {
       ApplicationContext.set('teamId', record.teamId);
       ApplicationContext.set('tenantId', record.teamId);
     }
-    if (record.userId != null) {
+    if (record.userId != null && record.actorType !== 'service_account') {
       ApplicationContext.set('userId', record.userId);
     }
     if (record.actorId != null) {
@@ -485,7 +474,117 @@ class ApiKeyManager {
     if (record.serviceAccountId) {
       ApplicationContext.set('serviceAccountId', record.serviceAccountId);
     }
+    ApplicationContext.set('abilities', [...(record.permissions ?? [])]);
+    if (context.ip) ApplicationContext.set('ipAddress', context.ip);
+    if (context.userAgent) ApplicationContext.set('userAgent', context.userAgent);
+    if (context.correlationId) ApplicationContext.set('correlationId', context.correlationId);
   }
+
+  hasAbility<TAbility extends string>(record: ApiKeyRecord<TAbility>, ability: TAbility, context: ApiKeyPolicyContext = ApplicationContext.snapshot()): boolean {
+    const trusted = this.validatedRecords.get(record);
+    if (!trusted) return false;
+    if (!this.isActive(trusted, Date.now()) || trusted.disabledAt != null || trusted.expiresAt != null && trusted.expiresAt <= Date.now()) return false;
+    if (context.apiKeyId !== trusted.id || !sameIdentity(context.actorId, trusted.actorId) || context.actorType !== (trusted.actorType ?? 'user')) return false;
+    if (trusted.teamId != null && (!sameIdentity(context.teamId, trusted.teamId) || !sameIdentity(context.tenantId, trusted.teamId))) return false;
+    if (trusted.teamId == null && (context.teamId != null || context.tenantId != null)) return false;
+    if (trusted.teamId != null && context.platform === true) return false;
+    if (trusted.actorType === 'service_account' && (context.serviceAccountId !== trusted.serviceAccountId || context.userId != null || !validIdentity(trusted.teamId))) return false;
+    return trusted.permissions?.some((permission) => permission === '*' || permission === ability) ?? false;
+  }
+
+  async runWithKey<T>(plainTextKey: string, context: ApiKeyValidationContext, callback: (record: ApiKeyRecord) => T | Promise<T>): Promise<T | null> {
+    return await ApplicationContext.runIsolated({}, async () => {
+      const record = await this.validate(plainTextKey, context);
+      return record ? await callback(record) : null;
+    });
+  }
+
+  private isActive(record: ApiKeyRecord, now: number): boolean {
+    return record.revokedAt == null || record.rotatedAt === record.revokedAt && record.overlapUntil != null && now < record.overlapUntil;
+  }
+
+  private clearCredentialContext(): void {
+    for (const field of ['teamId', 'tenantId', 'userId', 'actorId', 'actorType', 'apiKeyId', 'serviceAccountId', 'abilities']) ApplicationContext.set(field, undefined);
+  }
+
+  private async mutate<T>(callback: () => Promise<T>): Promise<T> {
+    if (this.config.driver === 'database') return Connection.transaction(callback);
+    const pending = this.memoryTail.then(async () => {
+      const snapshot = structuredClone(this.keys);
+      try { return await callback(); }
+      catch (error) { this.keys = snapshot; throw error; }
+    });
+    this.memoryTail = pending.then(() => {}, () => {});
+    return pending;
+  }
+
+  private async withRecord<T>(keyId: string, callback: (record: ApiKeyRecord) => Promise<T>): Promise<T | null> {
+    return this.mutate(async () => {
+      const record = await this.findById(keyId);
+      if (!record) return null;
+      if (this.config.driver === 'database') {
+        const anchor = await this.query().where('id', record.rotationId ?? record.id).forUpdate().first();
+        if (!anchor) throw new Error('API key rotation lineage is missing.');
+        const latest = await this.findById(keyId);
+        if (!latest) return null;
+        return callback(latest);
+      }
+      return callback(record);
+    });
+  }
+
+  private async control(keyId: string, action: 'revoked' | 'disabled' | 'enabled', owner?: string | number): Promise<boolean | null> {
+    return this.withRecord(keyId, async (record) => {
+      if (!this.isActive(record, Date.now()) || owner !== undefined && !sameIdentity(owner, record.userId)) return false;
+      if (action === 'disabled' && record.disabledAt != null || action === 'enabled' && record.disabledAt == null) return false;
+      const prior = structuredClone(record);
+      const now = Date.now();
+      const rotationId = record.rotationId ?? record.id;
+      if (this.config.driver === 'database') {
+        await this.query().where('rotation_id', rotationId).update(action === 'revoked'
+          ? { revoked_at: now, overlap_until: null } : { disabled_at: action === 'disabled' ? now : null });
+      } else {
+        for (const key of this.keys.filter((item) => (item.rotationId ?? item.id) === rotationId)) {
+          if (action === 'revoked') { key.revokedAt = now; key.overlapUntil = undefined; }
+          else key.disabledAt = action === 'disabled' ? now : undefined;
+        }
+      }
+      const updated = action === 'revoked' ? { ...record, revokedAt: now, overlapUntil: undefined }
+        : { ...record, disabledAt: action === 'disabled' ? now : undefined };
+      await this.auditControl(action, updated, prior);
+      await this.invalidateAuthorizationSnapshots();
+      return true;
+    });
+  }
+
+  private async invalidateAuthorizationSnapshots(): Promise<void> {
+    // Synchronous policy checks are request-scoped; committed control changes require revalidation.
+    await Connection.afterCommit(() => { this.validatedRecords = new WeakMap(); });
+  }
+
+  private async auditControl(action: string, record: ApiKeyRecord, previous?: ApiKeyRecord, metadata: Record<string, unknown> = {}): Promise<void> {
+    const controls = (key: ApiKeyRecord): Record<string, unknown> => ({
+      name: key.name, teamId: key.teamId, actorType: key.actorType, actorId: key.actorId,
+      serviceAccountId: key.serviceAccountId, permissions: key.permissions,
+      allowedIps: key.allowedIps, rateLimit: key.rateLimit, expiresAt: key.expiresAt,
+      disabledAt: key.disabledAt, revokedAt: key.revokedAt,
+    });
+    await Audit.log({ userId: null, action: `api_key.${action}`, modelType: 'ApiKey', modelId: previous?.id ?? record.id,
+      oldValues: previous ? controls(previous) : undefined, newValues: controls(record),
+      metadata: { targetTenantId: record.teamId, rotationId: record.rotationId ?? record.id, ...metadata } });
+  }
+}
+
+function validIdentity(value: unknown): value is string | number {
+  return typeof value === 'string' ? value.trim().length > 0 && value.length <= 255 : typeof value === 'number' && Number.isSafeInteger(value);
+}
+function sameIdentity(left: unknown, right: unknown): boolean { return validIdentity(left) && validIdentity(right) && String(left) === String(right); }
+function validRateLimit(value: ApiKeyRateLimit): boolean {
+  return Number.isSafeInteger(value.limit) && value.limit > 0 && Number.isSafeInteger(value.window) && value.window > 0;
+}
+function equalHash(left: string, right: string): boolean {
+  const a = Buffer.from(left); const b = Buffer.from(right);
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 export const ApiKeys = singleton(
