@@ -215,6 +215,21 @@ class AuditManager {
     return this.query({ userId, limit: limit || 100 });
   }
 
+  /** Prune records strictly before a Unix-millisecond cutoff; transaction counts describe matched records. */
+  async pruneBefore(cutoff: Date | string | number): Promise<number> {
+    if (!(cutoff instanceof Date) && typeof cutoff !== 'string' && typeof cutoff !== 'number'
+      || typeof cutoff === 'string' && !cutoff.trim()) throw new TypeError('Audit pruning requires a valid date or Unix-millisecond cutoff.');
+    const timestamp = cutoff instanceof Date ? cutoff.getTime() : new Date(cutoff).getTime();
+    if (!Number.isFinite(timestamp)) throw new RangeError('Invalid audit pruning cutoff.');
+    if (this.config.driver === 'database') return this.tableQuery().where('timestamp', '<', timestamp).delete();
+    if (this.config.driver !== 'memory') throw new Error(`Audit pruning is unsupported by the ${this.config.driver} driver; external logs are not deleted.`);
+    const ids = new Set(this.entries.filter(entry => entry.timestamp < timestamp).map(entry => entry.id));
+    const prune = () => { this.entries = this.entries.filter(entry => !ids.has(entry.id)); };
+    if (Connection.inTransaction()) await Connection.afterCommit(prune);
+    else prune();
+    return ids.size;
+  }
+
   async getStats(): Promise<{
     total: number;
     byAction: Record<string, number>;
