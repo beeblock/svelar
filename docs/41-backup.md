@@ -64,9 +64,8 @@ export const backupPlugin = new SvelarBackupPlugin({
 ```ts
 // src/lib/backup.ts
 import { Backup } from '@beeblock/svelar-backup';
-import Database from 'better-sqlite3';
-
-const db = new Database('database.db');
+import { env } from '@beeblock/svelar/config';
+import { capabilityAccess, resolveCapabilityInput } from '$lib/shared/permissions/access.server.js';
 
 Backup.configure({
   database: { driver: 'sqlite', filename: 'database.db' },
@@ -79,7 +78,11 @@ Backup.configure({
   notifications: { onSuccess: true, onFailure: true },
   compression: true,
   maxBackupSize: 500,
-  db,
+  connectionName: env('BACKUP_HISTORY_CONNECTION') || undefined,
+  authorize: async (event) => {
+    const input = resolveCapabilityInput(event);
+    return input !== null && await capabilityAccess.can('action.backups.manage', input);
+  },
 });
 ```
 
@@ -153,8 +156,7 @@ import { Backup } from '@beeblock/svelar-backup';
 
 | Method | Returns | Description |
 |---|---|---|
-| `Backup.configure(config)` | `void` | Set configuration (pass `db` to also initialize the service) |
-| `Backup.setDatabase(db)` | `void` | Set the database instance (better-sqlite3 or compatible) |
+| `Backup.configure(config)` | `void` | Configure dump sources, destinations and the optional named history connection |
 | `Backup.run()` | `Promise<BackupResult[]>` | Execute a backup to all configured destinations |
 | `Backup.list()` | `Promise<BackupRecord[]>` | List all backup records |
 | `Backup.download(nameOrId)` | `Promise<Buffer>` | Download a backup file by name or ID |
@@ -341,23 +343,13 @@ A compact health status badge:
 
 ---
 
-## Migration SQL
+## Migrations And SQLite Snapshots
 
-The `backups` table is created automatically by `BackupHistory.ensureTable()` when you call `Backup.configure()`. The SQL is:
+The plugin publishes `src/lib/database/migrations/create_backups_table.ts`. Run `npx svelar migrate` against the configured history connection before using it. `Backup.configure()` never creates tables at runtime. `connectionName` selects only the history connection; `database` independently chooses the database to dump. Raw database instances and `Backup.setDatabase()` are not part of this API.
 
-```sql
-CREATE TABLE IF NOT EXISTS backups (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  path TEXT NOT NULL,
-  disk TEXT NOT NULL,
-  size INTEGER DEFAULT 0,
-  status TEXT DEFAULT 'completed',
-  error TEXT,
-  duration INTEGER,
-  created_at TEXT
-);
-```
+SQLite backups require the optional `better-sqlite3@^12.11.1` peer. The dumper opens an existing source read-only and uses SQLite online backup, including committed WAL content, instead of copying only the main file. Missing sources/drivers and source-path or hard-link aliases fail without overwriting the source. PostgreSQL and MySQL dumpers use their native tools.
+
+Register and seed the platform-scoped `action.backups.manage` capability with its screen dependency, and configure the server-only authorization callback. It must return boolean `true` after current identity/capability checks; missing configuration denies HTTP access. Keep Origin/CSRF enabled for browser mutations. The published `[...path]` route matches both the base backup URL and its child operations. Unexpected HTTP failures are generic; provider and stored error details are redacted rather than exposed to browsers. Trusted server services retain operational details.
 
 ---
 
@@ -366,9 +358,8 @@ CREATE TABLE IF NOT EXISTS backups (
 ```ts
 // src/lib/backup.ts
 import { Backup } from '@beeblock/svelar-backup';
-import Database from 'better-sqlite3';
-
-const db = new Database('database.db');
+import { env } from '@beeblock/svelar/config';
+import { capabilityAccess, resolveCapabilityInput } from '$lib/shared/permissions/access.server.js';
 
 Backup.configure({
   database: { driver: 'sqlite', filename: 'database.db' },
@@ -389,7 +380,11 @@ Backup.configure({
   notifications: { onSuccess: true, onFailure: true },
   compression: true,
   maxBackupSize: 500,
-  db,
+  connectionName: env('BACKUP_HISTORY_CONNECTION') || undefined,
+  authorize: async (event) => {
+    const input = resolveCapabilityInput(event);
+    return input !== null && await capabilityAccess.can('action.backups.manage', input);
+  },
 });
 ```
 

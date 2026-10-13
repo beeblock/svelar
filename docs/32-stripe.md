@@ -85,6 +85,14 @@ This creates:
 - `invoices` table (polymorphic: `billable_type` + `billable_id`)
 - `stripe_customer_id` column on `users` table
 
+## Billable Identifiers
+
+`Billable(Model)` reads the model's configured `primaryKey` with `getAttribute`; it supports positive safe integer IDs and canonical string IDs, including UUID v7, ULID, and custom-named primary keys. Register each billable model by its distinct table name. Billing service and queued customer-sync inputs accept `string | number`; numeric `1` and string `'1'` identify the same owner. Empty, ambiguous numeric, whitespace/control-containing, reserved prototype, and over-255-character IDs are rejected rather than coerced.
+
+The plugin's initial alpha migrations store polymorphic `billable_id` as `VARCHAR(255)` without a foreign key to a host table. Subscription and invoice primary keys, and the invoice-to-subscription foreign key, remain integers. Subscription/invoice resources return canonical string `billableId` values. Exact string ownership checks also apply on case/accent-insensitive host databases. Caller metadata cannot replace the reserved billable identity; invoice events linked to a local subscription use that subscription's owner rather than editable invoice metadata.
+
+Before running migrations, adapt the published `add_stripe_customer_id_to_billable` migration for each registered host table. Existing alpha installations with integer `billable_id` columns must run an app-owned focused data-preserving migration to `VARCHAR(255)` before accepting UUID/ULID owners; changing this package's initial migration does not alter an already migrated database. Do not add a polymorphic foreign key to a differently typed host primary key.
+
 #### Adding Billable to Other Models
 
 The Billable mixin is **polymorphic** — any model can be billable, not just User. To make another model billable (e.g. Team, Company), duplicate the `add_stripe_customer_id_to_billable` migration and change the table name:
