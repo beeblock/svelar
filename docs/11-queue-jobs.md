@@ -283,14 +283,42 @@ await Queue.dispatch(new SendWelcomeEmail(user.id, user.email), {
   queue: 'emails',      // Send to a specific named queue
   delay: 60,            // Wait 60 seconds before processing
   maxAttempts: 5,       // Override job's maxAttempts
-  jobId: `welcome:${user.id}`, // Stable idempotency key
-  deduplicate: true,    // Skip enqueueing when jobId is already waiting
+  jobId: `welcome-${user.id}`, // Nonempty, nonnumeric Redis ID, without colons
+  deduplicate: true,    // Skip enqueueing while this retained jobId exists
   priority: 1,          // Lower numbers run first in BullMQ and memory queues
-  metadata: { userId: user.id, teamId }, // Dashboard/search context
+  metadata: { tenantId: teamId, resourceId: user.id }, // Indexed operational context
 });
 ```
 
 `Queue.dispatch()` returns the queued job id. Use `jobId` when an external event or webhook needs idempotency. Redis/BullMQ also receives `priority`; the memory driver uses priority for local tests.
+
+All job IDs must be nonempty strings without `:`; Redis also rejects integer-only custom IDs. Retention/removal affects how long an ID prevents another enqueue. Queue deduplication is not domain-level exactly-once delivery: jobs must tolerate retries and killed-worker recovery. Database and sync reject `priority`; sync rejects ID deduplication. Unsupported capabilities throw rather than silently approximating Redis semantics.
+
+#### Native Deduplication and Bulk Dispatch
+
+Native modes require Redis and BullMQ `>=5.77.4 <6`. `delay` and `retryDelay` use **seconds**; deduplication `ttl` uses **milliseconds**.
+
+```typescript
+await Queue.dispatch(new GenerateReport(reportId), {
+  queue: 'reports', connection: 'redis',
+  deduplication: { id: `report-${reportId}`, mode: 'debounce', ttl: 2000 },
+});
+
+const ids = await Queue.dispatchBulk([
+  { job: new GenerateReport(firstReportId), options: { jobId: `report-${firstReportId}` } },
+  { job: new GenerateReport(secondReportId), options: { jobId: `report-${secondReportId}` } },
+], { queue: 'reports', connection: 'redis' });
+```
+
+| Mode | Intake behavior |
+|------|-----------------|
+| `until-completed` | Suppress duplicates until completion or terminal failure |
+| `until-processing` | Release uniqueness when a worker acquires the job |
+| `throttle` with `ttl` | Suppress duplicates during the fixed TTL |
+| `debounce` with `ttl` | Extend the delay and replace pending work with the latest payload |
+| `coalesce` | While active, retain one latest successor instead of every update |
+
+Do not combine `deduplicate` and `deduplication`. For debounce, omit `delay` or set `delay * 1000 === ttl`. Native modes reject non-Redis drivers and older BullMQ peers. A bulk must resolve to one queue and connection; Redis uses native `addBulk`, database uses transactional inserts, and other drivers do not promise all-or-nothing execution. Database bulk ID deduplication is explicitly unsupported.
 
 ### Queue Registry
 
@@ -314,7 +342,80 @@ Queue.registerQueues([
 
 `Queue.queues()` returns the registered queue definitions and `Queue.registeredJobs()` returns the registered job class names. `JobMonitor.getHealth()` includes both lists for admin dashboards.
 
+#### Typed Job and Worker Profiles
+
+Register definitions in the common bootstrap used by web, workers and scheduler:
+
+```typescript
+import { Queue, type JobDefinition } from '@beeblock/svelar/queue';
+import { SendWelcomeEmail } from '$lib/jobs/SendWelcomeEmail.js';
+
+const definition = {
+  name: 'SendWelcomeEmail', queue: 'emails', connection: 'redis',
+  dispatch: { maxAttempts: 5 },
+} satisfies JobDefinition;
+Queue.register(SendWelcomeEmail, definition);
+Queue.registerWorkerProfile({
+  name: 'email-delivery', queue: 'emails', connection: 'redis',
+  concurrency: 5, lockDuration: 45000, stalledInterval: 30000, maxStalledCount: 1,
+});
+```
+
+Declare `static definition` on a Job subclass as another supported definition source. Explicit dispatch options override registered defaults. An instance's nondefault queue/attempt setting remains significant. `Queue.jobDefinitions()` and `Queue.workerProfiles()` return public definition snapshots. `Queue.discoverJobs(exportedJobs)` registers exported Job subclasses without calling constructors; dispatch also registers the encountered class/queue in that process. Automatic producer registration does **not** import that class into a separate worker. Register or discover the same exports in every process, and avoid changing persisted names while old jobs remain queued.
+
+Queue definitions may select `workerProfile`. `Queue.configure({ ..., queues, workers })` also accepts typed definitions. `Queue.discoverQueues(connection)` discovers instrumented Redis registry entries or persisted database queue names, not arbitrary external BullMQ consumers. Always provide the connection for operations where the same queue name exists on multiple connections.
+
 ### Queue Monitoring
+
+For named connections and production operator workflows, prefer the public adapter below. The existing `JobMonitor.listJobs/getHealth` API remains a default-connection compatibility view; its process-local throughput and scan-based pages are not the new shared/indexed contracts.
+
+#### Named Operational Adapters
+
+```typescript
+import { Queue, type QueueJobReference } from '@beeblock/svelar/queue';
+
+const adapter = Queue.adapter('emails', 'redis');
+const page = await adapter.list({
+  status: 'waiting', tenantId: authorizedTeamId,
+  accountId, resourceId, correlationId, offset: 0, limit: 25,
+});
+const counts = await adapter.counts();
+const runtime = await adapter.runtime();
+const metrics = await adapter.metrics(60);
+const failures = await adapter.deadLetters({ tenantId: authorizedTeamId, limit: 25 });
+
+const selected: QueueJobReference[] = failures.map(record => ({ id: record.id, source: 'dead-letter' }));
+const retry = await adapter.retryMany(selected);
+```
+
+Retry and cleanup are **alternative**, authorized operator commands, not a routine sequence. For a separately confirmed discard, call `adapter.cleanup(selected)` instead of retry. `JobMonitor.adapter(queue, connection)` delegates to the same adapter; there is no need to configure a second BullMQ client with private internals.
+
+| API | Contract |
+|-----|----------|
+| `get(id)` / `deadLetter(id)` | Exact live / ledger lookup, qualified by connection and queue; wrong scope returns `null` |
+| `list(filter)` | `{ items, offset, limit, indexedCount, coverage: 'instrumented' }`; limit `0..1000`, default 50 |
+| `deadLetters(filter)` | Ledger page; excludes replay receipts unless `includeReplayed: true` |
+| `counts()` | Live states and `deadLetter` separately; Redis live failed count is not a second ledger count |
+| `runtime()` | Pause, heartbeat observations, concurrency, indexed ready age/lag, stalled/expired lease observations |
+| `metrics(minutes)` | Shared Redis-native or database-event totals/minute buckets; `1..20160`, default 60 |
+| `pause()` / `resume()` | Redis global queue intake control; active jobs continue |
+| `timeline({ id, source }, limit)` | Scoped instrumented events; default 100, bounded `1..1000` |
+| `retry` / `retryMany` | Source-qualified retry/replay; per-item outcome, not a promise of completion |
+| `remove` / `cleanup` | Selected removal, never implicit purge; active or in-flight replay deletion is refused |
+| `reconcile(limit)` | Bounded migration/index reconciliation, `1..10000`; inspect `complete`, never assume full coverage |
+| `recover()` | Database expired-reservation recovery; Redis workers own native stalled recovery |
+
+Batch operations accept at most 1000 references, deduplicate references, and return `{ results, failures }`. Outcomes are `accepted`, `missing`, `busy`, `not-failed`, or `protected`. An accepted retry means intake succeeded, not that the job completed. A broker error leaves the original failed record available. Read the per-item outcomes, not only the resolved batch promise.
+
+Filters index `tenantId`, `accountId`, `resourceId`, and `correlationId`; metadata takes precedence over the captured context (`teamId`/`tenantId`, account/resource/correlation). Indexed values are strings or finite numbers, normalized to strings, at most 512 bytes without NUL. The storage index hashes those values; original payload/context can still contain sensitive data. These filters are **not authorization**: derive scope from trusted server context, authorize each selected job, and redact payloads, error stacks and context before returning browser resources.
+
+Redis metadata/class/status filters intersect Svelar-owned indexes before paging. `indexedCount` counts index entries, not every foreign broker job; stale entries are pruned during reads and pages can be short when jobs change. Database metadata uses migration-backed indexes and rejects live `jobClass` filtering without a class index; ledger class filtering is supported. Legacy/uninstrumented jobs can need bounded `reconcile()`. A partial reconciliation does not become a complete inventory.
+
+`runtime.workers` is a distributed heartbeat snapshot, not the registered profile count. Default `connections.<name>.monitoringCoverage: 'instrumented'` leaves queue-wide capacity unknown. Choose `'exclusive'` only for a dedicated prefix where every consumer publishes Svelar telemetry. Database pause/workers/global-concurrency are `null`; pause/resume throws `QueueCapabilityError`. Memory/sync reject shared operational monitoring and durable adapter replay. Do not turn null/incomplete observations into healthy zero.
+
+Redis ready age is the oldest **observed instrumented** waiting job, not proof that every foreign/legacy job was indexed. Redis active lock fields are renewed worker observations, not reads of private BullMQ lock tokens or exact lock PTTL. Foreign workers, missing observations or more than 1000 active jobs leave `locksComplete: false`; expired/stalled counts can be unknown. Database lock fields describe renewable reservation leases. A heartbeat or lease is an observation, not proof of a healthy domain operation.
+
+Shared Redis metrics come from native worker outcome buckets; database metrics come from persisted `svelar_queue_events`. They are distinct from the legacy monitor's local counters. Redis live timelines retain at most 100 events per job; SQL timeline/replay receipts and Redis operational indexes have no automatic age-based pruning. Plan explicit retention without deleting live or unresolved replay identity. Completed database replay receipts can be retained to prevent duplicate delivery, while ordinary completed jobs are removed.
 
 Import the monitor from its dedicated server entry and configure it with the same default connection and connections object used by `Queue.configure()`:
 
@@ -349,7 +450,7 @@ The optional second argument of `getJob(id, queueName?)`, `retryJob(id, queueNam
 
 Exact Redis creation-order pagination requires inspecting the relevant live states because BullMQ's native ranges use queue, priority, completion, or delay order instead of global creation order. `JobMonitor.configure()` accepts a positive safe integer `redisScanLimit`, defaulting to 1,000 live jobs per listing. The monitor checks public state counts before fetching jobs, then uses finite single-state ranges with a cumulative budget and at most one overflow job as a lookahead. Listings that exceed the budget throw `RedisJobScanLimitError` from `@beeblock/svelar/queue/JobMonitor`, with `queue`, `scanLimit`, and `observedJobs` fields. No partial or guessed page is returned. This applies to both combined and status-specific live listings, including class-filtered listings; the scan budget counts jobs before class filtering. Narrowing `status` may reduce the required scan. Persisted `status: 'failed'` listings do not scan Redis and are unaffected. Increase the budget explicitly through application configuration only when that bounded request cost is acceptable.
 
-Supported statuses are `waiting`, `active`, `completed`, `failed`, and `delayed`. Redis uses BullMQ's current state rather than inferring it from old timestamps; prioritized and paused pending jobs appear as `waiting`. Failed listings/counts come from `svelar_failed_jobs`, not an additional copy of BullMQ's retained failures. Database completed jobs are deleted, so `status: 'completed'` returns no jobs. Memory and sync expose persisted failures but not live job lists or retained completion history.
+Supported statuses are `waiting`, `active`, `completed`, `failed`, and `delayed`. Redis uses BullMQ's current state rather than inferring it from old timestamps; prioritized and paused pending jobs appear as `waiting`. Legacy failed listings/counts come from `svelar_failed_jobs`, not an additional copy of BullMQ's retained failures. Ordinary database completed jobs are deleted; retained replay delivery receipts may remain completed. Memory and sync expose persisted failures but not live job lists or retained completion history.
 
 `getHealth()` returns counts and `runtime` observations for the configured default queue and registered queues whose connection is omitted or matches the monitor's default connection. Definitions on other connections remain in `registry`, without observed counts or runtime entries. Missing observations must be treated as unknown.
 
@@ -532,6 +633,7 @@ Queue.configure({
     database: {
       driver: 'database',
       table: 'svelar_jobs',  // Default table name
+      leaseDurationMs: 30000, // Renewed reservation lease, milliseconds
     },
   },
 });
@@ -548,7 +650,7 @@ Database queue payloads must be valid JSON generated by Svelar. If a queued row 
 The Redis driver uses [BullMQ](https://docs.bullmq.io/) for production-grade queues with priorities, rate limiting, automatic retries, delays, and dashboard support. This is the recommended driver for production when you need high throughput and reliability.
 
 ```bash
-npm install bullmq
+npm install 'bullmq@^5.77.4'
 ```
 
 ```typescript
@@ -562,6 +664,8 @@ Queue.configure({
       password: process.env.REDIS_PASSWORD ?? '',
       db: 0,
       prefix: 'svelar',
+      producerTimeoutMs: 2000,
+      monitoringCoverage: 'instrumented', // Do not assume all workers use Svelar telemetry
       defaultJobOptions: {
         removeOnComplete: 100,  // Keep last 100 completed jobs
         removeOnFail: 500,      // Keep last 500 failed jobs
@@ -609,7 +713,7 @@ Process queued jobs with the worker:
 npx svelar queue:work
 ```
 
-The worker pulls jobs from the queue, executes `handle()`, retries on failure up to `maxAttempts`, deletes completed jobs, and calls `failed()` when all retries are exhausted.
+The worker executes `handle()`, retries up to `maxAttempts`, and records exhausted failures. Ordinary completed database jobs are deleted; replay receipts and Redis completions follow their retention contract.
 
 `queue:work` boots `src/app.ts` before processing jobs. Configure `Queue.configure()` and `Queue.registerAll([...])` in `src/app.ts` so the worker uses the same queue driver and job registry as the web process.
 
@@ -618,6 +722,10 @@ The worker pulls jobs from the queue, executes `handle()`, retries on failure up
 ```bash
 # Process a specific queue
 npx svelar queue:work --queue=urgent
+
+# Use registered settings or select a named connection explicitly
+npx svelar queue:work --profile=email-delivery
+npx svelar queue:work --connection=redis --queue=emails --concurrency=5
 
 # Stop after processing 100 jobs
 npx svelar queue:work --max-jobs=100
@@ -634,6 +742,9 @@ npx svelar queue:work --concurrency=5
 # Tune BullMQ lock and stalled-job detection windows (ms)
 npx svelar queue:work --lock-duration=45000 --stalled-interval=30000
 
+# Bound SIGTERM drain; preserve supervisor time beyond this deadline
+npx svelar queue:work --profile=email-delivery --grace-period=30
+
 # Process a single job and exit
 npx svelar queue:work --once
 ```
@@ -643,6 +754,16 @@ process. Redis queues use one native BullMQ Worker instead of an application
 polling loop, so concurrency, locks, retries, backoff, and stalled-job detection
 stay inside BullMQ. `--max-jobs` and `--once` are intended for tests, one-off
 maintenance commands, and finite certification checks.
+
+Finite Redis workers require concurrency 1. Do not combine a five-way profile with `--once`/`--max-jobs` unless explicitly overriding `--concurrency=1`; unsupported finite concurrency is rejected.
+
+Both continuous and finite Redis execution use native lock renewal. SIGTERM/SIGINT stops acquisition, retains the active job's lock/acknowledgement client while draining, then closes resources. A job exceeding `--grace-period` causes nonzero process exit; a subsequent worker can recover it as stalled. This is at-least-once execution. CPU-blocked event loops and external side effects still require idempotency and appropriate lock windows. Non-Redis drivers reject nondefault parallel/native lock settings rather than claiming equivalent concurrency.
+
+Database reservations use an owner token and renewable `leaseDurationMs` (default 30000). After a killed process, a new worker or `adapter.recover()` can recover expired reservations; old token holders cannot acknowledge someone else's recovered reservation. Legacy reserved rows without a lease are unknown, not automatically safe to steal.
+
+Queued execution uses an isolated application context. By default dispatch captures the producer's context; set `context: {}` for a system job with no inherited tenant/actor. Workers restore only captured context plus job identity, never a previous job's ambient tenant. Captured authority is not a replacement for current authorization inside sensitive job actions.
+
+Redis producers use bounded connections/commands with `producerTimeoutMs` (default 2000, allowed `1..60000`), fail-fast reconnect behavior and no indefinite offline enqueue buffer. This bounds the queue operation, not a whole HTTP workflow or every database backend timeout. A timeout after an uncertain broker acknowledgement still needs a stable ID/domain idempotency. Persist authoritative work first and use durable sweeps when a committed response must not depend on the queue signal.
 
 ### Programmatic Usage
 
@@ -675,7 +796,7 @@ await Queue.clear('default');
 
 When a job exceeds its `maxAttempts`, Svelar persists it to a `svelar_failed_jobs` database table so you can inspect, retry, or discard it later. This works with all queue drivers (sync, memory, database, redis).
 
-The `svelar_failed_jobs` table is managed by Svelar core migrations. Run `npx svelar migrate` before processing queues. If the table or database connection is unavailable, exhausted jobs fail loudly instead of being logged and lost.
+The queue tables are managed by core migrations. Run `npx svelar migrate` before processing queues, including `000038` job leases/metadata, `000039` failed-job replay/metadata, and `000043` queue events. Configure `QueueConfig.failedConnection` for the Redis ledger when needed. Database queue jobs and their replay receipt use `connections.<name>.databaseConnection` so ownership and delivery share the same database transaction. Missing migrations/storage fail loudly rather than silently dropping exhausted work.
 
 ### CLI Commands
 
@@ -704,7 +825,7 @@ import { Queue } from '@beeblock/svelar/queue';
 const failures = await Queue.failed();
 // => FailedJobRecord[] { id, queue, jobClass, payload, exception, failedAt }
 
-// Retry a specific job (removes from failed_jobs, re-dispatches to queue)
+// Retry a specific job (retains a replay receipt, hides it from pending failures)
 const retried = await Queue.retry('abc123');
 
 // Retry all failed jobs
@@ -723,9 +844,11 @@ When a job fails after exhausting all retry attempts:
 
 1. The `failed()` method on the job class is called (if defined)
 2. The job payload, exception, queue name, and timestamp are saved to `svelar_failed_jobs`
-3. The record stays there until you retry or flush it
+3. The pending failure remains until successful replay or explicit removal
 
-When you retry a failed job, Svelar deserializes the original JSON payload, creates a new job instance, dispatches it back onto the same queue, and deletes the failed record. If the payload is malformed, the retry fails and the failed record stays in `svelar_failed_jobs`.
+Replay preserves original payload, queue, connection, context, metadata, attempts policy, retry delay and priority. A transactional compare-and-set claim admits one concurrent admin winner, and a stable replay ID protects the publish/DB-acknowledgement crash window. The failed row remains as an acknowledged receipt (`replayedAt`, `replayJobId`); `Queue.failed()` and default adapter ledger pages exclude it. If deserialization or broker publication fails, the transaction rolls back and the pending failure remains. Do not manually delete broker jobs/receipts during an unresolved replay; that can remove its duplicate-delivery protection.
+
+Use source-qualified named adapters for operator actions rather than treating a live broker ID as a failed-record ID. Live failed Redis retry uses native state transition or its original ledger replay; active jobs cannot be deleted. `Queue.forgetFailed()` is explicit ledger removal; `Queue.flushFailed()` removes only unclaimed, unreplayed pending failures, not acknowledged replay receipts. These are administrative operations and need authorization, redaction and confirmation.
 
 `Queue.retryAll()` attempts every failed record. If any record cannot be deserialized or dispatched, it throws a `QueueRetryAllError` with `retried` and `failures` details, and leaves the failed record in `svelar_failed_jobs` for inspection.
 
@@ -930,6 +1053,16 @@ npm run dev:worker
 ```
 
 For additional queues, add another Compose service or script that passes `--queue=<name>`.
+
+### Verified Coverage and Limits
+
+The queue hardening gate passed **372 tests in 19 files with zero skips**: 159 queue unit tests, 189 related consumer tests, 14 native Redis lifecycle cases, 8 native Redis/SQLite monitoring cases and 2 actual Node-ESM PostgreSQL/MySQL cases. Strict source/declaration checks also passed. This records that specific gate, not automatic certification of an application's topology.
+
+Native child-process proofs covered lock renewal beyond `lockDuration`, SIGKILL stalled recovery, bounded SIGTERM drain, five simultaneous CLI jobs, named-connection isolation, cross-process metrics, single-winner replay, broker outage retention, killed-admin publish recovery and killed database reservation recovery. The SQL cases applied real core migrations and exercised replay under both PostgreSQL and MySQL. Source-only tests with optional native cases skipped are not equivalent evidence.
+
+Native suites are `queue-recovery-redis.test.ts`, `queue-monitoring-redis.test.ts` and `queue-monitoring-drivers.test.ts`. They require isolated services, `SVELAR_TEST_QUEUE_CLIENT` pointing to a package manifest with native peers, `SVELAR_TEST_QUEUE_REDIS_URL`, and SQL host ports in `SVELAR_TEST_QUEUE_PG_PORT` / `SVELAR_TEST_QUEUE_MYSQL_PORT`. Never target a production database/prefix; fixture teardown is destructive to its isolated test data.
+
+Remaining limits include unsupported database pause/worker topology/live class filtering, instrumented rather than universal Redis inventory, bounded lease scans/reconciliation, and operator-managed operational index/event/receipt retention. Profile registration is configuration, not proof that a worker is running. See [Deployment](./29-deployment.md) for readiness, traffic eligibility and container drain limits.
 
 ## Next Steps
 

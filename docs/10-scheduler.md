@@ -83,9 +83,9 @@ schedule() {
 }
 ```
 
-Without `.timezone(...)`, schedules use the process's system timezone (including `TZ`); they do not implicitly default to UTC. Task timezones affect both due checks and monitor previews. DST calendar adjustments follow cron-parser's iterator policy. There is no historical catch-up or general exactly-once guarantee; changing clocks, repeated local times, and multiple ticks in the same minute still require application-level idempotency and the appropriate overlap controls.
+Without an explicit timezone, schedules use the process's system timezone (including `TZ`); they do not implicitly default to UTC. In persistent mode the precedence is the stored task timezone, scheduler scope timezone, task `.timezone(...)`, then system time. Both execution and monitor previews use that effective timezone. DST calendar adjustments follow cron-parser's iterator policy.
 
-`Scheduler.register()` validates a task before adding it. Manually calling `Scheduler.run()` twice in the same due minute can execute a task twice; a timezone does not add deduplication.
+`Scheduler.register()` validates a task before adding it. A legacy, non-persistent scheduler can execute twice if `run()` is called twice in the same due minute. Persistent mode records checked minutes and supports bounded missed-run policies, but neither mode guarantees exactly-once side effects. Tasks must remain idempotent.
 
 ### handle()
 
@@ -125,16 +125,16 @@ export default class LongRunningTask extends ScheduledTask {
 }
 ```
 
-By default the lock expires after 5 minutes. For longer tasks, increase the TTL:
+By default the lease TTL is 5 minutes. Execution renews the lease while the task and its asynchronous hooks are still running. Choose a TTL that tolerates expected database latency and event-loop delays:
 
 ```typescript
 schedule() {
-  // Lock expires after 30 minutes — use for long-running tasks
+  // Allow a longer interruption before the renewable lease expires.
   return this.hourly().preventOverlap().lockExpiresAfter(30);
 }
 ```
 
-The `scheduler_locks` table is managed by Svelar core migrations. If the lock table or database connection is unavailable, a `preventOverlap()` task fails instead of running without a distributed lock.
+The `scheduler_locks` table is managed by Svelar core migrations. If the lock table or database connection is unavailable, a `preventOverlap()` task fails instead of running without a distributed lock. Persistent mode leases every task, even without `.preventOverlap()`. Losing ownership aborts the task's execution signal and prevents the old owner from recording a successful completion or releasing a successor's lease. Tasks must observe that signal before further side effects; a lease cannot stop uncooperative application code.
 
 ### onSuccess()
 
@@ -188,18 +188,104 @@ Create a scheduler and register tasks programmatically:
 
 ```typescript
 import { Scheduler } from '@beeblock/svelar/scheduler';
-import CleanupExpiredSessions from './CleanupExpiredSessions.ts';
-import DailyStatsSummary from './DailyStatsSummary.ts';
+import CleanupExpiredSessions from '$lib/shared/scheduler/CleanupExpiredSessions';
+import DailyStatsSummary from '$lib/shared/scheduler/DailyStatsSummary';
 
 export function createScheduler(): Scheduler {
-  const scheduler = new Scheduler()
-    .persistToDatabase()
-    .persistTaskSettings();
+  const scheduler = new Scheduler({
+    persistent: true,
+    timezone: process.env.SCHEDULER_TIMEZONE,
+  });
   scheduler.register(new CleanupExpiredSessions());
   scheduler.register(new DailyStatsSummary());
   return scheduler;
 }
 ```
+
+Use `$lib/scheduler/...` imports in flat apps. Declare `SCHEDULER_TIMEZONE` in the app's `.env.example` and load environment configuration through the normal `src/app.ts` bootstrap. Leaving it unset retains task/system timezone behavior.
+
+## Persistent Runtime
+
+Production controls are opt-in: use `new Scheduler({ persistent: true })` or `scheduler.persistRuntimeToDatabase()`. Both enable shared history, task settings, runtime state, renewable leases and durable run-now requests. Calling only `.persistToDatabase().persistTaskSettings()` retains the older history/settings mode; it does not enable durable requests or shared execution state. Plain `new Scheduler()` remains local and does not deduplicate repeated due checks.
+
+Before enabling persistent mode, run:
+
+```bash
+npx svelar migrate
+```
+
+Core migrations manage `scheduler_locks`, `scheduled_task_runs`, `scheduled_task_settings`, `scheduler_runtime` and `scheduler_requests`. The focused settings upgrade preserves existing global enable/disable records, including disabled tasks. Missing tables and database errors fail closed; runtime code never creates tables.
+
+### Tenant Scope And Configuration Profiles
+
+A scheduler captures its tenant and connection scope at construction. It never infers tenant scope from the current web request. Build separate instances with trusted configuration, register the same task catalog in the web process and worker, and use the same shared database:
+
+```typescript
+import { Scheduler, type SchedulerOptions } from '@beeblock/svelar/scheduler';
+import CleanupExpiredSessions from '$lib/shared/scheduler/CleanupExpiredSessions';
+
+export function createScopedScheduler(options: SchedulerOptions): Scheduler {
+  return new Scheduler({ ...options, persistent: true })
+    .register(new CleanupExpiredSessions());
+}
+
+// Values come from authorized tenant configuration, not client input.
+const scheduler = createScopedScheduler({
+  tenantId: tenant.id,
+  timezone: tenant.timezone,
+  connectionName: schedulerConnectionName,
+});
+```
+
+These are application configuration profiles, not a `--profile` CLI flag. The CLI boots `src/app.ts` and consumes the scope returned by the registry's `createScheduler()` or `scheduler` export. An omitted/null tenant selects the global scope. A non-null tenant automatically enables persistent mode. The same task name in two tenants has separate settings, locks, requests, history and runtime state; tenant tasks execute in an isolated `ApplicationContext` with the captured team ID.
+
+### Persistent Controls
+
+Apply operator changes through an authorized FormRequest/DTO/action flow. These service APIs do not authorize callers themselves:
+
+```typescript
+await scheduler.configureTask('cleanup-expired-sessions', {
+  enabled: true,
+  timezone: 'America/Sao_Paulo',
+  missedRun: { policy: 'catch-up', windowMinutes: 60, maxRuns: 10 },
+});
+
+await scheduler.configureTask('cleanup-expired-sessions', { enabled: false });
+// null removes the stored timezone override and restores scope/task fallback.
+await scheduler.configureTask('cleanup-expired-sessions', { timezone: null });
+```
+
+The worker reads persisted controls on its next poll. Changes survive restart; disabling does not forcibly interrupt an already-running task. Pending requests remain pending while disabled, and new requests for a disabled task reject. Re-enabling does not replay the entire disabled interval.
+
+### Missed Runs
+
+Task defaults can be declared in `schedule()`; a stored `configureTask()` policy overrides them:
+
+```typescript
+schedule() {
+  return this.everyFiveMinutes()
+    .missedRuns('catch-up', { windowMinutes: 60, maxRuns: 10 });
+}
+```
+
+- `skip` is the default: run only if the current minute is due.
+- `latest` runs at most the latest missed slot within the configured window.
+- `catch-up` executes the most recent missed slots, in chronological order, up to `maxRuns` within the window.
+
+The window is bounded to 1-10,080 minutes and the run count to 1-100; defaults are 60 minutes and 10 runs. Catch-up begins from the persisted checked minute, so a first-ever startup does not invent historical runs. Older slots beyond the window/count are discarded. `this.getExecutionContext()?.scheduledFor` identifies a scheduled slot; a manual request has a `requestId` instead. There is no general exactly-once guarantee after a crash: use idempotency keys around external side effects.
+
+### Queued Run Now
+
+Queue a registered task without executing it in the web/command process:
+
+```typescript
+const request = await scheduler.requestRun('cleanup-expired-sessions');
+// request.state === 'pending'; completion comes from a scheduler worker.
+const status = await scheduler.getRunRequest(request.task, request.id);
+const cancelled = await scheduler.cancelRunRequest(request.task, request.id);
+```
+
+Cancellation returns `true` only for a pending request in this scheduler's task/tenant scope; running or terminal requests cannot be cancelled through this API. Unknown tasks reject, and a foreign request lookup returns `null`. Requests transition through `pending`, `running`, `succeeded`/`failed` or `cancelled`. A worker renews request and task leases together. Abandoned running requests become eligible after lease expiry, so recovery is at-least-once: a crash after an external write can repeat that write. `requestedBy` and correlation context are captured from the authenticated `ApplicationContext`; populate them on the server, not from a request body.
 
 ## Running the Scheduler
 
@@ -208,10 +294,10 @@ export function createScheduler(): Scheduler {
 Run the scheduler in development:
 
 ```bash
-npx svelar schedule:run
+npx svelar schedule:work
 ```
 
-This boots `src/app.ts`, then loads the scheduler registry from `src/lib/shared/scheduler/index.ts` in DDD apps or `src/lib/scheduler/index.ts` in flat apps. The runner aligns to the top of each minute and persists task execution history to `scheduled_task_runs` so the admin dashboard can display accurate run times.
+This boots `src/app.ts`, then loads the scheduler registry from `src/lib/shared/scheduler/index.ts` in DDD apps or `src/lib/scheduler/index.ts` in flat apps. `schedule:work` and continuous `schedule:run` use the same worker implementation. Persistent workers poll for durable requests (default 1,000 ms) and deduplicate scheduled minutes through shared state; legacy registries run due checks once per minute.
 
 Run `npx svelar migrate` before starting the scheduler in any app that calls `persistToDatabase()`. If the `scheduled_task_runs` table is unavailable, the scheduler run fails instead of silently dropping history.
 
@@ -223,9 +309,31 @@ To run due tasks once and exit (useful for cron):
 npx svelar schedule:run --once
 ```
 
+In persistent mode, this also consumes pending requests during that tick. Failed task results set a nonzero command exit status; an overlap-skipped result is not a failure.
+
+Queue one manual run and exit, then inspect shared status without executing tasks:
+
+```bash
+npx svelar schedule:run --task=cleanup-expired-sessions
+npx svelar schedule:list
+npx svelar schedule:list --json
+```
+
+`--task` requires a persistent registry and prints the durable request ID/state, not a success claim for the task itself. `schedule:list --json` returns `{ data, meta }` with task names, tenant IDs, effective timezones, enablement, last/next run, duration/state, lock owners/expiry and missed-run policies.
+
+### Graceful Drain
+
+```bash
+npx svelar schedule:work --sleep=1000 --max-time=3600 --grace-period=30
+```
+
+`--sleep` accepts 10-60,000 milliseconds. `--max-time` begins draining after a positive number of seconds; omitting it runs until a signal. `--grace-period` is a positive warning interval in seconds, not a force-kill deadline. `SIGINT`, `SIGTERM`, `--max-time` and `await scheduler.stop()` stop accepting work and wait for the active handler and hooks. Leases stay renewed until actual completion, even beyond the grace period. Configure the process manager's termination timeout accordingly.
+
+Lease renewal failures surface as errors instead of false successful completion. Cooperative handlers should call `this.getExecutionContext()?.signal.throwIfAborted()` before further external writes and pass the signal to cancellation-aware clients. Draining itself does not abort healthy work.
+
 ### Production
 
-In production, run **one scheduler instance** per deployment. The generated Docker topology includes a dedicated `scheduler` service:
+In production, a single worker is the simplest topology. Persistent mode also supports competing workers sharing one database and the same explicit task/tenant scopes. The generated Docker topology includes a dedicated `scheduler` service:
 
 ```bash
 docker compose up -d scheduler
@@ -246,7 +354,7 @@ Or trigger it from a system cron job:
 
 ### Multiple Instances & Distributed Locking
 
-If you need to run multiple scheduler instances for high availability (e.g., across multiple servers), use `preventOverlap()` on your tasks. This acquires a database-backed distributed lock before executing, so only one instance runs each task at a time:
+Persistent mode acquires renewable database leases for every task and guards request claims with an invocation owner token. For a legacy registry, explicitly use `preventOverlap()` if several instances can run the same task:
 
 ```typescript
 schedule() {
@@ -254,7 +362,7 @@ schedule() {
 }
 ```
 
-The lock uses the shared database (SQLite, PostgreSQL, or MySQL) — no Redis required. Locks auto-expire via TTL, so crashed processes don't block future executions. The `scheduler_locks` table is managed by Svelar core migrations. If the lock store is unavailable, the task fails instead of running without a distributed lock. Graceful shutdown also surfaces lock cleanup failures for schedulers with overlapping-protected tasks.
+The lock uses the shared database (SQLite, PostgreSQL, or MySQL), with no Redis requirement. Crashed processes eventually lose their leases. This prevents simultaneous healthy owners, not repeated side effects after a crash or stalled process. Database outages fail closed; graceful shutdown awaits work before releasing ownership.
 
 ## Task Examples
 
@@ -512,64 +620,50 @@ scheduler.register(cleanupTask);
 
 ## Task Run History
 
-Task execution history is automatically persisted to the `scheduled_task_runs` database table when the scheduler registry calls `persistToDatabase()`. This is shared across all processes — the CLI scheduler writes to it, and the admin dashboard reads from it. If the table or database connection is unavailable, the scheduler run fails instead of silently dropping history.
+Task execution history is persisted to `scheduled_task_runs` when the registry calls `persistToDatabase()` or enables persistent runtime. The CLI writes history and the monitor reads it across processes. Missing storage fails instead of silently dropping history. Persistent tenant histories use scoped task keys, so the same task name in another tenant does not appear in this scope. The monitor bounds history per task, so a frequently running task cannot hide another task's last failure.
 
-Persistent task controls use `scheduled_task_settings`. Call `persistTaskSettings()` in the scheduler process when web/admin screens can enable or disable tasks:
-
-```typescript
-const scheduler = new Scheduler()
-  .persistToDatabase()
-  .persistTaskSettings();
-```
-
-The `scheduled_task_runs`, `scheduled_task_settings`, and `scheduler_locks` tables are managed by Svelar core migrations.
-
-Manual monitor-triggered execution fails before running the task if enablement controls cannot be read, including missing migrations and database permission errors. The monitor bounds history per task, so a frequently running task cannot hide another task's last failure.
+`persistTaskSettings()` remains available for legacy shared enable/disable controls; prefer persistent runtime for production controls, requests and shared execution state. All scheduler tables are managed by core migrations.
 
 ## Monitoring Scheduled Tasks
 
-The `ScheduleMonitor` provides a real-time view of all tasks for use in admin dashboards. It reads history from the database so it reflects runs from all scheduler processes:
+The `ScheduleMonitor` reads durable task state and history for admin dashboards. Use a separate monitor per immutable scheduler scope, especially in concurrent tenant requests:
 
-Run `npx svelar migrate` before using `ScheduleMonitor` in production. Missing `scheduled_task_runs` storage causes task listing, history reads, and manual dashboard-triggered runs to fail instead of returning empty history. Enable/disable calls persist to `scheduled_task_settings` so a web process can control a separate scheduler process after restart.
+Run `npx svelar migrate` before using the monitor in production. Missing storage fails rather than returning fabricated empty history. Enable/disable calls persist settings, so the web process can control the worker after restart.
 
 ```typescript
 import { ScheduleMonitor } from '@beeblock/svelar/scheduler/ScheduleMonitor';
 
-// Configure once with your scheduler instance.
-// New scaffolded apps do this in src/lib/shared/scheduler/index.ts.
-ScheduleMonitor.configure(scheduler);
+const monitor = ScheduleMonitor.forScheduler(scheduler);
 
 // List all tasks with status, last run, next run, history
-const tasks = await ScheduleMonitor.listTasks();
+const tasks = await monitor.listTasks();
 
-// Get health metrics (total tasks, errors, uptime)
-const health = await ScheduleMonitor.getHealth();
+// Shared process heartbeat health plus task errors/status
+const health = await monitor.getHealth();
 
-// Manually trigger a task and inspect its actual outcome
-const result = await ScheduleMonitor.runTask('cleanup-expired-sessions');
-if (result.skipped) {
-  // An overlap lock was held; the task did not execute.
-} else if (!result.success) {
-  // Report result.error through safe server-side logging/feedback.
-}
+// Enqueue only: a worker records the eventual outcome.
+const request = await monitor.requestRun('cleanup-expired-sessions');
+const status = await monitor.getRunRequest(request.task, request.id);
 
 // Enable/disable tasks
-await ScheduleMonitor.disableTask('daily-report');
-await ScheduleMonitor.enableTask('daily-report');
+await monitor.disableTask('daily-stats');
+await monitor.enableTask('daily-stats');
 ```
 
-`runTask()` returns a `TaskResult`; completion of its promise alone does not mean the task succeeded. Overlap-skipped executions set `skipped: true` and do not add a successful run to persisted history. Tasks with no history have an undefined `lastStatus`, rather than a false failure. Persisted task settings take precedence over stale process-local settings, including in health metrics, and enable/disable writes use an atomic upsert.
+For a single fixed global scope, `ScheduleMonitor.configure(scheduler)` remains available during bootstrap. Never reconfigure that shared singleton per request/tenant; use `forScheduler()` instead. `runTask()` rejects inline execution for persistent schedulers: production controls must call `requestRun()`. Legacy `runTask()` returns a `TaskResult`, whose resolved promise is not proof of success; inspect `success` and `skipped`. Overlap-skipped tasks do not add a successful run to history.
 
-Monitor previews use calendar iteration rather than a one-year minute scan, so schedules such as February 29 can correctly return a date several years away, including across non-leap century years. `TaskInfo.nextRun` is now `Date | null`; a calculation failure produces `null` and a safe `nextRunError`, never a fabricated current timestamp. `TaskInfo.timezone` identifies an explicit task timezone; undefined means system time. Update typed consumers to handle unavailable previews.
+`listTasks()` exposes effective timezone, last/next run, duration, enablement, active lock owner/lease expiry and missed-run policy. A disabled task's next run is `null`. Tasks with no history have an undefined `lastStatus`, not a false failure. Persisted settings take precedence over process-local state; enable/disable writes use an atomic upsert. `getHealth().processes` exposes shared worker owner/state/heartbeat and recent errors. Its `healthy` flag requires a running process with a recent heartbeat; a web monitor's own `uptime` is not worker uptime.
+
+Calendar previews handle distant dates such as February 29 without a one-year minute scan. `TaskInfo.nextRun` is `Date | null`; a preview failure returns `null` with safe `nextRunError`, never a fabricated current timestamp. `TaskInfo.timezone` is the effective explicit timezone; undefined means system time. Handle absent previews and avoid rendering raw task errors or request results to unauthorized clients.
 
 ## Best Practices
 
 1. **Keep tasks idempotent** — Tasks should be safe to run multiple times
 2. **Set appropriate intervals** — Don't run expensive tasks too frequently
 3. **Handle errors gracefully** — Use `onFailure()` to log and handle errors
-4. **Use `preventOverlap()` for long tasks** — Prevents duplicate execution across processes
-5. **Set `lockExpiresAfter()`** — Match the TTL to your task's expected duration
-6. **Run one scheduler instance** — Unless using `preventOverlap()` for distributed locking
+4. **Enable persistent runtime for production controls** — Share settings, leases, requests and history
+5. **Set `lockExpiresAfter()`** — Allow expected latency while leases renew, and observe the execution signal
+6. **Scope every worker explicitly** — Match tenant, timezone, connection and task catalog across processes
 7. **Test tasks** — Write tests for task logic
 8. **Keep tasks focused** — One responsibility per task
 

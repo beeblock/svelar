@@ -1,6 +1,6 @@
 # Deployment
 
-Svelar provides a complete Docker-based deployment pipeline. A single `npx svelar make:deploy` scaffolds everything: multi-stage Dockerfile, docker-compose with dev/prod overrides, queue worker and scheduler services, GitHub Actions CI/CD, DigitalOcean droplet setup, health endpoint, and `.dockerignore`.
+Svelar scaffolds Docker, separate app/worker/scheduler services, GitHub Actions and host provisioning with `npx svelar make:deploy`. Production `prod:deploy` uses an explicit release image, a stable blue/green gateway, readiness checks, bounded drain and retained rollback. Infrastructure bootstrap, migration compatibility and application-specific readiness still require operator review.
 
 CLI wrapper commands (`dev:up`, `prod:deploy`, etc.) let you manage containers without memorizing long compose flags.
 
@@ -64,12 +64,14 @@ Your app is now running at `http://localhost:5173` with hot-reload, backed by Po
 For production:
 
 ```bash
-# Start production containers from the configured image
-npx svelar prod:up
+# After infrastructure, core migration 000049 and bootstrap/readiness are installed:
+npx svelar prod:deploy --image=registry.example.com/myapp:release-123 --compatible-migrations
 
-# Or deploy latest image from registry
-npx svelar prod:deploy
+# Promote the previous retained runtime; database migrations are not undone
+npx svelar prod:deploy --rollback
 ```
+
+These commands are not a first-adoption shortcut. Read [Blue-Green Deployments with Docker Compose](#blue-green-deployments-with-docker-compose) before exposing a production service. `prod:up` is the legacy direct-Compose path, not start-first deployment; an existing legacy app requires a planned gateway cutover.
 
 ---
 
@@ -78,7 +80,7 @@ npx svelar prod:deploy
 | Command | What it generates |
 |---------|-------------------|
 | `npx svelar make:deploy` | Runs all three commands below |
-| `npx svelar make:docker` | `Dockerfile`, `docker-compose.yml`, `docker-compose.dev.yml`, `docker-compose.prod.yml`, `.dockerignore`, `.svelar-local/.gitkeep`, `scripts/svelar-dev-runtime.mjs`, `src/routes/api/health/+server.ts`, `docker/postgres/postgresql.conf`, `docker/postgres/init.sql`, `docker/pgbouncer/pgbouncer.ini` (PostgreSQL only) |
+| `npx svelar make:docker` | `Dockerfile`, base/dev/prod Compose, `svelar.deploy.json`, `.dockerignore`, `.svelar-local/.gitkeep`, dev/deploy runtime scripts, `/api/health`, `/api/ready`, `/api/traffic` routes, PostgreSQL/PgBouncer config when selected |
 | `npx svelar make:ci` | `.github/workflows/deploy.yml` |
 | `npx svelar make:infra` | `infra/setup-droplet.sh`, `infra/droplet.env.example` |
 
@@ -114,7 +116,7 @@ npx svelar make:deploy --force
 
 ## Runtime Commands
 
-All commands are docker compose wrappers. They automatically use the correct compose override file (dev or prod) so you don't need to type `-f docker-compose.yml -f docker-compose.dev.yml` every time.
+Development and maintenance commands select the corresponding Compose override. `prod:deploy` is a release orchestrator, not a plain `compose up` wrapper.
 
 ### Development (`dev:*`)
 
@@ -137,15 +139,18 @@ Uses `docker-compose.yml` + `docker-compose.prod.yml`. Pulls a pre-built image f
 | `npx svelar prod:down` | `docker compose -f docker-compose.yml -f docker-compose.prod.yml down` |
 | `npx svelar prod:logs` | `docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f` |
 | `npx svelar prod:restart` | `up -d --force-recreate --remove-orphans --wait app worker scheduler` |
-| `npx svelar prod:deploy` | `pull`, `run --rm --no-deps app npx svelar migrate --force`, then `up -d --remove-orphans --wait` |
+| `npx svelar prod:deploy --image=<release> --compatible-migrations` | Inspect/pull immutable image, preflight locked forward migrations, start candidate, verify readiness/smoke, promote gateway eligibility, drain old slot |
+| `npx svelar prod:deploy --rollback` | Start/promote retained previous slot, verify it and drain current slot; no database rollback |
 
 `prod:restart` does not run `down` by default because that tears down every dependency and causes avoidable downtime. It recreates the runtime containers (`app`, `worker`, and `scheduler`) and waits for health checks. Use `--service=app` to target one container, and `--no-wait` only when your Docker Compose version does not support health waiting.
 
-`prod:deploy` runs migrations by default before starting the updated image. Use `--no-migrate` for exceptional deploys where migrations are managed by a separate release step.
+`prod:deploy` runs locked forward migrations by default and requires `--compatible-migrations` acknowledgement of expand/contract compatibility. `--no-migrate` is an explicit separately-managed exception, not a way to make incompatible schemas safe. `--no-pull` supports locally built, explicit release images. Untagged images and `:latest` are rejected; the inspected local SHA256 image ID is used for the runtime.
+
+`prod:up/down/restart/logs` target the original base Compose project. They do not target generated blue/green slot projects. Use the private slot Compose files for maintenance/logs after adoption; never run base `prod:up` alongside the gateway on the same port.
 
 ### Targeting a specific service
 
-All runtime commands accept `--service <name>`:
+Compose maintenance commands accept `--service <name>`; `prod:deploy` deliberately rejects partial-service or no-readiness deployment:
 
 ```bash
 npx svelar dev:logs --service=postgres
@@ -161,14 +166,18 @@ npx svelar dev:up --service=redis
 
 ```
 your-project/
-├── Dockerfile                          # Multi-stage (base, deps, builder, production, development)
+├── Dockerfile                          # base, builder, deps, production, deployer, development
 ├── docker-compose.yml                  # Base compose — all services (app, postgres, pgbouncer, redis, etc.)
 ├── docker-compose.dev.yml              # Dev override — builds development target, bind-mounts source
 ├── docker-compose.prod.yml             # Prod override — uses pre-built image from registry
 ├── .dockerignore                       # Excludes node_modules, .env, build artifacts
 ├── .svelar-local/.gitkeep              # Keeps optional local package archive directory available to Docker
 ├── scripts/svelar-dev-runtime.mjs      # Local worker/scheduler runtime with Docker service host ports
+├── scripts/svelar-deploy.sh            # One-shot administrative image; host Docker only
+├── svelar.deploy.json                  # Reviewed blue/green manifest
 ├── src/routes/api/health/+server.ts    # Health endpoint
+├── src/routes/api/ready/+server.ts     # Boot/dependency readiness, no-store
+├── src/routes/api/traffic/+server.ts   # Read-only slot traffic eligibility, no-store
 ├── docker/                             # Database & pooler config (PostgreSQL only)
 │   ├── postgres/
 │   │   ├── postgresql.conf             # Production-tuned PostgreSQL config
@@ -197,7 +206,7 @@ docker-compose.yml           Base config — app + infrastructure (postgres, pgb
 Request flow:  app container → PgBouncer (:6432) → PostgreSQL (:5432)
 ```
 
-PostgreSQL, PgBouncer, Redis, and all other services are defined in the base `docker-compose.yml` — they run identically in both dev and prod. Only the `app` service changes between overrides.
+Infrastructure is defined in the base Compose file. Dev/prod overrides select runtime behavior; start-first deployment derives isolated runtime slot projects and shares already-existing infrastructure/network/named storage volumes without recreating them.
 
 **Development** (`dev:up`):
 - Builds the `development` stage of the Dockerfile
@@ -210,7 +219,7 @@ PostgreSQL, PgBouncer, Redis, and all other services are defined in the base `do
 - Uses a **pre-built image** from Docker Hub / your registry
 - Runs `node build/index.js` via dumb-init as a non-root user
 - Exposes port **3000**
-- Includes `src/` and `svelar.database.json` so CLI commands, migrations, seeders, workers, and scheduler bootstrap from the same app runtime
+- Includes `src/`, `svelar.database.json`, `tsconfig.json` and `.svelte-kit` so CLI/Jiti commands and background daemons can bootstrap the app
 - Health check on `/api/health`
 
 ### Development without Docker (hybrid approach)
@@ -239,72 +248,32 @@ REDIS_PORT=6379
 
 ## Dockerfile
 
-The generated Dockerfile has **5 stages**: `base`, `deps`, `builder`, `production`, and `development`.
+The generated Dockerfile has six targets: `base`, `builder`, `deps`, `production`, `deployer`, and `development`.
+
+`builder` copies app source before `npm ci`, allowing the generated `prepare: svelte-kit sync` script to find the Svelte/Vite configuration. Native dependency install scripts run normally. `deps` derives from that build and prunes development dependencies with `--ignore-scripts`; it does not rerun SvelteKit prepare after removing its tooling.
 
 ```dockerfile
-# ── Base ──────────────────────────────────────────────────
-FROM node:22-alpine AS base
-RUN apk add --no-cache dumb-init
-RUN addgroup -g 1001 sveltekit && adduser -u 1001 -G sveltekit -s /bin/sh -D sveltekit
-
-# ── Dependencies (production only) ───────────────────────
-FROM base AS deps
-WORKDIR /app
-COPY package*.json ./
-COPY .svelar-local ./.svelar-local
-RUN npm ci --omit=dev
-
-# ── Builder (full install + build) ───────────────────────
 FROM base AS builder
 WORKDIR /app
-COPY package*.json ./
 COPY .svelar-local ./.svelar-local
-RUN npm ci
 COPY . .
+RUN npm ci
 RUN npm run build
 
-# ── Production ───────────────────────────────────────────
-FROM base AS production
-WORKDIR /app
-ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000
-COPY --chown=sveltekit:sveltekit --from=deps /app/node_modules ./node_modules
-COPY --chown=sveltekit:sveltekit --from=builder /app/build ./build
-COPY --chown=sveltekit:sveltekit --from=builder /app/src ./src
-COPY --chown=sveltekit:sveltekit --from=builder /app/package.json ./
-COPY --chown=sveltekit:sveltekit --from=builder /app/svelar.database.json ./
-RUN mkdir -p storage/logs storage/public && chown -R sveltekit:sveltekit storage
-USER sveltekit
-EXPOSE 3000
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget -qO- http://127.0.0.1:3000/api/health || exit 1
-ENTRYPOINT ["dumb-init", "--"]
-CMD ["node", "build/index.js"]
-
-# ── Development (hot-reload) ─────────────────────────────
-FROM base AS development
-WORKDIR /app
-ENV NODE_ENV=development
-COPY package*.json ./
-COPY .svelar-local ./.svelar-local
-RUN npm ci
-COPY . .
-EXPOSE 5173
-CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+FROM builder AS deps
+RUN npm prune --omit=dev --ignore-scripts
 ```
 
-**Key design decisions:**
+The production target runs adapter-node through dumb-init as user 1001. It includes the built server, production dependencies, source bootstrap, database configuration, `tsconfig.json` and `.svelte-kit` for CLI/Jiti execution. Do not assume a built HTTP server alone can bootstrap migrations or workers.
 
-| Feature | Why |
-|---------|-----|
-| **dumb-init** | Proper PID 1 signal handling — Node.js doesn't handle SIGTERM/SIGINT correctly as PID 1 |
-| **Non-root user** (`sveltekit:1001`) | Security — container never runs as root |
-| **Separate deps stage** | `npm ci --omit=dev` creates a lean `node_modules` without devDependencies |
-| **Multi-stage** | Final production image is ~150MB instead of ~800MB |
-| **Layer caching** | `package*.json` is copied first so `npm ci` is cached unless dependencies change |
-| **Node adapter output** | The scaffold uses `@sveltejs/adapter-node`, so production runs the explicit Node server from `build/index.js` |
-| **Runtime CLI support** | `src/` and `svelar.database.json` are copied into the production image so `npx svelar migrate`, seeders, queue workers, scheduler tasks, and app bootstrap can run inside the container |
-| **Health check** | Docker monitors `/api/health` every 30s. Failed containers are restarted automatically |
-| **Development target** | `docker compose.dev.yml` builds this stage for hot-reload in Docker |
+The administrative `deployer` target derives from production, runs as root and installs Docker CLI/Compose. Only its one-shot deployment command mounts the host Docker socket. Docker/socket access is host-administrative authority, not a sandbox; never mount it in app, worker or scheduler containers.
+
+```bash
+docker build --target production -t "$DEPLOY_IMAGE" .
+docker build --target deployer -t "$DEPLOYER_IMAGE" .
+```
+
+Keep lockfiles and local package archives available to the build. The scaffold excludes `.env*`, `.svelar-env` and private deployment state from its Docker context. Do not bake credentials into image layers. Image size depends on application/native dependencies; no fixed size or automatic restart-on-unhealthy guarantee is made.
 
 ---
 
@@ -348,6 +317,8 @@ services:
     # No build — uses pre-built image from registry
 ```
 
+This legacy override selects `:latest` for direct `prod:up`. It is not the release selector for `prod:deploy`, which requires `--image` and pins the inspected immutable ID. For direct maintenance, review and replace mutable tags deliberately.
+
 This overrides the `app` service to:
 - **Pull a pre-built image** from Docker Hub (or your registry) instead of building locally
 - Set `DOCKER_IMAGE` in your `.env` to your Docker Hub username/image name
@@ -357,23 +328,61 @@ This overrides the `app` service to:
 
 ## Health Endpoint
 
-`make:docker` generates `src/routes/api/health/+server.ts`:
+The generated routes have distinct meanings:
 
-```typescript
-import { json } from '@sveltejs/kit';
+| Route | Meaning |
+|-------|---------|
+| `GET /api/health` | Process liveness/uptime, not dependency or worker readiness |
+| `GET /api/ready` | Bootstrap completed, not draining, and every configured readiness check returned `true` |
+| `GET /api/traffic` | Readiness plus this slot's current operator-controlled gateway eligibility |
 
-export const GET = () => json({
-  status: 'ok',
-  timestamp: new Date().toISOString(),
-  uptime: process.uptime(),
-});
+Ready and traffic responses are safe, no-store envelopes with HTTP 200/503:
+
+```json
+{"data":{"ready":true},"meta":{}}
 ```
 
-Used by:
-- **Dockerfile HEALTHCHECK** — Docker restarts the container if this endpoint fails
-- **Traefik load balancer** — routes traffic only to healthy containers
-- **GitHub Actions deploy** — can verify deployment success
-- **Monitoring** — external uptime checks
+Traffic adds `slot: "blue" | "green" | null`. The routes bind the public controller, without persistence or runtime DDL:
+
+```typescript
+// src/routes/api/ready/+server.ts
+import { DeploymentController } from '@beeblock/svelar/deployment';
+
+const controller = new DeploymentController();
+export const GET = () => controller.ready();
+```
+
+The traffic route calls `controller.traffic()`. Neither route permits changing slot eligibility over HTTP. The orchestrator supplies `SVELAR_DEPLOY_SLOT` and the absolute `SVELAR_DEPLOY_TRAFFIC_FILE` path; the app reads a small, read-only shared file containing slot names, not secrets. A missing/malformed file or unknown eligibility fails closed.
+
+### Bootstrap and Drain
+
+Configure readiness in the common server bootstrap after configuring dependencies, and mark ready only after providers initialize. Generated apps already wire these lifecycle calls; review existing/customized apps rather than adding duplicate handlers.
+
+```typescript
+import { Connection } from '@beeblock/svelar/database';
+import { DeploymentRuntime } from '@beeblock/svelar/deployment';
+
+DeploymentRuntime.configure({
+  timeoutMs: 2000,
+  cacheMs: 250,
+  checks: {
+    database: async signal => {
+      await Connection.raw('SELECT 1'); // Infrastructure probe, not application CRUD
+      return !signal.aborted;
+    },
+  },
+});
+// Only after the application's provider/bootstrap work has completed:
+DeploymentRuntime.ready();
+```
+
+Checks receive an `AbortSignal`. Timeout returns not-ready and aborts the signal; it cannot force-cancel a database/SDK operation that ignores it. The runtime retains one tracked probe flight until settlement, shares concurrent requests and briefly caches results, so repeated polling cannot create unbounded copies of a hung check. Configure driver deadlines as well. Reconfiguration and drain invalidate late success.
+
+Choose required probes deliberately. A DB read/cache operation/Redis count proves only that operation's reachability. Queue counts do not prove a live worker, sufficient intake capacity or successful domain work. Memory/sync adapters do not support shared queue monitoring; use `adapter.capabilities.shared` to decide whether that configured role has a shared-backend probe. Broadcast readiness does not prove visible cross-browser delivery. No checks means bootstrap/drain state only, not universal infrastructure health.
+
+On SIGTERM/SIGINT call `DeploymentRuntime.beginDrain()` immediately so readiness/traffic eligibility fail and Svelar hooks reject new work. Let adapter-node drain active HTTP requests before disconnecting their database. Generated cleanup is attached to `sveltekit:shutdown`, after HTTP drain, and then stops background resources. Do not close the DB at the initial signal while a response still needs it. Independently supervise CLI worker/scheduler shutdown and configure their deadlines.
+
+`SHUTDOWN_TIMEOUT` is finite; streams, WebSockets or long jobs exceeding it can be interrupted. Configure client reconnect/idempotency and test the application's own long-running requests. A Docker healthcheck marks a container unhealthy; Docker's restart policy does not by itself restart a still-running unhealthy process.
 
 ---
 
@@ -383,10 +392,11 @@ Used by:
 
 ### What it does
 
-1. **Triggers** on push to `main` (also builds on PRs, but only deploys on push)
-2. **Builds** the Docker image (production target)
-3. **Pushes** to Docker Hub with `:latest` and `:timestamp` tags
-4. **SSHs** into your droplet, writes `ENV_PROD` secret to `.env`, pulls the image, runs migrations, and starts containers with health waiting
+1. Builds production and administrative deployer targets on push/PR, using local SHA tags so fork PR builds do not need registry secrets.
+2. Pushes only Git SHA release/deployer tags on push; no `latest` or automatic old-image pruning.
+3. Serializes deployment workflows with `cancel-in-progress: false`.
+4. Copies reviewed Compose/config/manifest/script files and a private environment transfer file to the host.
+5. Requires `DEPLOY_COMPATIBLE_MIGRATIONS=true`, then invokes the administrative deployment script through Docker.
 
 ### Required GitHub Secrets
 
@@ -403,67 +413,31 @@ Used by:
 
 ### How `.env` works
 
-The production `.env` is **never manually managed on the server**. Instead:
+The generated workflow supplies `.env` through the `ENV_PROD` secret:
 
 1. Store your entire production `.env` contents as the `ENV_PROD` GitHub Secret
-2. On every deploy, the workflow writes it to `.env` on the server: `echo "${{ secrets.ENV_PROD }}" > .env`
+2. It passes the secret through an environment variable, writes `.svelar-env` using `umask 077` and `printf`, then copies it over SSH.
 3. Docker Compose reads it via `env_file: .env`
 
-This means updating environment variables is as simple as updating the `ENV_PROD` secret and pushing to main.
+The remote step copies the transfer file to `.env` and removes the transfer file. Do not interpolate multiline secrets directly into shell source. Review secret rotation and compatibility for both retained releases. The workflow does not provision dependencies or bootstrap the deployment lock table; finish first adoption separately. `DEPLOY_COMPATIBLE_MIGRATIONS` is an approval variable, not automated schema compatibility analysis.
 
 ### Generated workflow
 
-```yaml
-name: Deploy
+The authoritative workflow is emitted by `npx svelar make:ci`. Review the generated file rather than copying an older `compose up` pipeline. Its deployment operation is:
 
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-
-env:
-  DOCKER_IMAGE: ${{ secrets.DOCKER_USERNAME }}/${{ secrets.DOCKER_IMAGE_NAME }}
-
-jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Docker Hub
-        if: github.event_name == 'push'
-        run: echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
-
-      - name: Build Docker image
-        run: |
-          docker build . --file Dockerfile \
-            --target production \
-            --tag $DOCKER_IMAGE:$(date +%s) \
-            --tag $DOCKER_IMAGE:latest
-
-      - name: Push to Docker Hub
-        if: github.event_name == 'push'
-        run: docker push $DOCKER_IMAGE --all-tags
-
-      - name: Deploy to droplet
-        if: github.event_name == 'push'
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.DROPLET_HOST }}
-          username: ${{ secrets.DROPLET_USER }}
-          key: ${{ secrets.DROPLET_SSH_KEY }}
-          script: |
-            echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
-            cd ${{ secrets.DROPLET_PROJECT }}/
-            echo "${{ secrets.ENV_PROD }}" > .env
-            echo "DOCKER_IMAGE=${{ secrets.DOCKER_USERNAME }}/${{ secrets.DOCKER_IMAGE_NAME }}" >> .env
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm --no-deps app npx svelar migrate --force
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans --wait
-            docker image prune -f
+```bash
+# These come from reviewed CI environment/secrets, not interpolated shell source:
+test "$COMPATIBLE_MIGRATIONS" = true
+printf '%s' "$DOCKER_TOKEN" | docker login -u "$DOCKER_USERNAME" --password-stdin
+cd "$DEPLOY_PROJECT"
+umask 077
+cp .svelar-env .env
+rm .svelar-env
+docker pull "$DEPLOYER_IMAGE"
+sh scripts/svelar-deploy.sh --compatible-migrations
 ```
+
+Release/deployer images use Git SHA tags. The script runs the framework CLI from the administrative image, preserving the host project path for Docker bind mounts; host Node/npm is not required. Keep the previous release image and slot files for rollback. Do not cancel a running deploy or prune its retained resources blindly.
 
 ---
 
@@ -493,7 +467,9 @@ npx svelar infra:setup
 #    DROPLET_HOST, DROPLET_USER, DROPLET_SSH_KEY, DROPLET_PROJECT,
 #    ENV_PROD
 
-# 5. Push to main — GitHub Actions handles the rest
+# 5. Provision infra, bootstrap migration 000049 and review readiness/cutover
+# 6. Set DEPLOY_COMPATIBLE_MIGRATIONS=true only after compatibility review
+# 7. Push to main to deploy the reviewed release
 git push origin main
 ```
 
@@ -666,7 +642,7 @@ redis:
   image: redis:7-alpine
   restart: unless-stopped
   # No ports exposed — only reachable by app via Docker network
-  command: redis-server --requirepass ${REDIS_PASSWORD:-svelarsecret} --save "" --appendonly no --stop-writes-on-bgsave-error no
+  command: redis-server --requirepass ${REDIS_PASSWORD:-svelarsecret} --save "" --appendonly yes --appendfsync everysec
   volumes:
     - redisdata:/data
   healthcheck:
@@ -758,10 +734,10 @@ Generated Docker apps run long-lived daemons as separate Compose services:
 | Service | Command | Purpose |
 |---------|---------|---------|
 | `app` | `node build/index.js` | SvelteKit production server |
-| `worker` | `npx svelar queue:work --queue=default --concurrency=${QUEUE_WORKER_CONCURRENCY:-1}` | Queue job processor |
-| `scheduler` | `npx svelar schedule:run` | Cron task runner |
+| `worker` | `npx svelar queue:work --queue=default --concurrency=${QUEUE_WORKER_CONCURRENCY:-1} --grace-period=${QUEUE_WORKER_GRACE_PERIOD:-30}` | Long-lived queue job processor |
+| `scheduler` | `npx svelar schedule:work` | Long-lived cron/runtime-request processor |
 
-The scheduler should run as exactly one service per deployment. Svelar still uses `SchedulerLock` to prevent duplicate task execution if a second scheduler starts accidentally, but the generated topology keeps the intended process model explicit.
+During start-first deployment, old and candidate background daemons briefly overlap. Register the same jobs/tasks and use durable task locks/domain idempotency. A running container alone is not proof that a worker registered or a schedule can execute. Runtime services without custom healthchecks have running-only startup coverage and produce a warning; supply a real application-specific healthcheck when role readiness is required.
 
 For custom queues, add one worker service per queue:
 
@@ -803,7 +779,11 @@ npm run dev:scheduler
 | `INTERNAL_APP_URL` | `http://app:3000` | Internal Docker URL for server-side callbacks, scheduler broadcasts, and service-to-app requests |
 | `APP_KEY` | — | Secret key for session encryption |
 | `INTERNAL_SECRET` | — | Secret for internal API bridge (scheduler broadcasts) |
-| `DOCKER_IMAGE` | package.json name | Docker image for `docker-compose.prod.yml` |
+| `DOCKER_IMAGE` | package.json name | Legacy direct Compose image prefix; not `prod:deploy --image` |
+| `DEPLOY_IMAGE` | none | Explicit production release tag/digest for the administrative script |
+| `DEPLOYER_IMAGE` | none | Matching administrative release image; has Docker CLI/Compose |
+| `SHUTDOWN_TIMEOUT` | slot drain timeout minus one | adapter-node HTTP drain seconds; cleanup after HTTP drain |
+| `SVELAR_DEPLOY_SLOT` / `SVELAR_DEPLOY_TRAFFIC_FILE` | set by orchestrator | Slot identity and read-only eligibility file; do not accept browser overrides |
 
 ### Database
 
@@ -1061,76 +1041,103 @@ labels:
 
 ### Scheduler with Multiple Instances
 
-When scaling to multiple containers, **only one scheduler should run tasks at a time**. Svelar's `SchedulerLock` handles this automatically with database-backed distributed locking.
+Multiple schedulers require configured persistent runtime/locks and task concurrency policy; do not infer no-overlap from process count. Tasks without an applicable distributed policy can still overlap. The generated single-host blue/green plan temporarily overlaps old/new schedulers and does not implement an arbitrary horizontally scaled topology.
 
 ---
 
 ## Blue-Green Deployments with Docker Compose
 
-Blue-green deployments eliminate downtime by running two identical environments and switching traffic between them.
+`prod:deploy` implements a bounded **single Docker-host** start-first plan. A stable Caddy gateway keeps the public port while separate blue/green runtime projects share existing infrastructure. It is not multi-host orchestration, an autoscaler or a guarantee of uninterrupted arbitrary streams.
 
-### Directory Structure
+### First Adoption and Migration Foundation
 
+Before deployment:
+
+1. Review generated Docker/config files; generators preserve existing files unless explicitly forced.
+2. Provision the required base network, infrastructure services and named storage volumes. Do not start legacy app/worker/scheduler services on the gateway port.
+3. Under an explicit exclusive maintenance/bootstrap procedure, run core migrations including `000049_create_deployment_locks_table` against the intended database. A reviewed ordinary `npx svelar migrate` bootstrap can do this; `deploy:migrate` cannot create its own missing foundation.
+4. Wire ready/traffic routes and bootstrap/drain lifecycle in the actual release. For historical apps, review `update --dry-run` and lifecycle changes before deployment.
+5. Review forward migrations against both old and candidate images using expand/contract changes, and test rollback against the evolved schema.
+
+A release one-shot runs `deploy:migrate --check` before candidate startup, then locked forward `deploy:migrate`. Missing migration 49 fails before changing the active service. No runtime/web helper creates tables. The lock is keyed by database connection and name, with committed exact ownership; migration DDL is not placed inside that ownership transaction. `--connection=<name>` is available for an explicitly configured named database.
+
+An already-running legacy base app is rejected without stopping/rebinding it. Its **first gateway adoption requires a planned cutover**; the command does not claim zero-downtime migration of an arbitrary legacy topology.
+
+### Configuration and Commands
+
+`make:docker` emits `svelar.deploy.json`:
+
+```json
+{
+  "version": 1,
+  "strategy": "blue-green",
+  "gatewayImage": "caddy:2.11.7-alpine",
+  "readinessPath": "/api/ready",
+  "trafficPath": "/api/traffic",
+  "smokePath": "/api/health",
+  "readinessTimeout": 60,
+  "drainTimeout": 45,
+  "network": "default",
+  "runtimeServices": ["app", "worker", "scheduler"]
+}
 ```
-production/
-├── docker-compose.yml          # Shared services (db, redis, etc.)
-├── docker-compose.blue.yml     # Blue environment
-├── docker-compose.green.yml    # Green environment
-├── docker-compose.traefik.yml  # Traefik load balancer
-├── .env
-└── deploy.sh
-```
 
-### Deployment Script
+Timeouts use seconds: readiness `1..600`, drain `2..600`. Probe paths must be local absolute paths without query/fragment/redirects. Readiness must return `data.ready === true`; smoke must return 200. Choose a meaningful app-owned smoke route when process liveness is insufficient.
+
+The bounded plan requires one existing resolved network, existing named volumes, no fixed runtime `container_name`, no extra runtime networks or published background ports, and exactly one app HTTP port targeting container 3000. Unsupported topology is rejected, not silently dropped. Include every intended worker service in `runtimeServices` and give roles a real healthcheck if running-only startup coverage is insufficient.
 
 ```bash
-#!/usr/bin/env bash
-# deploy.sh — Blue-green deployment for Svelar
-set -euo pipefail
+# Installed CLI on an administrative host:
+npx svelar prod:deploy --image=registry.example.com/myapp:release-123 --compatible-migrations
 
-APP_DOMAIN="${APP_DOMAIN:?Set APP_DOMAIN}"
-CURRENT_FILE=".current-deployment"
+# Docker-only host, using matching reviewed release targets:
+export DEPLOY_IMAGE=registry.example.com/myapp:release-123
+export DEPLOYER_IMAGE=registry.example.com/myapp:release-123-deployer
+sh scripts/svelar-deploy.sh --compatible-migrations
 
-if [ -f "$CURRENT_FILE" ] && [ "$(cat $CURRENT_FILE)" = "blue" ]; then
-  CURRENT="blue"; NEXT="green"
-else
-  CURRENT="green"; NEXT="blue"
-fi
-
-echo "==> Current: $CURRENT | Deploying: $NEXT"
-
-# 1. Build the new environment
-docker compose -f docker-compose.yml -f docker-compose.${NEXT}.yml build
-
-# 2. Start (Traefik won't route until healthy)
-docker compose -f docker-compose.yml -f docker-compose.${NEXT}.yml up -d
-
-# 3. Wait for health check
-RETRIES=30
-until docker compose -f docker-compose.yml -f docker-compose.${NEXT}.yml \
-  exec app-${NEXT} wget -qO- http://localhost:3000/api/health > /dev/null 2>&1; do
-  RETRIES=$((RETRIES - 1))
-  if [ $RETRIES -le 0 ]; then
-    echo "==> ERROR: $NEXT failed health check. Rolling back."
-    docker compose -f docker-compose.yml -f docker-compose.${NEXT}.yml down
-    exit 1
-  fi
-  sleep 2
-done
-
-# 4. Run migrations
-docker compose -f docker-compose.yml -f docker-compose.${NEXT}.yml \
-  exec app-${NEXT} npx svelar migrate --force
-
-# 5. Switch traffic
-docker compose -f docker-compose.yml -f docker-compose.${NEXT}.yml up -d
-
-# 6. Stop the old environment
-docker compose -f docker-compose.yml -f docker-compose.${CURRENT}.yml down
-
-echo "$NEXT" > "$CURRENT_FILE"
-echo "==> Deployment complete. Active: $NEXT"
+# Prior retained runtime only; does not roll back schema:
+npx svelar prod:deploy --rollback
+# Docker-only equivalent with the administrative image environment still set:
+sh scripts/svelar-deploy.sh --rollback
 ```
+
+`--no-pull` permits an already-local explicit release image. `--no-migrate` requires a separately reviewed migration process. `--service` and `--no-wait` cannot bypass release/readiness boundaries. The administrative script needs Docker socket privileges; never expose it as a web endpoint.
+
+### Promotion, Failure and Recovery
+
+The candidate uses the inspected immutable image ID, the original environment/commands and external storage/network, without sharing the legacy `app` DNS alias. It starts before old runtime shutdown, passes local readiness/smoke and proves its slot identity. The fixed gateway has both slot upstreams and checks `/api/traffic`; promotion changes the read-only eligibility file, **not gateway config reload**. The orchestrator witnesses the candidate through the public gateway, makes it sole eligible, and waits for the active-health settling window before stopping the old slot.
+
+Once gateway smoke succeeds, release state is committed and the old slot receives bounded SIGTERM drain. Its image/container/config remain retained for rollback. Candidate readiness failure leaves the current route unchanged; a precommit post-switch smoke failure attempts restoration of the old eligibility. If restoration fails, both runtimes and journal are retained for operator reconciliation. If drain fails after state commit, the CLI reports that the new release **is already active**; do not treat that as permission to repeat an unknown deployment.
+
+State and Compose files live in `.svelar/deployment/` (private directory 0700, files 0600) and can contain app environment values. The tiny traffic subdirectory/file is readable by the nonroot app through a readonly bind mount and contains only slot names. Keep deployment state and environment transfer files out of Git/images.
+
+Deployment mutexes/journals and database migration ownership **do not automatically expire**. A killed process can leave an orphan. Inspect the saved active slot, containers, gateway eligibility and database lock, independently verify the old process is dead, and reconcile deliberately; never use a guessed age to steal a DDL lock. Public server-safe recovery APIs are:
+
+```typescript
+import { MigrationLock } from '@beeblock/svelar/deployment';
+
+const options = { connectionName: 'primary', name: 'migrations' };
+const lock = await MigrationLock.inspect(options);
+// Only after independently proving the prior owner has stopped:
+if (lock?.owner) await MigrationLock.release(lock.owner, options);
+```
+
+`MigrationLock.check(options)` verifies the installed foundation/unowned lock. `MigrationLock.run(callback, options)` acquires committed ownership and releases the exact token, preserving operation errors; it rejects execution inside an existing DB transaction. Busy/missing foundation use `MigrationLockBusyError` / `MigrationLockFoundationError`. This barrel exports runtime/controller/lock/types, not CLI commands.
+
+Database rollback is deliberately absent. Old and new app/worker/scheduler versions can overlap, so schema, serialized job classes and task policies must remain compatible. Rollback cannot undo external side effects. Retain compatible images and backups; define operator cleanup/retention separately.
+
+### Traffic Proof and Limits
+
+The deployment slice passed **36 focused unit/CLI tests** plus **4 native Docker/Caddy cases**, with strict declaration emission. Native proofs used different immutable Node images containing the actual `DeploymentRuntime`, an isolated random host port, Caddy 2.11.7, continuous HTTP requests and a request held on the old backend until its real SIGTERM showed one in-flight request. That request completed, the old process exited zero, promotion/explicit rollback kept the same public port, and the request loop recorded zero dropped/non-200 ordinary requests.
+
+Other cases proved never-ready candidate protection, automatic route restoration after a real gateway smoke failure, and refusal to touch a running legacy container. Run the isolated native suite with:
+
+```bash
+# From packages/svelar; requires Docker, Node/Caddy base images and esbuild:
+SVELAR_TEST_DEPLOY_DOCKER=1 ../../node_modules/.bin/vitest run tests/deployment-traffic.test.ts
+```
+
+This is a real HTTP/runtime/gateway proof, **not** certification of a generated SvelteKit app, worker domain readiness, TLS, multi-host failover, SSE/WebSocket continuity or an arbitrary production workload. Validate the packed/generated app, dependency probes, background healthchecks, active traffic and long-request/stream behavior before claiming readiness or availability. Application certification is separate from this focused source gate.
 
 ---
 
@@ -1193,7 +1200,7 @@ docker service scale svelar_worker=4
 
 ## Blue-Green Deployments with Docker Swarm
 
-Swarm's built-in rolling updates already provide zero-downtime deployments. For full blue-green isolation, deploy the new version as a separate service, test it, then switch Traefik labels.
+Swarm has its own start-first/rollback primitives. The examples above are operator-managed alternatives, not generated `prod:deploy` support or proof of zero downtime. Verify readiness, schema compatibility, traffic switching, long-lived streams and drain in that environment before making an availability claim.
 
 ---
 
@@ -1205,8 +1212,9 @@ Swarm's built-in rolling updates already provide zero-downtime deployments. For 
 # Development
 docker compose -f docker-compose.yml -f docker-compose.dev.yml exec app npx svelar migrate
 
-# Production
-docker compose -f docker-compose.yml -f docker-compose.prod.yml exec app npx svelar migrate
+# Adopted blue/green production (run through the reviewed active slot, example blue)
+docker compose -f .svelar/deployment/blue.compose.json run --rm --no-deps app_blue npx svelar deploy:migrate --check
+docker compose -f .svelar/deployment/blue.compose.json run --rm --no-deps app_blue npx svelar deploy:migrate
 
 # Docker Swarm
 docker exec $(docker ps -q -f name=svelar_app | head -1) npx svelar migrate
@@ -1237,10 +1245,9 @@ npx svelar dev:logs                    # All dev services
 npx svelar dev:logs --service=app      # Just the app
 npx svelar prod:logs                   # All prod services
 
-# Service logs
-docker compose logs -f app
-docker compose logs -f worker
-docker compose logs -f scheduler
+# Adopted deployment: inspect state.json first, then target that slot (example blue)
+docker compose -f .svelar/deployment/blue.compose.json logs -f app_blue worker_blue scheduler_blue
+docker compose -f .svelar/deployment/gateway.compose.json logs -f gateway
 ```
 
 ### Container Health
@@ -1434,10 +1441,10 @@ docker compose logs -f worker
 ### Out of Disk Space
 
 ```bash
-docker system prune -a --volumes
 docker system df -v
-docker image prune -a
 ```
+
+Do not run blanket `--volumes` or old-image pruning on a deployment host. Named volumes contain authoritative data and retained release images support rollback. Inspect ownership, backups, active state and the retained previous release before removing specific unused resources.
 
 ### Scheduler Running Duplicate Tasks
 
@@ -1448,6 +1455,6 @@ docker compose ps scheduler
 # Check scheduler_locks table
 docker compose exec postgres psql -U svelar -c "SELECT * FROM scheduler_locks;"
 
-# Clear stale locks
-docker compose exec postgres psql -U svelar -c "DELETE FROM scheduler_locks WHERE expires_at < NOW();"
 ```
+
+Use the scheduler's public runtime/lock contracts and current timestamp units when diagnosing overlap. Never delete a lock merely because a process looks quiet; verify ownership and that the task has stopped. See [Scheduler](./10-scheduler.md).
