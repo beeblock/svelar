@@ -1144,6 +1144,7 @@ function certificationTestSource(flat) {
 	import { ApiKeys } from '@beeblock/svelar/api-keys';
 	import { WebhookInbox } from '@beeblock/svelar/webhooks';
 	import { AuthenticateMiddleware } from '@beeblock/svelar/auth';
+	import { Hash } from '@beeblock/svelar/hashing';
 	import { Event, EventServiceProvider } from '@beeblock/svelar/events';
 	import { container } from '@beeblock/svelar/container';
 	import { ErrorHandler, HttpError, ValidationError } from '@beeblock/svelar/errors';
@@ -1629,6 +1630,10 @@ describe('Svelar release certification', () => {
 
 	  it('runs generated hook CSRF protections for API routes', async () => {
 	    const { handle } = await import('../../src/hooks.server.js');
+	    const { auth } = await import('../../src/app.js');
+	    const user = await User.create({ name: 'CSRF credential fixture', email: 'csrf-credential@example.test', password: await Hash.make('csrf-fixture-password'), role: 'user' });
+	    const pair = await auth.attemptJwt({ email: user.email, password: 'csrf-fixture-password' });
+	    expect(pair).not.toBeNull();
 
 	    async function request(path: string, options: any = {}) {
 	      return handle({
@@ -1645,9 +1650,15 @@ describe('Svelar release certification', () => {
 	    expect((await request('/api/certification')).status).toBe(419);
 	    expect((await request('/api/certification', {
 	      headers: { authorization: 'Bearer api-token' },
+	    })).status).toBe(401);
+	    expect((await request('/api/certification', {
+	      headers: { authorization: 'Bearer ' + pair!.token, origin: 'http://machine.example' },
 	    })).status).toBe(200);
 	    expect((await request('/api/internal/broadcast')).status).toBe(200);
-	    expect((await request('/api/webhooks/stripe')).status).toBe(200);
+	    for (const path of ['/api/internal/other', '/api/internal/broadcast-evil', '/api/internal/broadcast/child', '/api/webhooks/stripe', '/api/webhooks/incoming-evil']) {
+	      expect((await request(path)).status).toBe(419);
+	    }
+	    expect((await request('/api/webhooks/incoming/provider')).status).toBe(200);
 	    expect((await request('/api/certification', {
 	      headers: { origin: 'http://evil.example' },
 	    })).status).toBe(403);
@@ -1876,13 +1887,14 @@ describe('Svelar release certification', () => {
 	    const tailed: string[] = [];
 	    const unsubscribe = LogViewer.tail((entry) => {
 	      tailed.push(entry.message);
-	    }, { level: 'warn', channel: 'file' });
+	    }, { level: 'warn', channel: 'file', cursor: 0 });
 
-	    Log.debug('debug should be filtered from certification logs');
-	    Log.info('certification log persisted', { requestId: 'cert-log-1' });
-	    Log.warn('certification warning tailed', { requestId: 'cert-log-2' });
+	    await Log.debug('debug should be filtered from certification logs');
+	    await Log.info('certification log persisted', { requestId: 'cert-log-1' });
+	    await Log.warn('certification warning tailed', { requestId: 'cert-log-2' });
+	    await waitUntil(() => tailed.includes('certification warning tailed'), 10_000);
 	    unsubscribe();
-	    Log.error('certification error persisted', { requestId: 'cert-log-3' });
+	    await Log.error('certification error persisted', { requestId: 'cert-log-3' });
 
 	    await waitUntil(() => {
 	      if (!existsSync(logPath)) return false;
