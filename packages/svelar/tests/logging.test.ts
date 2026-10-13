@@ -7,7 +7,7 @@ import { LogViewer } from '../src/logging/LogViewer';
 import { ApplicationContext } from '../src/support/Context';
 
 describe('Logger', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     // Reset logger state between tests
     Log.configure({
       default: 'console',
@@ -18,11 +18,12 @@ describe('Logger', () => {
     });
     Log.clearContext();
     ApplicationContext.clear();
-    LogViewer.clear();
+    LogViewer.configure({ driver: 'memory' });
+    await LogViewer.clear();
   });
 
   describe('configure', () => {
-    it('should configure logging channels', () => {
+    it('should configure logging channels', async () => {
       Log.configure({
         default: 'console',
         channels: {
@@ -34,7 +35,7 @@ describe('Logger', () => {
       expect(Log).toBeDefined();
     });
 
-    it('should support multiple channels', () => {
+    it('should support multiple channels', async () => {
       Log.configure({
         default: 'stack',
         channels: {
@@ -47,7 +48,7 @@ describe('Logger', () => {
       expect(Log).toBeDefined();
     });
 
-    it('should set the default channel', () => {
+    it('should set the default channel', async () => {
       Log.configure({
         default: 'custom',
         channels: {
@@ -93,7 +94,7 @@ describe('Logger', () => {
   });
 
   describe('debug', () => {
-    it('should log debug messages', () => {
+    it('should log debug messages', async () => {
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       Log.configure({
@@ -103,13 +104,13 @@ describe('Logger', () => {
         },
       });
 
-      Log.debug('Debug message');
+      await Log.debug('Debug message');
 
       expect(consoleSpy).toHaveBeenCalled();
       consoleSpy.mockRestore();
     });
 
-    it('should include context', () => {
+    it('should include context', async () => {
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       Log.configure({
@@ -119,7 +120,7 @@ describe('Logger', () => {
         },
       });
 
-      Log.debug('User action', { userId: 123, action: 'login' });
+      await Log.debug('User action', { userId: 123, action: 'login' });
 
       const callArgs = consoleSpy.mock.calls[0][0];
       expect(callArgs).toContain('DEBUG');
@@ -128,7 +129,7 @@ describe('Logger', () => {
       consoleSpy.mockRestore();
     });
 
-    it('should respect log level filtering', () => {
+    it('should respect log level filtering', async () => {
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       Log.configure({
@@ -138,7 +139,7 @@ describe('Logger', () => {
         },
       });
 
-      Log.debug('Should not appear');
+      await Log.debug('Should not appear');
 
       // Debug should not be logged when level is 'info'
       // This is implementation dependent
@@ -147,7 +148,7 @@ describe('Logger', () => {
   });
 
   describe('info', () => {
-    it('should log info messages', () => {
+    it('should log info messages', async () => {
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       Log.configure({
@@ -157,13 +158,13 @@ describe('Logger', () => {
         },
       });
 
-      Log.info('Info message');
+      await Log.info('Info message');
 
       expect(consoleSpy).toHaveBeenCalled();
       consoleSpy.mockRestore();
     });
 
-    it('should work with context object', () => {
+    it('should work with context object', async () => {
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       Log.configure({
@@ -173,7 +174,7 @@ describe('Logger', () => {
         },
       });
 
-      Log.info('User registered', { email: 'user@example.com', id: 1 });
+      await Log.info('User registered', { email: 'user@example.com', id: 1 });
 
       expect(consoleSpy).toHaveBeenCalled();
       consoleSpy.mockRestore();
@@ -181,7 +182,7 @@ describe('Logger', () => {
   });
 
   describe('warn', () => {
-    it('should log warning messages', () => {
+    it('should log warning messages', async () => {
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       Log.configure({
@@ -191,13 +192,13 @@ describe('Logger', () => {
         },
       });
 
-      Log.warn('Warning message');
+      await Log.warn('Warning message');
 
       expect(consoleSpy).toHaveBeenCalled();
       consoleSpy.mockRestore();
     });
 
-    it('should use yellow color', () => {
+    it('should use yellow color', async () => {
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       Log.configure({
@@ -207,7 +208,7 @@ describe('Logger', () => {
         },
       });
 
-      Log.warn('Deprecated API used');
+      await Log.warn('Deprecated API used');
 
       expect(consoleSpy).toHaveBeenCalled();
       consoleSpy.mockRestore();
@@ -215,7 +216,7 @@ describe('Logger', () => {
   });
 
   describe('error', () => {
-    it('should log error messages', () => {
+    it('should log error messages', async () => {
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       Log.configure({
@@ -225,13 +226,13 @@ describe('Logger', () => {
         },
       });
 
-      Log.error('Error message');
+      await Log.error('Error message');
 
       expect(consoleSpy).toHaveBeenCalled();
       consoleSpy.mockRestore();
     });
 
-    it('should log errors with exception details', () => {
+    it('should log errors with exception details', async () => {
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       Log.configure({
@@ -241,7 +242,7 @@ describe('Logger', () => {
         },
       });
 
-      Log.error('Database connection failed', {
+      await Log.error('Database connection failed', {
         error: 'ECONNREFUSED',
         host: 'localhost',
         port: 5432,
@@ -251,7 +252,7 @@ describe('Logger', () => {
       consoleSpy.mockRestore();
     });
 
-    it('should use red color for error output', () => {
+    it('should use red color for error output', async () => {
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       Log.configure({
@@ -261,7 +262,7 @@ describe('Logger', () => {
         },
       });
 
-      Log.error('Critical failure');
+      await Log.error('Critical failure');
 
       expect(consoleSpy).toHaveBeenCalled();
       consoleSpy.mockRestore();
@@ -269,7 +270,7 @@ describe('Logger', () => {
   });
 
   describe('fatal', () => {
-    it('should log fatal messages', () => {
+    it('should log fatal messages', async () => {
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       Log.configure({
@@ -279,7 +280,7 @@ describe('Logger', () => {
         },
       });
 
-      Log.fatal('System crash imminent');
+      await Log.fatal('System crash imminent');
 
       expect(consoleSpy).toHaveBeenCalled();
       consoleSpy.mockRestore();
@@ -287,7 +288,7 @@ describe('Logger', () => {
   });
 
   describe('channel selection', () => {
-    it('should allow selecting specific channel', () => {
+    it('should allow selecting specific channel', async () => {
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       Log.configure({
@@ -298,13 +299,13 @@ describe('Logger', () => {
         },
       });
 
-      Log.channel('custom').info('Should not appear');
-      Log.channel('custom').warn('Should appear');
+      await Log.channel('custom').info('Should not appear');
+      await Log.channel('custom').warn('Should appear');
 
       consoleSpy.mockRestore();
     });
 
-    it('should support chaining log levels', () => {
+    it('should support chaining log levels', async () => {
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       Log.configure({
@@ -314,7 +315,7 @@ describe('Logger', () => {
         },
       });
 
-      Log.channel('console').debug('Debug info', { key: 'value' });
+      await Log.channel('console').debug('Debug info', { key: 'value' });
 
       expect(consoleSpy).toHaveBeenCalled();
       consoleSpy.mockRestore();
@@ -322,7 +323,7 @@ describe('Logger', () => {
   });
 
   describe('log levels', () => {
-    it('should respect level hierarchy', () => {
+    it('should respect level hierarchy', async () => {
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       Log.configure({
@@ -332,16 +333,16 @@ describe('Logger', () => {
         },
       });
 
-      Log.debug('Debug');
-      Log.info('Info');
-      Log.warn('Warning');
-      Log.error('Error');
+      await Log.debug('Debug');
+      await Log.info('Info');
+      await Log.warn('Warning');
+      await Log.error('Error');
 
       // Only error should be logged
       consoleSpy.mockRestore();
     });
 
-    it('should handle debug level showing all logs', () => {
+    it('should handle debug level showing all logs', async () => {
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       Log.configure({
@@ -351,10 +352,10 @@ describe('Logger', () => {
         },
       });
 
-      Log.debug('Debug');
-      Log.info('Info');
-      Log.warn('Warning');
-      Log.error('Error');
+      await Log.debug('Debug');
+      await Log.info('Info');
+      await Log.warn('Warning');
+      await Log.error('Error');
 
       expect(consoleSpy).toHaveBeenCalled();
       consoleSpy.mockRestore();
@@ -362,7 +363,7 @@ describe('Logger', () => {
   });
 
   describe('JSON format', () => {
-    it('should support JSON format logs', () => {
+    it('should support JSON format logs', async () => {
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       Log.configure({
@@ -372,7 +373,7 @@ describe('Logger', () => {
         },
       });
 
-      Log.info('User login', { userId: 1, ip: '192.168.1.1' });
+      await Log.info('User login', { userId: 1, ip: '192.168.1.1' });
 
       const callArgs = consoleSpy.mock.calls[0][0];
       const parsed = JSON.parse(callArgs);
@@ -405,7 +406,7 @@ describe('Logger', () => {
         await Log.info('contextual log', { action: 'save' });
       });
 
-      const [entry] = LogViewer.query({ search: 'contextual log' });
+      const [entry] = await LogViewer.query({ search: 'contextual log' });
       expect(entry.context).toMatchObject({
         requestId: 'req-1',
         correlationId: 'corr-1',
@@ -436,7 +437,7 @@ describe('Logger', () => {
         }),
       ]);
 
-      const byMessage = Object.fromEntries(LogViewer.query().map((entry) => [entry.message, entry.context]));
+      const byMessage = Object.fromEntries((await LogViewer.query()).map((entry) => [entry.message, entry.context]));
       expect(byMessage['request a']).toMatchObject({ requestId: 'req-a', tenantId: 'team-a' });
       expect(byMessage['request b']).toMatchObject({ requestId: 'req-b', tenantId: 'team-b' });
     });
@@ -466,7 +467,7 @@ describe('Logger', () => {
       expect(parsed.context.nested.authorization).toBe('[REDACTED]');
       expect(parsed.context.nested.refreshToken).toBe('[REDACTED]');
 
-      const [entry] = LogViewer.query({ search: 'redacted log' });
+      const [entry] = await LogViewer.query({ search: 'redacted log' });
       expect(entry.context.password).toBe('[REDACTED]');
       expect(JSON.stringify(entry.context)).not.toContain('secret-password');
 
@@ -485,7 +486,7 @@ describe('Logger', () => {
 
       await Log.info('configured context', { tenantId: 'explicit-tenant' });
 
-      const [entry] = LogViewer.query({ search: 'configured context' });
+      const [entry] = await LogViewer.query({ search: 'configured context' });
       expect(entry.context).toMatchObject({
         integration: 'billing',
         release: '0.8.0',
@@ -495,7 +496,7 @@ describe('Logger', () => {
   });
 
   describe('null driver', () => {
-    it('should not output anything with null driver', () => {
+    it('should not output anything with null driver', async () => {
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       Log.configure({
@@ -505,7 +506,7 @@ describe('Logger', () => {
         },
       });
 
-      Log.info('This should not appear');
+      await Log.info('This should not appear');
 
       expect(consoleSpy).not.toHaveBeenCalled();
       consoleSpy.mockRestore();
@@ -513,7 +514,7 @@ describe('Logger', () => {
   });
 
   describe('stack driver', () => {
-    it('should log to multiple channels', () => {
+    it('should log to multiple channels', async () => {
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       Log.configure({
@@ -525,7 +526,7 @@ describe('Logger', () => {
         },
       });
 
-      Log.info('Stack message');
+      await Log.info('Stack message');
 
       expect(consoleSpy).toHaveBeenCalled();
       consoleSpy.mockRestore();
@@ -533,7 +534,7 @@ describe('Logger', () => {
   });
 
   describe('timestamp', () => {
-    it('should include timestamp in logs', () => {
+    it('should include timestamp in logs', async () => {
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       Log.configure({
@@ -543,7 +544,7 @@ describe('Logger', () => {
         },
       });
 
-      Log.info('Timestamped log');
+      await Log.info('Timestamped log');
 
       const callArgs = consoleSpy.mock.calls[0][0];
       // Should contain timestamp in ISO format or similar
@@ -554,7 +555,7 @@ describe('Logger', () => {
   });
 
   describe('integration - application logging', () => {
-    it('should handle request logging', () => {
+    it('should handle request logging', async () => {
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       Log.configure({
@@ -564,7 +565,7 @@ describe('Logger', () => {
         },
       });
 
-      Log.info('POST /api/users', {
+      await Log.info('POST /api/users', {
         statusCode: 201,
         duration: 145,
         userId: 1,
@@ -574,7 +575,7 @@ describe('Logger', () => {
       consoleSpy.mockRestore();
     });
 
-    it('should handle error logging with context', () => {
+    it('should handle error logging with context', async () => {
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       Log.configure({
@@ -584,7 +585,7 @@ describe('Logger', () => {
         },
       });
 
-      Log.error('Payment processing failed', {
+      await Log.error('Payment processing failed', {
         orderId: 12345,
         amount: 99.99,
         gateway: 'stripe',
@@ -595,7 +596,7 @@ describe('Logger', () => {
       consoleSpy.mockRestore();
     });
 
-    it('should handle warning for deprecated features', () => {
+    it('should handle warning for deprecated features', async () => {
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       Log.configure({
@@ -605,7 +606,7 @@ describe('Logger', () => {
         },
       });
 
-      Log.warn('Deprecated API endpoint used', {
+      await Log.warn('Deprecated API endpoint used', {
         endpoint: '/api/v1/users',
         replacedWith: '/api/v2/users',
         removedIn: '2.0.0',

@@ -175,6 +175,32 @@ Log.configure({
 });
 ```
 
+### Shared Persistent Log Viewer
+
+New apps configure the database viewer in `src/app.ts`, so web, workers and scheduler use the same `svelar_logs` table. Run the generated migration before starting these processes; the logger never creates tables at runtime. The memory driver remains an explicitly process-local option for tests or ephemeral development.
+
+```typescript
+import { Log, LogViewer } from '@beeblock/svelar/logging';
+
+Log.configure({
+  default: 'console',
+  channels: { console: { driver: 'console', format: 'json' } },
+  viewer: { driver: 'database', retentionSeconds: 30 * 86400, tailIntervalMs: 1000 },
+});
+await Log.info('Import completed', { tenantId: team.id, correlationId: 'import-17' });
+const first = await LogViewer.page({ tenantId: team.id, limit: 25 });
+const next = first.meta.nextCursor === null ? null
+  : await LogViewer.page({ tenantId: team.id, limit: 25, cursor: first.meta.nextCursor });
+const stats = await LogViewer.getStats();
+await LogViewer.prune(); // Schedule retention through a normal scheduled task.
+```
+
+All viewer reads/writes (`query`, `page`, `getStats`, `getRecentErrors`, `addEntry`, `clear`, `prune`) are asynchronous for both drivers. Await them, including in existing apps when upgrading. `page` returns `{ data, meta }` with stable entry-ID cursors; stats are aggregated in the database rather than loading every log. Search, channel, minimum severity, tenant and correlation filters are supported. The configured viewer and output channel must both succeed for an awaited log write to complete.
+
+`LogViewer.tail(callback, { cursor })` follows durable entries across processes using bounded database polling; the callback receives redacted entries and the returned function closes the subscription. Omitting the cursor tails only new entries. Retention defines the available replay window. The dashboard exposes the tail as authorized SSE, including entry IDs and `Last-Event-ID` resume, heartbeat, slow-client bounds and periodic reauthorization. Configure `onTailError` to report connectivity failures through a different sink, avoiding recursive logging.
+
+Secrets are redacted at ingestion, including direct viewer writes, before storage or tailing. Free-form logging still must not contain secrets that cannot be recognized by key or known credential syntax. A tenant filter is a query filter, not authorization; scope it on the server after checking the caller's permissions.
+
 ## Notifications
 
 Send notifications via email, database, and custom channels.
@@ -465,7 +491,7 @@ Scheduled task controls persist through `ScheduleMonitor` to `scheduled_task_set
 
 Mutations record intent before executing and completion afterwards through `Audit`. Configure a persistent audit driver for production. If intent cannot be recorded, the operation is blocked; if completion audit fails after execution, the response warns not to repeat the operation without checking state. Queue/scheduler side effects and audit persistence are not a single transaction.
 
-The logs tab has minimum-level/channel/search filters and pagination with filtered totals. Payloads, log context, and common credential formats in text are redacted at the dashboard boundary. Invalid/unstructured job payloads are withheld rather than exposed verbatim. Keep secrets out of free-form logs: redaction cannot recognize every arbitrary secret string. LogViewer queries and SSE tail are explicitly scoped to the current web process's ring buffer, not persistent shared log storage. SSE disconnect/cancel paths unsubscribe, bound slow clients, and reconnect periodically to recheck authorization.
+The logs tab has minimum-level/channel/search/tenant/correlation filters and pagination with filtered totals and entry-ID cursors. Payloads, log context, and common credential formats in text are redacted. Invalid/unstructured job payloads are withheld rather than exposed verbatim. Keep secrets out of free-form logs: redaction cannot recognize every arbitrary secret string. The viewer reports its configured scope explicitly: shared database for production or process-local memory. SSE disconnect/cancel paths unsubscribe, bound slow clients, support Last-Event-ID replay and reconnect periodically to recheck authorization.
 
 This bounded console does not yet provide batch retry/cleanup, DLQ routing, safe resource deep links, queue pause/resume commands, a distributed scheduler lock inspector, persistent shared log queries, integration kill switches, or a complete user/tenant permission editor. Those require additional public contracts or their owning scaffold surfaces; the UI does not invent telemetry or bypass those boundaries.
 
@@ -480,7 +506,7 @@ This bounded console does not yet provide batch retry/cleanup, DLQ routing, safe
 | POST | `/api/admin/scheduler/[name]/run` | Run task manually |
 | POST | `/api/admin/scheduler/[name]/toggle` | Persist boolean enabled state |
 | GET | `/api/admin/logs` | Query logs |
-| GET | `/api/admin/logs/tail` | Authorized, redacted process-local SSE logs |
+| GET | `/api/admin/logs/tail` | Authorized, redacted SSE logs from the configured shared/local backend |
 | GET | `/api/admin/stats` | Combined dashboard stats |
 
 ## Plugin System

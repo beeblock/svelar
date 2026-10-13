@@ -85,10 +85,10 @@ export class DashboardService {
     return 'Task completed successfully.';
   }
 
-  logs(filter: Parameters<typeof LogViewer.query>[0]) {
-    const total = LogViewer.query({ ...filter, limit: 10_000, offset: 0 }).length;
-    return { logs: redactDashboardValue(LogViewer.query(filter)), total, stats: LogViewer.getStats(),
-      limit: filter?.limit, offset: filter?.offset, scope: 'current web process' };
+  async logs(filter: Parameters<typeof LogViewer.query>[0]) {
+    const page = await LogViewer.page(filter);
+    return { logs: redactDashboardValue(page.data), stats: await LogViewer.getStats(),
+      limit: filter?.limit, offset: filter?.offset, ...page.meta };
   }
 }
 

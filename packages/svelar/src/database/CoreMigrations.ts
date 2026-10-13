@@ -39,6 +39,7 @@ import { CreateTeamRoleHasPermissionsTable } from './core/00000000_000031_create
 import { CreateTeamModelHasRolesTable } from './core/00000000_000032_create_team_model_has_roles_table.js';
 import { CreateTeamModelHasPermissionsTable } from './core/00000000_000033_create_team_model_has_permissions_table.js';
 import { ScopeWebhookInboxIdempotency } from './core/00000000_000034_scope_webhook_inbox_idempotency.js';
+import { CreateSvelarLogsTable } from './core/00000000_000035_create_svelar_logs_table.js';
 
 export {
   CreateSessionsTable,
@@ -74,6 +75,7 @@ export {
   CreateTeamModelHasRolesTable,
   CreateTeamModelHasPermissionsTable,
   ScopeWebhookInboxIdempotency,
+  CreateSvelarLogsTable,
 };
 
 const coreMigrationDefinitions = [
@@ -110,6 +112,7 @@ const coreMigrationDefinitions = [
   ['00000000_000032_create_team_model_has_roles_table', CreateTeamModelHasRolesTable],
   ['00000000_000033_create_team_model_has_permissions_table', CreateTeamModelHasPermissionsTable],
   ['00000000_000034_scope_webhook_inbox_idempotency', ScopeWebhookInboxIdempotency],
+  ['00000000_000035_create_svelar_logs_table', CreateSvelarLogsTable],
 ] as const;
 
 export function svelarCoreMigrations(): MigrationFile[] {

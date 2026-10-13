@@ -24,7 +24,8 @@
 
 import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { LogViewer } from './LogViewer.js';
+import { LogViewer, type LogViewerConfig } from './LogViewer.js';
+import { DEFAULT_REDACT_KEYS, redactLogContext, redactLogText } from './Redaction.js';
 import { ApplicationContext, type ApplicationContextSnapshot } from '../support/Context.js';
 
 // ── Types ──────────────────────────────────────────────────
@@ -58,6 +59,7 @@ export interface LogConfig {
   context?: Record<string, any>;
   /** Sensitive context keys to redact before writing to channels/viewers. */
   redactKeys?: string[];
+  viewer?: LogViewerConfig;
 }
 
 interface LogEntry {
@@ -201,6 +203,7 @@ class LoggerManager {
     this.context = config.context ?? {};
     this.redactKeys = [...DEFAULT_REDACT_KEYS, ...(config.redactKeys ?? [])];
     this.channels.clear();
+    if (config.viewer) LogViewer.configure(config.viewer);
   }
 
   /**
@@ -263,8 +266,8 @@ class LoggerManager {
     const channel = this.resolveChannel(name);
     if (LOG_LEVELS[entry.level] < LOG_LEVELS[channel.minLevel]) return;
 
-    const entryWithChannel = { ...entry, context: this.enrichContext(entry.context), channel: name };
-    LogViewer.addEntry(entryWithChannel);
+    const entryWithChannel = { ...entry, message: redactLogText(entry.message), context: this.enrichContext(entry.context), channel: name };
+    await LogViewer.addEntry(entryWithChannel);
     await channel.write(entryWithChannel);
   }
 
@@ -288,7 +291,7 @@ class LoggerManager {
       standardContext.actorId = snapshot.userId;
     }
 
-    return redactContext({ ...standardContext, ...this.context, ...context }, this.redactKeys);
+    return redactLogContext({ ...standardContext, ...this.context, ...context }, this.redactKeys);
   }
 
   private resolveChannel(name: string): Channel {
@@ -350,69 +353,14 @@ class LoggerFacade {
   private async write(entry: LogEntry): Promise<void> {
     if (LOG_LEVELS[entry.level] < LOG_LEVELS[this.channel.minLevel]) return;
 
-    const entryWithChannel = { ...entry, context: this.enrichContext(entry.context), channel: this.name };
-    LogViewer.addEntry(entryWithChannel);
+    const entryWithChannel = { ...entry, message: redactLogText(entry.message), context: this.enrichContext(entry.context), channel: this.name };
+    await LogViewer.addEntry(entryWithChannel);
     await this.channel.write(entryWithChannel);
   }
 }
 
 function now(): string {
   return new Date().toISOString();
-}
-
-const DEFAULT_REDACT_KEYS = [
-  'password',
-  'password_confirmation',
-  'current_password',
-  'new_password',
-  'token',
-  'access_token',
-  'refresh_token',
-  'api_key',
-  'apikey',
-  'secret',
-  'client_secret',
-  'private_key',
-  'authorization',
-  'cookie',
-  'set-cookie',
-  'signature',
-];
-
-function redactContext(value: any, redactKeys: string[], seen = new WeakSet<object>(), depth = 0): any {
-  if (value === null || typeof value !== 'object') return value;
-  if (value instanceof Date) return value.toISOString();
-  if (value instanceof Error) {
-    return {
-      name: value.name,
-      message: value.message,
-      ...(value.stack ? { stack: value.stack } : {}),
-    };
-  }
-  if (seen.has(value)) return '[Circular]';
-  if (depth > 8) return '[MaxDepth]';
-
-  seen.add(value);
-
-  if (Array.isArray(value)) {
-    return value.map((item) => redactContext(item, redactKeys, seen, depth + 1));
-  }
-
-  const output: Record<string, any> = {};
-  for (const [key, nestedValue] of Object.entries(value)) {
-    output[key] = shouldRedactKey(key, redactKeys)
-      ? '[REDACTED]'
-      : redactContext(nestedValue, redactKeys, seen, depth + 1);
-  }
-  return output;
-}
-
-function shouldRedactKey(key: string, redactKeys: string[]): boolean {
-  const normalized = key.toLowerCase().replace(/[-\s]/g, '_');
-  return redactKeys.some((redactKey) => {
-    const normalizedRedactKey = redactKey.toLowerCase().replace(/[-\s]/g, '_');
-    return normalized === normalizedRedactKey || normalized.includes(normalizedRedactKey);
-  });
 }
 
 import { singleton } from '../support/singleton.js';
@@ -423,3 +371,5 @@ import { singleton } from '../support/singleton.js';
 export const Log = singleton('svelar.log', () => new LoggerManager());
 
 export type { Channel, LogEntry };
+export { LogViewer, LogViewerService } from './LogViewer.js';
+export type { LogFilter, LogStats, LogPage, LogViewerConfig } from './LogViewer.js';

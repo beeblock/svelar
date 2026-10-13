@@ -60,7 +60,7 @@ export class DashboardController extends Controller {
   async stats() {
     const queue = await this.service.topology();
     const scheduler = await this.service.scheduler();
-    return this.result({ queue, scheduler: scheduler.health, logs: LogViewer.getStats(), recentErrors: LogViewer.getRecentErrors(10), timestamp: new Date().toISOString() });
+    return this.result({ queue, scheduler: scheduler.health, logs: await LogViewer.getStats(), recentErrors: await LogViewer.getRecentErrors(10), timestamp: new Date().toISOString() });
   }
 
   async queue(event: RequestEvent) {
@@ -83,7 +83,7 @@ export class DashboardController extends Controller {
 
   async logs(event: RequestEvent) {
     const filter = this.parse(dashboardLogSchema, Object.fromEntries(event.url.searchParams));
-    return this.result(this.service.logs(filter));
+    return this.result(await this.service.logs(filter));
   }
 
   async retryJob(event: RequestEvent) { return this.mutate('retryJob', event); }
@@ -98,7 +98,8 @@ export class DashboardController extends Controller {
   }
 
   async logsTail(event: RequestEvent) {
-    const filter = this.parse(dashboardLogSchema, Object.fromEntries(event.url.searchParams));
+    const filter = this.parse(dashboardLogSchema, { ...Object.fromEntries(event.url.searchParams),
+      ...(event.request.headers.has('Last-Event-ID') ? { cursor: event.request.headers.get('Last-Event-ID') } : {}) });
     let cleanup = () => {};
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -125,7 +126,7 @@ export class DashboardController extends Controller {
         };
         if (event.request.signal.aborted) { close(); return; }
         event.request.signal.addEventListener('abort', close, { once: true });
-        unsubscribe = LogViewer.tail((entry) => send(`data: ${JSON.stringify(redactDashboardValue(entry))}\n\n`), filter);
+        unsubscribe = LogViewer.tail((entry) => send(`${entry.id === undefined ? '' : `id: ${entry.id}\n`}data: ${JSON.stringify(redactDashboardValue(entry))}\n\n`), filter);
         heartbeat = setInterval(() => send(': heartbeat\n\n'), 15_000);
         // Reconnect periodically so revoked authorization is checked again.
         lifetime = setTimeout(close, 60_000);

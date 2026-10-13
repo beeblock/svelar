@@ -84,6 +84,40 @@ async function execute<T>(path: string, modules: Record<string, unknown> = {}, g
 }
 type Handler = (event: TestEvent) => Promise<Response>;
 
+describe('Async log viewer upgrade', () => {
+  it('migrates aliased imported viewer calls and preserves synchronous tail subscriptions', async () => {
+    fixture();
+    const path = 'src/routes/admin/+page.server.ts';
+    const source = "import { LogViewer as Viewer } from '@beeblock/svelar/logging';\nexport const load = async () => { const entries = Viewer.query({ limit: 2 }); const stats = Viewer.getStats(); const stop = Viewer.tail(() => {}); return { entries, stats }; };\n";
+    write(path, source);
+    const plan = planCoreScaffoldMigrationFromSource(root, ts);
+    expect(plan.errors).toEqual([]);
+    const edit = plan.edits.find((edit) => edit.path === path)!;
+    expect(edit.tokens.filter((token) => token.rule === 'log-viewer-await')).toHaveLength(4);
+    applyCoreScaffoldMigration(plan, { confirmed: true });
+    expect(read(path)).toContain('(await Viewer.query({ limit: 2 }))');
+    expect(read(path)).toContain('Viewer.tail(() => {})');
+    expect(readFileSync(join(root, path + '.core.bak'), 'utf8')).toBe(source);
+    const page = await execute<{ load: () => Promise<any> }>(path, { '@beeblock/svelar/logging': {
+      LogViewer: { query: async () => ['Entry'], getStats: async () => ({ totalEntries: 1 }), tail: () => () => {} },
+    } });
+    expect(await page.load()).toEqual({ entries: ['Entry'], stats: { totalEntries: 1 } });
+    expect(planCoreScaffoldMigrationFromSource(root, ts).edits).toHaveLength(0);
+  });
+
+  it.each([
+    "import { LogViewer } from '@beeblock/svelar/logging'; export function custom() { return LogViewer.getStats(); }",
+    "import { LogViewer } from '@beeblock/svelar/logging'; export const load = async (LogViewer) => LogViewer.query();",
+  ])('requires review for unsafe synchronous or shadowed viewer calls', (source) => {
+    fixture();
+    write('src/routes/admin/+page.server.ts', source);
+    const plan = planCoreScaffoldMigrationFromSource(root, ts);
+    expect(plan.errors.some((error) => error.includes('manual review'))).toBe(true);
+    expect(plan.edits.some((edit) => edit.path === 'src/routes/admin/+page.server.ts')).toBe(false);
+    expect(read('src/routes/admin/+page.server.ts')).toBe(source);
+  });
+});
+
 beforeEach(() => {
   cwd = process.cwd();
   root = mkdtempSync(join(packageRoot, '.test-core-migration-'));

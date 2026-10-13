@@ -209,15 +209,16 @@ describe('Dashboard operational boundaries', () => {
   });
 
   it('reports filtered log totals, redacted context, and process scope', async () => {
-    LogViewer.clear();
-    LogViewer.addEntry({ timestamp: new Date().toISOString(), level: 'info', message: 'Other', context: {} });
-    LogViewer.addEntry({ timestamp: new Date().toISOString(), level: 'error', channel: 'imports', message: 'password=do-not-send', context: { api_key: 'do-not-send', correlationId: 'incident-17' } });
+    LogViewer.configure({ driver: 'memory' });
+    await LogViewer.clear();
+    await LogViewer.addEntry({ timestamp: new Date().toISOString(), level: 'info', message: 'Other', context: {} });
+    await LogViewer.addEntry({ timestamp: new Date().toISOString(), level: 'error', channel: 'imports', message: 'password=do-not-send', context: { api_key: 'do-not-send', correlationId: 'incident-17' } });
     const response = await new DashboardController().handle('logs')(event('/api/admin/logs?level=error&channel=imports&limit=1'));
     const payload = await response.json();
     expect(payload.data.total).toBe(1);
-    expect(payload.data.scope).toBe('current web process');
+    expect(payload.data.scope).toBe('process');
     expect(JSON.stringify(payload)).not.toContain('do-not-send');
-    LogViewer.clear();
+    await LogViewer.clear();
   });
 
   it('redacts log streams and unsubscribes on cancellation', async () => {

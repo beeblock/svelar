@@ -264,14 +264,15 @@ describe('Abort Helpers', () => {
 });
 
 describe('ErrorHandler production safety and correlation', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     Log.configure({
       default: 'null',
       channels: {
         null: { driver: 'null' },
       },
     });
-    LogViewer.clear();
+    LogViewer.configure({ driver: 'memory' });
+    await LogViewer.clear();
     ApplicationContext.clear();
   });
 
@@ -291,7 +292,7 @@ describe('ErrorHandler production safety and correlation', () => {
     expect(body.incidentId).toMatch(/^inc_/);
     expect(JSON.stringify(body)).not.toContain('super-secret');
 
-    const [entry] = LogViewer.getRecentErrors();
+    const [entry] = await LogViewer.getRecentErrors();
     expect(entry.context).toMatchObject({
       requestId: 'req-error-1',
       tenantId: 'tenant-1',
@@ -310,7 +311,7 @@ describe('ErrorHandler production safety and correlation', () => {
 
     expect(response.status).toBe(403);
     expect(body).toEqual({ message: 'Nope' });
-    expect(LogViewer.getRecentErrors()).toHaveLength(0);
+    expect(await LogViewer.getRecentErrors()).toHaveLength(0);
   });
 
   it('wraps createSvelarApp requests in request/correlation context and returns x-request-id', async () => {
@@ -342,7 +343,7 @@ describe('ErrorHandler production safety and correlation', () => {
     });
 
     expect(response.headers.get('x-request-id')).toBe('req-hook-1');
-    const [entry] = LogViewer.query({ search: 'hook context log' });
+    const [entry] = await LogViewer.query({ search: 'hook context log' });
     expect(entry.context).toMatchObject({
       requestId: 'req-hook-1',
       correlationId: 'corr-hook-1',

@@ -265,7 +265,7 @@ class DashboardPlugin extends Plugin {
 
     const queueHealth = await JobMonitor.getHealth();
     const schedulerHealth = await ScheduleMonitor.getHealth();
-    const logStats = LogViewer.getStats();
+    const logStats = await LogViewer.getStats();
 
     // Determine overall health status
     let status: 'healthy' | 'degraded' | 'critical' = 'healthy';
@@ -317,8 +317,8 @@ class DashboardPlugin extends Plugin {
     // Add section data based on config
     if (this.dashboardConfig.sections.logs) {
       data.logs = {
-        stats: LogViewer.getStats(),
-        recentErrors: LogViewer.getRecentErrors(20),
+        stats: await LogViewer.getStats(),
+        recentErrors: await LogViewer.getRecentErrors(20),
       };
     }
 

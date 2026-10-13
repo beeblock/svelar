@@ -1741,7 +1741,7 @@ describe('Svelar release certification', () => {
 	  });
 
 	  it('runs file logging, LogViewer query/stats, and live tailing', async () => {
-	    LogViewer.clear();
+	    await LogViewer.clear();
 	    const logPath = join(process.cwd(), 'storage', 'logs', 'certification.log');
 	    rmSync(logPath, { force: true });
 
@@ -1773,7 +1773,7 @@ describe('Svelar release certification', () => {
 	        && !contents.includes('debug should be filtered');
 	    }, 10_000);
 
-	    const fileLogs = LogViewer.query({ channel: 'file', search: 'certification', limit: 10 });
+	    const fileLogs = await LogViewer.query({ channel: 'file', search: 'certification', limit: 10 });
 	    expect(fileLogs.map((entry) => entry.message)).toEqual([
 	      'certification log persisted',
 	      'certification warning tailed',
@@ -1781,19 +1781,19 @@ describe('Svelar release certification', () => {
 	    ]);
 	    expect(tailed).toEqual(['certification warning tailed']);
 
-	    const stats = LogViewer.getStats();
+	    const stats = await LogViewer.getStats();
 	    expect(stats.totalEntries).toBe(3);
 	    expect(stats.byLevel.info).toBe(1);
 	    expect(stats.byLevel.warn).toBe(1);
 	    expect(stats.byLevel.error).toBe(1);
 	    expect(stats.byChannel.file).toBe(3);
 
-	    const recentErrors = LogViewer.getRecentErrors(5);
+	    const recentErrors = await LogViewer.getRecentErrors(5);
 	    expect(recentErrors[0].message).toBe('certification error persisted');
 	  });
 
 		  it('runs exception handling, reporting, validation payloads, and middleware recovery', async () => {
-	    LogViewer.clear();
+	    await LogViewer.clear();
 	    Log.configure({
 	      default: 'null',
 	      channels: {
@@ -1816,8 +1816,9 @@ describe('Svelar release certification', () => {
 	    expect(responseBody).toEqual({ message: 'Internal server error', incidentId: expect.stringMatching(/^inc_[0-9a-f-]+$/) });
 	    expect(JSON.stringify(responseBody)).not.toContain('database exploded');
 	    expect(reported).toEqual(['database exploded:http://localhost/api/certification-errors']);
-	    expect(LogViewer.query({ level: 'error', search: 'database exploded' })).toHaveLength(1);
-	    expect(LogViewer.query({ level: 'error', search: 'database exploded' })[0].context.incidentId).toBe(responseBody.incidentId);
+	    const incidentEntries = await LogViewer.query({ level: 'error', search: 'database exploded' });
+	    expect(incidentEntries).toHaveLength(1);
+	    expect(incidentEntries[0].context.incidentId).toBe(responseBody.incidentId);
 
 	    const validation = await handler.handle(new ValidationError({ email: ['Required'] }), event);
 	    expect(validation.status).toBe(422);

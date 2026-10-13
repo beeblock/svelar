@@ -1,278 +1,211 @@
-/**
- * Log Viewer
- *
- * Utility for inspecting and filtering logs from the admin dashboard.
- * Stores recent logs in a ring buffer and provides live tailing support.
- *
- * @example
- * ```ts
- * import { LogViewer } from '@beeblock/svelar/logging';
- *
- * // Query logs with filtering
- * const errors = LogViewer.getRecentErrors(10);
- *
- * // Get stats
- * const stats = LogViewer.getStats();
- *
- * // Live tailing
- * const unsubscribe = LogViewer.tail((entry) => {
- *   console.log(`${entry.level}: ${entry.message}`);
- * });
- *
- * // Stop tailing
- * unsubscribe();
- * ```
- */
-
 import type { LogLevel } from './index.js';
+import { QueryBuilder } from '../orm/QueryBuilder.js';
 import { singleton } from '../support/singleton.js';
-
-// ── Types ──────────────────────────────────────────────────
+import { redactLogContext, redactLogText } from './Redaction.js';
 
 export interface LogEntry {
+  id?: number;
   timestamp: string;
   level: LogLevel;
   channel: string;
   message: string;
   context: Record<string, any>;
 }
-
 export interface LogFilter {
   level?: LogLevel;
   channel?: string;
   since?: Date;
   until?: Date;
   search?: string;
+  correlationId?: string;
+  tenantId?: string | number;
   limit?: number;
   offset?: number;
+  /** Exclusive entry ID, stable while other processes append entries. */
+  cursor?: number;
 }
-
 export interface LogStats {
   totalEntries: number;
   byLevel: Record<string, number>;
   byChannel: Record<string, number>;
 }
-
+export interface LogPage {
+  data: LogEntry[];
+  meta: { nextCursor: number | null; hasMore: boolean; total: number; scope: 'process' | 'shared database' };
+}
+export interface LogViewerConfig {
+  driver: 'memory' | 'database';
+  connection?: string;
+  maxEntries?: number;
+  retentionSeconds?: number;
+  tailIntervalMs?: number;
+  /** Reports tail failures without recursively logging to the failed backend. */
+  onTailError?: (error: unknown) => void;
+}
+const levels: LogLevel[] = ['debug', 'info', 'warn', 'error', 'fatal'];
 type TailCallback = (entry: LogEntry) => void;
 
-// ── Log Viewer Service ─────────────────────────────────────
+export class LogViewerService {
+  private config: LogViewerConfig = { driver: 'memory' };
+  private entries: LogEntry[] = [];
+  private nextId = 1;
+  private subscribers = new Set<TailCallback>();
 
-class LogViewerService {
-  private ringBuffer: LogEntry[] = [];
-  private maxSize = 10000;
-  private currentIndex = 0;
-  private tailSubscribers: TailCallback[] = [];
-
-  /**
-   * Add a log entry to the ring buffer.
-   * Called internally by the logging system.
-   */
-  addEntry(entry: Omit<LogEntry, 'channel'> & { channel?: string }): void {
-    const logEntry: LogEntry = {
-      timestamp: entry.timestamp,
-      level: entry.level,
-      channel: entry.channel ?? 'default',
-      message: entry.message,
-      context: entry.context,
-    };
-
-    // Add to ring buffer
-    if (this.ringBuffer.length < this.maxSize) {
-      this.ringBuffer.push(logEntry);
-    } else {
-      this.ringBuffer[this.currentIndex] = logEntry;
-      this.currentIndex = (this.currentIndex + 1) % this.maxSize;
+  configure(config: LogViewerConfig): void {
+    if (!['memory', 'database'].includes(config.driver)) throw new Error('Unknown log viewer driver.');
+    for (const [name, value, minimum] of [
+      ['maxEntries', config.maxEntries, 1], ['retentionSeconds', config.retentionSeconds, 1], ['tailIntervalMs', config.tailIntervalMs, 25],
+    ] as const) {
+      if (value !== undefined && (!Number.isSafeInteger(value) || value < minimum)) throw new Error(`Invalid log viewer ${name}.`);
     }
+    if (this.subscribers.size) throw new Error('Close log tails before reconfiguring the viewer.');
+    this.config = { ...config };
+    this.entries = [];
+    this.nextId = 1;
+  }
+  get scope(): 'process' | 'shared database' { return this.config.driver === 'database' ? 'shared database' : 'process'; }
 
-    // Notify tail subscribers
-    for (const callback of this.tailSubscribers) {
-      try {
-        callback(logEntry);
-      } catch {
-        // Silently ignore subscriber errors to prevent cascading failures
+  async addEntry(entry: Omit<LogEntry, 'channel'> & { channel?: string }): Promise<void> {
+    if (!levels.includes(entry.level) || !Number.isFinite(new Date(entry.timestamp).getTime())) throw new Error('Invalid log entry.');
+    const safe: LogEntry = { timestamp: new Date(entry.timestamp).toISOString(), level: entry.level,
+      channel: entry.channel ?? 'default', message: redactLogText(entry.message), context: redactLogContext(entry.context) };
+    if (this.config.driver === 'database') {
+      await this.table().insert({ recorded_at: safe.timestamp, level: safe.level, channel: safe.channel,
+        message: safe.message, context: JSON.stringify(safe.context),
+        correlation_id: safe.context.correlationId == null ? null : String(safe.context.correlationId),
+        tenant_id: safe.context.tenantId == null ? null : String(safe.context.tenantId) });
+      return;
+    }
+    safe.id = this.nextId++;
+    this.entries.push(safe);
+    if (this.entries.length > (this.config.maxEntries ?? 10_000)) this.entries.shift();
+    for (const callback of this.subscribers) {
+      try { callback(structuredClone(safe)); } catch (error) { this.config.onTailError?.(error); }
+    }
+  }
+
+  async query(filter: LogFilter = {}): Promise<LogEntry[]> {
+    this.validateFilter(filter);
+    const limit = filter.limit ?? 100;
+    if (this.config.driver === 'memory') return this.filtered(filter).slice(filter.offset ?? 0, (filter.offset ?? 0) + limit).map((entry) => structuredClone(entry));
+    const rows = await this.filteredQuery(filter).orderBy('id').offset(filter.offset ?? 0).limit(limit).get();
+    return rows.map((row) => this.hydrate(row));
+  }
+  async page(filter: LogFilter = {}): Promise<LogPage> {
+    this.validateFilter(filter);
+    const limit = filter.limit ?? 100;
+    const data = await this.query({ ...filter, limit: limit + 1 });
+    const hasMore = data.length > limit;
+    if (hasMore) data.pop();
+    const total = this.config.driver === 'memory' ? this.filtered({ ...filter, cursor: undefined }).length
+      : await this.filteredQuery({ ...filter, cursor: undefined }).count();
+    return { data, meta: { nextCursor: hasMore ? data.at(-1)!.id! : null, hasMore, total, scope: this.scope } };
+  }
+  async getStats(): Promise<LogStats> {
+    const stats: LogStats = { totalEntries: 0, byLevel: {}, byChannel: {} };
+    if (this.config.driver === 'memory') {
+      for (const entry of this.entries) {
+        stats.totalEntries++;
+        stats.byLevel[entry.level] = (stats.byLevel[entry.level] ?? 0) + 1;
+        stats.byChannel[entry.channel] = (stats.byChannel[entry.channel] ?? 0) + 1;
+      }
+      return stats;
+    }
+    for (const key of ['level', 'channel'] as const) {
+      const rows = await this.table().select(key).selectRaw('COUNT(*) AS total').groupBy(key).get();
+      for (const row of rows) {
+        const count = Number(row.total);
+        if (key === 'level') { stats.byLevel[row.level] = count; stats.totalEntries += count; }
+        else stats.byChannel[row.channel] = count;
       }
     }
-  }
-
-  /**
-   * Query logs with filtering and pagination.
-   */
-  query(filter: LogFilter = {}): LogEntry[] {
-    let results = this.getAllEntries();
-
-    // Filter by level
-    if (filter.level) {
-      const levelMap: Record<LogLevel, number> = {
-        debug: 0,
-        info: 1,
-        warn: 2,
-        error: 3,
-        fatal: 4,
-      };
-      const minLevel = levelMap[filter.level];
-      results = results.filter((entry) => levelMap[entry.level] >= minLevel);
-    }
-
-    // Filter by channel
-    if (filter.channel) {
-      results = results.filter((entry) => entry.channel === filter.channel);
-    }
-
-    // Filter by date range
-    if (filter.since) {
-      const sinceTime = filter.since.getTime();
-      results = results.filter((entry) => new Date(entry.timestamp).getTime() >= sinceTime);
-    }
-
-    if (filter.until) {
-      const untilTime = filter.until.getTime();
-      results = results.filter((entry) => new Date(entry.timestamp).getTime() <= untilTime);
-    }
-
-    // Filter by search string (case-insensitive)
-    if (filter.search) {
-      const searchLower = filter.search.toLowerCase();
-      results = results.filter(
-        (entry) =>
-          entry.message.toLowerCase().includes(searchLower) ||
-          JSON.stringify(entry.context).toLowerCase().includes(searchLower),
-      );
-    }
-
-    // Apply pagination
-    const offset = filter.offset ?? 0;
-    const limit = filter.limit ?? 100;
-
-    return results.slice(offset, offset + limit);
-  }
-
-  /**
-   * Get log statistics.
-   */
-  getStats(): LogStats {
-    const entries = this.getAllEntries();
-    const stats: LogStats = {
-      totalEntries: entries.length,
-      byLevel: {},
-      byChannel: {},
-    };
-
-    for (const entry of entries) {
-      stats.byLevel[entry.level] = (stats.byLevel[entry.level] ?? 0) + 1;
-      stats.byChannel[entry.channel] = (stats.byChannel[entry.channel] ?? 0) + 1;
-    }
-
     return stats;
   }
-
-  /**
-   * Get recent errors and critical logs (shortcut).
-   */
-  getRecentErrors(limit: number = 10): LogEntry[] {
-    const entries = this.getAllEntries();
-    return entries
-      .filter((entry) => entry.level === 'error' || entry.level === 'fatal')
-      .slice(-limit)
-      .reverse();
+  async getRecentErrors(limit = 10): Promise<LogEntry[]> {
+    this.validateFilter({ limit });
+    if (this.config.driver === 'memory') return this.filtered({ level: 'error' }).slice(-limit).reverse().map((entry) => structuredClone(entry));
+    return (await this.filteredQuery({ level: 'error' }).orderBy('id', 'desc').limit(limit).get()).map((row) => this.hydrate(row));
+  }
+  async clear(): Promise<void> {
+    if (this.config.driver === 'database') await this.table().delete();
+    else this.entries = [];
+  }
+  async prune(now = new Date()): Promise<number> {
+    if (!Number.isFinite(now.getTime())) throw new Error('Invalid retention clock.');
+    const cutoff = new Date(now.getTime() - (this.config.retentionSeconds ?? 30 * 86400) * 1000);
+    if (this.config.driver === 'database') return this.table().where('recorded_at', '<', cutoff.toISOString()).delete();
+    const before = this.entries.length;
+    this.entries = this.entries.filter((entry) => new Date(entry.timestamp) >= cutoff);
+    return before - this.entries.length;
   }
 
-  /**
-   * Clear all stored logs.
-   */
-  clear(): void {
-    this.ringBuffer = [];
-    this.currentIndex = 0;
-  }
-
-  /**
-   * Register a callback for live log tailing.
-   * Returns an unsubscribe function.
-   */
-  tail(callback: TailCallback, filter?: LogFilter): () => void {
-    // If a filter is provided, wrap the callback to apply filtering
-    const wrappedCallback = filter
-      ? (entry: LogEntry) => {
-          if (this.matchesFilter(entry, filter)) {
-            callback(entry);
+  /** Durable polling fans in entries from web, workers and scheduler; resume uses an entry ID. */
+  tail(callback: TailCallback, filter: LogFilter = {}): () => void {
+    this.validateFilter(filter);
+    const listener = (entry: LogEntry) => { if (this.matches(entry, filter)) callback(entry); };
+    this.subscribers.add(listener);
+    if (this.config.driver === 'memory') return () => { this.subscribers.delete(listener); };
+    let stopped = false;
+    let busy = false;
+    let cursor = filter.cursor;
+    const tick = async () => {
+      if (busy || stopped) return;
+      busy = true;
+      try {
+        if (cursor === undefined) {
+          const latest = await this.table().select('id').orderBy('id', 'desc').first();
+          cursor = Number(latest?.id ?? 0);
+        } else {
+          const rows = await this.query({ ...filter, cursor, offset: 0, limit: 500 });
+          for (const entry of rows) {
+            if (stopped) break;
+            cursor = entry.id!;
+            try { listener(entry); } catch (error) { this.config.onTailError?.(error); }
           }
         }
-      : callback;
-
-    this.tailSubscribers.push(wrappedCallback);
-
-    // Return unsubscribe function
-    return () => {
-      const index = this.tailSubscribers.indexOf(wrappedCallback);
-      if (index > -1) {
-        this.tailSubscribers.splice(index, 1);
-      }
+      } catch (error) { this.config.onTailError?.(error); }
+      finally { busy = false; }
     };
+    void tick();
+    const timer = setInterval(() => { void tick(); }, this.config.tailIntervalMs ?? 1000);
+    timer.unref();
+    return () => { stopped = true; clearInterval(timer); this.subscribers.delete(listener); };
   }
 
-  // ── Private Methods ────────────────────────────────────
-
-  /**
-   * Get all entries from the ring buffer in chronological order.
-   */
-  private getAllEntries(): LogEntry[] {
-    if (this.ringBuffer.length < this.maxSize) {
-      // Buffer not yet full, entries are in order
-      return [...this.ringBuffer];
-    }
-
-    // Buffer is full, entries wrap around
-    // currentIndex points to the oldest entry
-    return [
-      ...this.ringBuffer.slice(this.currentIndex),
-      ...this.ringBuffer.slice(0, this.currentIndex),
-    ];
+  private table(): QueryBuilder { return new QueryBuilder('svelar_logs', undefined, this.config.connection); }
+  private filteredQuery(filter: LogFilter): QueryBuilder {
+    const query = this.table();
+    if (filter.level) query.whereIn('level', levels.slice(levels.indexOf(filter.level)));
+    if (filter.channel) query.where('channel', filter.channel);
+    if (filter.since) query.where('recorded_at', '>=', filter.since.toISOString());
+    if (filter.until) query.where('recorded_at', '<=', filter.until.toISOString());
+    if (filter.cursor !== undefined) query.where('id', '>', filter.cursor);
+    if (filter.correlationId !== undefined) query.where('correlation_id', filter.correlationId);
+    if (filter.tenantId !== undefined) query.where('tenant_id', String(filter.tenantId));
+    if (filter.search) query.whereNested((nested) => nested.whereRaw('LOWER(message) LIKE ?', [`%${filter.search!.toLowerCase()}%`])
+      .orWhereRaw('LOWER(context) LIKE ?', [`%${filter.search!.toLowerCase()}%`]));
+    return query;
   }
-
-  /**
-   * Check if a log entry matches the given filter.
-   */
-  private matchesFilter(entry: LogEntry, filter: LogFilter): boolean {
-    if (filter.level) {
-      const levelMap: Record<LogLevel, number> = {
-        debug: 0,
-        info: 1,
-        warn: 2,
-        error: 3,
-        fatal: 4,
-      };
-      const minLevel = levelMap[filter.level];
-      if (levelMap[entry.level] < minLevel) return false;
+  private hydrate(row: any): LogEntry {
+    return { id: Number(row.id), timestamp: new Date(row.recorded_at).toISOString(), level: row.level,
+      channel: row.channel, message: row.message, context: JSON.parse(row.context) };
+  }
+  private filtered(filter: LogFilter): LogEntry[] { return this.entries.filter((entry) => this.matches(entry, filter)); }
+  private matches(entry: LogEntry, filter: LogFilter): boolean {
+    return (!filter.level || levels.indexOf(entry.level) >= levels.indexOf(filter.level)) &&
+      (!filter.channel || entry.channel === filter.channel) && (!filter.since || new Date(entry.timestamp) >= filter.since) &&
+      (!filter.until || new Date(entry.timestamp) <= filter.until) && (filter.cursor === undefined || entry.id! > filter.cursor) &&
+      (filter.correlationId === undefined || entry.context.correlationId === filter.correlationId) &&
+      (filter.tenantId === undefined || String(entry.context.tenantId) === String(filter.tenantId)) &&
+      (!filter.search || `${entry.message} ${JSON.stringify(entry.context)}`.toLowerCase().includes(filter.search.toLowerCase()));
+  }
+  private validateFilter(filter: LogFilter): void {
+    if (filter.level && !levels.includes(filter.level)) throw new Error('Invalid log level.');
+    for (const [key, min, max] of [['limit', 1, 10_001], ['offset', 0, 1_000_000], ['cursor', 0, Number.MAX_SAFE_INTEGER]] as const) {
+      const value = filter[key];
+      if (value !== undefined && (!Number.isSafeInteger(value) || value < min || value > max)) throw new Error(`Invalid log ${key}.`);
     }
-
-    if (filter.channel && entry.channel !== filter.channel) {
-      return false;
-    }
-
-    if (filter.since) {
-      const sinceTime = filter.since.getTime();
-      if (new Date(entry.timestamp).getTime() < sinceTime) return false;
-    }
-
-    if (filter.until) {
-      const untilTime = filter.until.getTime();
-      if (new Date(entry.timestamp).getTime() > untilTime) return false;
-    }
-
-    if (filter.search) {
-      const searchLower = filter.search.toLowerCase();
-      const matches =
-        entry.message.toLowerCase().includes(searchLower) ||
-        JSON.stringify(entry.context).toLowerCase().includes(searchLower);
-      if (!matches) return false;
-    }
-
-    return true;
+    for (const date of [filter.since, filter.until]) if (date && !Number.isFinite(date.getTime())) throw new Error('Invalid log date.');
   }
 }
-
-// ── Singleton Export ────────────────────────────────────
-
-/**
- * Global LogViewer singleton
- */
 export const LogViewer = singleton('svelar.logViewer', () => new LogViewerService());

@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import type * as TypeScript from 'typescript';
 
 export type CoreMigrationRule = 'provider-bootstrap' | 'queue-observations' | 'notification-channels'
-  | 'admin-user-guards' | 'queue-delete-outcome' | 'queue-retry-outcome' | 'scheduler-run-outcome' | 'scheduler-toggle-await';
+  | 'admin-user-guards' | 'queue-delete-outcome' | 'queue-retry-outcome' | 'scheduler-run-outcome' | 'scheduler-toggle-await' | 'log-viewer-await';
 
 export interface CoreMigrationToken {
   readonly start: number;
@@ -65,6 +65,7 @@ export function planCoreScaffoldMigrationFromSource(
     'Queue health reports Queue.size() on the configured default connection/queue and the length of Queue.failed(). These are bounded observations, not full BullMQ status counts or worker health.',
     'Admin guards and operator outcomes are semantic changes: missing params return 400, unavailable deletes return 404, unavailable retries/skipped task runs return 409, and failed runs return 500. Toggle persistence is awaited.',
     'Legacy scheduler-toggle body.enabled ?? true, error envelopes, default queue selection and other app-owned JSON/schema APIs are not migrated. Review their validation/authorization and exercise admin operations before claiming upgrade compatibility.',
+    'Recognized LogViewer calls in async scaffold functions become awaited. Custom synchronous wrappers or shadowed imports require review. Configure the shared database viewer and search sweep explicitly in existing app bootstrap.',
   ];
   const read = (path: string): Buffer | undefined => {
     const absolute = checkedPath(root, path);
@@ -132,7 +133,7 @@ function coreTokens(
   };
   const same = (node: TypeScript.Node | undefined, code: string): boolean => !!node && fingerprint(node) === fingerprint(sample(code));
   const hasIdentifier = (name: string): boolean => all().some((node) => ts.isIdentifier(node) && node.text === name);
-  const add = (start: number, end: number, replacement: string): void => {
+  const add = (start: number, end: number, replacement: string, tokenRule: CoreMigrationRule = rule): void => {
     if (start !== end) {
       const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.Standard, source.text, undefined, start, end - start);
       for (let kind = scanner.scan(); kind !== ts.SyntaxKind.EndOfFileToken; kind = scanner.scan()) {
@@ -141,7 +142,7 @@ function coreTokens(
         }
       }
     }
-    tokens.push({ start, end, replacement: replacement.replace(/\n/g, eol), rule });
+    tokens.push({ start, end, replacement: replacement.replace(/\n/g, eol), rule: tokenRule });
   };
   const replace = (node: TypeScript.Node, replacement: string): void => add(node.getStart(source), node.end, replacement);
   const imported = (module: string, name: string): string | undefined => {
@@ -171,6 +172,31 @@ function coreTokens(
     return node && ts.isArrowFunction(node) ? node : undefined;
   };
   const block = (fn: TypeScript.ArrowFunction | undefined): TypeScript.Block | undefined => fn && ts.isBlock(fn.body) ? fn.body : undefined;
+
+  const viewer = imported('@beeblock/svelar/logging/LogViewer', 'LogViewer') ?? imported('@beeblock/svelar/logging', 'LogViewer');
+  if (viewer) {
+    const methods = new Set(['query', 'page', 'getStats', 'getRecentErrors', 'addEntry', 'clear', 'prune']);
+    const calls = all().filter((node): node is TypeScript.CallExpression => ts.isCallExpression(node)
+      && ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.expression)
+      && node.expression.expression.text === viewer && methods.has(node.expression.name.text) && !ts.isAwaitExpression(node.parent));
+    if (calls.length) {
+      if (all().some((node) => (ts.isVariableDeclaration(node) || ts.isParameter(node)) && ts.isIdentifier(node.name) && node.name.text === viewer)) {
+        fail('Shadowed LogViewer binding needs manual review');
+      }
+      for (const call of calls) {
+        let scope: TypeScript.Node = call.parent;
+        while (scope !== source && !ts.isArrowFunction(scope) && !ts.isFunctionDeclaration(scope)
+          && !ts.isFunctionExpression(scope) && !ts.isMethodDeclaration(scope)) scope = scope.parent;
+        if (scope !== source && !ts.canHaveModifiers(scope)) fail('Synchronous LogViewer wrapper needs manual review');
+        const modifiers = ts.canHaveModifiers(scope) ? ts.getModifiers(scope) : undefined;
+        if (scope !== source && !modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)) {
+          fail('Synchronous LogViewer wrapper needs manual review');
+        }
+        add(call.getStart(source), call.getStart(source), '(await ', 'log-viewer-await');
+        add(call.end, call.end, ')', 'log-viewer-await');
+      }
+    }
+  }
 
   if (rule === 'provider-bootstrap') {
     const esp = variable('esp');

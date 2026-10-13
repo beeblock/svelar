@@ -15,6 +15,9 @@ export const dashboardQueueSchema = z.object({
 });
 
 export const dashboardLogSchema = z.object({
+  cursor: z.string().regex(/^\d+$/).transform(Number).refine(Number.isSafeInteger, 'Invalid cursor').optional(),
+  correlationId: identifier.optional(),
+  tenantId: identifier.optional(),
   level: z.enum(['debug', 'info', 'warn', 'error', 'fatal']).optional(),
   channel: identifier.optional(),
   search: z.string().max(500).optional(),

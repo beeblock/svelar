@@ -76,7 +76,7 @@ export type { StorageConfig, DiskConfig, FileInfo } from './storage/index.js';
 export { Log } from './logging/index.js';
 export type { LogLevel, LogConfig, LogChannelConfig } from './logging/index.js';
 export { LogViewer } from './logging/LogViewer.js';
-export type { LogEntry, LogFilter, LogStats } from './logging/LogViewer.js';
+export type { LogEntry, LogFilter, LogStats, LogPage, LogViewerConfig } from './logging/LogViewer.js';
 
 // Cache
 export { Cache } from './cache/index.js';

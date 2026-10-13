@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **Shared persistent log viewer** - Web/worker/scheduler logs can share a migrated database backend with stable cursor pagination, filtered search, database statistics, retention and cross-process resumable SSE tail. Viewer reads/writes are consistently asynchronous; generated apps configure the shared backend, and reviewed historical scaffold codemods add awaited calls. Sensitive context and recognizable credential text are redacted before persistence.
+
 - **Transactional settlement** - Nested transactions use savepoints across SQLite/PostgreSQL/MySQL; after-commit callbacks preserve application context, run only after the outer commit and are discarded on rollback. Already-committed callback failures are explicitly distinguishable from failed writes. Independent SQLite statements/transactions are serialized, and interleaved savepoints or detached transaction work fail closed.
 
 - **Strict release builds** — declaration emission errors now fail the package build instead of being hidden behind a warning.
