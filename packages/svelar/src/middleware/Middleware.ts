@@ -433,7 +433,7 @@ export class LoggingMiddleware extends Middleware {
  * that mutation requests (POST, PUT, PATCH, DELETE) include the token
  * in either the `X-CSRF-Token` header or a `_csrf` body field.
  *
- * Safe methods (GET, HEAD, OPTIONS) and API requests with Bearer tokens
+ * Safe methods (GET, HEAD, OPTIONS) and API requests with verified Bearer tokens
  * are exempt since they are not vulnerable to CSRF.
  */
 export interface CsrfOptions {
@@ -474,9 +474,9 @@ export class CsrfMiddleware extends Middleware {
       return this.setTokenAndContinue(ctx, next);
     }
 
-    // Requests with Bearer token (API calls) are exempt — they're not CSRF-vulnerable
+    // AuthenticateMiddleware must run first; a caller-supplied header is not proof of token auth.
     const authHeader = event.request.headers.get('authorization') ?? '';
-    if (authHeader.startsWith('Bearer ')) {
+    if (authHeader.startsWith('Bearer ') && event.locals.authenticatedVia === 'bearer') {
       return next();
     }
 
@@ -604,9 +604,9 @@ export class OriginMiddleware extends Middleware {
       return next();
     }
 
-    // API calls with Bearer tokens are exempt (not browser-initiated)
+    // Only verified credential auth, never session auth with an arbitrary Bearer header.
     const authHeader = event.request.headers.get('authorization') ?? '';
-    if (authHeader.startsWith('Bearer ')) {
+    if (authHeader.startsWith('Bearer ') && event.locals.authenticatedVia === 'bearer') {
       return next();
     }
 

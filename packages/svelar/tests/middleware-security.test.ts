@@ -134,7 +134,7 @@ describe('CsrfMiddleware', () => {
     expect((result as Response).status).toBe(419);
   });
 
-  it('should exempt requests with Bearer token', async () => {
+  it('exempts only verified Bearer authentication', async () => {
     const csrf = new CsrfMiddleware();
     const stack = new MiddlewareStack();
     stack.use(csrf);
@@ -143,9 +143,17 @@ describe('CsrfMiddleware', () => {
       method: 'POST',
       headers: { authorization: 'Bearer some-jwt-token' },
     });
+    ctx.event.locals.authenticatedVia = 'bearer';
     const result = await stack.execute(ctx, async () => new Response('ok'));
 
     expect((result as Response).status).toBe(200);
+  });
+
+  it.each([undefined, 'session'])('rejects an unverified Bearer header without CSRF (%s)', async (authenticatedVia) => {
+    const ctx = createCtx({ method: 'POST', pathname: '/api/posts', headers: { authorization: 'Bearer forged-token' } });
+    ctx.event.locals.authenticatedVia = authenticatedVia;
+    const response = await new CsrfMiddleware().handle(ctx, async () => new Response('must not execute'));
+    expect((response as Response).status).toBe(419);
   });
 
   it('should exempt excluded paths', async () => {
@@ -226,8 +234,9 @@ describe('CsrfMiddleware', () => {
     }
 
     await expect(run('/api/posts')).resolves.toMatchObject({ status: 419 });
-    await expect(run('/api/posts', { authorization: 'Bearer token' })).resolves.toMatchObject({ status: 200 });
-    await expect(run('/api/webhooks/stripe')).resolves.toMatchObject({ status: 200 });
+    await expect(run('/api/posts', { authorization: 'Bearer forged-token' })).resolves.toMatchObject({ status: 419 });
+    await expect(run('/api/webhooks/stripe')).resolves.toMatchObject({ status: 419 });
+    await expect(run('/api/webhooks/incoming/partner')).resolves.toMatchObject({ status: 200 });
     await expect(run('/api/internal/broadcast')).resolves.toMatchObject({ status: 200 });
   });
 

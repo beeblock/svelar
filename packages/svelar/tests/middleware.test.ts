@@ -551,7 +551,7 @@ describe('OriginMiddleware', () => {
     expect((result as Response).status).toBe(403);
   });
 
-  it('should allow requests with Bearer token', async () => {
+  it('allows cross-origin requests only with verified Bearer authentication', async () => {
     const origin = new OriginMiddleware();
     const stack = new MiddlewareStack();
     stack.use(origin);
@@ -560,7 +560,16 @@ describe('OriginMiddleware', () => {
       method: 'POST',
       headers: { authorization: 'Bearer some-token', origin: 'http://evil.com' },
     });
+    ctx.event.locals.authenticatedVia = 'bearer';
     const result = await stack.execute(ctx, async () => new Response('ok'));
     expect((result as Response).status).toBe(200);
+  });
+
+  it.each([undefined, 'session'])('rejects cross-origin requests with an unverified Bearer header (%s)', async (authenticatedVia) => {
+    const ctx = createCtx({ method: 'POST', headers: { authorization: 'Bearer forged-token', origin: 'http://evil.com' } });
+    ctx.event.locals.authenticatedVia = authenticatedVia;
+    const response = await new OriginMiddleware().handle(ctx, async () => new Response('must not execute'));
+    expect(response).toBeInstanceOf(Response);
+    expect((response as Response).status).toBe(403);
   });
 });

@@ -46,6 +46,7 @@ import { SessionMiddleware, DatabaseSessionStore, type SessionStore } from '../s
 import { AuthenticateMiddleware, type AuthManager } from '../auth/Auth.js';
 import { ErrorHandler, type ErrorHandlerConfig } from '../errors/Handler.js';
 import { ApplicationContext } from '../support/Context.js';
+import { DeploymentRuntime } from '../deployment/Runtime.js';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -75,6 +76,10 @@ export interface SvelarAppConfig {
 
   /** Session lifetime in seconds (default: 86400 = 24h) */
   sessionLifetime?: number;
+  sessionIdleLifetime?: number;
+  sessionRememberLifetime?: number;
+  sessionRememberAbsoluteLifetime?: number;
+  sessionWarningBefore?: number;
 
   /** Absolute session lifetime in seconds. Active sessions cannot exceed this age. */
   sessionAbsoluteLifetime?: number;
@@ -103,8 +108,11 @@ export interface SvelarAppConfig {
   /** CSRF: paths to protect (default: ['/api/']) */
   csrfPaths?: string[];
 
-  /** CSRF: paths to exclude (default: ['/api/webhooks', '/api/internal/']) */
+  /** CSRF: paths to exclude (default: signed incoming webhooks and internal bridge) */
   csrfExcludePaths?: string[];
+
+  /** Independently signed endpoints that must not interpret provider credentials as Svelar Bearer tokens. */
+  authExcludePaths?: string[];
 
   /** Auth throttle: max login attempts (default: 5) */
   authThrottleAttempts?: number;
@@ -175,6 +183,10 @@ export function createSvelarApp(appConfig: SvelarAppConfig = {}) {
     secret = process.env.APP_KEY ?? (() => { throw new Error('APP_KEY is not set. Set it in your environment or pass `secret` to createSvelarApp() — e.g. secret: process.env.APP_KEY.'); })(),
     sessionStore,
     sessionLifetime = 86400,
+    sessionIdleLifetime,
+    sessionRememberLifetime,
+    sessionRememberAbsoluteLifetime,
+    sessionWarningBefore,
     sessionAbsoluteLifetime,
     sessionTouchOnActivity = false,
     sessionTouchThrottle = 300,
@@ -184,7 +196,8 @@ export function createSvelarApp(appConfig: SvelarAppConfig = {}) {
     rateLimitCacheStore,
     trustedProxy = false,
     csrfPaths = ['/api/'],
-    csrfExcludePaths = ['/api/webhooks', '/api/internal/'],
+    csrfExcludePaths = ['/api/webhooks/incoming/', '/api/internal/'],
+    authExcludePaths = ['/api/webhooks/incoming/'],
     authThrottleAttempts = 5,
     authThrottleDecay = 1,
     authThrottleStore = rateLimitStore,
@@ -196,9 +209,12 @@ export function createSvelarApp(appConfig: SvelarAppConfig = {}) {
     errorConfig = {},
   } = appConfig;
 
+  if (authExcludePaths.some((path) => typeof path !== 'string' || !path.startsWith('/') || path === '/' || /[?#]/.test(path))) {
+    throw new TypeError('authExcludePaths must contain explicit application paths, never the root path.');
+  }
+
   // Build default middleware stack
   const defaultMiddleware: Array<Middleware | MiddlewareHandler> = [
-    new OriginMiddleware(),
     new RateLimitMiddleware({
       maxRequests: rateLimit,
       windowMs: rateLimitWindow,
@@ -206,11 +222,14 @@ export function createSvelarApp(appConfig: SvelarAppConfig = {}) {
       cacheStore: rateLimitCacheStore,
       trustedProxy,
     }),
-    new CsrfMiddleware({ onlyPaths: csrfPaths, excludePaths: csrfExcludePaths }),
     new SessionMiddleware({
       store: sessionStore ?? new DatabaseSessionStore(),
       secret,
       lifetime: sessionLifetime,
+      idleLifetime: sessionIdleLifetime,
+      rememberLifetime: sessionRememberLifetime,
+      rememberAbsoluteLifetime: sessionRememberAbsoluteLifetime,
+      warningBefore: sessionWarningBefore,
       absoluteLifetime: sessionAbsoluteLifetime,
       touchOnActivity: sessionTouchOnActivity,
       touchThrottle: sessionTouchThrottle,
@@ -219,8 +238,26 @@ export function createSvelarApp(appConfig: SvelarAppConfig = {}) {
 
   // Add auth middleware if auth manager is provided
   if (auth) {
-    defaultMiddleware.push(new AuthenticateMiddleware(auth));
+    const authentication = new AuthenticateMiddleware(auth);
+    defaultMiddleware.push(async (ctx, next) => {
+      const pathname = ctx.event.url.pathname;
+      const independent = authExcludePaths.some((path) => path.endsWith('/')
+        ? pathname.startsWith(path)
+        : pathname === path || pathname.startsWith(`${path}/`));
+      if (!independent) return authentication.handle(ctx, next);
+      // Signed provider routes authenticate themselves and must not inherit a browser identity.
+      for (const locals of [ctx.event.locals, ctx.locals]) {
+        locals.user = null;
+        locals.apiKey = null;
+        locals.authenticatedVia = null;
+        locals.auth = undefined;
+      }
+      return next();
+    });
   }
+
+  // Only verified credential authentication can exempt an API call from browser protections.
+  defaultMiddleware.push(new OriginMiddleware(), new CsrfMiddleware({ onlyPaths: csrfPaths, excludePaths: csrfExcludePaths }));
 
   // Add any extra middleware
   defaultMiddleware.push(...(extraMiddleware as any[]));
@@ -272,10 +309,12 @@ export function createSvelarApp(appConfig: SvelarAppConfig = {}) {
 
   return {
     handle: async ({ event, resolve }: any): Promise<Response> => {
-      const requestId = event.request?.headers?.get('x-request-id') || randomUUID();
-      const correlationId = event.request?.headers?.get('x-correlation-id') || requestId;
+      if (DeploymentRuntime.isDraining()) return new Response(null, { status: 503, headers: { 'Retry-After': '1', 'Cache-Control': 'no-store' } });
+      const acceptedId = (value: unknown): string | undefined => typeof value === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(value) ? value : undefined;
+      const requestId = acceptedId(event.request?.headers?.get('x-request-id')) ?? randomUUID();
+      const correlationId = acceptedId(event.request?.headers?.get('x-correlation-id')) ?? requestId;
 
-      return ApplicationContext.run({ requestId, correlationId }, async () => {
+      return ApplicationContext.runIsolated({ requestId, correlationId }, async () => {
         const response = await finalHandle({ event, resolve });
         try {
           response.headers.set('x-request-id', requestId);
