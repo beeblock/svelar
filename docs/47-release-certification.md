@@ -16,6 +16,8 @@ Run the full pre-publish gate:
 
 ```bash
 npm run certify
+# Certify an already-built immutable package without rebuilding/repacking:
+npm run certify -- --tarball=/absolute/path/beeblock-svelar-version.tgz --million
 ```
 
 For faster local iteration while hardening a feature:
@@ -24,11 +26,15 @@ For faster local iteration while hardening a feature:
 npm run certify:fast
 ```
 
+The final orchestrator preflights a supplied archive before application changes, records its SHA-256 and package/CLI identity, and uses the extracted artifact CLI for every fresh target. Each phase verifies the same bytes and fails rather than mixing builds. It writes durable per-gate logs and a manifest; a failed or skipped required phase cannot certify a release. Source-native runtime scenarios remain explicitly labeled separately from installed-package evidence.
+
+On shared development hosts, core and generated-app suites use one Vitest worker. Run heavy build/install/browser phases sequentially; optional native scenarios still create the processes needed to prove their explicit concurrency contracts. A machine timeout remains a failed gate until investigated and rerun, never an accepted or silently skipped test.
+
 ## Current Gate
 
 `npm run certify` runs:
 
-- the core package test suite
+- the core package test suite (native/optional gates are accounted for separately)
 - the generated CLI command inventory, derived from the same built-in command registry used by the `svelar` binary
 - package publish dry-run checks for `@beeblock/svelar`, including its bundled `svelar` binary
 - Redis cache, Redis session, and BullMQ queue smoke checks with Docker-managed random ports
@@ -52,7 +58,7 @@ Each generated smoke app also checks `npx svelar <command> --help` for every bui
 
 `npm run smoke:cli` installs the packed package in DDD and flat apps with both Zod and Valibot, executes every artifact generator, runs finite queue/scheduler commands and a discovered custom command, checks tinker model loading, and type-checks the generated app. Docker/SSH commands are checked with isolated process stubs so certification cannot provision a real host or stop unrelated containers. New apps run `svelte-kit sync` during `npm install` via `prepare`, including apps created with `--no-install`.
 
-`npm run smoke:upgrade` creates and seeds apps using the published `0.7.9` baseline, then installs the current tarball. Zod targets explicitly run the installed CLI's `update --migrate-zod4 --dry-run` and `--force`, reinstall dependencies when the manifest changes, and verify approved adapter import tokens, preserved local aliases and exact-original `.zod4.bak` backups. Both providers separately run `update --migrate-core --dry-run` and `--force` for eight recognized scaffold files. The preservation gate composes the explicit adapter/core AST token expectations against the historical snapshot, checks exact `.core.bak` pre-core-phase bytes, retains earlier Zod backups and rejects any other changes to original source. Valibot schemas are not converted. The missing-only `update --add-missing-user-files --category=config --force` mode adds ambient types without overwriting user files, followed by additive framework migrations. Both providers must retain `.env` bytes, customization markers and exact seeded user records, then pass `svelte-check` and real browser login/authenticated reload before app tests/build. The first pre-core-migration DDD/Zod check preserved source/backups but failed with 14 errors in nine files; focused codemod tests alone do not certify historical compatibility. Core migration does not repair Vite/Vitest aliases or legacy JSON-body/schema contracts; reviewed admin-operation failure cases remain required. Use `--upgrade-from=<version>` to test another exact published baseline. These gates do not guarantee compatibility with arbitrary custom app code or untested historical versions.
+`npm run smoke:upgrade` creates and seeds apps using the published `0.7.9` baseline, then installs the current tarball. Zod targets explicitly run the installed CLI's `update --migrate-zod4 --dry-run` and `--force`, reinstall dependencies when the manifest changes, and verify approved adapter import tokens, preserved local aliases and exact-original `.zod4.bak` backups. Both providers separately run `update --migrate-core --dry-run` and `--force` for nine recognized scaffold files, including the narrowed incoming-webhook prefix and exact internal bridge exception in hooks. The preservation gate composes the explicit adapter/core AST token expectations against the historical snapshot, checks exact `.core.bak` pre-core-phase bytes, retains earlier Zod backups and rejects any other changes to original source. Valibot schemas are not converted. The missing-only `update --add-missing-user-files --category=config --force` mode adds ambient types without overwriting user files, followed by additive framework migrations. Both providers must retain `.env` bytes, customization markers and exact seeded user records, then pass `svelte-check` and real browser login/authenticated reload before app tests/build. The first pre-core-migration DDD/Zod check preserved source/backups but failed with 14 errors in nine files; focused codemod tests alone do not certify historical compatibility. Core migration does not repair Vite/Vitest aliases or legacy JSON-body/schema contracts; reviewed admin-operation failure cases remain required. Use `--upgrade-from=<version>` to test another exact published baseline. These gates do not guarantee compatibility with arbitrary custom app code or untested historical versions.
 
 Generated DDD and flat smoke apps receive an injected `tests/feature/svelar-certification.test.ts` file. It validates the intended Svelar flow:
 
@@ -64,7 +70,7 @@ The injected test also covers complex ORM queries, soft deletes, UUID v7/ULID pr
 
 Because generated certification tests refresh and mutate the database, the smoke runner refreshes migrations and runs seeders again immediately before browser smoke. Browser assertions therefore exercise a real production `adapter-node` server against a known seeded app state instead of leftover test data. The browser smoke opens real `EventSource` subscriptions for SSE public, private, and presence channels and broadcasts through the generated internal HTTP bridge.
 
-## Pending External-Service Phases
+## External-Service Phases
 
 The documentation site's search keeps inline API names/CLI identifiers searchable, derives sections from the shared document registry, and refreshes its index within 30 seconds of documentation changes. Concurrent searches share one index build.
 
@@ -86,15 +92,60 @@ Builds still report upstream optional validation-adapter, circular-dependency an
 
 These results certify the stated scenarios, not every proposed feature or 100% statement/branch coverage. Full `npm run certify` must still be repeated on the final release artifact, including its external-service phases, before publishing.
 
-Passing the existing suite is not proof that every requested evolution is implemented, nor a claim of 100% application or branch coverage. The beeHub evolution request includes broader contracts than the original release suite. Before publishing, track those contracts separately and require their acceptance evidence:
+Passing the existing suite is not proof that every requested evolution is implemented, nor a claim of 100% application or branch coverage. The beeHub evolution request includes broader contracts than the original release suite. At that earlier snapshot, the following broader contracts still required separate implementation and acceptance evidence:
 
 - SVE-001/002/003: interrupted-worker recovery, multiprocess atomic rate limits and concurrent tenant/actor propagation across installed subpaths.
 - SVE-004/005: observer diffs/auditing and SvelteKit HTTP control flow in installed generated apps, not only source-unit imports.
-- SVE-006/007/008/009: inbox replay/retention, queue coalescing/DLQ/worker telemetry, scheduler locks/missed-run policy and durable after-commit search recovery. Current APIs and their bounded tests do not implement every item in these proposals.
+- SVE-006/007/008/009: inbox replay/retention, queue coalescing/DLQ/worker telemetry, scheduler locks/missed-run policy and durable after-commit search recovery. That snapshot did not implement every item in these proposals.
 - SVE-010/011/012/013: shared persistent log viewing across web/worker/scheduler, session expiry UX, distributed integration budgets and service-account rotation/audit guarantees.
 - SVE-014/015: all CLI generators must execute and type-check in both layouts/providers; advanced PostgreSQL indexes/checks and custom decimal casts need their own contracts and driver tests.
 - SVE-016/017: replayable SSE/background-operation lifecycle and zero-downtime deployment/drain/rollback are distinct from Redis fan-out and safer Compose commands.
 - SVE-018/019/020: dependency-aware capability manifests/system profiles, tenant editors, clock/context harnesses and optional operational UI patterns need explicit acceptance tests beyond RBAC scopes and callback fakes.
 - SVE-021/022: complete operational dashboard and authentication UX require desktop/mobile browser checks. Batch/DLQ operations, shared logs, distributed controls and per-login remember-me are not implied by existing dashboard or login scaffolds.
 
-Plugin packages are outside this core certification scope. Dependency major upgrades require their own migration tests; using a supported Node/SvelteKit baseline is not the same as blindly selecting every registry `latest` tag.
+Plugin dependency upgrades are included in the current evolution task and require their own migration tests; the core suite alone does not certify them. Using a supported Node/SvelteKit baseline is not the same as blindly selecting every registry `latest` tag.
+### Complete Request Ledger (2026-10-13)
+
+The source audit now finds implementations for all 22 beeHub items. The remaining acceptance work is not optional: repeat every required installed-package, driver, upgrade, CLI and production-browser scenario on the same final artifact. "Final gate pending" does not mean release-ready. An item becomes accepted only after implementation, installed-package verification and documentation agree; unit totals alone never close a row.
+
+| Item | Remaining implementation or acceptance work | State |
+|---|---|---|
+| SVE-001 | Resilient daemon/profiles, lock renewal, SIGKILL recovery, graceful drain and five-way concurrency implemented; repeat on final installed artifact | Final gate pending |
+| SVE-002 | Atomic coordination and trusted proxy chains implemented; real 1,000-request/four-process Redis proof passed, repeat final artifact | Final gate pending |
+| SVE-003 | General global-scope registry, all mutation boundaries and context propagation across jobs/events/scheduler/CLI | Final gate pending |
+| SVE-004 | Deep original snapshots, semantic decimal/custom casts and complete context-aware audit evidence | Final gate pending |
+| SVE-005 | Native HTTP errors/redirects are implemented; repeat installed-controller failure-path evidence on final artifact | Final gate pending |
+| SVE-006 | Transactional dispatch, coalescing/version ordering, retry/DLQ/replay, retention/redaction and reconciliation/lag | Final gate pending |
+| SVE-007 | Registry/profiles, deduplication/bulk dispatch and named shared adapters implemented; installed console and final worker proof pending | Final gate pending |
+| SVE-008 | Persistent controls, queued run-now, tenant timezone/catch-up, renewable locks and drain implemented; final process/application proof pending | Final gate pending |
+| SVE-009 | Durable after-commit search outbox, bounded keyset reindex, explicit bulk lifecycle and outage/rollback recovery | Final gate pending |
+| SVE-010 | Shared database log viewer, cursor/search/retention, distributed tail and safe incident reporting | Final gate pending |
+| SVE-011 | Idle/absolute activity semantics, throttled touch, multitab expiry warning and protected renewal | Final gate pending |
+| SVE-012 | Distributed credential/account budget and real concurrent HTTP resilience proof | Final gate pending |
+| SVE-013 | Rotation overlap, revocation audit, last-use address and explicit service-account policy context | Final gate pending |
+| SVE-014 | Architectural lint, apiFetch adoption codemod and every command in every layout/validation provider | Final gate pending |
+| SVE-015 | Advanced PostgreSQL indexes/checks/alterations, casts, keyset/custom primary keys and explicit eventful bulk operations | Final gate pending |
+| SVE-016 | SSE heartbeat/resume/reconnect/drain and persisted background operation progress/result/cancellation/deep links | Final gate pending |
+| SVE-017 | Docker/Caddy promotion/rollback passed with no dropped HTTP requests; verify generated adapter-node readiness/drain on final artifact | Final gate pending |
+| SVE-018 | Dependency-aware manifest, system/custom profiles, generated gates/editor, alias migration and protected platform boundary | Final gate pending |
+| SVE-019 | Scoped clock/context fakes and explicit native database profiles implemented; final integrated certification pending | Final gate pending |
+| SVE-020 | Six optional shadcn patterns and make:ui implemented; latest installed primitives and browser verification pending | Final gate pending |
+| SVE-021 | Complete generated operational shell/users/roles/queue/DLQ/scheduler/shared logs/kill switches and browser workflows | Final gate pending |
+| SVE-022 | Remember-me, branding/federation slots, complete expiry/error flows and generated desktop/mobile/keyboard tests | Final gate pending |
+
+All Dependabot PRs are part of this release task, including affected plugin repositories. Superseded PRs must be linked to the tested replacement commit; incompatible updates must be resolved explicitly, not silently left open. No package is published while a required row remains unaccepted.
+
+### Runtime Evidence (2026-10-13)
+
+- All three repositories (`beeblock/svelar`, `beeblock/svelar-docs`, `beeblock/svelar-datatable`) have no open PRs at the latest audit. Dependency updates are committed independently; the root npm audit has zero known vulnerabilities. Unversioned plugin drafts stay local and are not absorbed into core Git.
+- Queue verification passed 372 tests across 19 files without skips, including real Redis lifecycle/monitoring and PostgreSQL/MySQL Node-process cases. Scheduler verification passed 105 tests, including actual SQLite runtime and PostgreSQL/MySQL SQL contracts; those contracts are not a claim of native scheduler driver coverage.
+- Four Node HTTP servers admitted exactly 137 of 1,000 requests with a 137-request Redis quota; 863 were rejected, TTL remained positive, and spoofed forwarded headers were ignored. SSE verification used separate HTTP replicas and a killed/replaced process with replay.
+- Deployment passed 36 unit/CLI checks plus four real Docker/Caddy traffic scenarios. Shared logs/search passed ten separate-process scenarios without skips, including real Meilisearch outage/recovery, failed async tasks and keyset reindexing under concurrent deletes. These fixtures do not replace the final installed SvelteKit application gate.
+- Earlier installed probes correctly blocked release on cross-bundle Model/FormError identity, Vite 8 configuration, current shadcn utility types and protocol-route annotations. Those defects have focused regressions. Candidate 4 also exposed an overly broad internal CSRF exception in default hooks/scaffolding; it is not publishable, and the narrowed bridge exception must be certified in the next immutable package.
+- The latest complete source run passed 3,411 tests in 198 files with one worker, with 86 explicitly gated native/optional skips. Those skips remain acceptance obligations; they are not included in the native zero-skip claim. A subsequent formal certification stopped on one bounded CLI subprocess timeout; that failed run is retained separately and does not certify a release. The source runtime runner separately passed 75 native scenarios before the new active-worker deployment gate.
+- Native active-worker promotion/rollback passed twice: the latest run served 1,146 HTTP responses, all 200, while four BullMQ jobs each started/completed once, locks renewed during both SIGTERM drains, and replacements consumed the next jobs. This is a source-native fixture with real Docker/Caddy/Redis, not final installed-artifact certification.
+- All 14 local plugins passed 423 focused tests against candidate 5, with builds/types, packed consumer audits and additional native PostgreSQL/MySQL and Node 22.12 evidence. This includes the custom-primary-key impersonation fix and eight Charts failure-boundary regressions. Candidate 6 changes only seven CLI files; the other 358 packaged files, including all runtime entries, declarations and the manifest, are byte-identical. Final artifact provenance and installed CLI acceptance still need their own completion. Ignored no-Git drafts remain local by explicit owner instruction.
+- One-million-row keyset reindexing used real SQLite and bounded SDK-contract batches under a 128 MiB heap limit; maximum RSS was 121.4 MiB. This is not a one-million-document Meilisearch-server claim. Real Meilisearch outage/recovery is verified separately.
+- Six generated UI patterns passed eight real browser scenarios, including private SSE progress across two browsers and a 390px viewport. Auth UI passed 23 installed-app scenarios. These checkpoint results must be repeated after final source changes; populated operational controls and installed invitation workflows are separate required gates.
+- Candidate 5 installed invitation workflows passed 14 production-app scenarios with preserved source/database fingerprints. The OTP probe confirmed an obsolete expected message in the harness; its correction retains the 401, single alert, code clearing, successful verification and consumed-code replay denial. These are checkpoint proofs, not the final full Auth UI gate.
+- Installed probes also found and fixed the published 0.7.9 hook literal, incompatible historical Meilisearch SDK range, Valibot conversion of fixed core dashboard schemas, model/migration pluralization and five generated Team action error leaks. The final coordinator includes both invitation providers, populated operational controls and their standalone fixture tests before later phases overwrite apps.
