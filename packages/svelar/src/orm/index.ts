@@ -4,3 +4,5 @@ export { HasUlids, HasUuids } from './UniqueIds.js';
 export { QueryBuilder, type WhereOperator, type OrderDirection, type JoinType } from './QueryBuilder.js';
 export { Relation, HasOne, HasMany, BelongsTo, BelongsToMany } from './Relationship.js';
 export { ModelObserver, type ModelEventName, MODEL_EVENTS } from './Observer.js';
+export type { AttributeCast, ModelCast } from './Model.js';
+export type { GlobalScope, GlobalScopeQuery, ScopeValue } from './QueryBuilder.js';

@@ -300,6 +300,13 @@ Use `.default(value)`, not `.defaultTo(value)`. Use `addColumn` and `dropColumn`
 - Use `upsert` APIs where available instead of driver-specific SQL.
 - Cross-driver behavior matters: SQLite, PostgreSQL, and MySQL are supported out of the box.
 
+### Scope And Cast Contracts
+
+- Register named scopes through `Model.addGlobalScope`; scopes inherit safely and use a synchronous, frozen, condition-only adapter. They cannot execute/raw-rewrite a query. Group application OR predicates inside protected boundaries.
+- Scope-aware inserts require explicit equality/IN/null-compatible attributes. Never infer defaults from arbitrary predicates; range/pattern/negative scope inserts fail closed. Authorize `withoutGlobalScope` explicitly; scoped bulk upsert/FROM/union bypasses are rejected.
+- Use exact `decimal`/`decimal:<scale>` string casts for monetary decimals instead of Number. Custom `AttributeCast` defines synchronous get/set/optional equals. Mutable JSON/Date edits are tracked against deep originals and persisted change snapshots.
+- Keyset iteration respects custom primary keys and OR grouping. Bulk QueryBuilder writes remain eventless; individual Model persistence provides observers/audit/search outbox effects.
+
 ### Find-Or-Create Contracts
 
 - Model-aware `firstOrCreate` and `updateOrCreate` return full Model instances, even after `select(...)`. Clone builders to preserve caller filters, connection, tenant scope, and soft-delete scope; do not append lookup criteria to the caller.

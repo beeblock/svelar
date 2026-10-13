@@ -188,7 +188,42 @@ post.created_at;       // Date instance
 post.metadata;         // parsed object
 ```
 
-Supported cast types: `string`, `number`, `boolean`, `date`, `json`.
+Supported cast types: `string`, `number`, `boolean`, `date`, `json`, `decimal`, `decimal:<scale>` and typed `AttributeCast` objects.
+
+Decimal casts return exact strings, not IEEE-754 numbers. `decimal` normalizes equivalent representations such as `400.000` and `400`; `decimal:2` returns two fractional digits and rounds half away from zero without losing large-value precision. Invalid/nonfinite values are rejected.
+
+```typescript
+import { Model, type AttributeCast, type ModelCast } from '@beeblock/svelar/orm';
+
+const currencyCast: AttributeCast<{ code: string }> = {
+  get: (stored) => ({ code: String(stored).toUpperCase() }),
+  set: (value) => value.code.toUpperCase(),
+  equals: (left, right) => left.code === right.code,
+};
+class Invoice extends Model {
+  static casts = { total: 'decimal:2', currency: currencyCast, metadata: 'json' }
+    satisfies Record<string, ModelCast>;
+}
+```
+
+Custom casts are synchronous and define storage/application conversion through `get`/`set`; optional `equals` defines semantic dirty equality. JSON/Date/custom mutable values retain a cached application value, so in-place edits are detected and serialized on save. Originals, previous originals and persisted changes are deep snapshots: changing a returned snapshot cannot rewrite the audit diff. `wasChanged` reflects persisted changes, not the current dirty state.
+
+### Global Scopes
+
+Use `TenantModel`/`forTenant` for tenant isolation and register named condition-only scopes for additional model boundaries:
+
+```typescript
+Invoice.addGlobalScope('active', (query) => query.where('active', true));
+const inherited = Invoice.globalScopes();
+const activeInvoices = await Invoice.query().get();
+const allInvoices = await Invoice.withoutGlobalScope('active').get();
+```
+
+Scopes are inherited without mutating the parent registry, are evaluated synchronously and receive a frozen `GlobalScopeQuery` limited to parameterized conditions. The adapter cannot execute queries, inject raw SQL, change tables or perform writes. Scope clauses remain outside grouped user OR predicates, survive clones and apply to reads, updates/deletes and model-aware helper writes. Unknown scope names and unsafe bypasses fail closed.
+
+Creation does not infer arbitrary scope defaults. Supply explicit equality/IN/null-safe attributes that satisfy every active scope. Range/pattern/negative scopes remain valid for reads/updates/deletes but reject insertion when database affinity/collation cannot be safely proven; authorize an explicit `withoutGlobalScope` for that use case. Global-scoped bulk upserts and changed/union write targets are rejected rather than silently ignoring the scope.
+
+Custom model primary keys are used by `find`, `findOrFail` and default `chunkById`; keyset predicates are grouped with existing OR conditions. Aggregate queries discard unrelated raw-select bindings. Bulk query writes remain eventless; use individual Model persistence when hooks, audit or search outbox effects are needed.
 
 ### Multiple Database Connections
 

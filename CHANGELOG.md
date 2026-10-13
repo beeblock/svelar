@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **Global scopes and semantic casts** - Models support inherited named condition-only scopes with protected OR grouping and explicit removal. Scoped helper mutations and stale instances fail closed; insert scope values are explicit rather than inferred. Exact decimal/custom casts and deep mutable snapshots preserve meaningful dirty/audit diffs. Custom primary keys, keyset OR boundaries and aggregate raw-binding isolation are respected.
+
 - **Durable search synchronization** - Searchable model writes default to a same-database transactional outbox rather than waiting on Meilisearch. After-commit queue signals and the registered scheduler sweep recover delivery, retries, expired leases and replayable dead letters while preserving per-document order and isolated origin context. Reindexing uses keyset pagination/custom primary keys; hidden model fields stay out of default documents, and soft-delete/restore/force-delete participate in synchronization.
 
 - **Shared persistent log viewer** - Web/worker/scheduler logs can share a migrated database backend with stable cursor pagination, filtered search, database statistics, retention and cross-process resumable SSE tail. Viewer reads/writes are consistently asynchronous; generated apps configure the shared backend, and reviewed historical scaffold codemods add awaited calls. Sensitive context and recognizable credential text are redacted before persistence.

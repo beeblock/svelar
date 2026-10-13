@@ -23,7 +23,8 @@
  * ```
  */
 
-import { QueryBuilder } from './QueryBuilder.js';
+import { QueryBuilder, type GlobalScope } from './QueryBuilder.js';
+import { isDeepStrictEqual } from 'node:util';
 import { Connection } from '../database/Connection.js';
 import { HasOne, HasMany, BelongsTo, BelongsToMany } from './Relationship.js';
 import { type ModelObserver, type ModelEventName, MODEL_EVENTS } from './Observer.js';
@@ -34,6 +35,54 @@ import { ApplicationContext } from '../support/Context.js';
 // ── Types ──────────────────────────────────────────────────
 
 export type ModelAttributes = Record<string, any>;
+
+/** Synchronous conversion between database storage and an application value. */
+export interface AttributeCast<T = any> {
+  get(value: any, model: Model, key: string): T;
+  set(value: T, model: Model, key: string): any;
+  equals?(left: T, right: T): boolean;
+}
+
+export type ModelCast = 'string' | 'number' | 'boolean' | 'date' | 'json' |
+  'decimal' | `decimal:${number}` | AttributeCast;
+
+function snapshot<T>(value: T): T {
+  if (Buffer.isBuffer(value)) return Buffer.from(value) as T;
+  return structuredClone(value);
+}
+
+function snapshotAttributes(attributes: ModelAttributes): ModelAttributes {
+  return Object.fromEntries(Object.entries(attributes).map(([key, value]) => [key, snapshot(value)]));
+}
+
+// Decimal strings must never pass through Number: database decimals can exceed IEEE-754 precision.
+function decimal(value: unknown, precision?: number): string {
+  const input = String(value);
+  const match = /^([+-]?)(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(input);
+  if (!match || input.length > 10000) throw new TypeError('Invalid decimal value.');
+  const exponent = Number(match[4] ?? 0);
+  if (!Number.isSafeInteger(exponent) || Math.abs(exponent) > 10000) throw new TypeError('Invalid decimal exponent.');
+  let digits = (match[2] + (match[3] ?? '')).replace(/^0+/, '') || '0';
+  let scale = (match[3]?.length ?? 0) - exponent;
+  if (digits === '0' && precision === undefined) return '0';
+  if (scale < 0) { digits += '0'.repeat(-scale); scale = 0; }
+  if (precision !== undefined) {
+    if (!Number.isInteger(precision) || precision < 0 || precision > 100) throw new TypeError('Invalid decimal precision.');
+    if (scale > precision) {
+      const divisor = 10n ** BigInt(scale - precision);
+      const coefficient = BigInt(digits);
+      digits = (coefficient / divisor + (coefficient % divisor * 2n >= divisor ? 1n : 0n)).toString();
+    } else digits += '0'.repeat(precision - scale);
+    scale = precision;
+  } else {
+    while (scale > 0 && digits.endsWith('0')) { digits = digits.slice(0, -1); scale--; }
+    digits ||= '0';
+  }
+  digits = digits.replace(/^0+/, '') || '0';
+  const padded = digits.padStart(scale + 1, '0');
+  const result = scale ? `${padded.slice(0, -scale)}.${padded.slice(-scale)}` : padded;
+  return match[1] === '-' && BigInt(digits) !== 0n ? `-${result}` : result;
+}
 
 /** @internal Persistence context supplied by model-backed query helpers. */
 interface ModelCreateOptions<T> {
@@ -91,7 +140,7 @@ export class Model {
   static uniqueIdType: 'uuid' | 'ulid' = 'uuid';
 
   /** Attribute casting definitions */
-  static casts: Record<string, 'string' | 'number' | 'boolean' | 'date' | 'json'> = {};
+  static casts: Record<string, ModelCast> = {};
 
   /** Columns that can be mass-assigned */
   static fillable: string[] = [];
@@ -117,6 +166,8 @@ export class Model {
   /** Registered model observers */
   private static observers: Map<string, ModelObserver[]> = new Map();
 
+  private static scopeRegistry = new WeakMap<typeof Model, Map<string, GlobalScope>>();
+
   /** Custom model events (e.g. ['published', 'archived']) */
   static events: string[] = [];
 
@@ -126,6 +177,7 @@ export class Model {
   private originalAttributes: ModelAttributes = {};
   private previousOriginalAttributes: ModelAttributes = {};
   private changedAttributes: ModelAttributes = {};
+  private castCache = new Map<string, { raw: any; value: any }>();
   private relations: Record<string, any> = {};
   private exists: boolean = false;
 
@@ -166,9 +218,27 @@ export class Model {
   // ── Static Query Methods ─────────────────────────────────
 
   static query<T extends Model>(this: new () => T): QueryBuilder<T> {
-    const instance = new this();
     const ctor = this as unknown as typeof Model;
     return new QueryBuilder<T>(ctor.table, this, ctor.connection);
+  }
+
+  /** Inherited scopes are copied; registering a child scope cannot change its parent. */
+  static globalScopes(): ReadonlyMap<string, GlobalScope> {
+    const parent = Object.getPrototypeOf(this) as typeof Model | undefined;
+    const scopes = new Map<string, GlobalScope>(parent?.globalScopes?.() ?? []);
+    for (const [name, scope] of Model.scopeRegistry.get(this) ?? []) scopes.set(name, scope);
+    return scopes;
+  }
+
+  static addGlobalScope(name: string, scope: GlobalScope): void {
+    if (!name.trim() || typeof scope !== 'function') throw new TypeError('A global scope needs a name and a condition callback.');
+    let scopes = Model.scopeRegistry.get(this);
+    if (!scopes) { scopes = new Map(); Model.scopeRegistry.set(this, scopes); }
+    scopes.set(name, scope);
+  }
+
+  static withoutGlobalScope<T extends Model>(this: new () => T, name: string): QueryBuilder<T> {
+    return (this as any).query().withoutGlobalScope(name);
   }
 
   static async find<T extends Model>(this: new () => T, id: any): Promise<T | null> {
@@ -335,11 +405,14 @@ export class Model {
         const qb = query?.clone() ?? new QueryBuilder(ctor.table, this.constructor, ctor.connection);
         qb.where(ctor.primaryKey, pk);
         const affected = await qb.update(dirty);
-        if (query && affected === 0 && !await qb.clone().exists()) {
+        if ((query || qb.hasRowScopes()) && affected === 0 && !await qb.clone().exists()) {
           throw new Error(`Model "${ctor.name}" is no longer available in the query scope.`);
         }
-      } else if (query && !await query.clone().where(ctor.primaryKey, this.getOriginal(ctor.primaryKey)).exists()) {
-        throw new Error(`Model "${ctor.name}" is no longer available in the query scope.`);
+      } else {
+        const qb = query?.clone() ?? new QueryBuilder(ctor.table, this.constructor, ctor.connection);
+        if ((query || qb.hasRowScopes()) && !await qb.where(ctor.primaryKey, this.getOriginal(ctor.primaryKey)).exists()) {
+          throw new Error(`Model "${ctor.name}" is no longer available in the query scope.`);
+        }
       }
 
       this.captureChanges();
@@ -393,11 +466,13 @@ export class Model {
     const qb = new QueryBuilder(ctor.table, this.constructor, ctor.connection);
     if (ctor.softDeletes) {
       const deletedAt = new Date().toISOString();
-      await qb.where(ctor.primaryKey, pk).update({ [ctor.deletedAt]: deletedAt });
+      const affected = await qb.where(ctor.primaryKey, pk).update({ [ctor.deletedAt]: deletedAt });
+      if (affected === 0 && qb.hasRowScopes()) throw new Error(`Model "${ctor.name}" is no longer available in the query scope.`);
       this.setAttribute(ctor.deletedAt, deletedAt);
       this.captureChanges();
     } else {
-      await qb.where(ctor.primaryKey, pk).delete();
+      const affected = await qb.where(ctor.primaryKey, pk).delete();
+      if (affected === 0 && qb.hasRowScopes()) throw new Error(`Model "${ctor.name}" is no longer available in the query scope.`);
       this.exists = false;
       this.captureChanges();
     }
@@ -414,7 +489,8 @@ export class Model {
 
     const pk = this.getAttribute(ctor.primaryKey);
     const qb = new QueryBuilder(ctor.table, this.constructor, ctor.connection);
-    await qb.withTrashed().where(ctor.primaryKey, pk).forceDelete();
+    const affected = await qb.withTrashed().where(ctor.primaryKey, pk).forceDelete();
+    if (affected === 0 && qb.hasRowScopes()) throw new Error(`Model "${ctor.name}" is no longer available in the query scope.`);
 
     this.exists = false;
     this.captureChanges();
@@ -433,7 +509,10 @@ export class Model {
     const pk = this.getAttribute(ctor.primaryKey);
     const qb = new QueryBuilder(ctor.table, this.constructor, ctor.connection);
     await this.fireHook('restoring');
-    await qb.withTrashed().where(ctor.primaryKey, pk).update({ [ctor.deletedAt]: null });
+    const affected = await qb.withTrashed().where(ctor.primaryKey, pk).update({ [ctor.deletedAt]: null });
+    if (affected === 0 && qb.hasRowScopes() && !await qb.clone().exists()) {
+      throw new Error(`Model "${ctor.name}" is no longer available in the query scope.`);
+    }
 
     this.setAttribute(ctor.deletedAt, null);
     this.captureChanges();
@@ -453,7 +532,8 @@ export class Model {
     const fresh = await (this.constructor as any).find(pk);
 
     if (fresh) {
-      this.attributes = { ...fresh.attributes };
+      this.castCache.clear();
+      this.attributes = snapshotAttributes(fresh.attributes);
       this.syncOriginal();
     }
   }
@@ -463,37 +543,20 @@ export class Model {
   getAttribute(key: string): any {
     const ctor = this.constructor as typeof Model;
     const raw = this.attributes[key];
-
-    // Apply casts
     const cast = ctor.casts[key];
-    if (cast && raw !== undefined && raw !== null) {
-      switch (cast) {
-        case 'number':
-          return Number(raw);
-        case 'boolean':
-          return Boolean(raw);
-        case 'string':
-          return String(raw);
-        case 'date':
-          return new Date(raw);
-        case 'json':
-          return typeof raw === 'string' ? JSON.parse(raw) : raw;
-      }
+    if (raw != null && (cast === 'json' || cast === 'date' || typeof cast === 'object')) {
+      const cached = this.castCache.get(key);
+      if (cached && cached.raw === raw) return cached.value;
+      const value = this.readCast(key, raw);
+      this.castCache.set(key, { raw, value });
+      return value;
     }
-
-    return raw;
+    return this.readCast(key, raw);
   }
 
   setAttribute(key: string, value: any): void {
-    const ctor = this.constructor as typeof Model;
-    const cast = ctor.casts[key];
-
-    // Serialize for storage
-    if (cast === 'json' && typeof value !== 'string') {
-      this.attributes[key] = JSON.stringify(value);
-    } else {
-      this.attributes[key] = value;
-    }
+    this.castCache.delete(key);
+    this.attributes[key] = this.writeCast(key, value);
   }
 
   fill(attributes: ModelAttributes): void {
@@ -509,28 +572,30 @@ export class Model {
   }
 
   getAttributes(): ModelAttributes {
-    return { ...this.attributes };
+    this.flushCastCache();
+    return snapshotAttributes(this.attributes);
   }
 
   getOriginal(key?: string): any {
-    if (key) return this.originalAttributes[key];
-    return { ...this.originalAttributes };
+    if (key !== undefined) return snapshot(this.originalAttributes[key]);
+    return snapshotAttributes(this.originalAttributes);
   }
 
   getPreviousOriginal(key?: string): any {
-    if (key) return this.previousOriginalAttributes[key];
-    return { ...this.previousOriginalAttributes };
+    if (key !== undefined) return snapshot(this.previousOriginalAttributes[key]);
+    return snapshotAttributes(this.previousOriginalAttributes);
   }
 
   getChanges(): ModelAttributes {
-    return { ...this.changedAttributes };
+    return snapshotAttributes(this.changedAttributes);
   }
 
   getDirty(): ModelAttributes {
+    this.flushCastCache();
     const dirty: ModelAttributes = {};
     for (const [key, value] of Object.entries(this.attributes)) {
-      if (value !== this.originalAttributes[key]) {
-        dirty[key] = value;
+      if (!Object.hasOwn(this.originalAttributes, key) || !this.attributesEqual(key, value, this.originalAttributes[key])) {
+        dirty[key] = snapshot(value);
       }
     }
     return dirty;
@@ -641,7 +706,7 @@ export class Model {
   /** @internal Create a model instance from a database row */
   static hydrate<T extends Model>(this: new () => T, row: Record<string, any>): T {
     const instance = new this();
-    instance.attributes = { ...row };
+    instance.attributes = snapshotAttributes(row);
     instance.syncOriginal();
     instance.previousOriginalAttributes = {};
     instance.changedAttributes = {};
@@ -725,17 +790,18 @@ export class Model {
   // ── Private Helpers ──────────────────────────────────────
 
   private syncOriginal(): void {
-    this.originalAttributes = { ...this.attributes };
+    this.flushCastCache();
+    this.originalAttributes = snapshotAttributes(this.attributes);
   }
 
   private captureChanges(): void {
-    this.previousOriginalAttributes = { ...this.originalAttributes };
+    this.previousOriginalAttributes = snapshotAttributes(this.originalAttributes);
     this.changedAttributes = this.getDirty();
   }
 
   private getInsertableAttributes(): ModelAttributes {
     const ctor = this.constructor as typeof Model;
-    const attrs = { ...this.attributes };
+    const attrs = this.getAttributes();
 
     // Remove auto-incrementing primary key from insert data
     if (ctor.incrementing && attrs[ctor.primaryKey] === undefined) {
@@ -743,6 +809,63 @@ export class Model {
     }
 
     return attrs;
+  }
+
+  private readCast(key: string, raw: any): any {
+    if (raw == null) return raw;
+    const cast = (this.constructor as typeof Model).casts[key];
+    if (typeof cast === 'object') return cast.get(snapshot(raw), this, key);
+    if (cast === 'decimal' || cast?.startsWith('decimal:')) {
+      return decimal(raw, cast === 'decimal' ? undefined : Number(cast.slice(8)));
+    }
+    switch (cast) {
+      case 'number': return Number(raw);
+      case 'boolean': return raw === '0' ? false : Boolean(raw);
+      case 'string': return String(raw);
+      case 'date': return new Date(raw);
+      case 'json': return typeof raw === 'string' ? JSON.parse(raw) : snapshot(raw);
+      default: return raw;
+    }
+  }
+
+  private writeCast(key: string, value: any): any {
+    if (value == null) return value;
+    const cast = (this.constructor as typeof Model).casts[key];
+    if (typeof cast === 'object') return snapshot(cast.set(value, this, key));
+    if (cast === 'json') return typeof value === 'string' ? value : JSON.stringify(value);
+    if (cast === 'date') {
+      const date = new Date(value);
+      if (!Number.isFinite(date.getTime())) throw new TypeError(`Invalid date for attribute "${key}".`);
+      return date.toISOString();
+    }
+    if (cast === 'decimal' || cast?.startsWith('decimal:')) {
+      return decimal(value, cast === 'decimal' ? undefined : Number(cast.slice(8)));
+    }
+    return snapshot(value);
+  }
+
+  private flushCastCache(): void {
+    for (const [key, cached] of this.castCache) {
+      const raw = this.writeCast(key, cached.value);
+      this.attributes[key] = raw;
+      cached.raw = raw;
+    }
+  }
+
+  private attributesEqual(key: string, left: any, right: any): boolean {
+    if (left == null || right == null) return left === right;
+    const cast = (this.constructor as typeof Model).casts[key];
+    if (typeof cast === 'object') {
+      const a = this.readCast(key, left);
+      const b = this.readCast(key, right);
+      if (cast.equals) {
+        const equivalent = cast.equals(a, b);
+        if (typeof equivalent !== 'boolean') throw new TypeError('Custom cast equality must return a boolean synchronously.');
+        return equivalent;
+      }
+      return isDeepStrictEqual(cast.set(a, this, key), cast.set(b, this, key));
+    }
+    return isDeepStrictEqual(this.readCast(key, left), this.readCast(key, right));
   }
 
   private applyTenantAttributes(): void {

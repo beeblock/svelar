@@ -7,6 +7,8 @@
 // ORM
 export { Model, type ModelAttributes, type ModelHooks } from './orm/Model.js';
 export { QueryBuilder } from './orm/QueryBuilder.js';
+export type { AttributeCast, ModelCast } from './orm/Model.js';
+export type { GlobalScope, GlobalScopeQuery, ScopeValue } from './orm/QueryBuilder.js';
 export { HasOne, HasMany, BelongsTo, BelongsToMany } from './orm/Relationship.js';
 
 // Database
