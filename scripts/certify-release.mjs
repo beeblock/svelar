@@ -152,7 +152,9 @@ export function certificationPlan(options, artifact, reportDirectory, applicatio
 	);
 	gates.push(node('native-source-runtime', 'runtime-certification.mjs', [`--clients=${join(client, 'package.json')}`, `--report-dir=${join(reportDirectory, 'native-source-runtime')}`], 'source', { client }));
 	if (options.million) gates.push({ id: 'million-search', scope: 'source', files: ['search-large-keyset.test.ts'], env: { SVELAR_TEST_SEARCH_MILLION: '1', SVELAR_TEST_SEARCH_LARGE_EVIDENCE_DIR: join(reportDirectory, 'million-search') } });
-	if (options.typeDeps) gates.push({ id: 'operator-types', scope: 'source', files: ['dashboard-operational-types.test.ts'], env: { SVELAR_DASHBOARD_TYPE_DEPS: options.typeDeps } });
+	if (options.typeDeps) gates.push({ id: 'operator-types', scope: 'source', client,
+		files: ['dashboard-operational-types.test.ts', 'release-native-coverage-harness.test.ts'],
+		env: { SVELAR_DASHBOARD_TYPE_DEPS: options.typeDeps, SVELAR_RELEASE_COVERAGE_TYPE_CLIENT: client } });
 	gates.push(
 		smoke('historical-upgrade-four', ['--app=all', '--validation=all', '--upgrade-from=0.7.9', '--skip-cli-help', '--skip-shadcn']),
 		smoke('redis', ['--app=ddd', '--db=sqlite', '--redis', '--skip-shadcn', '--skip-build']),
@@ -240,6 +242,7 @@ export async function certifyRelease(options, { prepare = prepareSmokeArtifact, 
 				const env = { ...environment };
 				delete env.SVELAR_TEST_SEARCH_MILLION;
 				delete env.SVELAR_DASHBOARD_TYPE_DEPS;
+				delete env.SVELAR_RELEASE_COVERAGE_TYPE_CLIENT;
 				for (const [index, gate] of gates.entries()) {
 					abort.signal.throwIfAborted();
 					verifySmokeArtifact(artifact);

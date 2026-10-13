@@ -32,14 +32,17 @@ describe('Native runtime certification runner', () => {
     const env = runtime.nativeEnvironment({ PATH: '/tools', DB_PASSWORD: 'user-secret', DATABASE_URL: 'postgres://user-database',
       SVELAR_TEST_QUEUE_REDIS_URL: 'redis://user-redis', SVELAR_QUEUE_MONITOR_CHILD: 'worker', SVELAR_TEST_INBOX_OPERATIONS_NATIVE: '0',
       SVELAR_TEST_CACHE_REDIS_DOCKER: '0',
+      SVELAR_TEST_TEAMS_NATIVE: '0', SVELAR_TEST_TEAMS_CLIENT: '/wrong-team-client',
+      SVELAR_TEST_MYSQL_URL: '0', SVELAR_TEST_MYSQL_URL_MODULES: '/wrong-mysql-modules',
       SVELAR_TEST_SHARED_MEILI: '0', SVELAR_TEST_DEPLOY_DOCKER: '0', SVELAR_TEST_POSTGRES_CLIENT: '/wrong', SVELAR_TEST_SSE_CLIENT: '/wrong' },
     '/isolated/package.json', { redis: 50101, postgres: 50102, mysql: 50103 });
     expect(env.PATH).toBe('/tools'); expect(env.DB_PASSWORD).toBeUndefined(); expect(env.DATABASE_URL).toBeUndefined();
     expect(env.SVELAR_QUEUE_MONITOR_CHILD).toBeUndefined();
     expect(env.SVELAR_TEST_QUEUE_REDIS_URL).toBe('redis://127.0.0.1:50101/0');
     expect(env.SVELAR_TEST_REDIS_URL).toBe(env.SVELAR_TEST_QUEUE_REDIS_URL); expect(env.SVELAR_TEST_SSE_REDIS_URL).toBe(env.SVELAR_TEST_REDIS_URL);
-    for (const key of ['SVELAR_TEST_QUEUE_CLIENT', 'SVELAR_TEST_REDIS_CLIENT', 'SVELAR_TEST_SSE_CLIENT', 'SVELAR_TEST_POSTGRES_CLIENT', 'SVELAR_TEST_INBOX_OPERATION_CLIENT']) expect(env[key]).toBe('/isolated/package.json');
-    for (const key of ['SVELAR_TEST_INBOX_OPERATIONS_NATIVE', 'SVELAR_TEST_SHARED_MEILI', 'SVELAR_TEST_DEPLOY_DOCKER', 'SVELAR_TEST_CACHE_REDIS_DOCKER']) expect(env[key]).toBe('1');
+    for (const key of ['SVELAR_TEST_QUEUE_CLIENT', 'SVELAR_TEST_REDIS_CLIENT', 'SVELAR_TEST_SSE_CLIENT', 'SVELAR_TEST_POSTGRES_CLIENT', 'SVELAR_TEST_INBOX_OPERATION_CLIENT', 'SVELAR_TEST_TEAMS_CLIENT']) expect(env[key]).toBe('/isolated/package.json');
+    for (const key of ['SVELAR_TEST_INBOX_OPERATIONS_NATIVE', 'SVELAR_TEST_SHARED_MEILI', 'SVELAR_TEST_DEPLOY_DOCKER', 'SVELAR_TEST_CACHE_REDIS_DOCKER', 'SVELAR_TEST_TEAMS_NATIVE', 'SVELAR_TEST_MYSQL_URL']) expect(env[key]).toBe('1');
+    expect(env.SVELAR_TEST_MYSQL_URL_MODULES).toBe('/isolated/node_modules');
     expect(env.SVELAR_TEST_SCHEMA_POSTGRES_URL).toContain('/schema_proof'); expect(env.SVELAR_TEST_QUEUE_MYSQL_PORT).toBe('50103');
   });
   it('keeps owned Redis lifecycle and Docker recovery in the existing mandatory source gate', () => {
@@ -48,6 +51,14 @@ describe('Native runtime certification runner', () => {
       'cache-atomic-redis.test.ts', 'cache-redis-lifecycle-native.test.ts', 'rate-limit-redis-processes.test.ts', 'broadcasting-redis-processes.test.ts',
     ]);
     expect(runtime.nativeGates.flatMap((gate: { files: string[] }) => gate.files).filter((file: string) => file === 'cache-redis-lifecycle-native.test.ts')).toHaveLength(1);
+  });
+  it('wires remaining invitation and MySQL URL native obligations exactly once into the existing SQL gate', () => {
+    expect(runtime.nativeGates).toHaveLength(9);
+    expect(runtime.nativeGates.find((gate: { name: string }) => gate.name === 'queue-sql').files).toEqual([
+      'queue-monitoring-drivers.test.ts', 'team-invitation-drivers.test.ts', 'connection-mysql-url.test.ts',
+    ]);
+    const files = runtime.nativeGates.flatMap((gate: { files: string[] }) => gate.files);
+    for (const file of ['team-invitation-drivers.test.ts', 'connection-mysql-url.test.ts']) expect(files.filter((entry: string) => entry === file)).toHaveLength(1);
   });
   it('accepts only complete positive-count native reports with every requested file passing', () => {
     expect(runtime.verifyReport(report(directory), ['native.test.ts'], directory)).toEqual({ files: 1, passed: 1, skipped: 0 });

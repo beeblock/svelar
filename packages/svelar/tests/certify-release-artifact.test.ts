@@ -60,8 +60,9 @@ function passingOptInReport(args: string[], cwd: string) {
   if (!output) return;
   const files = args.filter((arg) => arg.startsWith('tests/'));
   const count = files[0].includes('search-large') ? 2 : 1;
-  write(output.slice('--outputFile.json='.length), JSON.stringify({ success: true, numTotalTests: count,
-    numPassedTests: count, numFailedTests: 0, numPendingTests: 0, numTodoTests: 0, numFailedTestSuites: 0, numPendingTestSuites: 0,
+  const total = count * files.length;
+  write(output.slice('--outputFile.json='.length), JSON.stringify({ success: true, numTotalTests: total,
+    numPassedTests: total, numFailedTests: 0, numPendingTests: 0, numTodoTests: 0, numFailedTestSuites: 0, numPendingTestSuites: 0,
     testResults: files.map((file) => ({ name: resolve(cwd, file), status: 'passed',
       assertionResults: Array.from({ length: count }, () => ({ status: 'passed' })) })) }));
 }
@@ -123,7 +124,11 @@ describe('Central certification options and gate inventory', () => {
     expect(native.scope).toBe('source');
     expect(native.args).toContain('--clients=/fresh-apps/svelar-smoke-ddd/package.json');
     expect(plan.find((gate: { id: string }) => gate.id === 'million-search').env.SVELAR_TEST_SEARCH_MILLION).toBe('1');
-    expect(plan.find((gate: { id: string }) => gate.id === 'operator-types').env.SVELAR_DASHBOARD_TYPE_DEPS).toBe('/deps2/node_modules');
+    expect(plan.find((gate: { id: string }) => gate.id === 'operator-types')).toMatchObject({
+      scope: 'source', client: '/fresh-apps/svelar-smoke-ddd',
+      files: ['dashboard-operational-types.test.ts', 'release-native-coverage-harness.test.ts'],
+      env: { SVELAR_DASHBOARD_TYPE_DEPS: '/deps2/node_modules', SVELAR_RELEASE_COVERAGE_TYPE_CLIENT: '/fresh-apps/svelar-smoke-ddd' },
+    });
     expect(plan.find((gate: { id: string }) => gate.id === 'historical-upgrade-four').args).toContain('--upgrade-from=0.7.9');
     expect(plan.every((gate: { args?: string[] }) => !gate.args?.includes('release:dry-run'))).toBe(true);
   });
@@ -282,12 +287,15 @@ describe('One-artifact orchestration and cleanup', () => {
     const execute = vi.fn(async (_command: string, args: string[], settings: { cwd: string; env: Record<string, string | undefined> }) => { passingOptInReport(args, settings.cwd); return { stdout: '', stderr: '' }; });
     const result = await coordinator.certifyRelease(options(['--tarball', path, '--million', '--type-deps', deps]), {
       prepare: (tarball: string) => smoke.prepareSmokeArtifact(tarball, prepareOptions()), execute, verifyClient: () => {}, log: () => {},
-      environment: { SVELAR_TEST_SEARCH_MILLION: '1', SVELAR_DASHBOARD_TYPE_DEPS: '/incorrect-deps' },
+      environment: { SVELAR_TEST_SEARCH_MILLION: '1', SVELAR_DASHBOARD_TYPE_DEPS: '/incorrect-deps', SVELAR_RELEASE_COVERAGE_TYPE_CLIENT: '/incorrect-client' },
     });
     expect(result.gates.find((gate: { id: string }) => gate.id === 'million-search').result).toMatchObject({ passed: 2, skipped: 0 });
-    expect(result.gates.find((gate: { id: string }) => gate.id === 'operator-types').result).toMatchObject({ passed: 1, skipped: 0 });
+    expect(result.gates.find((gate: { id: string }) => gate.id === 'operator-types').result).toMatchObject({ files: 2, passed: 2, skipped: 0 });
     expect(execute.mock.calls[0][2].env.SVELAR_TEST_SEARCH_MILLION).toBeUndefined();
     expect(execute.mock.calls[0][2].env.SVELAR_DASHBOARD_TYPE_DEPS).toBeUndefined();
+    expect(execute.mock.calls[0][2].env.SVELAR_RELEASE_COVERAGE_TYPE_CLIENT).toBeUndefined();
+    const typeInvocation = execute.mock.calls.find((call) => call[1].includes('tests/release-native-coverage-harness.test.ts'))!;
+    expect(typeInvocation[2].env.SVELAR_RELEASE_COVERAGE_TYPE_CLIENT).toBe(join(repository, '../svelar-testing-area/apps/svelar-smoke-ddd'));
     expect(result.optional).toEqual({ million: true, typeDeps: deps }); expect(extractionDirectories()).toEqual([]);
     for (const id of ['million-search', 'operator-types']) {
       const gate = result.gates.find((entry: { id: string }) => entry.id === id);
