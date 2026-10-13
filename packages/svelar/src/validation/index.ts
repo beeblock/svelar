@@ -5,7 +5,7 @@
  */
 
 import { z } from 'zod/v4';
-import { isUlid, isUuidv7 } from '../support/uuid.js';
+import { isUlid, isUuidv7 } from '../support/identifiers.js';
 
 // Re-export Zod for direct usage
 export { z };

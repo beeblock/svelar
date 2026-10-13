@@ -9,6 +9,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
+export { isUlid, isUuidv7 } from './identifiers.js';
 
 // ── UUIDv7 ──────────────────────────────────────────────────
 
@@ -96,21 +97,6 @@ export function ulid(): string {
   }
 
   return ts + r;
-}
-
-/**
- * Check if a string is a valid UUIDv7.
- */
-export function isUuidv7(value: string): boolean {
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  return uuidRegex.test(value);
-}
-
-/**
- * Check if a string is a valid ULID.
- */
-export function isUlid(value: string): boolean {
-  return /^[0-9A-HJKMNP-TV-Z]{26}$/i.test(value);
 }
 
 /**

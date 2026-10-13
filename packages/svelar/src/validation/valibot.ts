@@ -5,7 +5,7 @@
  */
 
 import * as v from 'valibot';
-import { isUlid, isUuidv7 } from '../support/uuid.js';
+import { isUlid, isUuidv7 } from '../support/identifiers.js';
 
 export { v };
 
