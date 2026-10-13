@@ -42,13 +42,19 @@ import type { CanImpersonateInstance, CanBeImpersonatedInstance } from '@beebloc
 // src/lib/impersonate.ts
 import { Impersonate } from '@beeblock/svelar-impersonate';
 import { User } from '$lib/models/User';
+import { capabilityAccess } from '$lib/shared/permissions/access.server.js';
 
 Impersonate.configure({
   userModel: User,
   redirect: '/dashboard',
-  guard: (admin) => {
-    const role = admin?.role ?? admin?.getAttribute?.('role');
-    return role === 'admin' || role === 'super-admin';
+  guard: async (admin) => {
+    // This example uses the application's default numeric permission subject.
+    const modelId = admin.getAttribute(User.primaryKey);
+    if (typeof modelId !== 'number' || !Number.isSafeInteger(modelId) || modelId < 1) return false;
+    return (await capabilityAccess.can('action.support.impersonate', {
+      principal: { kind: 'user', modelType: User.name, modelId },
+      scope: { platform: true },
+    })) === true;
   },
   targetGuard: (target) => {
     const role = target?.role ?? target?.getAttribute?.('role');
@@ -60,6 +66,10 @@ Impersonate.configure({
 The default-exported `/plugin` class extends Svelar's `Plugin`; its `boot()` configures this same facade. The named `/server` class export remains available. Use either normal plugin boot or explicit `Impersonate.configure()` in the common server bootstrap. Keep the configured user model consistent with the auth manager's model and eligibility policy.
 
 Bind `guard` to current trusted platform authority and the application's registered support capability. Return a boolean; when adapting a capability resolver, allow only `(await resolverResult) === true`. Tenant-admin grants or client permission snapshots must not establish platform impersonation authority. The built-in role checks are defaults and do not register or seed application capabilities.
+
+Register and seed `action.support.impersonate` as a platform capability in the application's literal manifest. The example uses its default numeric permission subject; opaque auth IDs require the application's trusted permission-subject mapping, never `Number(uuid)`. Both initial access and the freshly reloaded original admin use this same capability decision.
+
+The capability resolver imports shown here use the DDD layout. Flat apps use `$lib/permissions/access.server.js`; use the generated path for your layout.
 
 ### 2. Add the Middleware
 
@@ -83,14 +93,21 @@ export const handle = createSvelarHooks({
 ```ts
 // src/routes/api/admin/impersonate/[id]/+server.ts
 import { ImpersonateController } from '@beeblock/svelar-impersonate/server';
+import { capabilityAccess, resolveCapabilityInput } from '$lib/shared/permissions/access.server.js';
 
-export const POST = async (event) => ImpersonateController.start(event);
+export const POST = capabilityAccess.guardEndpoint(
+  'action.support.impersonate',
+  (event) => ImpersonateController.start(event),
+  resolveCapabilityInput,
+);
 ```
 
 ```ts
 // src/routes/api/admin/impersonate/stop/+server.ts
 import { ImpersonateController } from '@beeblock/svelar-impersonate/server';
 
+// Reviewed functional-RBAC exemption: restore this authenticated session only.
+// The service reauthorizes the original admin through the configured capability guard.
 export const POST = async (event) => ImpersonateController.stop(event);
 ```
 
@@ -163,7 +180,7 @@ import { Impersonate } from '@beeblock/svelar-impersonate';
 | `Impersonate.getImpersonatedUserId(event)` | `string \| number \| null` | Get the impersonated user ID |
 | `Impersonate.getStatus(event)` | `Promise<ImpersonateStatus>` | Get full status for the client |
 
-IDs retain their `string | number` type; UUID/ULID user IDs are supported. The HTTP start request validates a non-empty, trimmed ID of at most 255 characters and passes it to the service without numeric coercion.
+IDs retain their `string | number` type; UUID/ULID user IDs are supported, including custom named primary keys. The service reads the model constructor's declared `primaryKey` through `getAttribute()` and preserves the exact identifier during start and restoration. A missing declared key is rejected even if the record contains a shadow `id`; the default `id` lookup is used only for records without model primary-key metadata. The HTTP start request validates a non-empty, trimmed ID of at most 255 characters and passes it to the service without numeric coercion.
 
 **ImpersonateStatus:**
 
@@ -246,17 +263,24 @@ Provides static methods for impersonation API routes:
 ```ts
 // src/routes/api/admin/impersonate/[id]/+server.ts
 import { ImpersonateController } from '@beeblock/svelar-impersonate/server';
+import { capabilityAccess, resolveCapabilityInput } from '$lib/shared/permissions/access.server.js';
 
-export const POST = async (event) => ImpersonateController.start(event);
+export const POST = capabilityAccess.guardEndpoint(
+  'action.support.impersonate',
+  (event) => ImpersonateController.start(event),
+  resolveCapabilityInput,
+);
 ```
 
 ```ts
 // src/routes/api/admin/impersonate/stop/+server.ts
+// Reviewed functional-RBAC exemption: existing session restoration, original-admin guard still applies.
 export const POST = async (event) => ImpersonateController.stop(event);
 ```
 
 ```ts
 // src/routes/api/admin/impersonate/status/+server.ts
+// Reviewed functional-RBAC exemption: current authenticated session state only.
 export const GET = async (event) => ImpersonateController.status(event);
 ```
 
@@ -276,6 +300,8 @@ export const GET = async (event) => ImpersonateController.status(event);
 - `500` -- Unexpected internal failure, returned as the generic `Impersonation failed.` message
 
 The plugin publisher supplies separate start (`[id]`) and stop routes; add the optional status route manually. Keep authentication, capability/policy checks, validation, and CSRF enabled for the write routes.
+
+Record the reviewed stop/status exemptions in the application manifest. Stop is authorized against the freshly loaded original admin through `guard`, so the impersonated member does not need the support capability to restore the session. Status exposes only this authenticated session and must run after verification middleware.
 
 ### ImpersonateMiddleware
 
@@ -393,10 +419,8 @@ export class User extends CanImpersonate(CanBeImpersonated(Model)) {
 import { Impersonate } from '@beeblock/svelar-impersonate';
 import { User } from '$lib/models/User';
 
-Impersonate.configure({
-  userModel: User,
-  redirect: '/dashboard',
-});
+// Use the capability-bound guard configuration from Quick Start above.
+// A role-only default is insufficient for a platform support endpoint.
 ```
 
 ```ts
@@ -418,14 +442,20 @@ export const handle = createSvelarHooks({
 ```ts
 // src/routes/api/admin/impersonate/[id]/+server.ts
 import { ImpersonateController } from '@beeblock/svelar-impersonate/server';
+import { capabilityAccess, resolveCapabilityInput } from '$lib/shared/permissions/access.server.js';
 
-export const POST = async (event) => ImpersonateController.start(event);
+export const POST = capabilityAccess.guardEndpoint(
+  'action.support.impersonate',
+  (event) => ImpersonateController.start(event),
+  resolveCapabilityInput,
+);
 ```
 
 ```ts
 // src/routes/api/admin/impersonate/stop/+server.ts
 import { ImpersonateController } from '@beeblock/svelar-impersonate/server';
 
+// Reviewed functional-RBAC exemption: original-admin capability guard and CSRF remain enforced.
 export const POST = async (event) => ImpersonateController.stop(event);
 ```
 
@@ -433,6 +463,7 @@ export const POST = async (event) => ImpersonateController.stop(event);
 // src/routes/api/admin/impersonate/status/+server.ts
 import { ImpersonateController } from '@beeblock/svelar-impersonate/server';
 
+// Reviewed functional-RBAC exemption: current authenticated session state only.
 export const GET = async (event) => ImpersonateController.status(event);
 ```
 

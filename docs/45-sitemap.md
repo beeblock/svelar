@@ -53,6 +53,7 @@ export const sitemapPlugin = new SvelarSitemapPlugin({
 import { SitemapController } from '@beeblock/svelar-sitemap/server';
 import { Post } from '$lib/models/Post';
 
+// Reviewed public functional-RBAC exemption: intentionally public URLs only.
 export const GET = SitemapController.handle(async (sitemap) => {
   sitemap.add('/', { changeFreq: 'daily', priority: 1.0 });
   sitemap.add('/about', { changeFreq: 'monthly', priority: 0.8 });
@@ -244,10 +245,13 @@ Handles dynamic sitemap serving from SvelteKit routes:
 
 Review these GET routes as public functional-RBAC exemptions only for intentionally public URLs. Filter model queries to published/public records and preserve any required tenant boundary. The controller uses public caching; do not place private user-specific URLs or metadata in that response. It returns an empty XML document with status 500 on generation failure without exposing the exception message.
 
+Register the reviewed public binding in the application's literal manifest (`--public` when scaffolding the route/controller). Keep the common authentication/policy/validation middleware active. These read-only GET exemptions do not authorize scheduler control or any write endpoint.
+
 ```ts
 // src/routes/sitemap.xml/+server.ts
 import { SitemapController } from '@beeblock/svelar-sitemap/server';
 
+// Reviewed public functional-RBAC exemption: intentionally public URLs only.
 export const GET = SitemapController.handle(async (sitemap) => {
   sitemap.add('/', { changeFreq: 'daily', priority: 1.0 });
   sitemap.add('/about');
@@ -261,6 +265,7 @@ export const GET = SitemapController.handle(async (sitemap) => {
 import { SitemapController } from '@beeblock/svelar-sitemap/server';
 import { SitemapIndex } from '@beeblock/svelar-sitemap';
 
+// Reviewed public functional-RBAC exemption: public child-sitemap references only.
 export const GET = SitemapController.handleIndex(async () => {
   const index = SitemapIndex.create('https://example.com');
   index.addSitemap('/sitemap-pages.xml', new Date());
@@ -350,6 +355,7 @@ import { SitemapController } from '@beeblock/svelar-sitemap/server';
 import { Post } from '$lib/models/Post';
 import { Product } from '$lib/models/Product';
 
+// Reviewed public functional-RBAC exemption: published/public model URLs only.
 export const GET = SitemapController.handle(async (sitemap) => {
   // Static pages
   sitemap
@@ -376,6 +382,7 @@ export const GET = SitemapController.handle(async (sitemap) => {
     lastmod: (product) => product.updated_at,
     changeFreq: 'daily',
     priority: 0.8,
+    query: (q) => q.where('published', true), // use the model's public-visibility predicate
   });
 
   return sitemap;
@@ -388,6 +395,7 @@ export const GET = SitemapController.handle(async (sitemap) => {
 import { SitemapController } from '@beeblock/svelar-sitemap/server';
 import { SitemapIndex } from '@beeblock/svelar-sitemap';
 
+// Reviewed public functional-RBAC exemption: public child-sitemap references only.
 export const GET = SitemapController.handleIndex(async () => {
   const index = SitemapIndex.create('https://myapp.com');
   index.addSitemap('/sitemap-pages.xml', new Date());
