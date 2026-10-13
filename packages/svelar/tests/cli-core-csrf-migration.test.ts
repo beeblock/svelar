@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,7 +30,39 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); rmSync(root, { recursive: true, force: true }); });
 
 describe('Recognized legacy CSRF token migration', () => {
-  it.each(['/api/webhooks/', '/api/webhooks/incoming/'])('narrows %s plus broad internal prefix with exact backup and idempotence', (prefix) => {
+  it('migrates the hash-verified published 0.7.9 hooks template and preserves the upgrade marker', () => {
+    const published = `/**
+ * SvelteKit Server Hooks \u2014 Svelar middleware pipeline
+ */
+
+import { createSvelarApp } from '@beeblock/svelar/hooks';
+import { DatabaseSessionStore } from '@beeblock/svelar/session';
+
+// Import app.ts to trigger database + hashing + auth configuration
+import { auth } from './app.js';
+
+export const { handle, handleError } = createSvelarApp({
+  auth,
+  secret: process.env.APP_KEY,
+  sessionStore: new DatabaseSessionStore(),
+  rateLimitStore: process.env.RATE_LIMIT_STORE === 'cache' ? 'cache' : 'memory',
+  rateLimitCacheStore: process.env.RATE_LIMIT_CACHE_STORE || process.env.CACHE_DRIVER,
+  authThrottleStore: process.env.RATE_LIMIT_STORE === 'cache' ? 'cache' : 'memory',
+  authThrottleCacheStore: process.env.RATE_LIMIT_CACHE_STORE || process.env.CACHE_DRIVER,
+  csrfExcludePaths: ['/api/webhooks', '/api/internal/'],
+});
+`;
+    expect(createHash('sha256').update(published).digest('hex')).toBe('74212577d6ce4fcbe1f280247aeecb8421a987265f8a0e01b87d7a24f1ca303c');
+    const original = published + '\n// upgrade customization\n'; write(original);
+    const migration = plan();
+    expect(migration.errors).toEqual([]); expect(migration.edits).toHaveLength(1);
+    applyCoreScaffoldMigration(migration, { confirmed: true });
+    expect(read()).toBe(original.replace("['/api/webhooks', '/api/internal/']", "['/api/webhooks/incoming/'],\n  csrfExcludeExactPaths: ['/api/internal/broadcast']"));
+    expect(readFileSync(join(root, path + '.core.bak'), 'utf8')).toBe(original);
+    expect(plan().errors).toEqual([]); expect(plan().edits).toEqual([]);
+  });
+
+  it.each(['/api/webhooks', '/api/webhooks/', '/api/webhooks/incoming/'])('narrows %s plus broad internal prefix with exact backup and idempotence', (prefix) => {
     const source = hooks(`csrfExcludePaths: ['${prefix}', '/api/internal/'],`);
     write(source);
     const expected = source.replace(`['${prefix}', '/api/internal/']`, "['/api/webhooks/incoming/'],\n  csrfExcludeExactPaths: ['/api/internal/broadcast']");
@@ -88,6 +121,11 @@ describe('Recognized legacy CSRF token migration', () => {
 
 describe('Fail-closed app-owned CSRF configurations', () => {
   const options = [
+    "csrfExcludePaths: ['/api/webhooks', '/api/internal/', '/custom/'],",
+    "csrfExcludePaths: ['/api/webhooks', '/api/internal'],",
+    "csrfExcludePaths: ['/api/webhooks-custom', '/api/internal/'],",
+    "csrfExcludePaths: ['/api/webhooks', '/api/internal/'], csrfExcludeExactPaths: ['/custom'],",
+    "csrfExcludePaths: ['/api/webhooks', '/api/internal/'], ...customOptions,",
     "csrfExcludePaths: ['/api/webhooks/', '/api/internal/', '/custom/'],",
     "csrfExcludePaths: ['/api/internal/', '/api/webhooks/'],",
     "csrfExcludePaths: ['/custom/', '/api/internal/'],",

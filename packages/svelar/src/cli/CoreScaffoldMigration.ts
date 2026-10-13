@@ -262,7 +262,7 @@ function coreTokens(
       && exactPaths?.length === 1 && exactPaths[0] === '/api/internal/broadcast') return tokens;
     if (exact) fail('Existing exact CSRF exclusions require manual review');
     if (!prefix || !ts.isPropertyAssignment(prefix) || !ts.isArrayLiteralExpression(prefix.initializer)
-      || paths?.length !== 2 || !['/api/webhooks/', '/api/webhooks/incoming/'].includes(paths[0]) || paths[1] !== '/api/internal/') {
+      || paths?.length !== 2 || !['/api/webhooks', '/api/webhooks/', '/api/webhooks/incoming/'].includes(paths[0]) || paths[1] !== '/api/internal/') {
       fail('Custom CSRF exclusion paths require manual review');
     }
     if (exclusions.length !== 1 || exclusions[0] !== prefix) fail('Additional CSRF option objects require manual review');
