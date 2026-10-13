@@ -213,6 +213,51 @@ describe('One-artifact orchestration and cleanup', () => {
     const evidence = reports()[0]; expect(evidence.status).toBe('failed'); expect(evidence.cleanup).toBe('completed');
     expect(evidence.gates[failedIndex].status).toBe('failed'); expect(evidence.gates.slice(failedIndex + 1).every((gate: { status: string }) => gate.status === 'not-run')).toBe(true);
     expect(JSON.stringify(evidence)).not.toContain('fixture-secret');
+    const commandLog = readFileSync(evidence.gates[failedIndex].logPath, 'utf8');
+    expect(commandLog).toContain('FAILURE'); expect(commandLog).toContain('gate failed');
+    expect(commandLog).not.toContain('fixture-secret');
+  });
+
+  it('persists completed stdout/stderr per gate with secrets redacted and child streaming disabled', async () => {
+    const path = archive(); const log = vi.fn();
+    const stdout = 'correlationId=trace-log-123 ' + 'Authorization: Bearer split-' + 'credential {"password":"fixture-password"}';
+    const stderr = 'warning from /fixture.ts:17 api_key=fixture-key';
+    const execute = vi.fn(async (_command: string, _args: string[], _settings: { stream: boolean }) => ({ stdout, stderr }));
+    const result = await coordinator.certifyRelease(options(['--tarball', path]), {
+      prepare: (tarball: string) => smoke.prepareSmokeArtifact(tarball, prepareOptions()), execute, verifyClient: () => {}, log,
+    });
+    for (const gate of result.gates) {
+      expect(gate.logPath).toMatch(new RegExp(`/${gate.id}/command\\.log$`));
+      const output = readFileSync(gate.logPath, 'utf8');
+      expect(output).toContain('STDOUT'); expect(output).toContain('STDERR');
+      expect(output).toContain('trace-log-123'); expect(output).toContain('/fixture.ts:17');
+      for (const secret of ['split-credential', 'fixture-password', 'fixture-key']) expect(output).not.toContain(secret);
+      expect(gate.durationMs).toBeGreaterThanOrEqual(0); expect(gate.finishedAt).toBeTruthy();
+    }
+    expect(execute.mock.calls.every(([, , settings]) => settings.stream === false)).toBe(true);
+    for (const secret of ['split-credential', 'fixture-password', 'fixture-key']) expect(JSON.stringify(log.mock.calls)).not.toContain(secret);
+  });
+
+  it('retains failed deadline evidence and output before cleanup without continuing another phase', async () => {
+    const path = archive(); let recordedBeforeCleanup = false;
+    const error = Object.assign(new Error('Command exceeded 10800000ms password=deadline-secret'), {
+      code: 'ETIMEDOUT', signal: 'SIGTERM', stdout: 'correlationId=timeout-123 Authorization: Bearer timeout-token', stderr: 'write ETIMEDOUT at /fixture.ts:31 api_key=timeout-key',
+    });
+    const execute = vi.fn(async () => { throw error; });
+    await expect(coordinator.certifyRelease(options(['--tarball', path]), {
+      prepare: (tarball: string) => {
+        const artifact = smoke.prepareSmokeArtifact(tarball, prepareOptions()); const cleanup = artifact.cleanup;
+        artifact.cleanup = () => { const failed = reports()[0].gates[0]; recordedBeforeCleanup = existsSync(failed.logPath); cleanup(); };
+        return artifact;
+      }, execute, log: () => {},
+    })).rejects.toBe(error);
+    expect(recordedBeforeCleanup).toBe(true); expect(execute).toHaveBeenCalledTimes(1);
+    const evidence = reports()[0]; const failed = evidence.gates[0]; const output = readFileSync(failed.logPath, 'utf8');
+    expect(failed.status).toBe('failed'); expect(failed.deadlineMs).toBe(10800000); expect(failed.durationMs).toBeGreaterThanOrEqual(0);
+    for (const value of ['ETIMEDOUT', 'SIGTERM', '10800000', 'timeout-123', '/fixture.ts:31']) expect(output).toContain(value);
+    for (const secret of ['deadline-secret', 'timeout-token', 'timeout-key']) expect(output).not.toContain(secret);
+    expect(evidence.gates.slice(1).every((gate: { status: string }) => gate.status === 'not-run')).toBe(true);
+    expect(extractionDirectories()).toEqual([]);
   });
 
   it('detects artifact mutation during a gate before any later gate can consume changed bytes', async () => {
@@ -244,6 +289,13 @@ describe('One-artifact orchestration and cleanup', () => {
     expect(execute.mock.calls[0][2].env.SVELAR_TEST_SEARCH_MILLION).toBeUndefined();
     expect(execute.mock.calls[0][2].env.SVELAR_DASHBOARD_TYPE_DEPS).toBeUndefined();
     expect(result.optional).toEqual({ million: true, typeDeps: deps }); expect(extractionDirectories()).toEqual([]);
+    for (const id of ['million-search', 'operator-types']) {
+      const gate = result.gates.find((entry: { id: string }) => entry.id === id);
+      expect(existsSync(gate.logPath)).toBe(true);
+      const directory = dirname(gate.logPath);
+      expect(existsSync(join(directory, `${id}.log`))).toBe(true);
+      expect(JSON.parse(readFileSync(join(directory, `${id}.json`), 'utf8')).success).toBe(true);
+    }
   });
 
   it('rejects missing opt-in type dependencies before build/pack or any gate', async () => {

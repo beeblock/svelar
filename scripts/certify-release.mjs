@@ -2,6 +2,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import { createJiti } from 'jiti';
 import { cliExecutionGates } from './cli-certification.mjs';
@@ -191,6 +192,14 @@ async function readBuiltinCommandNames() {
 	return names;
 }
 
+function persistCommandLog(record, invocation, output, failure) {
+	const metadata = { gate: record.id, scope: record.scope, command: invocation.command, args: invocation.args,
+		status: record.status, startedAt: record.startedAt, finishedAt: record.finishedAt,
+		durationMs: record.durationMs, deadlineMs: record.deadlineMs, errorCode: failure?.code, signal: failure?.signal };
+	const contents = `${JSON.stringify(metadata, null, 2)}\n\nSTDOUT\n${output?.stdout ?? ''}\n\nSTDERR\n${output?.stderr ?? ''}\n${failure ? `\nFAILURE\n${failure.stack ?? failure.message ?? String(failure)}\n` : ''}`;
+	writeFileSync(record.logPath, redactEvidence(contents), { mode: 0o600 });
+}
+
 export async function certifyRelease(options, { prepare = prepareSmokeArtifact, execute = runCommand,
 	readNames = readBuiltinCommandNames, verifyClient = verifyInstalledArtifactClient, environment = process.env,
 	applicationRoot = appsRoot, log = console.log } = {}) {
@@ -235,23 +244,46 @@ export async function certifyRelease(options, { prepare = prepareSmokeArtifact, 
 					abort.signal.throwIfAborted();
 					verifySmokeArtifact(artifact);
 					const record = report.gates[index];
-					record.status = 'running'; persist();
+					const directory = join(reportDirectory, gate.id); mkdirSync(directory);
+					const started = performance.now();
+					record.status = 'running'; record.startedAt = new Date().toISOString();
+					record.deadlineMs = gate.files ? 360000 : 10800000;
+					record.logPath = join(directory, 'command.log');
+					let invocation = { command: gate.command ?? process.execPath, args: gate.args ?? [] };
+					let output;
+					let gateFailure;
+					const capture = async (command, args, settings) => {
+						invocation = { command, args };
+						try { output = await execute(command, args, { ...settings, stream: false }); return output; }
+						catch (error) { output = error; throw error; }
+					};
+					persistCommandLog(record, invocation); persist();
 					try {
 						if (gate.client) verifyClient(gate.client, artifact);
 						log(`\n[${gate.scope}] ${gate.id}`);
 						if (gate.files) {
-							const directory = join(reportDirectory, gate.id); mkdirSync(directory);
 							record.result = await runNativeGate({ name: gate.id, files: gate.files }, {
 								cwd: coreRoot, env: { ...env, ...gate.env }, signal: abort.signal, timeoutMs: 360000,
 								temporaryDirectory: artifact.extractionRoot, reportDirectory: directory, vitest: join(repoRoot, 'node_modules/vitest/vitest.mjs'),
-							}, execute);
+							}, capture);
 						} else {
 							log(`$ ${gate.command} ${gate.args.join(' ')}`);
-							await execute(gate.command, gate.args, { cwd: repoRoot, env, signal: abort.signal, timeoutMs: 10800000, stream: true, maxBytes: 64 * 1024 * 1024 });
+							await capture(gate.command, gate.args, { cwd: repoRoot, env, signal: abort.signal, timeoutMs: record.deadlineMs, maxBytes: 64 * 1024 * 1024 });
 						}
 						verifySmokeArtifact(artifact);
-						record.status = 'passed'; persist();
-					} catch (error) { record.status = 'failed'; record.error = redactEvidence(error.message ?? String(error)); throw error; }
+						record.status = 'passed';
+					} catch (error) { gateFailure = error; record.status = 'failed'; record.error = redactEvidence(error.message ?? String(error)); throw error; }
+					finally {
+						record.finishedAt = new Date().toISOString();
+						record.durationMs = Math.round((performance.now() - started) * 100) / 100;
+						try { persistCommandLog(record, invocation, output, gateFailure); }
+						catch (error) {
+							record.status = 'failed'; record.error = 'Command evidence could not be preserved.';
+							throw gateFailure ? new AggregateError([gateFailure, error], record.error) : error;
+						} finally { persist(); }
+						if (output?.stdout) log(redactEvidence(output.stdout));
+						if (output?.stderr) log(redactEvidence(output.stderr));
+					}
 				}
 				report.status = 'passed';
 			}
