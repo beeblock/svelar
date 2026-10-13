@@ -8,7 +8,7 @@
 
 import type { Model } from '../orm/Model.js';
 
-type ModelClass<T> = new (...args: any[]) => T;
+type ModelClass<T> = new () => T;
 
 export abstract class Factory<T extends Model> {
   private static _sequence = 0;
@@ -27,24 +27,24 @@ export abstract class Factory<T extends Model> {
   abstract model(): ModelClass<T>;
 
   /** Return default attribute values for the model */
-  abstract definition(): Record<string, any>;
+  abstract definition(): Record<string, unknown> | Promise<Record<string, unknown>>;
 
   /**
    * Create a model instance and persist it to the database.
    */
-  async create(overrides: Partial<Record<string, any>> = {}): Promise<T> {
+  async create(overrides: Partial<Record<string, unknown>> = {}): Promise<T> {
     const ModelClass = this.model();
-    const attrs = { ...this.definition(), ...overrides };
+    const attrs = { ...await this.definition(), ...overrides };
     const instance = new ModelClass();
     Object.assign(instance, attrs);
-    await (instance as any).save();
+    await instance.save();
     return instance;
   }
 
   /**
    * Create multiple model instances and persist them.
    */
-  async createMany(count: number, overrides: Partial<Record<string, any>> = {}): Promise<T[]> {
+  async createMany(count: number, overrides: Partial<Record<string, unknown>> = {}): Promise<T[]> {
     const results: T[] = [];
     for (let i = 0; i < count; i++) {
       results.push(await this.create(overrides));
@@ -55,9 +55,15 @@ export abstract class Factory<T extends Model> {
   /**
    * Make a model instance without persisting it.
    */
-  make(overrides: Partial<Record<string, any>> = {}): T {
+  make(overrides: Partial<Record<string, unknown>> = {}): T {
     const ModelClass = this.model();
-    const attrs = { ...this.definition(), ...overrides };
+    const definition = this.definition();
+    if (typeof definition.then === 'function') {
+      // Synchronous callers cannot await this result, including a rejected definition.
+      void Promise.resolve(definition).catch(() => {});
+      throw new TypeError('Factory.make() requires a synchronous definition. Use makeAsync() or makeManyAsync() for async definitions.');
+    }
+    const attrs = { ...definition, ...overrides };
     const instance = new ModelClass();
     Object.assign(instance, attrs);
     return instance;
@@ -66,11 +72,27 @@ export abstract class Factory<T extends Model> {
   /**
    * Make multiple model instances without persisting them.
    */
-  makeMany(count: number, overrides: Partial<Record<string, any>> = {}): T[] {
+  makeMany(count: number, overrides: Partial<Record<string, unknown>> = {}): T[] {
     const results: T[] = [];
     for (let i = 0; i < count; i++) {
       results.push(this.make(overrides));
     }
+    return results;
+  }
+
+  /** Make an instance from a synchronous or asynchronous definition without persisting. */
+  async makeAsync(overrides: Partial<Record<string, unknown>> = {}): Promise<T> {
+    const ModelClass = this.model();
+    const attrs = { ...await this.definition(), ...overrides };
+    const instance = new ModelClass();
+    Object.assign(instance, attrs);
+    return instance;
+  }
+
+  /** Make instances sequentially so definition state and sequence ordering remain stable. */
+  async makeManyAsync(count: number, overrides: Partial<Record<string, unknown>> = {}): Promise<T[]> {
+    const results: T[] = [];
+    for (let i = 0; i < count; i++) results.push(await this.makeAsync(overrides));
     return results;
   }
 }
