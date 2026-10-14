@@ -486,6 +486,44 @@ describe('Auth page rendering', () => {
     expect(output).not.toContain('action="?/send"');
   });
 
+  it.each<ValidationProvider>(['zod', 'valibot'])('keeps send results local and retains typed OTP through prefills and unrelated updates (%s)', (provider) => {
+    const requestForm = { id: 'otp-request', data: { email: 'user@example.com' }, errors: {} };
+    const verifyForm = { id: 'otp-verify', data: { email: 'user@example.com', code: '' }, errors: {} };
+    const { formInstances } = renderAuthPage(T.otpLoginPageSvelte, { requestForm, verifyForm, appName: 'Acme' }, undefined, provider);
+    const [request, verify] = formInstances;
+    expect(request.options.invalidateAll).toBe(false);
+    expect(verify.options.onUpdated).toBeUndefined();
+    verify.form.set({ email: 'user@example.com', code: '654321' });
+    for (const result of [
+      { type: 'success', data: { codeSent: true, email: 'user@example.com', verifyForm: { ...verifyForm, valid: false, posted: false } } },
+      { type: 'failure', data: { verifyForm: { ...verifyForm, valid: false, posted: false } } },
+      { type: 'failure', data: { form: { ...verifyForm, valid: false, posted: true } } },
+      { type: 'failure', data: { verifyForm: { ...verifyForm, id: 'another-form', valid: false, posted: true } } },
+      { type: 'failure', data: { requestForm: { ...requestForm, valid: false, posted: true } } },
+    ]) {
+      verify.options.onResult({ result });
+      expect(get(verify.form).code).toBe('654321');
+    }
+    request.options.onResult({ result: { type: 'success', data: { codeSent: true, email: 'user@example.com' } } });
+    expect(get(verify.form)).toEqual({ email: 'user@example.com', code: '654321' });
+  });
+
+  it.each<ValidationProvider>(['zod', 'valibot'])('clears OTP only after its own completed server failure and on transport errors (%s)', (provider) => {
+    const requestForm = { id: 'otp-request', data: { email: 'user@example.com' }, errors: {} };
+    const verifyForm = { id: 'otp-verify', data: { email: 'user@example.com', code: '654321' }, errors: {} };
+    const { formInstances } = renderAuthPage(T.otpLoginPageSvelte, { requestForm, verifyForm, appName: 'Acme' }, undefined, provider);
+    const verify = formInstances[1];
+    for (const status of [400, 401, 403, 422, 429, 503]) {
+      verify.form.set({ ...verifyForm.data });
+      verify.options.onResult({ result: { type: 'failure', status, data: { verifyForm: { ...verifyForm, valid: false, posted: true } } } });
+      expect(get(verify.form).code).toBe('');
+    }
+    verify.form.set({ ...verifyForm.data });
+    verify.options.onError({ result: { type: 'error' } });
+    expect(get(verify.form).code).toBe('');
+    expect(get(verify.message)).toBe('Unable to verify the code right now. Please try again.');
+  });
+
   it.each([T.loginPageSvelte, T.registerPageSvelte, T.resetPasswordPageSvelte])('clears passwords after a failed update and on unexpected errors', (template) => {
     const initial = { data: { email: 'user@example.com', password: 'initial-secret', password_confirmation: 'initial-secret' }, errors: {} };
     const { formInstances } = renderAuthPage(template, { form: initial, appName: 'Acme' });

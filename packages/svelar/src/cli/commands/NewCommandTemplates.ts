@@ -4698,6 +4698,8 @@ export const actions: Actions = {
   // svelte-ignore state_referenced_locally
   const { form: requestForm, errors: requestErrors, enhance: requestEnhance, submitting: requestSubmitting, delayed: requestDelayed, message: requestMessage } = superForm(actionData?.requestForm ?? data.requestForm, {
     validators: zod4Client(otpRequestSchema),
+    // The send result includes both forms; reloading would overwrite the verification code.
+    invalidateAll: false,
     onResult: ({ result }) => {
       if (result.type === 'success' && result.data?.codeSent) {
         codeSent = true;
@@ -4713,8 +4715,9 @@ export const actions: Actions = {
   // svelte-ignore state_referenced_locally
   const { form: verifyForm, errors: verifyErrors, enhance: verifyEnhance, submitting: verifySubmitting, delayed: verifyDelayed, message: verifyMessage } = superForm(actionData?.verifyForm ?? data.verifyForm, {
     validators: zod4Client(otpVerifySchema),
-    onUpdated: ({ form: updated }) => {
-      if (!updated.valid) $verifyForm.code = '';
+    onResult: ({ result }) => {
+      const failed = result.type === 'failure' ? result.data?.verifyForm : undefined;
+      if (failed?.id === data.verifyForm.id && failed?.posted === true) $verifyForm.code = '';
     },
     onError: () => {
       $verifyForm.code = '';
