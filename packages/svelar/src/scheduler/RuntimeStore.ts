@@ -127,7 +127,7 @@ export class SchedulerRuntimeStore {
     await this.query('scheduler_runtime').upsert({
       runtime_key: `process:${owner}`, kind: 'process', task_name: null, tenant_id: schedulerTenantId(this.scope),
       state: 'running', heartbeat_at: Date.now(), started_at: Date.now(), ...data,
-    }, 'runtime_key', ['state', 'heartbeat_at', ...Object.keys(data)]);
+    }, 'runtime_key', [...new Set(['state', 'heartbeat_at', ...Object.keys(data)])]);
   }
 
   async processes(): Promise<SchedulerRuntimeRecord[]> {
