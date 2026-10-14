@@ -113,13 +113,29 @@ describe('Central certification options and gate inventory', () => {
     for (const gate of smokeGates) expect(gate.args).toContain(`--tarball=${path}`);
     expect(plan.slice(3, 11).map((gate: { id: string }) => gate.id)).toEqual(['fresh-new-cli-four', 'operational-browser-fixtures', 'auth-ui-zod', 'auth-ui-valibot', 'ui-patterns', 'invitation-ui-zod', 'invitation-ui-valibot', 'populated-operations']);
     expect(plan[3].args).toEqual(expect.arrayContaining(['--app=all', '--validation=all', '--cli-execution', '--browser', '--prod']));
-    expect(plan[4]).toMatchObject({ scope: 'source', command: process.execPath, args: ['--test', join(repository, 'scripts/operational-browser-fixtures.test.mjs')] });
+    expect(plan[4]).toMatchObject({ scope: 'source', command: process.execPath, args: ['--test',
+      join(repository, 'scripts/operational-browser-fixtures.test.mjs'),
+      join(repository, 'scripts/scheduler-installed-process-certification.test.mjs'),
+      join(repository, 'scripts/generated-deployment-certification.test.mjs')] });
     expect(plan[5].client).toBe('/fresh-apps/svelar-smoke-ddd');
     expect(plan[6].client).toBe('/fresh-apps/svelar-smoke-ddd-valibot');
     expect(plan[7].args).toContain('--clients=/fresh-apps/svelar-smoke-ddd/package.json');
     expect(plan[8].args).toEqual([join(repository, 'scripts/invitation-ui-certification.mjs'), '--installed-app=/fresh-apps/svelar-smoke-ddd', `--tarball=${path}`, '--report-dir=/evidence/invitation-ui-zod']);
     expect(plan[9].args).toEqual([join(repository, 'scripts/invitation-ui-certification.mjs'), '--installed-app=/fresh-apps/svelar-smoke-ddd-valibot', `--tarball=${path}`, '--report-dir=/evidence/invitation-ui-valibot']);
     expect(plan[10].args).toEqual([join(repository, 'scripts/browser-smoke.mjs'), '--app-dir=/fresh-apps/svelar-smoke-ddd', '--server-script=smoke:serve:prod', '--operational-deep', `--expected-core-sha256=${selectedSha}`, '--port=5826', '--evidence-dir=/evidence/populated-operations']);
+    expect(plan.slice(11, 15).map((gate: { id: string }) => gate.id)).toEqual([
+      'scheduler-process-restart', 'capability-absence-zod', 'capability-absence-valibot', 'generated-adapter-deployment',
+    ]);
+    expect(plan[11]).toMatchObject({ scope: 'artifact', client: '/fresh-apps/svelar-smoke-ddd',
+      args: [join(repository, 'scripts/scheduler-installed-process-certification.mjs'), '--app-dir', '/fresh-apps/svelar-smoke-ddd',
+        '--tarball', path, '--expected-sha256', selectedSha, '--report-dir', '/evidence/scheduler-process-restart'] });
+    for (const [index, validation] of [[12, 'zod'], [13, 'valibot']] as const) {
+      expect(plan[index].scope).toBe('artifact');
+      expect(plan[index].args).toEqual(expect.arrayContaining([`--expected-core-sha256=${selectedSha}`, `--validation=${validation}`, '--certify']));
+      expect(plan[index].args).toContain(`--clients=${plan[index].client}/package.json`);
+    }
+    expect(plan[14]).toMatchObject({ scope: 'artifact', args: [join(repository, 'scripts/generated-deployment-certification.mjs'),
+      `--tarball=${path}`, `--sha256=${selectedSha}`, '--execute', '--report-dir=/evidence/generated-adapter-deployment'] });
     const native = plan.find((gate: { id: string }) => gate.id === 'native-source-runtime');
     expect(native.scope).toBe('source');
     expect(native.args).toContain('--clients=/fresh-apps/svelar-smoke-ddd/package.json');
@@ -138,6 +154,7 @@ describe('Central certification options and gate inventory', () => {
     expect(plan.some((gate: { id: string }) => gate.id === 'native-source-runtime')).toBe(true);
     expect(plan.some((gate: { id: string }) => gate.id.startsWith('auth-ui') || gate.id === 'ui-patterns')).toBe(false);
     expect(plan.some((gate: { id: string }) => gate.id.startsWith('invitation-ui') || gate.id === 'populated-operations')).toBe(false);
+    expect(plan.some((gate: { id: string }) => gate.id === 'scheduler-process-restart' || gate.id.startsWith('capability-absence-') || gate.id === 'generated-adapter-deployment')).toBe(false);
     expect(plan.find((gate: { id: string }) => gate.id === 'operational-browser-fixtures').scope).toBe('source');
     expect(plan.filter((gate: { args?: string[] }) => gate.args?.includes('--tarball=/immutable.tgz'))).toHaveLength(8);
     expect(plan.some((gate: { args?: string[] }) => gate.args?.includes('--browser') || gate.args?.includes('--prod'))).toBe(false);
@@ -163,7 +180,7 @@ describe('One-artifact orchestration and cleanup', () => {
     expect(result.artifact.sha256).toBe(createHash('sha256').update(before).digest('hex'));
     expect(result.sourceRuntime).toEqual({ enabled: true, immutableArtifactProof: false });
     expect(result.gates.every((gate: { status: string }) => gate.status === 'passed')).toBe(true);
-    expect(result.cleanup).toBe('completed'); expect(verifyClient).toHaveBeenCalledTimes(7);
+    expect(result.cleanup).toBe('completed'); expect(verifyClient).toHaveBeenCalledTimes(10);
     expect(readFileSync(path)).toEqual(before); expect(extractionDirectories()).toEqual([]);
     const invocations = execute.mock.calls;
     const publish = invocations.find(([, args]) => args[0] === 'publish');
@@ -205,7 +222,9 @@ describe('One-artifact orchestration and cleanup', () => {
     expect(extractionDirectories()).toEqual([]); expect(reports()).toEqual([]);
   });
 
-  it.each(['fresh-new-cli-four', 'operational-browser-fixtures', 'auth-ui-zod', 'invitation-ui-zod', 'invitation-ui-valibot', 'populated-operations', 'native-source-runtime', 'historical-upgrade-four', 'database-drivers'])('stops on %s failure, preserves evidence and never proceeds/retries', async (id) => {
+  it.each(['fresh-new-cli-four', 'operational-browser-fixtures', 'auth-ui-zod', 'invitation-ui-zod', 'invitation-ui-valibot', 'populated-operations',
+    'scheduler-process-restart', 'capability-absence-zod', 'capability-absence-valibot', 'generated-adapter-deployment',
+    'native-source-runtime', 'historical-upgrade-four', 'database-drivers'])('stops on %s failure, preserves evidence and never proceeds/retries', async (id) => {
     const path = archive(); const settings = options(['--tarball', path]);
     const ids = coordinator.certificationPlan(settings, { tarballPath: path, sha256: selectedSha }, '/report').map((gate: { id: string }) => gate.id);
     const failedIndex = ids.indexOf(id); let calls = 0;

@@ -45,6 +45,9 @@ export const featureGates = [
 	['Installed invitation page/API acceptance with preserved source and database (both providers)', 'invitation-ui-certification.mjs --installed-app=<fresh DDD> --tarball=<selected archive>'],
 	['Populated operations browser acceptance using the installed immutable package', 'browser-smoke.mjs --operational-deep --expected-core-sha256=<selected SHA> before service phases'],
 	['Operational browser fixture isolation, ownership and failure contracts', 'node --test scripts/operational-browser-fixtures.test.mjs: SOURCE gate, outside Vitest'],
+	['Persistent scheduler controls across independent HTTP and restarted scheduler processes', 'scheduler-installed-process-certification.mjs using the selected installed archive'],
+	['Capability-gated absent commands and direct HTTP 403 (both providers)', 'capability-absence-certification.mjs: test-owned frontend with CLI-generated backend'],
+	['Generated adapter-node readiness, HTTP drain, promotion and rollback', 'generated-deployment-certification.mjs: installed app; active domain-worker proof remains separately labeled SOURCE-native'],
 	['Million-record bounded search reindex (optional, zero skips when enabled)', '--million or SVELAR_TEST_SEARCH_MILLION=1'],
 	['Strict generated operator bindings (optional, zero skips when enabled)', '--type-deps=<installed node_modules> or SVELAR_DASHBOARD_TYPE_DEPS'],
 	['API key create/validate/revoke/rotate and fail-closed Bearer authentication', 'packages/svelar/tests/api-keys.test.ts + generated-app certification'],
@@ -140,7 +143,10 @@ export function certificationPlan(options, artifact, reportDirectory, applicatio
 		{ id: 'security-audit', scope: 'source', command: 'npm', args: ['run', 'security:audit'] },
 		{ id: 'artifact-publish-dry-run', scope: 'artifact', command: 'npm', args: ['publish', artifact.tarballPath, '--dry-run', '--ignore-scripts', '--tag=svelar-certification', '--json'] },
 		smoke('fresh-new-cli-four', ['--app=all', '--validation=all', '--cli-execution', '--skip-cli-help', ...(!options.fast ? ['--browser', '--prod'] : [])]),
-		{ id: 'operational-browser-fixtures', scope: 'source', command: process.execPath, args: ['--test', join(scriptDir, 'operational-browser-fixtures.test.mjs')] },
+		{ id: 'operational-browser-fixtures', scope: 'source', command: process.execPath, args: ['--test',
+			join(scriptDir, 'operational-browser-fixtures.test.mjs'),
+			join(scriptDir, 'scheduler-installed-process-certification.test.mjs'),
+			join(scriptDir, 'generated-deployment-certification.test.mjs')] },
 	];
 	if (!options.fast) gates.push(
 		node('auth-ui-zod', 'auth-ui-certification.mjs', ['--app-dir', client, '--phase', 'full', '--port', '5897', '--report-dir', join(reportDirectory, 'auth-ui-zod')], 'artifact', { client }),
@@ -149,6 +155,17 @@ export function certificationPlan(options, artifact, reportDirectory, applicatio
 		node('invitation-ui-zod', 'invitation-ui-certification.mjs', [`--installed-app=${client}`, `--tarball=${artifact.tarballPath}`, `--report-dir=${join(reportDirectory, 'invitation-ui-zod')}`], 'artifact', { client }),
 		node('invitation-ui-valibot', 'invitation-ui-certification.mjs', [`--installed-app=${valibot}`, `--tarball=${artifact.tarballPath}`, `--report-dir=${join(reportDirectory, 'invitation-ui-valibot')}`], 'artifact', { client: valibot }),
 		node('populated-operations', 'browser-smoke.mjs', [`--app-dir=${client}`, '--server-script=smoke:serve:prod', '--operational-deep', `--expected-core-sha256=${artifact.sha256}`, '--port=5826', `--evidence-dir=${join(reportDirectory, 'populated-operations')}`], 'artifact', { client }),
+		node('scheduler-process-restart', 'scheduler-installed-process-certification.mjs', ['--app-dir', client,
+			'--tarball', artifact.tarballPath, '--expected-sha256', artifact.sha256,
+			'--report-dir', join(reportDirectory, 'scheduler-process-restart')], 'artifact', { client }),
+		node('capability-absence-zod', 'capability-absence-certification.mjs', [`--clients=${join(client, 'package.json')}`,
+			`--expected-core-sha256=${artifact.sha256}`, '--validation=zod', '--certify',
+			`--report-dir=${join(reportDirectory, 'capability-absence-zod')}`], 'artifact', { client }),
+		node('capability-absence-valibot', 'capability-absence-certification.mjs', [`--clients=${join(valibot, 'package.json')}`,
+			`--expected-core-sha256=${artifact.sha256}`, '--validation=valibot', '--certify',
+			`--report-dir=${join(reportDirectory, 'capability-absence-valibot')}`], 'artifact', { client: valibot }),
+		node('generated-adapter-deployment', 'generated-deployment-certification.mjs', [`--tarball=${artifact.tarballPath}`,
+			`--sha256=${artifact.sha256}`, '--execute', `--report-dir=${join(reportDirectory, 'generated-adapter-deployment')}`]),
 	);
 	gates.push(node('native-source-runtime', 'runtime-certification.mjs', [`--clients=${join(client, 'package.json')}`, `--report-dir=${join(reportDirectory, 'native-source-runtime')}`], 'source', { client }));
 	if (options.million) gates.push({ id: 'million-search', scope: 'source', files: ['search-large-keyset.test.ts'], env: { SVELAR_TEST_SEARCH_MILLION: '1', SVELAR_TEST_SEARCH_LARGE_EVIDENCE_DIR: join(reportDirectory, 'million-search') } });
