@@ -10,7 +10,7 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseEnv, promisify } from 'node:util';
 import { tmpdir } from 'node:os';
-import { fixtureIdentity, installationProvenance, prepareIsolatedApp, sourceSnapshot, startServer, stopServer } from './auth-ui-certification.mjs';
+import { fixtureIdentity, installationProvenance, pendingFormSubmission, prepareIsolatedApp, sourceSnapshot, startServer, stopServer } from './auth-ui-certification.mjs';
 
 const run = promisify(execFile);
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -392,6 +392,15 @@ async function installedFixture(isolation, operation, state) {
   } finally { clearTimeout(timeout); clearTimeout(forced); }
 }
 
+export function invitationCdpEndpoint(data) {
+  const candidates = Object.values(data).filter((value) => typeof value === 'string' && /^wss?:\/\//.test(value));
+  assert.equal(candidates.length, 1, 'Expected one CDP endpoint from the owned agent-browser session.');
+  const url = new URL(candidates[0]);
+  assert(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) && !url.username && !url.password
+    && url.pathname.startsWith('/devtools/browser/'), 'Refusing a non-local or non-browser CDP endpoint.');
+  return url.href;
+}
+
 async function restoreOriginalAuthConfig(original, copy) {
   for (const entry of await readdir(join(copy, 'config'))) {
     if (entry === 'auth.js' || entry === 'auth.ts' || entry.startsWith('.auth-ui-original-auth.')) await rm(join(copy, 'config', entry));
@@ -402,10 +411,10 @@ async function restoreOriginalAuthConfig(original, copy) {
 }
 
 export async function installedCertification(options) {
-  const result = { mode: 'installed-production', passed: 0, failed: 0, skipped: 0, expectedChecks: 14, complete: false, cases: [], cleanupErrors: [],
+  const result = { mode: 'installed-production', passed: 0, failed: 0, skipped: 0, expectedChecks: 14, complete: false, cases: [], pendingForms: [], cleanupErrors: [],
     startedAt: new Date().toISOString(), nodeVersion: process.version,
     scope: 'Unchanged installed adapter-node production routes and Superforms; actual generated UserFactory/installed Hash/Auth/Teams; owned SQLite online backup. No core-source aliases, Vite, app source patches, builds, packs or installs.' };
-  let state = fixtureIdentity(); let isolation; let server; let browserOpened = false; let failure; let snapshot; let buildSnapshot; let originalDatabase; let databaseSnapshot; let interrupted = false;
+  let state = fixtureIdentity(); let isolation; let server; let browserOpened = false; let cdpBrowser; let pendingPage; let failure; let snapshot; let buildSnapshot; let originalDatabase; let databaseSnapshot; let interrupted = false;
   const session = 'invitation-installed-' + state.runId;
   let origin;
   const browser = async (...args) => {
@@ -542,7 +551,18 @@ export async function installedCertification(options) {
       result.branding = await evaluate('({ frameCount: document.querySelectorAll(".auth-frame").length, heading: document.querySelector(".auth-frame h1")?.textContent?.trim(), images: [...document.querySelectorAll(".auth-frame img")].map(image => ({ src: image.getAttribute("src"), complete: image.complete, naturalWidth: image.naturalWidth })) })');
       await browser('screenshot', join(options.reportDir, 'installed-desktop.png'));
       assertBranding(state.presentation, result.branding);
-      await browser('focus', 'button[type=submit]'); await browser('press', 'Enter'); await browser('wait', '--text', 'Invitation accepted.');
+      const { chromium } = createRequire(join(options.appDir, 'package.json'))('@playwright/test');
+      cdpBrowser = await chromium.connectOverCDP(invitationCdpEndpoint(await browser('get', 'cdp-url')), { timeout: 10000 });
+      const pages = cdpBrowser.contexts().flatMap((context) => context.pages()).filter((page) => new URL(page.url()).origin === origin);
+      assert.equal(pages.length, 1, 'Expected one page for the owned invitation browser session.');
+      pendingPage = pages[0]; pendingPage.setDefaultTimeout(10000);
+      const acceptance = await pendingFormSubmission(pendingPage, { path: '/invitations/' + state.tokens.accept,
+        action: 'accept', spinner: true, fields: { token: state.tokens.accept } }, async () => {
+        await browser('focus', 'button[type=submit]'); await browser('press', 'Enter');
+      });
+      result.pendingForms.push(acceptance.evidence);
+      assert.equal((await acceptance.response.json()).type, 'success', 'Accept must complete through the real named action.');
+      await browser('wait', '--text', 'Invitation accepted.');
       assert.equal(await evaluate('document.querySelector("button[type=submit]") === null'), true);
       const after = await status(); result.acceptance = { before, after };
       assert.equal(after.invitations.accept, 'accepted'); assert.equal(after.recipientMemberships.length, 1); assert.equal(after.recipientMemberships[0].role, 'viewer');
@@ -553,7 +573,12 @@ export async function installedCertification(options) {
     await check('mobile production named decline removes only the pending invitation', async () => {
       const before = await status(); await browser('set', 'viewport', '390', '844'); await browser('open', origin + '/invitations/' + state.tokens.mobile); await browser('wait', 'button[formaction]');
       assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true); await browser('screenshot', join(options.reportDir, 'installed-mobile.png'));
-      await browser('find', 'role', 'button', 'click', '--name', 'Decline'); await browser('wait', '--text', 'Invitation declined.');
+      const decline = await pendingFormSubmission(pendingPage, { path: '/invitations/' + state.tokens.mobile,
+        action: 'decline', spinner: true, fields: { token: state.tokens.mobile } },
+        () => browser('find', 'role', 'button', 'click', '--name', 'Decline'));
+      result.pendingForms.push(decline.evidence);
+      assert.equal((await decline.response.json()).type, 'success', 'Decline must complete through the real named action.');
+      await browser('wait', '--text', 'Invitation declined.');
       assert.equal(await evaluate('document.querySelector("button[type=submit]") === null'), true);
       const after = await status(); assert.equal(after.invitations.mobile, 'missing'); assert.deepEqual(after.tables.team_members, before.tables.team_members);
       assert.equal(after.tables.team_invitations.count, before.tables.team_invitations.count - 1);
@@ -563,7 +588,7 @@ export async function installedCertification(options) {
     assert(!interrupted, 'Installed certification interrupted.'); assert.equal(result.passed, result.expectedChecks); result.complete = true;
   } catch (error) { failure = error; result.failed = 1; result.failure = redact(error.stack ?? error, state); }
   finally {
-    for (const cleanup of [async () => { if (browserOpened) await browser('close'); }, async () => { if (server) await stopServer(server); },
+    for (const cleanup of [async () => { if (browserOpened) await browser('close'); }, async () => { if (cdpBrowser?.isConnected()) await cdpBrowser.close(); }, async () => { if (server) await stopServer(server); },
       async () => { if (snapshot) assert.deepEqual(await sourceSnapshot(options.appDir), snapshot, 'Original source/config/env changed.'); },
       async () => { if (buildSnapshot) assert.deepEqual(await treeSnapshot(join(options.appDir, 'build')), buildSnapshot, 'Original production output changed.'); },
       async () => { if (result.installation) assert.deepEqual(await installedPreflight(options.appDir), result.installation, 'Installed package or factory changed.'); },

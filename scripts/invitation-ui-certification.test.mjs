@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test, { after, before } from 'node:test';
 import { promisify } from 'node:util';
-import { assertBranding, installedPreflight, ownedFixtureDirectory, parseInstalledOptions, productionManifest, recipientMembership, verifyArtifact } from './invitation-ui-certification.mjs';
+import { assertBranding, installedPreflight, invitationCdpEndpoint, ownedFixtureDirectory, parseInstalledOptions, productionManifest, recipientMembership, verifyArtifact } from './invitation-ui-certification.mjs';
 
 const script = fileURLToPath(new URL('./invitation-ui-certification.mjs', import.meta.url));
 let artifact;
@@ -15,6 +15,27 @@ let archiveDirectory;
 const run = promisify(execFile);
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const subpaths = ['cli', 'database', 'orm', 'auth', 'session', 'hashing', 'teams', 'testing'];
+
+test('pending invite barriers attach only to the existing owned local browser endpoint', () => {
+  assert.equal(invitationCdpEndpoint({ cdpUrl: 'ws://127.0.0.1:12345/devtools/browser/owned' }), 'ws://127.0.0.1:12345/devtools/browser/owned');
+  assert.equal(invitationCdpEndpoint({ url: 'ws://localhost:12345/devtools/browser/owned' }), 'ws://localhost:12345/devtools/browser/owned');
+});
+test('remote, authenticated and page-only CDP endpoints cannot control invitation fixtures', () => {
+  for (const endpoint of ['ws://other.example/devtools/browser/foreign', 'ws://user:secret@127.0.0.1/devtools/browser/foreign', 'ws://127.0.0.1/devtools/page/foreign']) {
+    assert.throws(() => invitationCdpEndpoint({ url: endpoint }), /Refusing/);
+  }
+});
+test('missing and ambiguous browser endpoints fail before attaching', () => {
+  assert.throws(() => invitationCdpEndpoint({}), /Expected one/);
+  assert.throws(() => invitationCdpEndpoint({ first: 'ws://127.0.0.1/devtools/browser/one', second: 'ws://127.0.0.1/devtools/browser/two' }), /Expected one/);
+});
+test('installed accept/decline retain real POST barriers and never install mocked responses', async () => {
+  const source = await readFile(script, 'utf8');
+  assert(source.includes("action: 'accept', spinner: true, fields: { token: state.tokens.accept }"));
+  assert(source.includes("action: 'decline', spinner: true, fields: { token: state.tokens.mobile }"));
+  assert(source.includes('result.pendingForms.push(acceptance.evidence)') && source.includes('result.pendingForms.push(decline.evidence)'));
+  assert(!source.includes('.fulfill('));
+});
 
 async function temporary(callback) {
   const directory = await mkdtemp(join(tmpdir(), 'svelar-invitation-preflight-unit-'));
