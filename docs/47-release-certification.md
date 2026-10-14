@@ -199,7 +199,19 @@ Both generated Docker images built and passed installed Core10 SHA/integrity pro
 
 Source commit `94b64e1` adds wildcard routing without forcing a database name, separate database environment variables, explicit SCRAM alignment and authenticated `SELECT 1` health; see [PgBouncer deployment configuration](./29-deployment.md#pgbouncer-connection-pooling). Its 38 focused tests passed without skips and the strict source type check passed. Its SOURCE-native report passed six checks with no cleanup errors: default/custom database routing, read-only configuration preserved, correct punctuation credentials accepted, incorrect credentials rejected, and real container health rejecting bad credentials. A double-quote-containing password remains unsupported by the pinned image's unescaped userlist writer. The receipt is `candidate10/pgbouncer-source-correction-20261014/576865eb-5f1a-4ec9-893d-ae72606950c0/native-report.json`; it is not installed candidate 11 or generated adapter-node deployment evidence.
 
-Replacement candidate 11 build/provenance, installed deployment recheck, full 25-gate run and fresh CI remain required. A source patch or successful query alone cannot certify promotion/drain/rollback, and no test-app workaround makes the preserved Core10 archive publishable.
+The replacement candidate 11 build/provenance completed, but its installed deployment recheck exposed the separate runtime blocker below. A source patch or successful query alone cannot certify promotion/drain/rollback, and no test-app workaround makes the preserved Core10 archive publishable.
+
+### Candidate 11 Scheduler PostgreSQL Blocker (2026-10-14)
+
+**Candidate 11 is not publishable.** Its archive is `evolution-candidate/candidate11/beeblock-svelar-0.8.0.tgz`, SHA-256 `9bb767194ef8fb8794f6631c513b9564d655ef277c06e5dfaf0724482381b2f4`. The strict build passed with 365 files and 63 CLI commands. Only two CLI files changed against candidate 10; the other 363 files are byte-identical, which is provenance evidence, not a claim that their runtime behavior passed this installed scenario.
+
+The actual generated Docker app passed PgBouncer/migration bootstrap and installed-image integrity. The interrupted run recorded four partial checks: production provenance, initial blue app/worker/scheduler process startup, dependency-controlled readiness 503 while liveness remained 200, and old-slot traffic ineligibility 503. Initial process startup does not prove stable scheduler health or domain-job readiness.
+
+The PostgreSQL scheduler then crash-looped: `SchedulerRuntimeStore.process()` builds an upsert update-column list from `['state', 'heartbeat_at', ...Object.keys(data)]`, while `writeHeartbeat()` also supplies `state` and `heartbeat_at`. The duplicated assignments cause PostgreSQL to reject the heartbeat with `multiple assignments to same column "state"`. The container restarted seven times with exit code 1. The runner was deliberately interrupted on this real defect; its interruption is not a passing availability result.
+
+The report and scheduler container log remain under `candidate11/generated-deployment-addon-recheck-20261014/2dd71d59-bbdb-46e0-913f-d8cc47b89034/`, including `report.json` and `container-51e996df829f.log`; owned-resource cleanup completed without errors. Completion of the held HTTP request with 200, drain exit 0 and retained rollback remain **unproven**. Earlier SOURCE-native deployment receipts and Core10 standalone checks do not close this installed failure.
+
+The bounded runtime fix, actual PostgreSQL/MySQL regressions and runner restart-count checks are required before candidate 12 can be built and certified. Candidate 12 is **pending**, not ready: its strict build/artifact identity, installed generated deployment, full 25-gate run, final Node floor and fresh CI still need their own receipts. No current package is accepted for publication.
 
 All SVE-001 through SVE-022 rows remain **Final gate pending**. npm authentication still returns E401 at this checkpoint; release notes remain **Unreleased**.
 
