@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { acceptancePlan, archiveIdentity, assertAvailability, assertDrain, assertOwned, assertProbe,
-  certifyGeneratedDeployment, deploymentCliArguments, generatedDockerProxySource, generatedRoleObservation, imageProofSource, installedIdentity, parseOptions, scope } from './generated-deployment-certification.mjs';
+  certifyGeneratedDeployment, deploymentCliArguments, generatedDockerProxySource, generatedRoleObservation, imageProofSource, installedIdentity, parseOptions, scope, shutdownProbeSource } from './generated-deployment-certification.mjs';
 import { ownerLabel } from './runtime-certification.mjs';
 
 const sha = 'a'.repeat(64);
@@ -30,6 +30,15 @@ test('parser refuses implicit core builds, missing provenance and unbounded setu
   }
   assert.equal(parseOptions([...args, '--execute']).execute, true);
   assert.equal(parseOptions([...args, '--execute', '--plan']).execute, false);
+});
+
+test('shutdown handle diagnostics are explicit, logging-only, and not pristine-app acceptance', () => {
+  const options = parseOptions([...args, '--diagnostic-handles']);
+  assert.equal(options.diagnosticHandles, true);
+  assert.match(acceptancePlan(options).instrumentation, /not pristine-app acceptance/);
+  assert.match(shutdownProbeSource, /handles\.includes\(client\.stream\)/);
+  assert.match(shutdownProbeSource, /\.unref\(\)/);
+  assert.doesNotMatch(shutdownProbeSource, /\.(?:flush|disconnect|close|destroy|exit)\(/);
 });
 
 test('calling the runner without explicit execution cannot start even an archive read', async () => {
@@ -139,6 +148,16 @@ test('HTTP drain requires real SIGTERM, live held request, successful response a
   }
 });
 
+test('drain failure preserves every actual metric without accepting SIGKILL or non-200 responses', () => {
+  const failed = { signal: '15', runningBeforeRelease: true, status: 200, exitCode: 137, oomKilled: false, elapsedMs: 23000 };
+  assert.throws(() => assertDrain(failed), (error) => {
+    assert.deepEqual(JSON.parse(error.message.split('Received drain: ')[1]), failed);
+    return true;
+  });
+  assert.throws(() => assertDrain({ ...failed, status: 503, exitCode: 0 }));
+  assert.throws(() => assertDrain({ ...failed, signal: '9', exitCode: 0 }));
+});
+
 test('container observations refuse other runs and unlabeled shared services', () => {
   const runId = 'exact-owned-run';
   assertOwned({ Config: { Labels: { [ownerLabel]: runId } } }, runId);
@@ -187,7 +206,7 @@ test('role failure awaits durable diagnostics and keeps the original role cause 
 });
 
 test('owned Docker proxy and image public-entry probe compile without running native code', () => {
-  for (const source of [imageProofSource, generatedDockerProxySource({ directory: '/owned/tools', binary: '/usr/bin/docker', runId: 'ebcd8ab9-5d97-4589-a15d-44652b66c33d' })]) {
+  for (const source of [imageProofSource, shutdownProbeSource, generatedDockerProxySource({ directory: '/owned/tools', binary: '/usr/bin/docker', runId: 'ebcd8ab9-5d97-4589-a15d-44652b66c33d', diagnosticPath: '/owned/tools/shutdown-probe.mjs' })]) {
     const result = spawnSync(process.execPath, ['--input-type=module', '--check'], { input: source, encoding: 'utf8', timeout: 1000 });
     assert.equal(result.status, 0, result.stderr);
   }

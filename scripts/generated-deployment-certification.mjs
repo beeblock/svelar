@@ -27,6 +27,7 @@ export function parseOptions(args) {
     if (arg === '--help' || arg === '-h') options.help = true;
     else if (arg === '--execute') options.execute = true;
     else if (arg === '--plan') options.execute = false;
+    else if (arg === '--diagnostic-handles') options.diagnosticHandles = true;
     else if (arg.startsWith('--tarball=')) options.tarball = resolve(arg.slice(10));
     else if (arg.startsWith('--sha256=')) options.sha256 = arg.slice(9);
     else if (arg.startsWith('--report-dir=')) options.reportDir = resolve(arg.slice(13));
@@ -42,6 +43,7 @@ export function parseOptions(args) {
 
 export function acceptancePlan(options) {
   return { mode: options.execute ? 'execute' : 'plan-only', artifact: { path: options.tarball, sha256: options.sha256 }, scope,
+    instrumentation: options.diagnosticHandles ? 'Logging-only main-process preload via owned read-only Compose mount; not pristine-app acceptance.' : null,
     app: 'A new uniquely named sibling app; never reuse an active smoke app.',
     generators: ['new --no-install --validation=zod', 'npm run ui:install', 'make:deploy --db=postgres --no-soketi --no-rustfs --no-meilisearch --no-gotenberg'],
     checks: ['archive/installed-lock/image provenance', 'generated production Dockerfile and unmodified application source',
@@ -99,10 +101,11 @@ export function assertAvailability(samples, windows) {
   return { requests: samples.length, non200: 0, dropped: 0, retried: 0, intervalMs: 3000 };
 }
 
-export function assertDrain({ signal, runningBeforeRelease, status, exitCode, oomKilled, elapsedMs }) {
+export function assertDrain(drain) {
+  const { signal, runningBeforeRelease, status, exitCode, oomKilled, elapsedMs } = drain;
   if (!['15', 'SIGTERM'].includes(String(signal)) || runningBeforeRelease !== true || status !== 200 || exitCode !== 0 || oomKilled
     || !Number.isFinite(elapsedMs) || elapsedMs < 1000) {
-    throw new Error('Adapter-node must receive real SIGTERM, retain the held request, complete it, then exit zero without OOM.');
+    throw new Error(`Adapter-node must receive real SIGTERM, retain the held request, complete it, then exit zero without OOM. Received drain: ${JSON.stringify(drain)}`);
   }
 }
 
@@ -163,12 +166,57 @@ export function generatedDockerProxySource(config) {
 (async () => {
   const { labelledDockerArgs, runCommand } = await import(${JSON.stringify(new URL('./runtime-certification.mjs', import.meta.url).href)});
   const config = ${JSON.stringify(config)};
-  const args = await labelledDockerArgs(process.argv.slice(2), config);
+  let args = await labelledDockerArgs(process.argv.slice(2), config);
+  const action = args.findIndex(value => ['up', 'run', 'create'].includes(value));
+  if (config.diagnosticPath && args[0] === 'compose' && action > 0) {
+    const { writeFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const normalized = JSON.parse((await runCommand(config.binary, [...args.slice(0, action), 'config', '--format', 'json'], { cwd: process.cwd(), timeoutMs: 30000, detached: false })).stdout);
+    const services = Object.fromEntries(Object.keys(normalized.services).filter(name => /^app(?:_(?:blue|green))?$/.test(name)).map(name => [name, {
+      environment: { NODE_OPTIONS: '--import=file:///svelar-probe/shutdown.mjs' },
+      volumes: [{ type: 'bind', source: config.diagnosticPath, target: '/svelar-probe/shutdown.mjs', read_only: true }],
+    }]));
+    const overlay = join(config.directory, crypto.randomUUID() + '.diagnostic.compose.json');
+    await writeFile(overlay, JSON.stringify({ services }), { mode: 0o600 });
+    args = [...args.slice(0, action), '-f', overlay, ...args.slice(action)];
+  }
   const result = await runCommand(config.binary, args, { cwd: process.cwd(), timeoutMs: 180000, detached: false });
   process.stdout.write(result.stdout); process.stderr.write(result.stderr);
 })().catch(error => { process.stdout.write(error.stdout ?? ''); process.stderr.write(error.stderr ?? ''); console.error(error.message); process.exitCode = 1; });
 `;
 }
+
+export const shutdownProbeSource = `
+import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+const prefix = '[SvelarShutdownProbe] ';
+const socket = value => ({ type: value?.constructor?.name, destroyed: value?.destroyed,
+  refed: value?._handle?.hasRef?.(), localAddress: value?.localAddress, localPort: value?.localPort,
+  remoteAddress: value?.remoteAddress, remotePort: value?.remotePort });
+async function observe(stage) {
+  try {
+    const handles = process._getActiveHandles();
+    const path = createRequire('/app/package.json').resolve('@beeblock/svelar/package.json');
+    const manifest = JSON.parse(readFileSync(path, 'utf8'));
+    const entry = manifest.exports['./cache'];
+    const { Cache } = await import(pathToFileURL(resolve(dirname(path), typeof entry === 'string' ? entry : entry.import)).href);
+    const store = Cache.store();
+    const client = store.redis;
+    process.stdout.write(prefix + JSON.stringify({ stage, pid: process.pid, at: new Date().toISOString(),
+      resources: process.getActiveResourcesInfo(), handles: handles.map(socket),
+      cache: { type: store.constructor.name, owned: store.owned, status: client?.status,
+        streamMatchesActiveHandle: !!client?.stream && handles.includes(client.stream), stream: client?.stream ? socket(client.stream) : null } }) + '\\n');
+  } catch (error) { process.stdout.write(prefix + JSON.stringify({ stage, error: error.message }) + '\\n'); }
+}
+function snapshots(stage) {
+  void observe(stage);
+  for (const delay of [1000, 5000, 10000, 20000]) setTimeout(() => { void observe(stage + '+' + delay + 'ms'); }, delay).unref();
+}
+process.once('SIGTERM', () => snapshots('SIGTERM'));
+process.once('sveltekit:shutdown', () => snapshots('sveltekit:shutdown'));
+`;
 
 export const imageProofSource = `
 import { createRequire } from 'node:module';
@@ -199,6 +247,8 @@ export async function certifyGeneratedDeployment(options) {
   const evidenceDir = join(options.reportDir, runId);
   await mkdir(evidenceDir, { recursive: true, mode: 0o700 });
   const evidence = { runId, project, app: null, artifact, scope, node: process.version, status: 'running', checks: [], timeline: [], commands: [], samples: [], transitions: [], cleanup: [] };
+  if (options.diagnosticHandles) evidence.instrumentation = { loggingOnly: true, pristineAppAcceptance: false,
+    method: 'Owned read-only Compose mount + NODE_OPTIONS ESM preload; observes private Cache ownership/socket identity without mutation.' };
   evidence.runner = { path: script, sha256: createHash('sha256').update(await readFile(script)).digest('hex') };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new Error('Generated deployment overall deadline exceeded.')), options.timeout * 1000);
@@ -335,12 +385,16 @@ export async function certifyGeneratedDeployment(options) {
     if (!(await inspect(oldId)).State.Running) throw new Error('Old adapter-node exited before the admitted request was released.');
     await barrier.release();
     const response = await held;
+    record('held-http-response', { phase: label, oldId, ...response });
+    await persist();
     if (!Array.isArray(response.body?.data)) throw new Error('Held real Post request did not return its resource collection.');
     await promotion;
     transition.finishedAt = Date.now();
     const after = await inspect(oldId);
     const drain = { signal: signal.Actor.Attributes.signal, runningBeforeRelease: during.State.Running,
       status: response.status, exitCode: after.State.ExitCode, oomKilled: after.State.OOMKilled, elapsedMs: response.elapsedMs };
+    record('generated-http-drain-observed', { phase: label, oldId, ...drain, finalContainerState: after.State });
+    await persist();
     assertDrain(drain);
     const committed = await state();
     if (committed.active !== targetSlot) throw new Error('Committed deployment did not select the target slot.');
@@ -360,7 +414,9 @@ export async function certifyGeneratedDeployment(options) {
     app = join(fixtureRoot, project); evidence.app = app;
     proxyDirectory = join(fixtureRoot, 'tools'); await mkdir(proxyDirectory);
     const proxy = join(proxyDirectory, 'bin'); await mkdir(proxy);
-    await writeFile(join(proxy, 'docker'), generatedDockerProxySource({ directory: proxyDirectory, binary: dockerBinary, runId }), { mode: 0o755 });
+    const diagnosticPath = options.diagnosticHandles ? join(proxyDirectory, 'shutdown-probe.mjs') : undefined;
+    if (diagnosticPath) await writeFile(diagnosticPath, shutdownProbeSource, { mode: 0o644 });
+    await writeFile(join(proxy, 'docker'), generatedDockerProxySource({ directory: proxyDirectory, binary: dockerBinary, runId, diagnosticPath }), { mode: 0o755 });
     // No shared app/service environment is inherited by this fresh fixture.
     env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(DB_|DATABASE_URL$|REDIS_|CACHE_|QUEUE_|AUTH_|APP_|ORIGIN$|INTERNAL_APP_URL$|MEILI|BROADCAST_|PUSHER_|MAIL_|SMTP_|S3_|SVELAR_|COMPOSE_|NODE_PATH$|NODE_OPTIONS$)/.test(key)));
     env = { ...env, PATH: [proxy, dirname(process.execPath), env.PATH ?? ''].join(delimiter), CI: '1', FORCE_COLOR: '0' };
