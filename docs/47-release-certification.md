@@ -125,14 +125,14 @@ The source audit now finds implementations for all 22 beeHub items. The remainin
 | SVE-012 | Distributed credential/account budget and real concurrent HTTP resilience proof | Final gate pending |
 | SVE-013 | Rotation overlap, revocation audit, last-use address and explicit service-account policy context | Final gate pending |
 | SVE-014 | Architectural lint, apiFetch adoption codemod and every command in every layout/validation provider | Final gate pending |
-| SVE-015 | Advanced PostgreSQL indexes/checks/alterations, casts, keyset/custom primary keys and explicit eventful bulk operations | Final gate pending |
+| SVE-015 | Advanced PostgreSQL indexes/checks/alterations, casts, keyset/custom primary keys and eventful bulk operations; typed JSON/window helpers and combined native/model-lifecycle proofs outstanding | Final gate pending |
 | SVE-016 | SSE heartbeat/resume/reconnect/drain and persisted background operation progress/result/cancellation/deep links | Final gate pending |
 | SVE-017 | Docker/Caddy promotion/rollback passed with no dropped HTTP requests; verify generated adapter-node readiness/drain on final artifact | Final gate pending |
 | SVE-018 | Dependency-aware manifest, system/custom profiles, generated gates/editor, alias migration and protected platform boundary | Final gate pending |
 | SVE-019 | Scoped clock/context fakes and explicit native database profiles implemented; final integrated certification pending | Final gate pending |
 | SVE-020 | Six optional shadcn patterns and make:ui implemented; latest installed primitives and browser verification pending | Final gate pending |
 | SVE-021 | Complete generated operational shell/users/roles/queue/DLQ/scheduler/shared logs/kill switches and browser workflows | Final gate pending |
-| SVE-022 | Remember-me, branding/federation slots, complete expiry/error flows and generated desktop/mobile/keyboard tests | Final gate pending |
+| SVE-022 | Remember-me, branding/federation slots, expiry/error flows and generated desktop/mobile/keyboard tests; non-login busy/duplicate-submit browser proof outstanding | Final gate pending |
 
 All Dependabot PRs are part of this release task, including affected plugin repositories. Superseded PRs must be linked to the tested replacement commit; incompatible updates must be resolved explicitly, not silently left open. No package is published while a required row remains unaccepted.
 
@@ -248,7 +248,11 @@ This proves the stated generated adapter-node HTTP/deployment CLI boundary, prom
 
 Plugin receipt `plugin-final13/evidence/final-acceptance.json` records a fresh execution of **425 focused tests across 14 plugins** on Node 22.12.0, **11 native stages** exiting 0 and **eight browser checks** with zero page errors. These are separate counts, not a combined test total or transferred candidate 8-12 evidence. All 365 installed core files matched the selected archive before and after the native/browser checks, without source aliases; the reused graph directory's historical name does not select an older package. The exact Datatable archive matched all 58 physical files, had no missing export/relative-import targets and passed strict packed-peer resolution; its fresh lock audit, including optional Excel, reported zero vulnerabilities. This scoped plugin proof does not certify every SDK branch, core CSRF middleware or a fresh live Meilisearch server.
 
-Formal **25-gate** run `candidate13/certification/4302a860-846b-4107-b6fd-84f631ca5f0b/manifest.json` is **running** on the same SHA with `--million` and `--type-deps`. At this checkpoint, SOURCE unit, security audit and exact-archive publication dry-run passed; the fresh four-app CLI matrix is active. SOURCE unit reported 3,575 passes and 90 conditional skips (3,665 total) across 205 files: 193 passed and 12 conditional, in 201.87 seconds. Conditional skips are not acceptance; distinct required opt-in receipts must prove their stated coverage. This SOURCE run is not installed-SDK or fresh-CI evidence.
+Formal **25-gate** run `candidate13/certification/4302a860-846b-4107-b6fd-84f631ca5f0b/manifest.json`, with `--million` and `--type-deps`, was **intentionally interrupted and superseded, incomplete and not accepted** after a read-only requirements audit. Its preserved manifest records seven passed phases: SOURCE unit, security audit, exact-archive publication dry-run, fresh four-app CLI/type/test/build/production-browser matrix, source helper fixtures and both Auth UI providers. The next `ui-patterns` phase is literally `failed`, with `Release certification interrupted.`; the remaining 17 phases were not run. This is not a full-25 PASS or a diagnosed UI-pattern runtime failure.
+
+SOURCE unit reported 3,575 passes and 90 conditional skips (3,665 total) across 205 files: 193 passed and 12 conditional, in 201.87 seconds. Conditional skips are not acceptance; distinct required opt-in receipts must prove their stated coverage. This SOURCE run is not installed-SDK or fresh-CI evidence.
+
+The audit identified SVE-015's explicitly requested typed JSON/window QueryBuilder helpers as missing. Combined native PostgreSQL JSONB-operator/binding coverage and a combined `firstOrCreate` UUID/tenant/observer/audit lifecycle regression also remain required, as does browser coverage for non-login auth busy states and duplicate-submit prevention. Implementation and additional proofs are pending; no new helper API or completed regression is claimed here. A replacement candidate 14 identity has not yet been recorded.
 
 The complete integrated run, fresh CI, final core Node 22.12 floor and final approval remain **pending**. Plugin Node 22.12 execution does not replace the core floor gate. These scoped PASS receipts do not accept the whole package or authorize publication.
 
@@ -256,18 +260,18 @@ All SVE-001 through SVE-022 rows remain **Final gate pending**. The last reporte
 
 ### Publication After Final Approval
 
-**Do not run the publication steps while any required gate or ledger row is pending.** First retain the successful full-25 manifest, floor/fresh-CI/plugin receipts and explicit approval binding both package versions to their archive SHA/SRI. Candidate 13 is the current candidate, not an approved release. If a later artifact is required, change the selected path and approved identity together; never edit or repack an archive.
+**Do not run the publication steps while any required gate or ledger row is pending.** First retain the successful full-25 manifest, floor/fresh-CI/plugin receipts and explicit approval binding both package versions to their archive SHA/SRI. Candidate 13 is superseded and must not be published; the replacement candidate's identity and approval are pending. Select the approved core path and identity together when available; never edit or repack an archive.
 
-Only core `@beeblock/svelar@0.8.0` and `@beeblock/svelar-datatable@0.3.0` are selected for publication. Other plugin drafts are not part of these publish commands. From the core repository root, the current candidate paths are:
+Only core `@beeblock/svelar@0.8.0` and `@beeblock/svelar-datatable@0.3.0` are intended publication targets. Other plugin drafts are not part of these publish commands. From the core repository root, the core path below deliberately remains a placeholder until final approval; Datatable's retained candidate path is also subject to that approval:
 
 ```bash
 ARTIFACTS="$PWD/../svelar-testing-area/artifacts"
-CORE_TARBALL="$ARTIFACTS/evolution-candidate/candidate13/beeblock-svelar-0.8.0.tgz"
+CORE_TARBALL="/absolute/path/to/final-approved/beeblock-svelar-0.8.0.tgz"
 DT_TARBALL="$ARTIFACTS/plugin-final8/datatable-afterwrap/beeblock-svelar-datatable-0.3.0.tgz"
 shasum -a 256 "$CORE_TARBALL" "$DT_TARBALL"
 ```
 
-Stop unless the approved hashes match: core `06c8c008d980182d0c476a8957a401b86ccd42b99ca9cc220207a25ea9d93bb7`; Datatable `b348f5cd0f6fc761c5dea6f4f2fb84e88bcd92e4cd2458ff36413e02cde807a4`. Core's `identity.json` and Datatable's adjacent `datatable-packed-acceptance.json` record the expected SRI. The older same-version Datatable archive outside `datatable-afterwrap` is not selected.
+Stop unless both hashes match the final approved receipts. Core's approved SHA/SRI is not yet selected; candidate 13's historical SHA above is not publication approval. The retained Datatable SHA is `b348f5cd0f6fc761c5dea6f4f2fb84e88bcd92e4cd2458ff36413e02cde807a4`. The approved core `identity.json` and Datatable's adjacent `datatable-packed-acceptance.json` must supply the matching SRI. The older same-version Datatable archive outside `datatable-afterwrap` is not selected.
 
 1. After approval, authenticate the maintainer account and verify its identity. It must have publishing rights to both packages; finish any browser/2FA challenge. If E401 persists, privately check registry/scoped-registry and configuration precedence. Never paste `.npmrc`, passwords or tokens into reports. See [npm login](https://docs.npmjs.com/cli/v11/commands/npm-login/).
 
