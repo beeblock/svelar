@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { acceptancePlan, archiveIdentity, assertAvailability, assertDrain, assertOwned, assertProbe,
-  certifyGeneratedDeployment, generatedDockerProxySource, imageProofSource, installedIdentity, parseOptions, scope } from './generated-deployment-certification.mjs';
+  certifyGeneratedDeployment, deploymentCliArguments, generatedDockerProxySource, imageProofSource, installedIdentity, parseOptions, scope } from './generated-deployment-certification.mjs';
 import { ownerLabel } from './runtime-certification.mjs';
 
 const sha = 'a'.repeat(64);
@@ -34,6 +34,18 @@ test('parser refuses implicit core builds, missing provenance and unbounded setu
 
 test('calling the runner without explicit execution cannot start even an archive read', async () => {
   await assert.rejects(certifyGeneratedDeployment(parseOptions(args)), /requires explicit --execute/);
+});
+
+test('local initial deployment, promotion and retained rollback never request a registry pull', () => {
+  const cli = '/owned/app/node_modules/@beeblock/svelar/dist/cli/bin.js';
+  for (const operation of [
+    ['--image=owned-release:one', '--compatible-migrations'],
+    ['--image=owned-release:two', '--compatible-migrations'],
+    ['--rollback'],
+  ]) {
+    assert.deepEqual(deploymentCliArguments(cli, operation), [cli, 'prod:deploy', '--no-pull', ...operation]);
+    assert.equal(deploymentCliArguments(cli, operation).includes('--no-migrate'), false);
+  }
 });
 
 test('archive provenance checks bytes, not the archive name or package version', async (t) => {

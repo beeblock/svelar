@@ -54,6 +54,10 @@ export function acceptancePlan(options) {
   };
 }
 
+export function deploymentCliArguments(cliPath, args) {
+  return [cliPath, 'prod:deploy', '--no-pull', ...args];
+}
+
 export async function archiveIdentity(path, expectedSha256) {
   const bytes = await readFile(path);
   const sha256 = createHash('sha256').update(bytes).digest('hex');
@@ -254,7 +258,7 @@ export async function certifyGeneratedDeployment(options) {
     } };
   }
   const slotFile = (slot) => join(app, `.svelar/deployment/${slot}.compose.json`);
-  const deploy = (args) => command(process.execPath, [evidence.installed.cliPath, 'prod:deploy', ...args], { timeoutMs: 150000 });
+  const deploy = (args) => command(process.execPath, deploymentCliArguments(evidence.installed.cliPath, args), { timeoutMs: 150000 });
   async function state() { return JSON.parse(await readFile(join(app, '.svelar/deployment/state.json'), 'utf8')); }
   async function roles(slot, imageId) {
     const observations = [];
