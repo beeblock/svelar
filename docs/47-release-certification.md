@@ -17,7 +17,8 @@ Run the full pre-publish gate:
 ```bash
 npm run certify
 # Certify an already-built immutable package without rebuilding/repacking:
-npm run certify -- --tarball=/absolute/path/beeblock-svelar-version.tgz --million
+npm run certify -- --tarball=/absolute/path/beeblock-svelar-version.tgz --million \
+  --type-deps=/absolute/path/installed-app/node_modules
 ```
 
 For faster local iteration while hardening a feature:
@@ -235,8 +236,74 @@ The causal receipt is `candidate12/generated-deployment-causal-recheck-20261014/
 
 Source correction `d6f96cb` adds owner-safe public `Cache.close()` and awaited generated cleanup after HTTP drain; it does not flush Redis keys or disconnect a borrowed client. Its 176 focused tests and four SOURCE-native Redis tests passed without skips; strict source types passed. Under `candidate12/cache-source-correction-20261014/`, the owned-close child exited naturally with code 0 in 273 ms and the independent reader in 222 ms, both with only `PipeWrap` resources: data survived and the borrowed client remained usable. Diagnostic helper commit `aa02589` passed 20 Node tests without skips. These source/helper receipts are not a packed candidate 13 SRI, generated-app promotion/drain/rollback or full-certification result; see [Closing cache resources](./12-additional-features.md#closing-cache-resources) for the public lifecycle contract.
 
-Full 25-gate certification, fresh CI and the final Node 22.12 floor remain **pending**. Candidate 11's failed deployment receipt stays preserved and blocked; the new archive does not retroactively pass that run.
+Candidate 11/12 failure receipts stay preserved and blocked; the source correction does not retroactively pass either run.
+
+### Candidate 13 Scoped Installed Checkpoint (2026-10-14)
+
+The frozen archive is `evolution-candidate/candidate13/beeblock-svelar-0.8.0.tgz`, SHA-256 `06c8c008d980182d0c476a8957a401b86ccd42b99ca9cc220207a25ea9d93bb7`, built at `21122d0` with cache correction `d6f96cb`. Strict build/declarations passed with 365 files and 63 CLI commands. The comparison against candidate 12 changes 19 packaged entries, including cache declarations/runtime and importing bundles; 346 remain identical. This does not permit a blanket transfer of earlier native/plugin execution results.
+
+The pristine installed generated-app addon passed **11 checks** under `candidate13/generated-deployment-20261014/8c465222-aa85-4eca-a9eb-536aece33181/report.json`, with the exact archive/SRI, no diagnostic preload and preserved source fingerprints. Promotion completed the held HTTP request with 200 in 21,881 ms, rollback with 200 in 14,948 ms; both received SIGTERM, remained alive until release, then exited 0 without OOM or forced SIGKILL. Readiness returned 503 while liveness stayed 200 under the controlled dependency lock. All 14 ordinary HTTP samples returned 200, with zero drops or retries; nine app/worker/scheduler observations recorded live PIDs and zero restarts. Owned Docker/app cleanup completed without errors.
+
+This proves the stated generated adapter-node HTTP/deployment CLI boundary, promotion and retained rollback. Worker/scheduler observations are **startup only**, not generated domain-job execution or long active-job drain; that work has separate SOURCE-native receipts. TLS, multi-host failover, SSE/WebSocket drain and differing schema-version rollback are outside this addon. It is not 100% coverage or completion of the integrated release gate.
+
+Plugin receipt `plugin-final13/evidence/final-acceptance.json` records a fresh execution of **425 focused tests across 14 plugins** on Node 22.12.0, **11 native stages** exiting 0 and **eight browser checks** with zero page errors. These are separate counts, not a combined test total or transferred candidate 8-12 evidence. All 365 installed core files matched the selected archive before and after the native/browser checks, without source aliases; the reused graph directory's historical name does not select an older package. The exact Datatable archive matched all 58 physical files, had no missing export/relative-import targets and passed strict packed-peer resolution; its fresh lock audit, including optional Excel, reported zero vulnerabilities. This scoped plugin proof does not certify every SDK branch, core CSRF middleware or a fresh live Meilisearch server.
+
+Formal **25-gate** run `candidate13/certification/4302a860-846b-4107-b6fd-84f631ca5f0b/manifest.json` is **running** on the same SHA with `--million` and `--type-deps`. At this checkpoint, SOURCE unit, security audit and exact-archive publication dry-run passed; the fresh four-app CLI matrix is active. SOURCE unit reported 3,575 passes and 90 conditional skips (3,665 total) across 205 files: 193 passed and 12 conditional, in 201.87 seconds. Conditional skips are not acceptance; distinct required opt-in receipts must prove their stated coverage. This SOURCE run is not installed-SDK or fresh-CI evidence.
+
+The complete integrated run, fresh CI, final core Node 22.12 floor and final approval remain **pending**. Plugin Node 22.12 execution does not replace the core floor gate. These scoped PASS receipts do not accept the whole package or authorize publication.
 
 All SVE-001 through SVE-022 rows remain **Final gate pending**. The last reported npm authentication check returned E401; no successful login/publication receipt is recorded. Release notes remain **Unreleased**.
+
+### Publication After Final Approval
+
+**Do not run the publication steps while any required gate or ledger row is pending.** First retain the successful full-25 manifest, floor/fresh-CI/plugin receipts and explicit approval binding both package versions to their archive SHA/SRI. Candidate 13 is the current candidate, not an approved release. If a later artifact is required, change the selected path and approved identity together; never edit or repack an archive.
+
+Only core `@beeblock/svelar@0.8.0` and `@beeblock/svelar-datatable@0.3.0` are selected for publication. Other plugin drafts are not part of these publish commands. From the core repository root, the current candidate paths are:
+
+```bash
+ARTIFACTS="$PWD/../svelar-testing-area/artifacts"
+CORE_TARBALL="$ARTIFACTS/evolution-candidate/candidate13/beeblock-svelar-0.8.0.tgz"
+DT_TARBALL="$ARTIFACTS/plugin-final8/datatable-afterwrap/beeblock-svelar-datatable-0.3.0.tgz"
+shasum -a 256 "$CORE_TARBALL" "$DT_TARBALL"
+```
+
+Stop unless the approved hashes match: core `06c8c008d980182d0c476a8957a401b86ccd42b99ca9cc220207a25ea9d93bb7`; Datatable `b348f5cd0f6fc761c5dea6f4f2fb84e88bcd92e4cd2458ff36413e02cde807a4`. Core's `identity.json` and Datatable's adjacent `datatable-packed-acceptance.json` record the expected SRI. The older same-version Datatable archive outside `datatable-afterwrap` is not selected.
+
+1. After approval, authenticate the maintainer account and verify its identity. It must have publishing rights to both packages; finish any browser/2FA challenge. If E401 persists, privately check registry/scoped-registry and configuration precedence. Never paste `.npmrc`, passwords or tokens into reports. See [npm login](https://docs.npmjs.com/cli/v11/commands/npm-login/).
+
+```bash
+npm login --scope=@beeblock --auth-type=web --registry=https://registry.npmjs.org
+npm whoami --registry=https://registry.npmjs.org
+```
+
+2. Check the exact target versions before writing to the registry. A genuine version-not-found result is different from E401/network failure. If a version already exists, compare its SRI with the approved receipt: matching bytes mean it is already published; different bytes require maintainer review. Do not overwrite, unpublish or bump versions to work around a conflict. See [npm publish](https://docs.npmjs.com/cli/v11/commands/npm-publish/).
+
+```bash
+npm view @beeblock/svelar@0.8.0 version dist.integrity --json --registry=https://registry.npmjs.org
+npm view @beeblock/svelar-datatable@0.3.0 version dist.integrity --json --registry=https://registry.npmjs.org
+```
+
+3. Dry-run the exact approved archives. Do not use `npm run release`, workspace publishing, `npm version`, another build or `npm pack`: the current workspace release helper runs validation/build and publishes the workspace, and core's `prepublishOnly` rebuilds. Tarball publication with [ignore-scripts](https://docs.npmjs.com/cli/v11/using-npm/config/#ignore-scripts) avoids those lifecycle hooks.
+
+```bash
+npm publish "$CORE_TARBALL" --dry-run --ignore-scripts --access=public --tag=latest --registry=https://registry.npmjs.org
+npm publish "$DT_TARBALL" --dry-run --ignore-scripts --access=public --tag=latest --registry=https://registry.npmjs.org
+```
+
+4. Publish core first, then verify the exact registry version and SRI against its approved identity. Stop on any mismatch before publishing Datatable.
+
+```bash
+npm publish "$CORE_TARBALL" --ignore-scripts --access=public --tag=latest --registry=https://registry.npmjs.org
+npm view @beeblock/svelar@0.8.0 version dist.integrity --json --registry=https://registry.npmjs.org
+```
+
+5. Only after core verification, publish Datatable and verify its SRI. Its selected archive has core peer `^0.8.0`, so the order matters.
+
+```bash
+npm publish "$DT_TARBALL" --ignore-scripts --access=public --tag=latest --registry=https://registry.npmjs.org
+npm view @beeblock/svelar-datatable@0.3.0 version dist.integrity --json --registry=https://registry.npmjs.org
+```
+
+6. Preserve publication/registry receipts. If an upload times out, query the exact version/SRI before retrying; never blindly republish. Record a partial publication if core succeeds but Datatable does not. Convert `Unreleased` to the actual release version/date only after the relevant registry publication is verified, without rebuilding the certified archives. These instructions do not execute or authorize publication themselves.
 
 No candidate is declared accepted or released here. Publication remains blocked until every required final phase and ledger row is accepted and npm authentication succeeds. Publish only the exact approved archives with `--ignore-scripts`; do not rebuild, repack or patch their versions.
