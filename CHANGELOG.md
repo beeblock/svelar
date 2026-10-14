@@ -56,6 +56,7 @@ Preparation for the next 0.8 release; this version has not been published. These
 
 ### Fixed
 
+- **OTP two-step form state** - Sending a code no longer triggers background page invalidation that can erase verification input. Verify result handling clears secrets only for its own matching posted server failure, while transport-error clearing remains; shared Zod/Valibot validation and backend auth semantics are unchanged.
 - **Redis cache failure cleanup** - Framework-owned clients now share lazy readiness, bound startup/commands and release failed connections without background retry leaks; later calls can recover. Outages remain errors, and borrowed clients retain caller-owned lifecycle/options.
 - **Model find-or-create lifecycle** — `firstOrCreate()` and `updateOrCreate()` now preserve caller state, filters, connection and scope overrides while running fillable guards, generated identifiers, timestamps, casts, observers, audit and configured search synchronization through Model persistence. Failed or disappeared scoped writes do not emit success events.
 - **Insert identity isolation** — SQLite/MySQL return IDs from the mutation result rather than a separate connection-local query; supplied custom primary keys and default-only inserts work across the supported drivers.
