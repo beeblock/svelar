@@ -143,7 +143,7 @@ describe('Scoped core AST migration', () => {
     expect(plan.errors).toEqual([]);
     expect(plan.edits).toHaveLength(9);
     expect(plan.edits.find((edit) => edit.path === path)?.tokens.map((token) => token.rule)).toEqual(['csrf-exclusions', 'csrf-exclusions']);
-    expect(plan.warnings[0]).toContain('nine recognized');
+    expect(plan.warnings[0]).toContain('eleven recognized');
     expect(applyCoreScaffoldMigration(plan, { confirmed: true })).toHaveLength(9);
     expect(read(path + '.core.bak')).toBe(original);
     expect((await planCoreScaffoldMigration(root)).edits).toEqual([]);

@@ -35,6 +35,8 @@ const RULES: Readonly<Record<string, CoreMigrationRule>> = {
   'src/app.ts': 'provider-bootstrap',
   'src/hooks.server.ts': 'csrf-exclusions',
   'src/routes/admin/+page.server.ts': 'admin-user-guards',
+  'src/routes/api/admin/logs/+server.ts': 'log-viewer-await',
+  'src/routes/api/admin/stats/+server.ts': 'log-viewer-await',
   'src/routes/api/admin/queue/[id]/+server.ts': 'queue-delete-outcome',
   'src/routes/api/admin/queue/[id]/retry/+server.ts': 'queue-retry-outcome',
   'src/routes/api/admin/scheduler/[name]/run/+server.ts': 'scheduler-run-outcome',
@@ -63,7 +65,7 @@ export function planCoreScaffoldMigrationFromSource(
   const errors: string[] = [];
   const edits: CoreMigrationFile[] = [];
   const warnings = [
-    'This opt-in migration changes only nine recognized legacy scaffold files when present. Customized legacy patterns require manual review; templates are never copied over source.',
+    'This opt-in migration changes only eleven recognized legacy scaffold files when present. Customized legacy patterns require manual review; templates are never copied over source.',
     'Queue health reports Queue.size() on the configured default connection/queue and the length of Queue.failed(). These are bounded observations, not full BullMQ status counts or worker health.',
     'Admin guards and operator outcomes are semantic changes: missing params return 400, unavailable deletes return 404, unavailable retries/skipped task runs return 409, and failed runs return 500. Toggle persistence is awaited.',
     'Legacy scheduler-toggle body.enabled ?? true, error envelopes, default queue selection and other app-owned JSON/schema APIs are not migrated. Review their validation/authorization and exercise admin operations before claiming upgrade compatibility.',
@@ -181,15 +183,59 @@ function coreTokens(
     const methods = new Set(['query', 'page', 'getStats', 'getRecentErrors', 'addEntry', 'clear', 'prune']);
     const calls = all().filter((node): node is TypeScript.CallExpression => ts.isCallExpression(node)
       && ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.expression)
-      && node.expression.expression.text === viewer && methods.has(node.expression.name.text) && !ts.isAwaitExpression(node.parent));
+      && node.expression.expression.text === viewer && methods.has(node.expression.name.text));
     if (calls.length) {
-      if (all().some((node) => (ts.isVariableDeclaration(node) || ts.isParameter(node)) && ts.isIdentifier(node.name) && node.name.text === viewer)) {
+      const binds = (name: TypeScript.BindingName, value: string): boolean => ts.isIdentifier(name) ? name.text === value
+        : name.elements.some((element) => ts.isBindingElement(element) && binds(element.name, value));
+      const shadows = (value: string): boolean => all().some((node) =>
+        ((ts.isVariableDeclaration(node) || ts.isParameter(node)) && binds(node.name, value))
+        || ((ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isClassDeclaration(node) || ts.isClassExpression(node))
+          && node.name?.text === value));
+      if (shadows(viewer)) {
         fail('Shadowed LogViewer binding needs manual review');
       }
+      const outer = (node: TypeScript.Expression): TypeScript.Expression => {
+        let current = node;
+        while (ts.isParenthesizedExpression(current.parent) || ts.isAsExpression(current.parent)
+          || ts.isTypeAssertionExpression(current.parent) || ts.isNonNullExpression(current.parent)
+          || ts.isSatisfiesExpression(current.parent)) current = current.parent;
+        return current;
+      };
+      const nativePromise = (node: TypeScript.Node, names: readonly string[]): boolean => {
+        if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)
+          || !ts.isIdentifier(node.expression.expression) || node.expression.expression.text !== 'Promise'
+          || !names.includes(node.expression.name.text)) return false;
+        if (shadows('Promise') || source.statements.some((statement) => ts.isImportDeclaration(statement) && !statement.importClause?.isTypeOnly
+          && (statement.importClause?.name?.text === 'Promise' || (statement.importClause?.namedBindings
+            && (ts.isNamespaceImport(statement.importClause.namedBindings) ? statement.importClause.namedBindings.name.text === 'Promise'
+              : statement.importClause.namedBindings.elements.some((item) => !item.isTypeOnly && item.name.text === 'Promise')))))) {
+          fail('Shadowed Promise binding needs manual review');
+        }
+        return true;
+      };
+      const promiseAware = (call: TypeScript.CallExpression): boolean => {
+        const value = outer(call);
+        if (ts.isAwaitExpression(value.parent) || ts.isVoidExpression(value.parent)) return true;
+        const member = value.parent;
+        const continuation = ts.isPropertyAccessExpression(member) ? member.name.text
+          : ts.isElementAccessExpression(member) && ts.isStringLiteral(member.argumentExpression) ? member.argumentExpression.text : undefined;
+        if (continuation && ['then', 'catch', 'finally'].includes(continuation)) return true;
+        if (nativePromise(value.parent, ['resolve']) && ts.isCallExpression(value.parent)
+          && value.parent.arguments.length === 1 && value.parent.arguments[0] === value) return true;
+        const array = value.parent;
+        return ts.isArrayLiteralExpression(array) && nativePromise(array.parent, ['all', 'allSettled', 'race', 'any'])
+          && ts.isCallExpression(array.parent) && array.parent.arguments.length === 1 && array.parent.arguments[0] === array;
+      };
       for (const call of calls) {
+        // Preserve promises intentionally awaited, aggregated, or chained. Awaiting
+        // a chain receiver changes its value; awaiting array elements changes concurrency.
+        if (promiseAware(call)) continue;
         let scope: TypeScript.Node = call.parent;
-        while (scope !== source && !ts.isArrowFunction(scope) && !ts.isFunctionDeclaration(scope)
-          && !ts.isFunctionExpression(scope) && !ts.isMethodDeclaration(scope)) scope = scope.parent;
+        while (scope !== source && !ts.isFunctionLike(scope)) {
+          if (ts.isParameter(scope) || ts.isPropertyDeclaration(scope) || ts.isClassStaticBlockDeclaration(scope)
+            || ts.isComputedPropertyName(scope) || ts.isDecorator(scope)) fail('Unsafe LogViewer await context needs manual review');
+          scope = scope.parent;
+        }
         if (scope !== source && !ts.canHaveModifiers(scope)) fail('Synchronous LogViewer wrapper needs manual review');
         const modifiers = ts.canHaveModifiers(scope) ? ts.getModifiers(scope) : undefined;
         if (scope !== source && !modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)) {
@@ -200,6 +246,8 @@ function coreTokens(
       }
     }
   }
+
+  if (rule === 'log-viewer-await') return tokens;
 
   if (rule === 'csrf-exclusions') {
     const nodes = all();
