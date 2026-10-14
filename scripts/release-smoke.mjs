@@ -1249,6 +1249,7 @@ export function certificationTestSource(flat, artifactSha256 = null, resetOption
 	import { Cache } from '@beeblock/svelar/cache';
 	import { Connection, Migration, Schema } from '@beeblock/svelar/database';
 	import { ApiKeys } from '@beeblock/svelar/api-keys';
+	import { Audit, auditable } from '@beeblock/svelar/audit';
 	import { WebhookInbox } from '@beeblock/svelar/webhooks';
 	import { AuthenticateMiddleware } from '@beeblock/svelar/auth';
 	import { Hash } from '@beeblock/svelar/hashing';
@@ -1288,6 +1289,7 @@ afterAll(async () => {
   Event.flush();
   Post.removeObservers();
   await Queue.stop();
+  await Cache.close();
   await Connection.disconnect();
 });
 
@@ -1650,8 +1652,9 @@ describe('Svelar release certification', () => {
       saving() { calls.push('saving'); },
       saved() { calls.push('saved'); },
     });
+    auditable(HelperRecord);
     try {
-      await Teams.runWithTeam('helper-team-a', async () => {
+      await ApplicationContext.run({ userId: 'helper-actor', actorId: 'helper-actor', correlationId: 'helper-correlation' }, () => Teams.runWithTeam('helper-team-a', async () => {
         const query = HelperRecord.forTenant('helper-team-a').where('slug', 'decoy').orWhere('slug', 'lifecycle');
         const original = query.toSQL();
         const record = await query.firstOrCreate({ slug: 'lifecycle' }, {
@@ -1663,10 +1666,14 @@ describe('Svelar release certification', () => {
         expect(record.getAttribute('is_admin')).toBeUndefined();
         expect(record.getAttribute('created_at')).toBeTruthy();
         expect(calls).toEqual(['creating', 'saving', 'created', 'saved']);
+        const createdAudit = await Audit.forModel(HelperRecord.name, record.getAttribute('record_key'));
+        expect(createdAudit).toHaveLength(1);
+        expect(createdAudit[0]).toMatchObject({ action: 'created', modelId: record.getAttribute('record_key'), newValues: { title: 'Created' } });
         calls.length = 0;
         const unchanged = await query.firstOrCreate({ slug: 'lifecycle' }, { title: 'Ignored' });
         expect(unchanged.getAttribute('title')).toBe('Created');
         expect(calls).toEqual([]);
+        expect(await Audit.forModel(HelperRecord.name, record.getAttribute('record_key'))).toHaveLength(1);
         const updated = await query.select('title').updateOrCreate({ slug: 'lifecycle' }, {
           title: 'Updated', payload: { step: 2 }, is_admin: true,
         });
@@ -1675,6 +1682,14 @@ describe('Svelar release certification', () => {
         expect(changes.title).toBe('Updated');
         expect(changes).not.toHaveProperty('is_admin');
         expect(calls).toEqual(['updating', 'saving', 'updated', 'saved']);
+        const updatedAudit = await Audit.forModel(HelperRecord.name, record.getAttribute('record_key'));
+        expect(updatedAudit).toHaveLength(2);
+        expect(updatedAudit).toEqual(expect.arrayContaining([
+          expect.objectContaining({ action: 'created', newValues: expect.objectContaining({ title: 'Created' }) }),
+          expect.objectContaining({ action: 'updated', oldValues: expect.objectContaining({ title: 'Created' }), newValues: expect.objectContaining({ title: 'Updated' }) }),
+        ]));
+        expect(updatedAudit.every((entry) => entry.userId === 'helper-actor' && entry.metadata?.actorId === 'helper-actor'
+          && entry.metadata?.teamId === 'helper-team-a' && entry.metadata?.correlationId === 'helper-correlation')).toBe(true);
         expect((await HelperRecord.where('slug', 'decoy').first())?.getAttribute('title')).toBe('Untouched');
         query.select('*');
         expect(query.toSQL()).toEqual(original);
@@ -1687,13 +1702,14 @@ describe('Svelar release certification', () => {
         }, ['team_id', 'slug'], ['title']);
         expect((await HelperRecord.find(record.getAttribute('record_key')))?.getAttribute('title')).toBe('Own bulk update');
         expect(calls).toEqual(['updating', 'saving', 'updated', 'saved']);
+        expect(await Audit.forModel(HelperRecord.name, record.getAttribute('record_key'))).toHaveLength(2);
         const attack = HelperRecord.withTrashed().upsert({
           record_key: foreign.getAttribute('record_key'), slug: 'foreign-key-collision', title: 'Attack',
         }, ['team_id', 'slug'], ['title']);
         if (Connection.getDriver() === 'mysql') await attack;
         else await expect(attack).rejects.toThrow();
         await updated.delete();
-      });
+      }));
       const trashed = await HelperRecord.forTenant('helper-team-a').withTrashed().updateOrCreate(
         { slug: 'lifecycle' }, { title: 'Updated while trashed' },
       );

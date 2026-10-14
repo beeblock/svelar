@@ -95,6 +95,23 @@ describe('Installed release coverage contracts (no native execution)', () => {
     expect(call).not.toMatch(/vi\.mock|fakeHttp|interceptHttp/);
   });
 
+  it.each([false, true])('combines UUID tenant lifecycle and persistent audit assertions in flat=%s', (flat) => {
+    const source = parsed(flat);
+    const call = callbackCall(source, 'persists find-or-create models with tenant scopes, casts, IDs and observer diffs').getText(source);
+    expect(source.text).toContain("import { Audit, auditable } from '@beeblock/svelar/audit'");
+    expect(call).toContain('class HelperRecord extends HasUuids(TenantModel)');
+    expect(call).toContain('auditable(HelperRecord)');
+    expect(call).toContain('ApplicationContext.run');
+    expect(call).toContain("entry.metadata?.actorId === 'helper-actor'");
+    expect(call).toContain("entry.metadata?.teamId === 'helper-team-a'");
+    expect(call).toContain("oldValues: expect.objectContaining({ title: 'Created' })");
+    expect(call).toContain("newValues: expect.objectContaining({ title: 'Updated' })");
+    expect(call).toContain('expect(createdAudit).toHaveLength(1)');
+    expect(call).toContain('expect(updatedAudit).toHaveLength(2)');
+    expect(call).not.toContain("driver: 'memory'");
+    expect(source.text).toContain('await Cache.close()');
+  });
+
   it('pins each child to archive SHA, installed lock integrity and physical public exports', () => {
     const source = harness.installedHttpBudgetChildSource();
     expect(source).toContain("createRequire(config.appManifest)");
