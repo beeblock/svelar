@@ -93,6 +93,86 @@ async function paceContext(context, pace) {
   });
 }
 
+export function pendingFormSnapshot({ formSelector = 'form', loadingText } = {}) {
+  const form = document.querySelector(formSelector);
+  const visible = (element) => element.getClientRects().length > 0;
+  const buttons = [...(form?.querySelectorAll('button[type=submit]') ?? [])].filter(visible);
+  const inputs = [...(form?.querySelectorAll('input:not([type=hidden]), textarea, select') ?? [])].filter(visible);
+  return { visible: !!form && visible(form), submitCount: buttons.length, inputCount: inputs.length,
+    submitsDisabled: buttons.length > 0 && buttons.every((button) => button.disabled),
+    inputsDisabled: inputs.every((input) => input.disabled),
+    busy: buttons.some((button) => button.getAttribute('aria-busy') === 'true'),
+    loading: !!loadingText && buttons.some((button) => button.textContent.trim() === loadingText),
+    spinner: buttons.some((button) => [...button.querySelectorAll('svg.animate-spin')].some(visible)),
+  };
+}
+
+export function assertPendingForm(snapshot, { loadingText, spinner = false } = {}) {
+  assert(snapshot.visible && snapshot.submitCount > 0, 'Pending form must remain visible.');
+  assert(snapshot.submitsDisabled && snapshot.inputsDisabled, 'Pending form must disable all visible inputs and submit controls.');
+  assert(loadingText ? snapshot.loading : snapshot.busy, 'Pending form must show visible loading feedback.');
+  if (spinner) assert(snapshot.spinner, 'Pending form must show its loading spinner.');
+}
+
+// Hold the real browser POST, never its response; release to the unchanged server after observing pending UI.
+export async function pendingFormSubmission(page, { path, action, formSelector = 'form', loadingText, spinner = false, fields = {} }, submit, observe = async () => {}) {
+  const origin = new URL(page.url()).origin;
+  const matchesUrl = (value) => {
+    const url = new URL(String(value));
+    return url.origin === origin && url.pathname === path && (!action || url.searchParams.has('/' + action));
+  };
+  const matches = (request) => request.method() === 'POST' && matchesUrl(request.url());
+  let release; let captured; let rejectRoute; let forwarded; let heldRoute = false; let writes = 0; let timer; let snapshot;
+  const gate = new Promise((accept) => { release = accept; });
+  const intercepted = new Promise((accept) => { captured = accept; });
+  const routeFailure = new Promise((_, reject) => { rejectRoute = reject; });
+  const completed = new Promise((accept) => { forwarded = accept; });
+  routeFailure.catch(() => {});
+  const count = (request) => { if (matches(request)) writes++; };
+  const handler = async (route) => {
+    if (!matches(route.request())) return route.fallback();
+    heldRoute = true;
+    try {
+      const request = route.request();
+      const form = await new Response(request.postDataBuffer(), { headers: { 'content-type': request.headers()['content-type'] } }).formData();
+      for (const [name, value] of Object.entries(fields)) assert(form.get(name) === value, `Actual submitted ${name} did not match the valid fixture input.`);
+      captured(); await gate; await route.fallback();
+    } catch (error) { rejectRoute(error); await route.abort('failed'); }
+    finally { forwarded(); }
+  };
+  page.on('request', count);
+  await page.route(matchesUrl, handler);
+  const response = page.waitForResponse((value) => matches(value.request()), { timeout: 10000 });
+  response.catch(() => {});
+  try {
+    await submit();
+    await Promise.race([intercepted, routeFailure, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Valid ${path} form did not submit its POST.`)), 5000);
+    })]);
+    clearTimeout(timer);
+    const settings = { formSelector, loadingText };
+    await page.waitForFunction((settings) => {
+      const form = document.querySelector(settings.formSelector);
+      const buttons = [...(form?.querySelectorAll('button[type=submit]') ?? [])].filter((button) => button.getClientRects().length > 0);
+      return buttons.some((button) => settings.loadingText ? button.textContent.trim() === settings.loadingText : button.getAttribute('aria-busy') === 'true');
+    }, settings, { timeout: 10000 });
+    snapshot = await page.evaluate(pendingFormSnapshot, settings);
+    assertPendingForm(snapshot, { loadingText, spinner });
+    await observe();
+    await page.keyboard.press('Enter');
+    assert.equal(writes, 1, 'Pending form dispatched a duplicate POST.');
+    release();
+    const actual = await Promise.race([response, routeFailure]);
+    assert.equal(writes, 1, 'Form dispatched more than one POST after release.');
+    return { response: actual, evidence: { path, action: action ?? 'default', posts: writes, ...snapshot, validatedFields: Object.keys(fields) } };
+  } finally {
+    clearTimeout(timer); release();
+    page.off('request', count);
+    if (heldRoute) await completed;
+    await page.unroute(matchesUrl, handler);
+  }
+}
+
 export async function sourceSnapshot(appDir) {
   const snapshot = {};
   async function visit(path, key) {
@@ -451,26 +531,14 @@ async function login(page, options, state, kind = 'eligible', remember = false, 
   await page.getByLabel('Email', { exact: true }).fill(state.accounts[kind].email);
   await page.getByLabel('Password', { exact: true }).fill(state.password);
   if (remember) await page.getByRole('checkbox', { name: 'Remember me' }).check();
-  let release;
-  let held;
-  const matcher = '**/login';
   if (loading) {
-    const barrier = new Promise((accept) => { release = accept; });
-    const intercepted = new Promise((accept) => { held = accept; });
-    await page.route(matcher, async (route) => {
-      if (route.request().method() !== 'POST') return route.continue();
-      held(); await barrier; await route.continue();
-    });
-    try {
-      await page.getByRole('button', { name: 'Sign In', exact: true }).click();
-      await Promise.race([intercepted, new Promise((_, reject) => setTimeout(() => reject(new Error('Login did not submit.')), 5000))]);
-      await page.locator('button[type=submit][aria-busy=true]').waitFor();
-      assert(await page.getByLabel('Password', { exact: true }).isDisabled(), 'Pending login must disable secret input.');
-      assert(await page.getByRole('button', { name: 'Show password', exact: true }).isDisabled(), 'Pending login must disable visibility control.');
-    } finally { release(); }
+    await pendingFormSubmission(page, { path: '/login', fields: { email: state.accounts[kind].email, password: state.password } },
+      () => page.getByRole('button', { name: 'Sign In', exact: true }).click(), async () => {
+        assert(await page.getByLabel('Password', { exact: true }).isDisabled(), 'Pending login must disable secret input.');
+        assert(await page.getByRole('button', { name: 'Show password', exact: true }).isDisabled(), 'Pending login must disable visibility control.');
+      });
   } else await page.getByRole('button', { name: 'Sign In', exact: true }).click();
   await page.waitForURL((url) => url.pathname !== '/login');
-  if (loading) await page.unroute(matcher);
 }
 
 async function logout(page) {
@@ -488,29 +556,43 @@ function monitorContext(context, errors, responses) {
   });
 }
 
-async function fullCases(browser, options, fixture, state, checks, runtimeErrors, errorResponses, expectedResponses, pace) {
+async function fullCases(browser, options, fixture, state, checks, runtimeErrors, errorResponses, expectedResponses, pace, pendingForms) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   monitorContext(context, runtimeErrors, errorResponses);
   await paceContext(context, pace);
   const page = await context.newPage();
   try {
+    await goto(page, options, '/forgot-password');
+    await page.getByLabel('Email', { exact: true }).fill(state.accounts.eligible.email);
+    const recovery = await pendingFormSubmission(page, { path: '/forgot-password', loadingText: 'Sending...', fields: { email: state.accounts.eligible.email } },
+      () => page.locator('form [type=submit]').click());
+    pendingForms.push(recovery.evidence);
+    assert.equal((await recovery.response.json()).type, 'success', 'Recovery must finish through the real action.');
+    await page.getByText('If that email exists, a reset link has been sent. Check your inbox.', { exact: true }).waitFor();
+    assert.equal(await page.locator('form').count(), 0, 'Recovery success retained duplicate-submit controls.');
+    checks.push('recovery-pending-and-real-success');
     await goto(page, options, '/reset-password?token=auth-ui-invalid&email=unknown%40example.test');
     await page.getByLabel('New Password', { exact: true }).fill(state.password);
     await page.getByLabel('Confirm Password', { exact: true }).fill(state.password);
-    await page.locator('form [type=submit]').click();
+    const reset = await pendingFormSubmission(page, { path: '/reset-password', loadingText: 'Resetting...',
+      fields: { password: state.password, password_confirmation: state.password } }, () => page.locator('form [type=submit]').click());
+    pendingForms.push(reset.evidence);
     await page.getByText('Invalid or expired reset link. Please request a new one.', { exact: true }).waitFor();
     for (const input of await page.locator('input[autocomplete*=password]').all()) assert.equal(await input.inputValue(), '', 'Reset failure retained secret.');
     assert.equal(await page.getByRole('alert').count(), 1);
     checks.push('invalid-reset-clears-both-passwords');
     await goto(page, options, '/otp-login');
     await page.getByLabel('Email', { exact: true }).fill(state.accounts.eligible.email);
-    await page.locator('form [type=submit]').click();
+    const send = await pendingFormSubmission(page, { path: '/otp-login', action: 'send', loadingText: 'Sending...', fields: { email: state.accounts.eligible.email } },
+      () => page.locator('form [type=submit]').click());
+    pendingForms.push(send.evidence);
     await page.getByLabel('Verification Code', { exact: true }).waitFor();
     await runFixtureCommand(fixture.appDir, fixture.env, 'otp-fixture', state, { code: '123456' });
     await page.getByLabel('Verification Code', { exact: true }).fill('654321');
-    const invalidOtpResponse = page.waitForResponse((response) => new URL(response.url()).pathname === '/otp-login' && response.request().method() === 'POST');
-    await page.locator('form [type=submit]').click();
-    const invalidOtp = await (await invalidOtpResponse).json();
+    const verify = await pendingFormSubmission(page, { path: '/otp-login', action: 'verify', loadingText: 'Verifying...', fields: { email: state.accounts.eligible.email, code: '654321' } },
+      () => page.locator('form [type=submit]').click());
+    pendingForms.push(verify.evidence);
+    const invalidOtp = await verify.response.json();
     assert.equal(invalidOtp.type, 'failure', 'Invalid OTP must remain an action failure.');
     assert.equal(invalidOtp.status, 401, 'Invalid OTP must preserve its authentication failure status.');
     await page.getByText(authUiMessages.invalidOtp, { exact: true }).waitFor();
@@ -607,7 +689,7 @@ async function fullCases(browser, options, fixture, state, checks, runtimeErrors
 
 export async function runCertification(options) {
   await mkdir(options.reportDir ??= await mkdtemp(join(tmpdir(), 'svelar-auth-ui-report-')), { recursive: true });
-  const report = { phase: options.phase, appDir: options.appDir, baseUrl: options.baseUrl, startedAt: new Date().toISOString(), complete: false, checks: [], failures: [], screenshots: [],
+  const report = { phase: options.phase, appDir: options.appDir, baseUrl: options.baseUrl, startedAt: new Date().toISOString(), complete: false, checks: [], pendingForms: [], failures: [], screenshots: [],
     scope: { authSurfaces: 6, forms: 5, verificationStatusPage: 1, federation: 'presentation only; no external provider callbacks', mail: 'null transport in isolated full mode' } };
   const state = fixtureIdentity();
   let fixture;
@@ -658,7 +740,7 @@ export async function runCertification(options) {
           }
         } finally { await context.close(); }
       }
-      if (options.phase === 'full') await fullCases(browser, options, fixture, state, report.checks, runtimeErrors, errorResponses, expectedResponses, pace);
+      if (options.phase === 'full') await fullCases(browser, options, fixture, state, report.checks, runtimeErrors, errorResponses, expectedResponses, pace, report.pendingForms);
       for (const response of errorResponses) if (!expectedResponses.has(response)) runtimeErrors.push(`HTTP ${response.status()} ${new URL(response.url()).pathname}`);
       assert.deepEqual(runtimeErrors, [], 'Browser runtime/quota errors; not retried.');
       assert(!interrupted, 'Certification interrupted.');

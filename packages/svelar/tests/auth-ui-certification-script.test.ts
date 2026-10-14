@@ -16,6 +16,94 @@ import { NewCommandTemplates } from '../src/cli/commands/NewCommandTemplates.js'
 
 const harness = await import(new URL('../../../scripts/auth-ui-certification.mjs', import.meta.url).href);
 
+describe('real POST pending-form barrier harness', () => {
+  const pending = { visible: true, submitCount: 1, inputCount: 1, submitsDisabled: true, inputsDisabled: true,
+    busy: true, loading: true, spinner: true };
+
+  function browserPage({ snapshot = pending, duplicate = false, field = 'valid-secret', forwardError = false } = {}) {
+    const listeners = new Map<string, (request: any) => void>();
+    const request = { method: () => 'POST', url: () => 'http://127.0.0.1:12345/otp-login?/verify',
+      headers: () => ({ 'content-type': 'application/x-www-form-urlencoded' }),
+      postDataBuffer: () => Buffer.from(new URLSearchParams({ code: field }).toString()) };
+    const response = { request: () => request, status: () => 401 };
+    let acceptResponse!: (response: any) => void;
+    let handler: any;
+    let matcher: any;
+    const result = { forwarded: 0, aborted: 0, unrouted: false, observed: false };
+    const page = {
+      url: () => 'http://127.0.0.1:12345/otp-login',
+      on: (name: string, callback: (request: any) => void) => listeners.set(name, callback),
+      off: (name: string) => listeners.delete(name),
+      route: async (predicate: any, callback: any) => { matcher = predicate; handler = callback; },
+      unroute: async (predicate: any, callback: any) => { expect(predicate).toBe(matcher); expect(callback).toBe(handler); result.unrouted = true; },
+      waitForResponse: (predicate: any) => new Promise((accept) => {
+        acceptResponse = (value) => { expect(predicate(value)).toBe(true); accept(value); };
+      }),
+      waitForFunction: async () => {}, evaluate: async () => snapshot,
+      keyboard: { press: async () => { if (duplicate) listeners.get('request')?.(request); } },
+    };
+    const submit = async () => {
+      expect(matcher(new URL(request.url()))).toBe(true);
+      expect(matcher(new URL('http://127.0.0.1:12345/otp-login?/send'))).toBe(false);
+      expect(matcher(new URL('http://other.example/otp-login?/verify'))).toBe(false);
+      listeners.get('request')?.(request);
+      void handler({ request: () => request, fallback: async () => {
+        result.forwarded++;
+        if (forwardError) throw new Error('real forwarding failed');
+        acceptResponse(response);
+      }, abort: async () => { result.aborted++; } });
+    };
+    return { page, submit, response, result, listeners };
+  }
+  const options = { path: '/otp-login', action: 'verify', loadingText: 'Verifying...', fields: { code: 'valid-secret' } };
+
+  it('holds and forwards one real action response, validates fields and emits no secret values', async () => {
+    const fixture = browserPage();
+    const actual = await harness.pendingFormSubmission(fixture.page, options, fixture.submit, async () => {
+      expect(fixture.result.forwarded).toBe(0); fixture.result.observed = true;
+    });
+    expect(actual.response).toBe(fixture.response);
+    expect(actual.evidence).toMatchObject({ action: 'verify', posts: 1, loading: true, inputsDisabled: true, validatedFields: ['code'] });
+    expect(JSON.stringify(actual.evidence)).not.toContain('valid-secret');
+    expect(fixture.result).toMatchObject({ observed: true, forwarded: 1, aborted: 0, unrouted: true });
+    expect(fixture.listeners.size).toBe(0);
+  });
+
+  it.each(['visible', 'submitsDisabled', 'inputsDisabled', 'loading'] as const)('refuses a missing %s pending state and still releases/unroutes the request', async (property) => {
+    const fixture = browserPage({ snapshot: { ...pending, [property]: false } });
+    await expect(harness.pendingFormSubmission(fixture.page, options, fixture.submit)).rejects.toThrow();
+    expect(fixture.result).toMatchObject({ forwarded: 1, unrouted: true });
+    expect(fixture.listeners.size).toBe(0);
+  });
+
+  it('refuses duplicate submission without retrying either request', async () => {
+    const fixture = browserPage({ duplicate: true });
+    await expect(harness.pendingFormSubmission(fixture.page, options, fixture.submit)).rejects.toThrow('duplicate POST');
+    expect(fixture.result).toMatchObject({ forwarded: 1, unrouted: true });
+    expect(fixture.listeners.size).toBe(0);
+  });
+
+  it('rejects a lost/changed serialized field before forwarding and without exposing its value', async () => {
+    const fixture = browserPage({ field: 'private-wrong-value' });
+    await expect(harness.pendingFormSubmission(fixture.page, options, fixture.submit)).rejects.toThrow('Actual submitted code');
+    expect(fixture.result).toMatchObject({ forwarded: 0, aborted: 1, unrouted: true });
+    expect(fixture.listeners.size).toBe(0);
+  });
+
+  it('preserves forwarding failure and removes the barrier/listener', async () => {
+    const fixture = browserPage({ forwardError: true });
+    await expect(harness.pendingFormSubmission(fixture.page, options, fixture.submit)).rejects.toThrow('real forwarding failed');
+    expect(fixture.result).toMatchObject({ forwarded: 1, aborted: 1, unrouted: true });
+    expect(fixture.listeners.size).toBe(0);
+  });
+
+  it('requires invitation busy semantics and visible spinner, not merely a disabled button', () => {
+    expect(() => harness.assertPendingForm(pending, { spinner: true })).not.toThrow();
+    expect(() => harness.assertPendingForm({ ...pending, busy: false }, { spinner: true })).toThrow('loading feedback');
+    expect(() => harness.assertPendingForm({ ...pending, spinner: false }, { spinner: true })).toThrow('loading spinner');
+  });
+});
+
 class FixtureUser extends Model {
   static table = 'users';
   static timestamps = false;
