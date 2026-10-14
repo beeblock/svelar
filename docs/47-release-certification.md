@@ -107,11 +107,11 @@ Passing the existing suite is not proof that every requested evolution is implem
 Plugin dependency upgrades are included in the current evolution task and require their own migration tests; the core suite alone does not certify them. Using a supported Node/SvelteKit baseline is not the same as blindly selecting every registry `latest` tag.
 ### Complete Request Ledger (2026-10-13)
 
-The source audit now finds implementations for all 22 beeHub items. The remaining acceptance work is not optional: repeat every required installed-package, driver, upgrade, CLI and production-browser scenario on the same final artifact. "Final gate pending" does not mean release-ready. An item becomes accepted only after implementation, installed-package verification and documentation agree; unit totals alone never close a row.
+The initial source inventory found broad implementations across the 22 beeHub items, but the independent 2026-10-14 audit identified missing SVE-015 helpers and additional acceptance gaps below. Neither implementation nor acceptance is declared complete. The remaining work is not optional: repeat every required installed-package, driver, upgrade, CLI and production-browser scenario on the same final artifact. "Final gate pending" does not mean release-ready. An item becomes accepted only after implementation, installed-package verification and documentation agree; unit totals alone never close a row.
 
 | Item | Remaining implementation or acceptance work | State |
 |---|---|---|
-| SVE-001 | Resilient daemon/profiles, lock renewal, SIGKILL recovery, graceful drain and five-way concurrency implemented; repeat on final installed artifact | Final gate pending |
+| SVE-001 | SOURCE-native daemon/lock/recovery proofs exist; packaged installed-CLI five-way concurrency, long-lock renewal, SIGTERM/SIGKILL recovery and context proof required on final artifact | Final gate pending |
 | SVE-002 | Atomic coordination and trusted proxy chains implemented; real 1,000-request/four-process Redis proof passed, repeat final artifact | Final gate pending |
 | SVE-003 | General global-scope registry, all mutation boundaries and context propagation across jobs/events/scheduler/CLI | Final gate pending |
 | SVE-004 | Deep original snapshots, semantic decimal/custom casts and complete context-aware audit evidence | Final gate pending |
@@ -252,7 +252,11 @@ Formal **25-gate** run `candidate13/certification/4302a860-846b-4107-b6fd-84f631
 
 SOURCE unit reported 3,575 passes and 90 conditional skips (3,665 total) across 205 files: 193 passed and 12 conditional, in 201.87 seconds. Conditional skips are not acceptance; distinct required opt-in receipts must prove their stated coverage. This SOURCE run is not installed-SDK or fresh-CI evidence.
 
-The audit identified SVE-015's explicitly requested typed JSON/window QueryBuilder helpers as missing. Combined native PostgreSQL JSONB-operator/binding coverage and a combined `firstOrCreate` UUID/tenant/observer/audit lifecycle regression also remain required, as does browser coverage for non-login auth busy states and duplicate-submit prevention. Implementation and additional proofs are pending; no new helper API or completed regression is claimed here. A replacement candidate 14 identity has not yet been recorded.
+The audit identified SVE-015's explicitly requested typed JSON/window QueryBuilder helpers as missing. Combined native PostgreSQL JSONB-operator/binding coverage and a combined `firstOrCreate` UUID/tenant/observer/audit lifecycle regression remain required on the replacement archive, as does browser coverage for non-login auth busy states and duplicate-submit prevention. Implementation and final-artifact proofs are pending; no new helper API is claimed here. A replacement candidate 14 identity has not yet been recorded.
+
+Follow-up `54e0e07` adds the combined UUID/tenant/model-observer/persistent-audit assertion to the installed certification fixture. Its reported receipts are 17 harness tests and 45 actual SQLite app tests, separate counts; they do not close PostgreSQL/MySQL or replacement-artifact acceptance. ORM helper implementation and auth/invitation busy-state proofs remain pending.
+
+A further SVE-001 gap is explicit: the five-way queue CLI/recovery proof is **SOURCE-native**, whereas the existing installed Redis fixture runs same-process concurrency 1. Neither proves packaged-CLI concurrency 5, long renewable locks, SIGTERM drain, SIGKILL recovery or job context on the final installed artifact. A required installed-native sidecar using the packaged CLI, snapshot-preserved generated fixtures and owned Redis is being prepared. The successor pipeline is planned to have **26 mandatory gates** once that sidecar is ready and registered; it is not yet implemented or passed by this checkpoint. A full-25 result alone cannot close this newly identified requirement. An independent installed `LogViewer` reader from a job is an additional proposed check, not a completed receipt.
 
 The complete integrated run, fresh CI, final core Node 22.12 floor and final approval remain **pending**. Plugin Node 22.12 execution does not replace the core floor gate. These scoped PASS receipts do not accept the whole package or authorize publication.
 
@@ -260,7 +264,7 @@ All SVE-001 through SVE-022 rows remain **Final gate pending**. The last reporte
 
 ### Publication After Final Approval
 
-**Do not run the publication steps while any required gate or ledger row is pending.** First retain the successful full-25 manifest, floor/fresh-CI/plugin receipts and explicit approval binding both package versions to their archive SHA/SRI. Candidate 13 is superseded and must not be published; the replacement candidate's identity and approval are pending. Select the approved core path and identity together when available; never edit or repack an archive.
+**Do not run the publication steps while any required gate or ledger row is pending.** First retain a successful manifest covering every required phase, including the planned installed-native queue CLI gate (26 total when registered), floor/fresh-CI/plugin receipts and explicit approval binding both package versions to their archive SHA/SRI. Candidate 13 is superseded and must not be published; the replacement candidate's identity and approval are pending. Select the approved core path and identity together when available; never edit or repack an archive.
 
 Only core `@beeblock/svelar@0.8.0` and `@beeblock/svelar-datatable@0.3.0` are intended publication targets. Other plugin drafts are not part of these publish commands. From the core repository root, the core path below deliberately remains a placeholder until final approval; Datatable's retained candidate path is also subject to that approval:
 
