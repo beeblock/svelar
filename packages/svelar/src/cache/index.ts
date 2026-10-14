@@ -72,6 +72,8 @@ export interface CacheConfig {
 }
 
 interface CacheStore {
+  /** Release owned resources without deleting cached data. */
+  close?(): Promise<void>;
   get<T = any>(key: string): Promise<T | null>;
   put(key: string, value: any, ttl?: number): Promise<void>;
   forget(key: string): Promise<boolean>;
@@ -489,6 +491,9 @@ function redisTimeout(value: number | undefined, name: string): number {
 class RedisCacheStore implements CacheStore {
   private redis?: any;
   private connecting?: Promise<any>;
+  private openingClient?: any;
+  private closed = false;
+  private closing?: Promise<void>;
   private url?: string;
   private connection?: Record<string, any>;
   private prefix: string;
@@ -523,6 +528,7 @@ class RedisCacheStore implements CacheStore {
   }
 
   private async getClient(): Promise<any> {
+    if (this.closed) throw new Error('Redis cache store is closed.');
     if (!this.owned) return this.redis;
     if (this.connecting) return this.connecting;
     if (this.redis?.status === 'ready') return this.redis;
@@ -541,6 +547,7 @@ class RedisCacheStore implements CacheStore {
     const { default: Redis } = await import('ioredis' as string).catch((cause: unknown) => {
       throw new Error('Redis cache requires "ioredis" package. Install it: npm install ioredis', { cause });
     });
+    if (this.closed) throw new Error('Redis cache store is closed.');
     const options = {
       ...this.connection,
       lazyConnect: true,
@@ -554,6 +561,7 @@ class RedisCacheStore implements CacheStore {
       autoResendUnfulfilledCommands: false,
     };
     const client = this.url ? new Redis(this.url, options) : new Redis(options);
+    this.openingClient = client;
     let connectionError: unknown;
     // The operation reports failures; the listener also prevents SDK error-event spam.
     client.on('error', (error: unknown) => {
@@ -564,21 +572,51 @@ class RedisCacheStore implements CacheStore {
       if (this.redis === client) this.redis = undefined;
     });
     try {
-      await this.bounded(client.connect(), this.connectTimeoutMs, 'connect');
+      await this.bounded(client.connect().then(() => {
+        if (this.closed) {
+          this.discard(client);
+          throw new Error('Redis cache store is closed.');
+        }
+      }), this.connectTimeoutMs, 'connect');
+      if (this.closed) throw new Error('Redis cache store is closed.');
       if (client.status !== 'ready') throw connectionError ?? new Error('Redis cache connection did not become ready.');
       this.redis = client;
       return client;
     } catch (error) {
       this.discard(client);
       throw connectionError ?? error;
+    } finally {
+      if (this.openingClient === client) this.openingClient = undefined;
     }
   }
 
   private discard(client: CacheStoreConfig['client']): void {
+    if (!this.owned) return;
     if (this.redis === client) this.redis = undefined;
-    if (client.status !== 'end') client.disconnect();
-    // ioredis disconnect() can wait for a half-open peer; failures must release owned sockets now.
-    client.stream?.destroy();
+    try {
+      if (client.status !== 'end') client.disconnect();
+    } finally {
+      // ioredis disconnect() can wait for a half-open peer; release owned sockets now.
+      client.stream?.destroy();
+    }
+  }
+
+  close(): Promise<void> {
+    if (this.closing) return this.closing;
+    this.closed = true;
+    this.closing = (async () => {
+      const errors: unknown[] = [];
+      if (this.owned) {
+        for (const client of new Set([this.redis, this.openingClient])) {
+          if (client) try { this.discard(client); } catch (error) { errors.push(error); }
+        }
+        // A lazy import/connect may finish after close began; never publish its client.
+        try { await this.connecting; } catch { /* The pending operation reports its own failure. */ }
+      }
+      this.redis = undefined;
+      if (errors.length) throw new AggregateError(errors, 'Redis cache shutdown failed.');
+    })();
+    return this.closing;
   }
 
   private async bounded<T>(operation: Promise<T>, timeoutMs: number, stage: 'connect' | 'command'): Promise<T> {
@@ -596,6 +634,7 @@ class RedisCacheStore implements CacheStore {
   }
 
   private async command<T>(client: CacheStoreConfig['client'], operation: () => Promise<T>): Promise<T> {
+    if (this.closed) throw new Error('Redis cache store is closed.');
     if (!this.owned) return operation();
     try {
       return await this.bounded(operation(), this.commandTimeoutMs, 'command');
@@ -793,6 +832,7 @@ class CacheManager {
     stores: { memory: { driver: 'memory' } },
   };
   private stores = new Map<string, CacheStore>();
+  private closing?: Promise<void>;
 
   configure(config: CacheConfig): void {
     this.config = config;
@@ -800,6 +840,7 @@ class CacheManager {
   }
 
   store(name?: string): CacheStore {
+    if (this.closing) throw new Error('Cache manager is closing.');
     const storeName = name ?? this.config.default;
     if (this.stores.has(storeName)) return this.stores.get(storeName)!;
 
@@ -809,6 +850,22 @@ class CacheManager {
     const store = this.createStore(storeConfig);
     this.stores.set(storeName, store);
     return store;
+  }
+
+  /** Close initialized stores only; later use creates fresh stores from the same configuration. */
+  close(): Promise<void> {
+    if (this.closing) return this.closing;
+    const stores = [...this.stores.values()];
+    this.stores.clear();
+    const closing = Promise.allSettled(stores.map((store) => Promise.resolve().then(() => store.close?.())))
+      .then((results) => {
+        const errors = results.flatMap((result) => result.status === 'rejected' ? [result.reason] : []);
+        if (errors.length) throw new AggregateError(errors, 'Cache shutdown failed.');
+      }).finally(() => {
+        if (this.closing === closing) this.closing = undefined;
+      });
+    this.closing = closing;
+    return closing;
   }
 
   // Proxy methods to default store

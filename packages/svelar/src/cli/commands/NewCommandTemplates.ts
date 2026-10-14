@@ -1062,11 +1062,19 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => 
 // adapter-node emits this only after HTTP drain: never disconnect the DB on SIGTERM.
 process.once('sveltekit:shutdown', () => {
   void (async () => {
-    await scheduler.stop();
-    await Queue.stop();
-    await Broadcast.drain();
-    await Connection.disconnect();
-  })().catch(() => console.error('Svelar shutdown cleanup failed.'));
+    const failures: Error[] = [];
+    for (const [name, close] of [
+      ['scheduler', () => scheduler.stop()],
+      ['queue', () => Queue.stop()],
+      ['broadcast', () => Broadcast.drain()],
+      ['cache', () => Cache.close()],
+      ['database', () => Connection.disconnect()],
+    ] as const) {
+      try { await close(); }
+      catch (cause) { failures.push(new Error(name, { cause })); }
+    }
+    if (failures.length) throw new AggregateError(failures, 'Svelar shutdown cleanup failed.');
+  })().catch((error: AggregateError) => console.error('Svelar shutdown cleanup failed:', error.errors.map((failure: Error) => failure.message).join(', ')));
 });
 
 export { Connection, Hash, Broadcast };

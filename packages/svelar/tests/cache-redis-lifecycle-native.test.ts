@@ -1,6 +1,6 @@
 import { spawn, execFile } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm, symlink, mkdir, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdtemp, rm, symlink, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { createServer, type Socket } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
@@ -25,6 +25,15 @@ describe.skipIf(!dependencyRoot)('real ioredis owned cache lifecycle', () => {
     await symlink(dependencyRoot!, join(directory, 'node_modules'), 'dir');
     await build({ entryPoints: [resolve('src/cache/index.ts')], outfile: entry, bundle: true, packages: 'external',
       platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent' });
+    if (process.env.SVELAR_CACHE_REDIS_EVIDENCE_DIR) {
+      await mkdir(process.env.SVELAR_CACHE_REDIS_EVIDENCE_DIR, { recursive: true });
+      await writeFile(join(process.env.SVELAR_CACHE_REDIS_EVIDENCE_DIR, 'source-identity.json'), JSON.stringify({
+        scope: 'source-native; not an installed immutable artifact', node: process.version,
+        source: resolve('src/cache/index.ts'),
+        sourceSha256: createHash('sha256').update(await readFile('src/cache/index.ts')).digest('hex'),
+        bundleSha256: createHash('sha256').update(await readFile(entry)).digest('hex'), dependencyRoot,
+      }, null, 2) + '\n');
+    }
   });
   afterAll(async () => { if (directory) await rm(directory, { recursive: true, force: true }); });
 
@@ -46,7 +55,7 @@ describe.skipIf(!dependencyRoot)('real ioredis owned cache lifecycle', () => {
         child.once('close', (code, signal) => accept({ code, signal }));
       });
     } finally { clearTimeout(timer); if (child.exitCode === null) child.kill('SIGKILL'); }
-    const evidence = { name, deadlineMs, elapsedMs: Date.now() - startedAt, killed, ...result, stdout, stderr };
+    const evidence = { name, pid: child.pid, deadlineMs, elapsedMs: Date.now() - startedAt, killed, ...result, stdout, stderr };
     if (process.env.SVELAR_CACHE_REDIS_EVIDENCE_DIR) {
       await mkdir(process.env.SVELAR_CACHE_REDIS_EVIDENCE_DIR, { recursive: true });
       await writeFile(join(process.env.SVELAR_CACHE_REDIS_EVIDENCE_DIR, `${name}.json`), JSON.stringify(evidence, null, 2) + '\n');
@@ -190,4 +199,60 @@ describe.skipIf(!dependencyRoot)('real ioredis owned cache lifecycle', () => {
       expect(report).toMatchObject({ capacityWinners: 17, casWinners: 1, recovered: true });
     } finally { await execute('docker', ['rm', '--force', name], { timeout: 5000 }); }
   }, 25_000);
+
+  it.skipIf(process.env.SVELAR_TEST_CACHE_REDIS_DOCKER !== '1')('closes owned clients naturally, retains Redis data and leaves borrowed clients usable', async () => {
+    const name = `svelar-cache-close-${randomUUID()}`;
+    const prefix = `owned-close:${randomUUID()}:`;
+    const probe = createServer();
+    await new Promise<void>((accept) => probe.listen(0, '127.0.0.1', accept));
+    const address = probe.address();
+    if (!address || typeof address === 'string') throw new Error('Expected owned TCP address.');
+    const port = address.port;
+    await new Promise<void>((accept, reject) => probe.close((error) => error ? reject(error) : accept()));
+    try {
+      await execute('docker', ['run', '--detach', '--pull=never', '--name', name,
+        '--label', `io.svelar.runtime-certification=${name}`, '--publish', `127.0.0.1:${port}:6379`,
+        'redis:7-alpine', 'redis-server', '--save', '', '--appendonly', 'no'], { timeout: 10_000 });
+      await execute('docker', ['exec', name, 'redis-cli', 'ping'], { timeout: 5000 });
+      const report = await childProbe('owned-close', `
+        import Redis from 'ioredis';
+        const url = 'redis://127.0.0.1:${port}';
+        const prefix = ${JSON.stringify(prefix)};
+        Cache.configure({default:'redis',stores:{redis:{driver:'redis',url,prefix}, idle:{driver:'redis',url}}});
+        const old = Cache.store();
+        await old.put('retained', {value:'still-present'}, 0);
+        await Promise.all([Cache.close(), Cache.close(), old.close()]);
+        await assert.rejects(old.get('retained'), /store is closed/);
+        assert.deepEqual(await Cache.get('retained'), {value:'still-present'});
+        await Cache.close();
+        const borrowed = new Redis(url, {lazyConnect:true,retryStrategy:()=>null,disconnectTimeout:1});
+        borrowed.on('error', () => {});
+        await borrowed.connect();
+        const disconnect = borrowed.disconnect;
+        let disconnects = 0;
+        borrowed.disconnect = function(...args) { disconnects++; return disconnect.apply(this,args); };
+        Cache.configure({default:'redis',stores:{redis:{driver:'redis',client:borrowed,prefix}}});
+        const borrowedStore = Cache.store();
+        assert.deepEqual(await borrowedStore.get('retained'), {value:'still-present'});
+        await Cache.close();
+        assert.equal(disconnects, 0);
+        assert.equal(borrowed.status, 'ready');
+        assert.equal(await borrowed.ping(), 'PONG');
+        assert.deepEqual(JSON.parse(await borrowed.get(prefix+'retained')).value, {value:'still-present'});
+        await assert.rejects(borrowedStore.get('retained'), /store is closed/);
+        borrowed.disconnect();
+        borrowed.stream?.destroy();
+        await sleep(150);
+        console.log(JSON.stringify({ownedClosed:true,borrowedPreserved:true,dataRetained:true,
+          resources:process.getActiveResourcesInfo()}));`);
+      expect(report).toMatchObject({ ownedClosed: true, borrowedPreserved: true, dataRetained: true });
+      const independent = await childProbe('close-independent-reader', `
+        Cache.configure({default:'redis',stores:{redis:{driver:'redis',url:'redis://127.0.0.1:${port}',prefix:${JSON.stringify(prefix)}}}});
+        assert.deepEqual(await Cache.get('retained'), {value:'still-present'});
+        await Cache.close();
+        await sleep(150);
+        console.log(JSON.stringify({independentDataRetained:true,resources:process.getActiveResourcesInfo()}));`);
+      expect(independent.independentDataRetained).toBe(true);
+    } finally { await execute('docker', ['rm', '--force', name], { timeout: 5000 }); }
+  }, 15_000);
 });

@@ -9,6 +9,7 @@ interface FakeClient extends EventEmitter {
   url?: string;
   connect: ReturnType<typeof vi.fn<() => Promise<void>>>;
   disconnect: ReturnType<typeof vi.fn<() => void>>;
+  stream: { destroy: ReturnType<typeof vi.fn<() => void>> };
   get: ReturnType<typeof vi.fn<(key: string) => Promise<string | null>>>;
   exists: ReturnType<typeof vi.fn<(key: string) => Promise<number>>>;
   set: ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<string>>>;
@@ -37,6 +38,7 @@ vi.mock('ioredis', async () => {
       });
     });
     disconnect = vi.fn(() => { this.status = 'end'; this.emit('end'); });
+    stream = { destroy: vi.fn() };
     get = vi.fn(async (_key: string): Promise<string | null> => '{"value":"hit"}');
     exists = vi.fn(async (_key: string) => 1);
     set = vi.fn(async (..._args: unknown[]) => 'OK');
@@ -243,5 +245,123 @@ describe('owned Redis cache lifecycle', () => {
     const bootstrap = NewCommandTemplates.appTs();
     expect(bootstrap).toContain("connectTimeoutMs: config.get('cache.stores.redis.connectTimeoutMs', 2000)");
     expect(bootstrap).toContain("commandTimeoutMs: config.get('cache.stores.redis.commandTimeoutMs', 2000)");
+  });
+
+  it('closes an idle store without constructing a Redis client and rejects stale references', async () => {
+    const store = configure();
+    await Cache.close();
+    await expect(store.get('old')).rejects.toThrow('store is closed');
+    expect(sdk.instances).toHaveLength(0);
+    expect(await Cache.store().get('fresh')).toBe('hit');
+  });
+
+  it('disconnects an owned client once without flushing data and permits fresh manager use', async () => {
+    const store = configure();
+    await store.put('persistent', 'value', 0);
+    const [client] = sdk.instances;
+    const closing = store.close!();
+    expect(store.close!()).toBe(closing);
+    await closing;
+    await Cache.close();
+    expect(client.disconnect).toHaveBeenCalledTimes(1);
+    expect(client.stream.destroy).toHaveBeenCalledTimes(1);
+    expect(client.del).not.toHaveBeenCalled();
+    expect(client.scan).not.toHaveBeenCalled();
+    await expect(store.has('persistent')).rejects.toThrow('store is closed');
+    expect(await Cache.get('persistent')).toBe('hit');
+    expect(sdk.instances).toHaveLength(2);
+  });
+
+  it('never closes, mutates or destroys a borrowed client at store or manager shutdown', async () => {
+    const borrowed = Object.freeze({ get: vi.fn(async () => '{"value":"retained"}'),
+      disconnect: vi.fn(), quit: vi.fn(), stream: Object.freeze({ destroy: vi.fn() }) });
+    const store = configure({ client: borrowed });
+    expect(await store.get('key')).toBe('retained');
+    await store.close!();
+    await Cache.close();
+    expect(borrowed.disconnect).not.toHaveBeenCalled();
+    expect(borrowed.quit).not.toHaveBeenCalled();
+    expect(borrowed.stream.destroy).not.toHaveBeenCalled();
+    await expect(store.get('old')).rejects.toThrow('store is closed');
+    expect(await Cache.store().get('key')).toBe('retained');
+  });
+
+  it('prevents a lazy import from creating a client after close begins', async () => {
+    const store = configure();
+    const pending = expect(store.get('late')).rejects.toThrow('store is closed');
+    await store.close!();
+    await pending;
+    expect(sdk.instances).toHaveLength(0);
+  });
+
+  it('discards a late connection and never dispatches its pending command', async () => {
+    sdk.automaticReady = false;
+    const store = configure();
+    const pending = expect(store.get('late')).rejects.toThrow('store is closed');
+    await vi.waitFor(() => expect(sdk.instances[0]?.status).toBe('connecting'));
+    const [client] = sdk.instances;
+    const closing = store.close!();
+    expect(client.disconnect).toHaveBeenCalledTimes(1);
+    client.finishConnect();
+    await closing;
+    await pending;
+    expect(client.status).toBe('end');
+    expect(client.get).not.toHaveBeenCalled();
+    await expect(store.get('later')).rejects.toThrow('store is closed');
+    expect(sdk.instances).toHaveLength(1);
+  });
+
+  it('releases owned sockets even if disconnect throws and reports the close failure', async () => {
+    const store = configure();
+    await store.get('ready');
+    const [client] = sdk.instances;
+    const failure = new Error('disconnect failed');
+    client.disconnect.mockImplementationOnce(() => { throw failure; });
+    await expect(store.close!()).rejects.toMatchObject({ errors: [failure] });
+    expect(client.stream.destroy).toHaveBeenCalledTimes(1);
+    await expect(store.get('old')).rejects.toThrow('store is closed');
+  });
+
+  it('does not reconnect a closed store when an in-flight command later fails', async () => {
+    const store = configure();
+    await store.get('ready');
+    const [client] = sdk.instances;
+    let reject!: (error: Error) => void;
+    client.get.mockImplementationOnce(() => new Promise((_accept, fail) => { reject = fail; }));
+    const pending = expect(store.get('pending')).rejects.toThrow('pending connection closed');
+    await vi.waitFor(() => expect(reject).toBeTypeOf('function'));
+    await Cache.close();
+    reject(new Error('pending connection closed'));
+    await pending;
+    await expect(store.get('later')).rejects.toThrow('store is closed');
+    expect(sdk.instances).toHaveLength(1);
+    expect(client.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes every initialized store, aggregates failures in order and does not open configured stores', async () => {
+    Cache.configure({ default: 'one', stores: { one: { driver: 'memory' }, two: { driver: 'memory' }, idle: { driver: 'redis' } } });
+    const one = Cache.store('one');
+    const two = Cache.store('two');
+    const failures = [new Error('one failed'), new Error('two failed')];
+    one.close = vi.fn(async () => { throw failures[0]; });
+    two.close = vi.fn(async () => { throw failures[1]; });
+    const closing = Cache.close();
+    expect(Cache.close()).toBe(closing);
+    expect(() => Cache.store()).toThrow('manager is closing');
+    await expect(closing).rejects.toMatchObject({ errors: failures });
+    expect(one.close).toHaveBeenCalledTimes(1);
+    expect(two.close).toHaveBeenCalledTimes(1);
+    expect(sdk.instances).toHaveLength(0);
+    expect(Cache.store()).not.toBe(one);
+    await Cache.close();
+  });
+
+  it('supports stores without a close hook without flushing their data', async () => {
+    Cache.configure({ default: 'memory', stores: { memory: { driver: 'memory' } } });
+    const store = Cache.store();
+    await store.put('retained', 'value');
+    await Cache.close();
+    expect(await store.get('retained')).toBe('value');
+    expect(Cache.store()).not.toBe(store);
   });
 });
