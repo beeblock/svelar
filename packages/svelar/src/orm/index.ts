@@ -6,3 +6,4 @@ export { Relation, HasOne, HasMany, BelongsTo, BelongsToMany } from './Relations
 export { ModelObserver, type ModelEventName, MODEL_EVENTS } from './Observer.js';
 export type { AttributeCast, ModelCast } from './Model.js';
 export type { GlobalScope, GlobalScopeQuery, ScopeValue } from './QueryBuilder.js';
+export type { JsonValue, JsonLengthOperator, WindowOrder, WindowSpecification } from './QueryBuilder.js';

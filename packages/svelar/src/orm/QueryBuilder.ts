@@ -13,6 +13,14 @@ import { ApplicationContext } from '../support/Context.js';
 export type WhereOperator = '=' | '!=' | '<>' | '>' | '>=' | '<' | '<=' | 'LIKE' | 'NOT LIKE' | 'IN' | 'NOT IN' | 'IS' | 'IS NOT' | 'BETWEEN';
 export type OrderDirection = 'asc' | 'desc';
 export type JoinType = 'INNER' | 'LEFT' | 'RIGHT' | 'CROSS';
+export type JsonValue = null | boolean | number | string | readonly JsonValue[] | { readonly [key: string]: JsonValue };
+export type JsonLengthOperator = '=' | '!=' | '<>' | '>' | '>=' | '<' | '<=';
+export interface WindowOrder { column: string; direction?: OrderDirection }
+interface WindowOptions { partitionBy?: readonly string[]; orderBy?: readonly WindowOrder[] }
+export type WindowSpecification = WindowOptions & (
+  | { function: 'row_number' | 'rank' | 'dense_rank'; column?: never; frame?: never }
+  | { function: 'count' | 'sum' | 'avg' | 'min' | 'max'; column: string; frame?: 'partition' | 'running' }
+);
 
 export type ScopeValue = string | number | boolean | bigint | Date | null;
 
@@ -378,6 +386,53 @@ export class QueryBuilder<TModel = any> {
       });
     }
     return this;
+  }
+
+  /** PostgreSQL JSONB containment at the root; SQLite/MySQL semantics are deliberately not emulated. */
+  whereJsonContains(column: string, value: JsonValue): this {
+    return this.jsonContains(column, value, 'AND', false);
+  }
+
+  orWhereJsonContains(column: string, value: JsonValue): this {
+    return this.jsonContains(column, value, 'OR', false);
+  }
+
+  whereJsonDoesntContain(column: string, value: JsonValue): this {
+    return this.jsonContains(column, value, 'AND', true);
+  }
+
+  orWhereJsonDoesntContain(column: string, value: JsonValue): this {
+    return this.jsonContains(column, value, 'OR', true);
+  }
+
+  /** PostgreSQL JSONB top-level key or string-array element existence, not a JSON path. */
+  whereJsonContainsKey(column: string, key: string): this {
+    return this.jsonContainsKey(column, key, 'AND', false);
+  }
+
+  orWhereJsonContainsKey(column: string, key: string): this {
+    return this.jsonContainsKey(column, key, 'OR', false);
+  }
+
+  whereJsonDoesntContainKey(column: string, key: string): this {
+    return this.jsonContainsKey(column, key, 'AND', true);
+  }
+
+  orWhereJsonDoesntContainKey(column: string, key: string): this {
+    return this.jsonContainsKey(column, key, 'OR', true);
+  }
+
+  /** Root array length on all drivers. SQL NULL and non-arrays never match, including length zero. */
+  whereJsonLength(column: string, length: number): this;
+  whereJsonLength(column: string, operator: JsonLengthOperator, length: number): this;
+  whereJsonLength(column: string, operatorOrLength: JsonLengthOperator | number, length?: number): this {
+    return this.jsonLength(column, operatorOrLength, length, 'AND');
+  }
+
+  orWhereJsonLength(column: string, length: number): this;
+  orWhereJsonLength(column: string, operator: JsonLengthOperator, length: number): this;
+  orWhereJsonLength(column: string, operatorOrLength: JsonLengthOperator | number, length?: number): this {
+    return this.jsonLength(column, operatorOrLength, length, 'OR');
   }
 
   whereIn(column: string, values: any[]): this {
@@ -829,6 +884,45 @@ export class QueryBuilder<TModel = any> {
       this._selectBindings.push(...bindings);
     }
     return this;
+  }
+
+  /** Aggregates default to the whole partition; running frames require an explicit order. */
+  selectWindow(alias: string, specification: WindowSpecification): this {
+    if (!specification || typeof specification !== 'object' || Array.isArray(specification)
+      || Object.keys(specification).some((key) => !['function', 'column', 'partitionBy', 'orderBy', 'frame'].includes(key))) {
+      throw new TypeError('Window selection requires a structured specification.');
+    }
+    if (typeof alias !== 'string') throw new TypeError('Window alias must be a simple identifier.');
+    const label = assertSqlIdentifier(alias, 'Window alias');
+    const fn = specification.function;
+    const ranking = ['row_number', 'rank', 'dense_rank'].includes(fn);
+    if (!ranking && !['count', 'sum', 'avg', 'min', 'max'].includes(fn)) throw new TypeError('Unsupported window function.');
+    const partition = specification.partitionBy ?? [];
+    const order = specification.orderBy ?? [];
+    if (!Array.isArray(partition) || partition.length > 16 || !Array.isArray(order) || order.length > 16) {
+      throw new RangeError('Window partition/order lists must contain at most 16 columns.');
+    }
+    const partitions = Array.from(partition, (column) => this.structuredColumn(column));
+    const orders = Array.from(order, (item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)
+        || Object.keys(item).some((key) => !['column', 'direction'].includes(key))) throw new TypeError('Invalid window order.');
+      const direction = item.direction ?? 'asc';
+      if (direction !== 'asc' && direction !== 'desc') throw new TypeError('Invalid window order direction.');
+      return `${this.structuredColumn(item.column)} ${direction.toUpperCase()}`;
+    });
+    if (ranking && (!orders.length || specification.column !== undefined || specification.frame !== undefined)) {
+      throw new TypeError('Ranking windows require ordering and accept no column or frame.');
+    }
+    const frame = ranking ? undefined : specification.frame ?? 'partition';
+    if (frame !== undefined && !['partition', 'running'].includes(frame)) throw new TypeError('Invalid window frame.');
+    if (frame === 'running' && !orders.length) throw new TypeError('Running windows require ordering.');
+    const column = ranking ? '' : specification.column === '*' && fn === 'count' ? '*' : this.structuredColumn(specification.column!);
+    const clauses = [
+      ...(partitions.length ? [`PARTITION BY ${partitions.join(', ')}`] : []),
+      ...(orders.length ? [`ORDER BY ${orders.join(', ')}`] : []),
+      ...(frame ? [`ROWS BETWEEN UNBOUNDED PRECEDING AND ${frame === 'running' ? 'CURRENT ROW' : 'UNBOUNDED FOLLOWING'}`] : []),
+    ];
+    return this.selectRaw(`${fn.toUpperCase()}(${column}) OVER (${clauses.join(' ')}) as ${this.quoteIdentifier(label, 'Window alias')}`);
   }
 
   // ── INSERT / UPSERT ───────────────────────────────────────
@@ -1406,6 +1500,74 @@ export class QueryBuilder<TModel = any> {
   }
 
   // ── PRIVATE ──────────────────────────────────────────────
+
+  private structuredColumn(column: string): string {
+    if (typeof column !== 'string' || !column || column.split('.').some((part) => !part || part === '*')) {
+      throw new TypeError('Structured queries require a column identifier, not SQL or an alias.');
+    }
+    for (const part of column.split('.')) assertSqlIdentifier(part, 'Structured column');
+    return this.quoteIdentifier(column, 'Structured column');
+  }
+
+  private jsonContains(column: string, value: JsonValue, boolean: 'AND' | 'OR', negate: boolean): this {
+    if (Connection.getDriver(this.connectionName) !== 'postgres') throw new Error('JSONB containment requires PostgreSQL.');
+    const identifier = this.structuredColumn(column);
+    const active = new WeakSet<object>(); let nodes = 0;
+    const validate = (input: unknown, depth: number): void => {
+      if (++nodes > 10000 || depth > 64) throw new RangeError('JSON predicate exceeds its bounded structure limit.');
+      if (input === null || typeof input === 'string' || typeof input === 'boolean') return;
+      if (typeof input === 'number' && Number.isFinite(input)) return;
+      if (!input || typeof input !== 'object' || active.has(input)
+        || !Array.isArray(input) && ![Object.prototype, null].includes(Object.getPrototypeOf(input))) {
+        throw new TypeError('JSON predicates require finite JSON values without cycles.');
+      }
+      active.add(input);
+      if (Object.getOwnPropertySymbols(input).length) {
+        throw new TypeError('JSON predicates do not invoke custom serialization.');
+      }
+      const descriptors = Object.getOwnPropertyDescriptors(input);
+      for (const [key, descriptor] of Object.entries(descriptors)) {
+        if (Array.isArray(input) && key === 'length') continue;
+        if (!descriptor.enumerable || !('value' in descriptor)) throw new TypeError('JSON predicates require enumerable data properties.');
+        if (Array.isArray(input) && (!/^(0|[1-9]\d*)$/.test(key) || Number(key) >= input.length)) {
+          throw new TypeError('JSON predicates do not accept augmented arrays.');
+        }
+        validate(descriptor.value, depth + 1);
+      }
+      if (Array.isArray(input) && Object.keys(input).length !== input.length) throw new TypeError('JSON predicates do not accept sparse or augmented arrays.');
+      active.delete(input);
+    };
+    validate(value, 0);
+    const encoded = JSON.stringify(value);
+    if (typeof encoded !== 'string') throw new TypeError('JSON predicate must be serializable.');
+    if (Buffer.byteLength(encoded) > 1_048_576) throw new RangeError('JSON predicate must fit in 1 MiB.');
+    this.whereClauses.push({ type: 'raw', raw: `${negate ? 'NOT ' : ''}(${identifier}::jsonb @> ?::jsonb)`, values: [encoded], boolean });
+    return this;
+  }
+
+  private jsonContainsKey(column: string, key: string, boolean: 'AND' | 'OR', negate: boolean): this {
+    if (Connection.getDriver(this.connectionName) !== 'postgres') throw new Error('JSONB key existence requires PostgreSQL.');
+    const identifier = this.structuredColumn(column);
+    if (typeof key !== 'string' || key.includes('\0')) throw new TypeError('JSON key must be a text value without NUL.');
+    this.whereClauses.push({ type: 'raw', raw: `${negate ? 'NOT ' : ''}(${identifier}::jsonb ? ?)`, values: [key], boolean });
+    return this;
+  }
+
+  private jsonLength(column: string, operatorOrLength: JsonLengthOperator | number, length: number | undefined, boolean: 'AND' | 'OR'): this {
+    const identifier = this.structuredColumn(column);
+    const operator = typeof operatorOrLength === 'number' && length === undefined ? '=' : operatorOrLength;
+    const value = typeof operatorOrLength === 'number' && length === undefined ? operatorOrLength : length;
+    if (typeof operator !== 'string' || !['=', '!=', '<>', '>', '>=', '<', '<='].includes(operator)) throw new TypeError('Invalid JSON length comparison.');
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw new RangeError('JSON length requires a nonnegative safe integer.');
+    const driver = Connection.getDriver(this.connectionName);
+    let expression: string;
+    if (driver === 'postgres') expression = `CASE WHEN jsonb_typeof(${identifier}::jsonb) = 'array' THEN jsonb_array_length(${identifier}::jsonb) END`;
+    else if (driver === 'mysql') expression = `CASE WHEN JSON_TYPE(${identifier}) = 'ARRAY' THEN JSON_LENGTH(${identifier}) END`;
+    else if (driver === 'sqlite') expression = `CASE WHEN json_type(${identifier}) = 'array' THEN json_array_length(${identifier}) END`;
+    else throw new Error('JSON array length is unsupported by this database driver.');
+    this.whereClauses.push({ type: 'raw', raw: `(${expression}) ${operator} ?`, values: [value], boolean });
+    return this;
+  }
 
   private buildWhere(): { whereSQL: string; whereBindings: any[] } {
     const scopes = this.whereClauses.filter((clause) => clause.tenantScope || clause.softDeleteScope || clause.globalScope);
