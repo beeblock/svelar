@@ -223,8 +223,16 @@ The SOURCE-native receipt `candidate11/scheduler-source-correction-20261014/dc59
 
 The byte comparison against candidate 11 changed four entries: `dist/cli/bin.js`, `dist/cli/index.js`, `dist/index.js` and `dist/scheduler/index.js`; 361 files remain identical, with no additions/removals. Changed root/scheduler runtime bundles prevent a blanket transfer of earlier native results. Unchanged bytes alone do not establish that all native/plugin scenarios reran on candidate 12.
 
-The actual installed candidate 12 generated-app deployment recheck is in progress at this checkpoint; no completed installed deployment PASS is recorded here. Full 25-gate certification, fresh CI and the final Node 22.12 floor remain **pending**. Candidate 11's failed deployment receipt stays preserved and blocked; the new archive does not retroactively pass that run.
+### Candidate 12 Installed Drain Failure (2026-10-14)
 
-All SVE-001 through SVE-022 rows remain **Final gate pending**. npm authentication still returns E401 at this checkpoint; release notes remain **Unreleased**.
+**Candidate 12 is not accepted or ready for publication.** Its actual generated-app addon failed `assertDrain`. Installed-image integrity, initial role health with zero restarts, readiness 503/liveness 200 and old-slot traffic ineligibility 503 passed their bounded checks, but the old app exited **137**, with `OOMKilled=false`, after real SIGTERM and the 30-second Docker stop deadline. Promotion observations do not establish graceful shutdown or completed rollback.
+
+The original helper did not retain the held HTTP response status before asserting drain. Do not infer either successful HTTP completion or a failed response from that missing value. The report/logs and cleanup without errors remain preserved under `candidate12/generated-deployment-addon-20261014/d912e143-ba1d-4c5a-b059-0f623bb25283/`.
+
+The shutdown cause remains **under investigation**. Diagnostic-only harness work will retain drain values before assertion and inspect active handles using the same immutable archive. Cache/owned Redis is a hypothesis, not a confirmed cause; no candidate 13 runtime fix or acceptance is recorded. These diagnostics must not relax the required HTTP/drain/rollback assertions.
+
+Full 25-gate certification, fresh CI and the final Node 22.12 floor remain **pending**. Candidate 11's failed deployment receipt stays preserved and blocked; the new archive does not retroactively pass that run.
+
+All SVE-001 through SVE-022 rows remain **Final gate pending**. The last reported npm authentication check returned E401; no successful login/publication receipt is recorded. Release notes remain **Unreleased**.
 
 No candidate is declared accepted or released here. Publication remains blocked until every required final phase and ledger row is accepted and npm authentication succeeds. Publish only the exact approved archives with `--ignore-scripts`; do not rebuild, repack or patch their versions.
