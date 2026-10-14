@@ -595,14 +595,18 @@ Extensions and postgresql.conf are loaded automatically on both dev and prod —
 
 PgBouncer is included automatically when using PostgreSQL. It sits between the app and the database, pooling connections to prevent exhaustion under load across web, worker, and scheduler containers.
 
-Credentials are read from the `DATABASE_URL` environment variable in `docker-compose.yml` — the PgBouncer image auto-generates its auth file at startup. No static password files are committed to git.
+The corrected source template passes separate `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER` and `DB_PASSWORD` variables to the pinned PgBouncer image, which generates its userlist at startup. This avoids the image's `DATABASE_URL` parser, which splits punctuation-containing passwords. It does not regenerate a `pgbouncer.ini` that already exists, including a read-only mounted file. Database routing and client authentication come from that file, not an assumed environment rewrite. See the [image entrypoint](https://github.com/edoburu/docker-pgbouncer/blob/v1.25.1-p0/entrypoint.sh). No static password files are committed to git.
 
 ```yaml
 pgbouncer:
   image: edoburu/pgbouncer:v1.25.1-p0
   restart: unless-stopped
   environment:
-    DATABASE_URL: postgres://${DB_USER:-svelar}:${DB_PASSWORD:-secret}@postgres:5432/${DB_NAME:-svelar}
+    DB_HOST: postgres
+    DB_PORT: 5432
+    DB_NAME: ${DB_NAME:-svelar}
+    DB_USER: ${DB_USER:-svelar}
+    DB_PASSWORD: ${DB_PASSWORD:-secret}
     AUTH_TYPE: scram-sha-256
   volumes:
     - ./docker/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
@@ -610,7 +614,11 @@ pgbouncer:
     postgres:
       condition: service_healthy
   healthcheck:
-    test: ["CMD-SHELL", "PGPASSWORD=${DB_PASSWORD:-secret} pg_isready -h 127.0.0.1 -p 6432 -U ${DB_USER:-svelar} -d ${DB_NAME:-svelar}"]
+    test:
+      - CMD-SHELL
+      - >-
+        PGPASSWORD="$${DB_PASSWORD}" psql -h 127.0.0.1 -p 6432
+        -U "$${DB_USER}" -d "$${DB_NAME}" -tAc 'SELECT 1' >/dev/null
     interval: 10s
     timeout: 5s
     retries: 5
@@ -618,11 +626,28 @@ pgbouncer:
 
 The app connects to `pgbouncer:6432` (not `postgres:5432`). This is set automatically in `docker-compose.yml` via `DB_HOST=pgbouncer` and `DB_PORT=6432`. Generated database config disables PostgreSQL prepared statements automatically when `DB_HOST=pgbouncer`; set `DB_PREPARE=false` explicitly when connecting to PgBouncer through a different hostname.
 
+The mounted `docker/pgbouncer/pgbouncer.ini` needs an active database mapping:
+
+```ini
+[databases]
+* = host=postgres port=5432
+```
+
+Omitting `dbname` preserves the database name requested by the client, so a custom `DB_NAME` routes to that same database on `postgres`, rather than forcing every connection to `svelar`. An exact named entry overrides the wildcard; use reviewed named mappings instead if you need a routing allowlist. The wildcard neither creates databases nor grants access: the destination must exist and PostgreSQL must authorize the configured user. See [PgBouncer database routing](https://www.pgbouncer.org/config.html#section-databases).
+
+Keep the application's and pooler's `DB_NAME` aligned with the intended PostgreSQL database. The corrected mounted template sets `auth_type = scram-sha-256` and `auth_file = /etc/pgbouncer/userlist.txt`, matching the existing Compose `AUTH_TYPE=scram-sha-256`. This is explicit configuration alignment, not a claim that the earlier Compose value was defective. Review both client and backend authentication when customizing it; never disable authentication to fix routing.
+
+**Credential limit:** omit double quotes (`"`) from generated pooler credentials. The pinned image writes an unescaped quoted userlist; a real probe rejected a correct double-quote-containing password. Colon and the tested punctuation combinations work through separate variables, but this is not arbitrary-password escaping support. Do not work around the limit with `trust` authentication or committed secrets.
+
+The health command uses quoted container variables (`$$` prevents Compose from substituting them on the host) and an authenticated `SELECT 1`. A wrong credential must make it exit nonzero; `pg_isready` alone reports socket availability, not database mapping or query authorization. Before migrations, also verify the selected database/user through the pooler using the application's credentials.
+
+**Candidate 10 blocker:** its packed template leaves `[databases]` empty, so the generated read-only configuration fails bootstrap with `no such database: svelar`. The mapping above is the required correction, not a successful deployment claim for that archive. Existing customized files need explicit review; do not overwrite them blindly. The replacement artifact must pass generated-app readiness, promotion, drain and rollback before release acceptance. See the [certification checkpoint](./47-release-certification.md#candidate-10-generated-deployment-blocker-2026-10-14).
+
 **Generated config files:**
 
 | File | Purpose |
 |------|---------|
-| `docker/pgbouncer/pgbouncer.ini` | Pool mode (transaction), pool sizes, timeouts, keepalive, scram-sha-256 auth |
+| `docker/pgbouncer/pgbouncer.ini` | Explicit database routing, transaction pooling, pool sizes/timeouts and SCRAM-SHA-256 client auth in the corrected source template |
 
 **Default pool settings:**
 
