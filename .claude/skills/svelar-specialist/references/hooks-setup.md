@@ -23,3 +23,5 @@ Configure idle/absolute/remember session lifetimes, warning thresholds, trusted 
 ## Health And Shutdown
 
 Use DeploymentRuntime readiness/traffic/drain hooks and the generated worker/scheduler runtime scripts. Database/cache/queue probes must reflect actual configured sources. Null or memory state is not distributed health; SSE ready alone does not prove cross-browser delivery. Drain HTTP and active workers before closing database/Redis resources. Use the generated Docker/Caddy promotion/rollback workflow instead of compose down/up.
+
+Inspect existing `sveltekit:shutdown` cleanup before adding listeners. After HTTP drain, await scheduler/Queue/Broadcast shutdown, public `Cache.close()` from `@beeblock/svelar/cache`, then database shutdown; attempt later cleanup even after an earlier failure. Never replace resource teardown with `Cache.flush()` or forced exit, and leave borrowed clients to their owner. See [Closing cache resources](../../../../docs/12-additional-features.md#closing-cache-resources) for initialized-store ownership and close semantics. A logging-only active-handle diagnosis is not a pristine installed-deployment PASS.

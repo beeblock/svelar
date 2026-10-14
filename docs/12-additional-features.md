@@ -86,6 +86,23 @@ Connection/command failures reject (including `get()`), discard the owned connec
 
 File cache treats missing, expired, and corrupted entries as cache misses and removes corrupted/expired files. Filesystem errors that are not normal cache misses are not swallowed.
 
+### Closing Cache Resources
+
+Use the existing `@beeblock/svelar/cache` entry point for runtime teardown:
+
+```typescript
+import { Cache } from '@beeblock/svelar/cache';
+
+// After HTTP and background work have drained.
+await Cache.close();
+```
+
+`Cache.close(): Promise<void>` snapshots only initialized stores, clears the manager's instance registry and awaits every available store close hook. It does not initialize unused stores or flush cache keys. All close hooks are attempted; failures reject with `AggregateError` rather than prevent the remaining stores from closing. A later facade call creates fresh store instances after the awaited close; do not use close as a per-request reset or assume process-local memory state survives that instance replacement.
+
+Closing a framework-owned Redis store is terminal and idempotent: retained references reject further commands, pending connection startup is cancelled and a late ready event cannot restore the closed client. Pending commands can reject when that owned connection is disconnected. Redis data is not flushed, and `client` remains borrowed/caller-owned: this cleanup does not disconnect it or transfer responsibility for its lifetime.
+
+Generated app cleanup awaits scheduler, Queue, Broadcast, Cache and database shutdown in that order after adapter-node's HTTP drain, attempts every step even if an earlier one fails, then reports collected failures. Existing/customized apps should add the public cache call to their existing cleanup once, preserving ownership and that drain order; do not close request resources at initial SIGTERM or force process exit to conceal retained handles. See [Deployment](./29-deployment.md#bootstrap-and-drain) for the runtime lifecycle. These API semantics do not by themselves certify a generated application's graceful shutdown; the installed deployment gate remains separate.
+
 ### Using Cache
 
 ```typescript
