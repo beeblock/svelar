@@ -110,6 +110,19 @@ export function assertOwned(inspect, runId) {
   if (!runId || inspect?.Config?.Labels?.[ownerLabel] !== runId) throw new Error('Resource is not owned by this exact generated deployment run.');
 }
 
+export async function generatedRoleObservation(role, id, imageId, value, captureFailure) {
+  const state = value.State ?? {};
+  const health = state.Health?.Status ?? null;
+  const observation = { role, id, imageId: value.Image, command: value.Config?.Cmd,
+    running: state.Running, status: state.Status, restarting: state.Restarting, restartCount: value.RestartCount,
+    health, pid: state.Pid, exitCode: state.ExitCode, oomKilled: state.OOMKilled };
+  if (value.Image === imageId && state.Running === true && state.Status === 'running' && state.Restarting === false
+    && value.RestartCount === 0 && state.Pid > 0 && state.OOMKilled === false && state.Dead === false
+    && (role === 'app' ? health === 'healthy' : health === null || health === 'healthy')) return observation;
+  const receipt = await captureFailure?.(observation);
+  throw new Error(`Generated ${role} process is unhealthy: ${JSON.stringify(observation)}${receipt ? `; logs: ${receipt}` : ''}`);
+}
+
 async function executable(name) {
   for (const part of (process.env.PATH ?? '').split(delimiter)) {
     const path = resolve(part, name);
@@ -265,8 +278,13 @@ export async function certifyGeneratedDeployment(options) {
     for (const role of ['app', 'worker', 'scheduler']) {
       const id = await container(slotFile(slot), `${role}_${slot}`);
       const value = await inspect(id);
-      if (!value.State.Running || value.Image !== imageId) throw new Error(`Generated ${role} did not remain running with its exact immutable image.`);
-      observations.push({ role, id, imageId: value.Image, command: value.Config.Cmd, running: true });
+      observations.push(await generatedRoleObservation(role, id, imageId, value, async (observation) => {
+        const logs = await runCommand(dockerBinary, ['logs', '--tail', '200', id], { timeoutMs: 10000 }).catch((error) => error);
+        const name = `role-failure-${slot}-${role}-${id}.log`;
+        await writeEvidence(evidenceDir, name, safe(`${logs.stdout ?? ''}\n${logs.stderr ?? ''}`));
+        record('generated-role-process-failure', { ...observation, log: name });
+        return join(evidenceDir, name);
+      }));
     }
     check(`${slot}-generated-role-processes`, { observations, domainJobReadinessAsserted: false });
   }

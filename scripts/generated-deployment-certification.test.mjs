@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { acceptancePlan, archiveIdentity, assertAvailability, assertDrain, assertOwned, assertProbe,
-  certifyGeneratedDeployment, deploymentCliArguments, generatedDockerProxySource, imageProofSource, installedIdentity, parseOptions, scope } from './generated-deployment-certification.mjs';
+  certifyGeneratedDeployment, deploymentCliArguments, generatedDockerProxySource, generatedRoleObservation, imageProofSource, installedIdentity, parseOptions, scope } from './generated-deployment-certification.mjs';
 import { ownerLabel } from './runtime-certification.mjs';
 
 const sha = 'a'.repeat(64);
@@ -144,6 +144,46 @@ test('container observations refuse other runs and unlabeled shared services', (
   assertOwned({ Config: { Labels: { [ownerLabel]: runId } } }, runId);
   assert.throws(() => assertOwned({ Config: { Labels: { [ownerLabel]: 'another-run' } } }, runId));
   assert.throws(() => assertOwned({ Config: { Labels: {} } }, runId));
+});
+
+const healthyRole = () => ({ Image: 'sha256:owned-image', RestartCount: 0, Config: { Cmd: ['node', 'build/index.js'] },
+  State: { Running: true, Status: 'running', Restarting: false, Pid: 123, ExitCode: 0, OOMKilled: false, Dead: false, Health: { Status: 'healthy' } } });
+
+test('generated roles require exact image, zero restarts, real running PID and application health', async () => {
+  const value = healthyRole();
+  assert.equal((await generatedRoleObservation('app', 'owned-container', value.Image, value)).health, 'healthy');
+  delete value.State.Health;
+  for (const role of ['worker', 'scheduler']) {
+    assert.equal((await generatedRoleObservation(role, 'owned-container', value.Image, value)).restartCount, 0);
+  }
+  await assert.rejects(generatedRoleObservation('app', 'owned-container', value.Image, value), /unhealthy/);
+});
+
+test('Docker Running=true cannot make a crash-looping or unhealthy role pass', async () => {
+  for (const changed of [
+    { RestartCount: 7 }, { Image: 'sha256:other-image' },
+    ...[{ Running: false }, { Status: 'restarting' }, { Restarting: true }, { Pid: 0 }, { OOMKilled: true }, { Dead: true },
+      { Health: { Status: 'starting' } }, { Health: { Status: 'unhealthy' } }].map((state) => ({ State: { ...healthyRole().State, ...state } })),
+  ]) {
+    await assert.rejects(generatedRoleObservation('scheduler', 'owned-container', 'sha256:owned-image', { ...healthyRole(), ...changed }), /unhealthy/);
+  }
+});
+
+test('role failure awaits durable diagnostics and keeps the original role cause instead of an interruption', async () => {
+  let saved = false;
+  const value = { ...healthyRole(), RestartCount: 7 };
+  await assert.rejects(generatedRoleObservation('scheduler', 'owned-container', value.Image, value, async (observation) => {
+    assert.equal(observation.restartCount, 7);
+    await Promise.resolve(); saved = true;
+    return '/owned/evidence/scheduler.log';
+  }), (error) => {
+    assert.equal(saved, true);
+    assert.match(error.message, /Generated scheduler process is unhealthy/);
+    assert.match(error.message, /restartCount":7/);
+    assert.match(error.message, /\/owned\/evidence\/scheduler.log/);
+    assert.doesNotMatch(error.message, /interrupted/);
+    return true;
+  });
 });
 
 test('owned Docker proxy and image public-entry probe compile without running native code', () => {
