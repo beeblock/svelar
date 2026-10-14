@@ -211,7 +211,19 @@ The PostgreSQL scheduler then crash-looped: `SchedulerRuntimeStore.process()` bu
 
 The report and scheduler container log remain under `candidate11/generated-deployment-addon-recheck-20261014/2dd71d59-bbdb-46e0-913f-d8cc47b89034/`, including `report.json` and `container-51e996df829f.log`; owned-resource cleanup completed without errors. Completion of the held HTTP request with 200, drain exit 0 and retained rollback remain **unproven**. Earlier SOURCE-native deployment receipts and Core10 standalone checks do not close this installed failure.
 
-The bounded runtime fix, actual PostgreSQL/MySQL regressions and runner restart-count checks are required before candidate 12 can be built and certified. Candidate 12 is **pending**, not ready: its strict build/artifact identity, installed generated deployment, full 25-gate run, final Node floor and fresh CI still need their own receipts. No current package is accepted for publication.
+The bounded runtime correction, PostgreSQL/MySQL regressions and runner restart-count checks are recorded below with candidate 12's build identity. They do not complete installed generated deployment or accept any package for publication.
+
+### Candidate 12 Pending Installed Gate (2026-10-14)
+
+The frozen archive is `evolution-candidate/candidate12/beeblock-svelar-0.8.0.tgz`, SHA-256 `f36e8386312f9d46fc239d72b131e6fa79f9b1cd45e161e565b4ef2ff07ba7ed`, built at `2889799` with runtime correction `e5b0514`. Strict build/declarations and CLI preflight passed, with 365 packaged files and 63 commands. This is artifact/build provenance, not completed release acceptance.
+
+The runtime fix deduplicates the heartbeat upsert columns. The contributor deployment runner now checks zero restarts, live role PIDs/health and captures the exact failing role's log, repeating role checks after promotion/rollback. Focused source tests passed 45 without skips, helper Node tests passed 18 without skips, and the strict source type check passed.
+
+The SOURCE-native receipt `candidate11/scheduler-source-correction-20261014/dc598d76-719d-4885-abf5-bbf33206dc21/report.json` passed three checks for each of PostgreSQL and MySQL, six total, using four real CLI scheduler processes. It verifies advancing heartbeats, durable run-now execution once per generation, SIGTERM exit 0, distinct replacement PIDs/owners and persisted stopped records; cleanup had no errors. These source-built processes used Node 24.19.0. They are not packed candidate 12 execution, SRI or Node 22.12 floor evidence.
+
+The byte comparison against candidate 11 changed four entries: `dist/cli/bin.js`, `dist/cli/index.js`, `dist/index.js` and `dist/scheduler/index.js`; 361 files remain identical, with no additions/removals. Changed root/scheduler runtime bundles prevent a blanket transfer of earlier native results. Unchanged bytes alone do not establish that all native/plugin scenarios reran on candidate 12.
+
+The actual installed candidate 12 generated-app deployment recheck is in progress at this checkpoint; no completed installed deployment PASS is recorded here. Full 25-gate certification, fresh CI and the final Node 22.12 floor remain **pending**. Candidate 11's failed deployment receipt stays preserved and blocked; the new archive does not retroactively pass that run.
 
 All SVE-001 through SVE-022 rows remain **Final gate pending**. npm authentication still returns E401 at this checkpoint; release notes remain **Unreleased**.
 
