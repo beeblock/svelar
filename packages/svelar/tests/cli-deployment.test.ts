@@ -156,7 +156,8 @@ describe('CLI deployment and utility commands', () => {
     expect(compose).toContain('- ORIGIN=${APP_URL:-http://localhost:3000}');
     expect(compose).toContain('- INTERNAL_APP_URL=http://app:3000');
     expect(compose).toContain('AUTH_TYPE: scram-sha-256');
-    expect(compose).toContain('PGPASSWORD=${DB_PASSWORD:-secret} pg_isready -h 127.0.0.1 -p 6432 -U ${DB_USER:-svelar} -d ${DB_NAME:-svelar}');
+    expect(compose).toContain('psql -h 127.0.0.1 -p 6432');
+    expect(compose).toContain("-tAc 'SELECT 1' >/dev/null");
     expect(compose).toContain('"--appendonly", "yes", "--appendfsync", "everysec"');
     expect(compose).toContain('- "${SOKETI_PORT:-5334}:6001"');
     expect(compose).toContain("node -e \\\"require('http').get('http://127.0.0.1:6001'");
@@ -177,6 +178,41 @@ describe('CLI deployment and utility commands', () => {
     expect(readFileSync(join(tmpDir, '.gitignore'), 'utf8')).toContain('.svelar/deployment/');
     expect(dockerfile).toContain('FROM production AS deployer');
     expect(dockerfile).toContain('npm prune --omit=dev --ignore-scripts');
+  });
+
+  it('routes default and custom client database names through the read-only pooler config', async () => {
+    await new MakeDockerCommand().handle([], { force: true, db: 'postgres' });
+
+    const ini = readFileSync(join(tmpDir, 'docker', 'pgbouncer', 'pgbouncer.ini'), 'utf8');
+    const databases = ini.split('[databases]')[1].split('[pgbouncer]')[0]
+      .split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith(';'));
+    expect(databases).toEqual(['* = host=postgres port=5432']);
+    expect(databases[0]).not.toMatch(/\b(?:dbname|user|password)=/);
+    expect(ini).toContain('auth_type = scram-sha-256');
+    expect(ini).toContain('auth_file = /etc/pgbouncer/userlist.txt');
+    expect(ini).toContain('pool_mode = transaction');
+    expect(ini).not.toMatch(/^auth_type\s*=\s*(?:trust|any|plain)$/m);
+
+    const compose = readFileSync(join(tmpDir, 'docker-compose.yml'), 'utf8');
+    expect(compose).toContain('./docker/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro');
+    expect(compose).toContain('      DB_HOST: postgres');
+    expect(compose).toContain('      DB_PORT: 5432');
+    expect(compose).toContain('      DB_NAME: ${DB_NAME:-svelar}');
+    expect(compose).toContain('      DB_USER: ${DB_USER:-svelar}');
+    expect(compose).toContain('      DB_PASSWORD: ${DB_PASSWORD:-secret}');
+    expect(compose).toContain('      AUTH_TYPE: scram-sha-256');
+    expect(compose).not.toContain('DATABASE_URL:');
+  });
+
+  it('requires authenticated pooler queries instead of listener-only health and quotes container credentials', async () => {
+    await new MakeDockerCommand().handle([], { force: true, db: 'postgres' });
+
+    const compose = readFileSync(join(tmpDir, 'docker-compose.yml'), 'utf8');
+    const pooler = compose.split('\n  pgbouncer:\n')[1].split('\n  redis:')[0];
+    expect(pooler).toContain('PGPASSWORD=\\"$${DB_PASSWORD}\\"');
+    expect(pooler).toContain('-U \\"$${DB_USER}\\" -d \\"$${DB_NAME}\\"');
+    expect(pooler).toContain("-tAc 'SELECT 1' >/dev/null");
+    expect(pooler).not.toContain('pg_isready');
   });
 
   it('allows opting out of Meilisearch in generated Docker templates', async () => {

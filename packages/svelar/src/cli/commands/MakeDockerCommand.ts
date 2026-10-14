@@ -373,7 +373,11 @@ export class MakeDockerCommand extends Command {
       lines.push('    # ports:');
       lines.push('    #   - "6432:6432"');
       lines.push('    environment:');
-      lines.push('      DATABASE_URL: postgres://${DB_USER:-svelar}:${DB_PASSWORD:-secret}@postgres:5432/${DB_NAME:-svelar}');
+      lines.push('      DB_HOST: postgres');
+      lines.push('      DB_PORT: 5432');
+      lines.push('      DB_NAME: ${DB_NAME:-svelar}');
+      lines.push('      DB_USER: ${DB_USER:-svelar}');
+      lines.push('      DB_PASSWORD: ${DB_PASSWORD:-secret}');
       lines.push('      AUTH_TYPE: scram-sha-256');
       lines.push('    volumes:');
       lines.push('      - ./docker/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro');
@@ -381,7 +385,7 @@ export class MakeDockerCommand extends Command {
       lines.push('      postgres:');
       lines.push('        condition: service_healthy');
       lines.push('    healthcheck:');
-      lines.push('      test: ["CMD-SHELL", "PGPASSWORD=${DB_PASSWORD:-secret} pg_isready -h 127.0.0.1 -p 6432 -U ${DB_USER:-svelar} -d ${DB_NAME:-svelar}"]');
+      lines.push('      test: ["CMD-SHELL", "PGPASSWORD=\\\"$${DB_PASSWORD}\\\" psql -h 127.0.0.1 -p 6432 -U \\\"$${DB_USER}\\\" -d \\\"$${DB_NAME}\\\" -tAc \'SELECT 1\' >/dev/null"]');
       lines.push('      interval: 10s');
       lines.push('      timeout: 5s');
       lines.push('      retries: 5');
