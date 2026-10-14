@@ -140,7 +140,7 @@ export class CapabilityStateCommand extends Command {
   async handle(): Promise<void> {
     await this.bootstrap();
     const records = await new CapabilityRecordRepository().all();
-    this.log('CAPABILITY_STATE:' + JSON.stringify(records.map(record => record.toArray()).sort((a, b) => Number(a.id) - Number(b.id))));
+    this.log('CAPABILITY_STATE:' + JSON.stringify(records.map(record => record.getAttributes()).sort((a, b) => Number(a.id) - Number(b.id))));
   }
 }
 ` },
@@ -166,6 +166,7 @@ export const load: PageServerLoad = capabilityAccess.guardLayout(async (event) =
 }, resolveCapabilityInput);
 ` },
     { path: 'src/routes/dashboard/capability-proof/+page.svelte', content: `<script lang="ts">
+  import { untrack } from 'svelte';
   import type { PageData } from './$types';
   import { superForm } from 'sveltekit-superforms';
   import { ${clientAdapter} } from 'sveltekit-superforms/adapters';
@@ -175,19 +176,19 @@ export const load: PageServerLoad = capabilityAccess.guardLayout(async (event) =
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
-  import Plus from 'lucide-svelte/icons/plus';
-  import Pencil from 'lucide-svelte/icons/pencil';
-  import Trash2 from 'lucide-svelte/icons/trash-2';
+  import Plus from '@lucide/svelte/icons/plus';
+  import Pencil from '@lucide/svelte/icons/pencil';
+  import Trash2 from '@lucide/svelte/icons/trash-2';
   import { capabilityRecordSchema, createCapabilityRecordSchema, updateCapabilityRecordSchema } from '${module}/contracts/schemas/capability-record.schema.js';
   import type { CapabilityRecordData } from '${module}/contracts/schemas/capability-record.schema.js';
 
   let { data }: { data: PageData } = $props();
   const access = $derived(capabilityClient(data.capabilities));
-  const createState = superForm(data.createForm, { validators: ${clientAdapter}(createCapabilityRecordSchema) });
-  const updateState = superForm(data.updateForm, { validators: ${clientAdapter}(updateCapabilityRecordSchema) });
+  const createState = superForm(untrack(() => data.createForm), { validators: ${clientAdapter}(createCapabilityRecordSchema) });
+  const updateState = superForm(untrack(() => data.updateForm), { validators: ${clientAdapter}(updateCapabilityRecordSchema) });
   const { form: createForm, errors: createErrors } = createState;
   const { form: updateForm, errors: updateErrors } = updateState;
-  let records = $state<CapabilityRecordData[]>(data.records);
+  let records = $state<CapabilityRecordData[]>(untrack(() => data.records));
   let pending = $state(false);
   let feedback = $state('');
   let failure = $state('');
@@ -220,13 +221,13 @@ export const load: PageServerLoad = capabilityAccess.guardLayout(async (event) =
   async function create(event: SubmitEvent) {
     event.preventDefault();
     if (pending || !access.can('action.capability-proof.create')) return;
-    const form = await createState.validateForm();
+    const form = await createState.validateForm({ update: true });
     if (form.valid) await mutate('POST', null, form.data);
   }
   async function update(event: SubmitEvent) {
     event.preventDefault();
     if (pending || editing === null || !access.can('action.capability-proof.update')) return;
-    const form = await updateState.validateForm();
+    const form = await updateState.validateForm({ update: true });
     if (form.valid) await mutate('PUT', editing, form.data);
   }
 </script>
@@ -268,11 +269,11 @@ export const load: PageServerLoad = capabilityAccess.guardLayout(async (event) =
     </form>
   {/if}
   {#if deleting !== null && access.can('action.capability-proof.delete')}
-    <section role="alertdialog" aria-labelledby="delete-title" class="space-y-3 border-t pt-4">
+    <div role="alertdialog" tabindex="-1" aria-labelledby="delete-title" class="space-y-3 border-t pt-4">
       <h2 id="delete-title" class="text-lg font-semibold">Delete this record?</h2>
       <Button type="button" variant="destructive" data-testid="confirm-delete" disabled={pending} onclick={() => { if (deleting !== null) void mutate('DELETE', deleting); }}>Delete record</Button>
       <Button type="button" variant="outline" data-testid="cancel-delete" disabled={pending} onclick={() => { deleting = null; }}>Cancel</Button>
-    </section>
+    </div>
   {/if}
 </main>
 ` },
@@ -383,7 +384,7 @@ export async function certifyCapabilityAbsence(options) {
     receipt.expectedCoreSha256 = fixture.evidence.expectedCoreSha256;
     if (!options.certify) { receipt.status = 'prepared-not-certified'; return receipt; }
     await fixture.run('sync', [await binary(fixture.require, '@sveltejs/kit', 'svelte-kit'), 'sync']);
-    await fixture.run('typecheck', [await binary(fixture.require, 'svelte-check'), '--tsconfig', './tsconfig.json']);
+    await fixture.run('typecheck', [await binary(fixture.require, 'svelte-check'), '--tsconfig', './tsconfig.json', '--fail-on-warnings']);
     await fixture.run('architecture', [fixture.cli, 'lint:architecture']);
     await fixture.run('migrate', [fixture.cli, 'migrate']);
     await fixture.run('seed', [fixture.cli, 'seed:run', '--class=CapabilityAbsenceSeeder']);
@@ -403,14 +404,22 @@ export async function certifyCapabilityAbsence(options) {
       return (await fetch(`http://127.0.0.1:${fixture.port}/login`, { signal: AbortSignal.timeout(2000) })).ok;
     });
     await runCommand('agent-browser', ['skills', 'get', 'core'], { timeoutMs: 15000, signal: controller.signal });
+    const browserLog = [];
     const browser = async (session, ...args) => {
       sessions.add(session);
-      const result = await runCommand('agent-browser', ['--session', session, '--json', ...args], {
-        cwd: fixture.directory, env: { ...fixture.env, AGENT_BROWSER_ALLOWED_DOMAINS: '127.0.0.1', AGENT_BROWSER_DEFAULT_TIMEOUT: '10000' },
-        timeoutMs: 45000, signal: controller.signal });
-      const parsed = JSON.parse(result.stdout);
-      assert.equal(parsed.success, true, 'Browser command failed.');
-      return parsed.data;
+      const safeArgs = args[0] === 'eval' ? ['eval', '(browser assertion)'] :
+        args[0] === 'fill' && args[1].includes('password') ? ['fill', args[1], '[REDACTED]'] : args;
+      const command = `${session}: ${safeArgs.join(' ')}`;
+      browserLog.push(command);
+      await writeEvidence(report, 'browser-commands.log', browserLog.join('\n'));
+      try {
+        const result = await runCommand('agent-browser', ['--session', session, '--json', ...args], {
+          cwd: fixture.directory, env: { ...fixture.env, AGENT_BROWSER_ALLOWED_DOMAINS: '127.0.0.1', AGENT_BROWSER_DEFAULT_TIMEOUT: '10000' },
+          timeoutMs: 45000, signal: controller.signal });
+        const parsed = JSON.parse(result.stdout);
+        assert.equal(parsed.success, true, 'Browser command failed.');
+        return parsed.data;
+      } catch (error) { error.browserCommand = command; throw error; }
     };
     const evaluate = async (session, expression) => (await browser(session, 'eval', '-b', Buffer.from(expression).toString('base64'))).result;
     const presentation = session => evaluate(session, `({ready:!!document.querySelector('[data-testid="capability-screen"][data-ready="true"]'),
@@ -452,10 +461,15 @@ export async function certifyCapabilityAbsence(options) {
     const noCsrf = await evaluate(writer, `(async()=>{const response=await fetch('${fixtureApi}',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"title":"Missing CSRF"}'});return response.status})()`);
     assert.equal(noCsrf, 419, 'Granted users still require CSRF.'); assert.deepEqual(await state(), original);
     checks.push({ name: 'writer-missing-csrf-rejected', status: noCsrf });
-    await browser(writer, 'click', '[data-capability-action=create]');
-    await browser(writer, 'wait', '--fn', '!!document.querySelector("[data-testid=title-error]")');
+    // Generated string rules allow empty values; exercise a type violation without changing those rules.
+    const invalid = await evaluate(writer, `(async()=>{const cookie=document.cookie.split('; ').find(x=>x.startsWith('XSRF-TOKEN='));
+      if(!cookie) throw new Error('Missing same-session CSRF cookie');
+      const response=await fetch('${fixtureApi}',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':decodeURIComponent(cookie.slice(11))},body:'{"title":123}'});
+      return {status:response.status,body:await response.json()}})()`);
+    assert.equal(invalid.status, 422, 'A granted valid-CSRF request with a real schema type violation must fail validation.');
+    assert.ok(Array.isArray(invalid.body.errors?.title) && invalid.body.errors.title.length > 0, 'The generated FormRequest must identify the invalid title field.');
     assert.deepEqual(await state(), original);
-    checks.push({ name: 'shared-schema-inline-invalid-unchanged' });
+    checks.push({ name: 'generated-shared-schema-invalid-type-422-unchanged', status: invalid.status, validationFields: Object.keys(invalid.body.errors), unchangedTableSha256: snapshot });
     await evaluate(writer, `(()=>{window.__capabilityBusy={seen:false,disabled:false};
       const screen=document.querySelector('[data-testid=capability-screen]');
       const observer=new MutationObserver(()=>{if(screen.getAttribute('aria-busy')==='true'){
@@ -488,7 +502,7 @@ export async function certifyCapabilityAbsence(options) {
     assert.equal(checks.length, 12, 'Every planned acceptance check must execute.');
     receipt.status = 'passed';
     await writeFile(join(fixture.directory, 'CAPABILITY-PROOF-TIMELINE.md'), '# Capability Absence Fixture\n\n' + receipt.label + '\n\nCLI scaffold -> shared-schema frontend -> typecheck/architecture -> migrate/seeder -> production build -> desktop/mobile DOM checks -> valid-CSRF forbidden writes + unchanged DB -> granted CRUD.\n\nEvidence: ' + report + '\n');
-  } catch (error) { failure = error; receipt.status = 'failed'; await writeEvidence(report, 'failure.json', { message: error.message, stack: error.stack, stdout: error.stdout, stderr: error.stderr }); }
+  } catch (error) { failure = error; receipt.status = 'failed'; await writeEvidence(report, 'failure.json', { message: error.message, stack: error.stack, browserCommand: error.browserCommand, stdout: error.stdout, stderr: error.stderr }); }
   finally {
     const cleanupErrors = [];
     for (const session of sessions) {

@@ -57,7 +57,8 @@ describe('Installed capability absence sidecar', () => {
     expect(page).toContain("from '@beeblock/svelar/permissions/client'");
     expect(page).toContain('capabilityClient(data.capabilities)');
     for (const action of gate.commands) expect(page).toContain(`{#if access.can('action.capability-proof.${action}')}`);
-    expect(page).toContain('validateForm()');
+    expect(page).toContain('createState.validateForm({ update: true })');
+    expect(page).toContain('updateState.validateForm({ update: true })');
     expect(page).toContain("from '$lib/modules/capability-proof/contracts/schemas/capability-record.schema.js'");
     expect(page).toContain("from '@beeblock/svelar/http'");
     expect(page).toContain('disabled={pending}');
@@ -65,7 +66,13 @@ describe('Installed capability absence sidecar', () => {
     expect(page).toContain('role="status"');
     expect(page).toContain('role="alert"');
     expect(page).toContain('role="alertdialog"');
+    expect(page).toContain('untrack(() => data.createForm)');
+    expect(page).toContain('untrack(() => data.updateForm)');
+    expect(page).toContain('untrack(() => data.records)');
+    expect(page).toContain('role="alertdialog" tabindex="-1"');
     expect(page).toContain('createState.reset()');
+    for (const icon of ['plus', 'pencil', 'trash-2']) expect(page).toContain(`from '@lucide/svelte/icons/${icon}'`);
+    expect(page).not.toContain("from 'lucide-svelte/");
   });
   it('seeds exact grants for ordinary users and reads full state through the repository', () => {
     const files = gate.capabilityFixtureFiles() as Array<{ path: string; content: string }>;
@@ -78,7 +85,8 @@ describe('Installed capability absence sidecar', () => {
     expect(seed).toContain('Permissions.global().assignRole');
     const state = files.find(file => file.path.endsWith('CapabilityStateCommand.ts'))!.content;
     expect(state).toContain('new CapabilityRecordRepository().all()');
-    expect(state).toContain('record.toArray()');
+    expect(state).toContain('record.getAttributes()');
+    expect(state).not.toContain('record.toArray()');
     for (const file of files) {
       expect(file.content).not.toContain('Connection.raw');
       expect(file.content).not.toContain('CREATE TABLE');
