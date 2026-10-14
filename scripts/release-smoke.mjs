@@ -486,10 +486,13 @@ async function main() {
 
 		for (const target of targets) {
 			verifySmokeArtifact(smokeArtifact);
+			target.ownedDatabase = false;
 			if (usePgBouncer) {
 				target.env = { ...pgBouncerEnv, ...redisEnv, ...gotenbergEnv, ...meilisearchEnv, ...s3Env };
+				target.ownedDatabase = target.db === 'postgres';
 			} else if (useServices && target.db !== 'sqlite') {
 				target.env = { ...(await services.envFor(target.db)), ...redisEnv, ...gotenbergEnv, ...meilisearchEnv, ...s3Env };
+				target.ownedDatabase = true;
 			} else {
 				target.env = { ...databaseEnv(target.db), ...redisEnv, ...gotenbergEnv, ...meilisearchEnv, ...s3Env };
 			}
@@ -546,7 +549,7 @@ function smokeApp(target, tarballPath) {
 
 	patchAppPackage(appDir, tarballPath, target.port);
 	if (!skipCertification) {
-		writeCertificationTest(appDir);
+		writeCertificationTest(appDir, certificationDatabaseResetOptions(target));
 	}
 
 	if (skipInstall) return;
@@ -1144,9 +1147,17 @@ export function patchAppPackage(appDir, tarballPath, port, manifest = smokeArtif
 	rmSync(join(appDir, 'node_modules', '@beeblock', 'svelar'), { recursive: true, force: true });
 }
 
-function writeCertificationTest(appDir) {
+export function certificationDatabaseResetOptions(target) {
+	if (target.db === 'sqlite') return { refreshDatabase: true };
+	if (!['postgres', 'mysql'].includes(target.db) || target.ownedDatabase !== true || target.env?.DB_DRIVER !== target.db) {
+		throw new Error('SQL certification resets require a database created by this smoke run; use --services or --pgbouncer.');
+	}
+	return { refreshDatabase: true, allowDestructiveDatabase: true };
+}
+
+function writeCertificationTest(appDir, resetOptions) {
 	const testPath = join(appDir, 'tests', 'feature', 'svelar-certification.test.ts');
-	writeFileSync(testPath, `${certificationTestSource(!existsSync(join(appDir, 'src/lib/modules')), smokeArtifact.sha256)}\n`);
+	writeFileSync(testPath, `${certificationTestSource(!existsSync(join(appDir, 'src/lib/modules')), smokeArtifact.sha256, resetOptions)}\n`);
 }
 
 export function installedHttpBudgetChildSource() {
@@ -1224,7 +1235,7 @@ redis.on('error', () => {});
 `;
 }
 
-export function certificationTestSource(flat, artifactSha256 = null) {
+export function certificationTestSource(flat, artifactSha256 = null, resetOptions = { refreshDatabase: true }) {
 		return `import { existsSync, readFileSync, rmSync } from 'node:fs';
 		import { createHmac, randomUUID } from 'node:crypto';
 		import { spawn } from 'node:child_process';
@@ -1281,7 +1292,7 @@ afterAll(async () => {
 });
 
 describe('Svelar release certification', () => {
-  useSvelarTest({ refreshDatabase: true });
+  useSvelarTest(${JSON.stringify(resetOptions)});
 
   it('preserves installed Controller native Kit errors/redirects and reports unexpected failures safely', async () => {
     const secret = 'certification-only-private-database-detail';

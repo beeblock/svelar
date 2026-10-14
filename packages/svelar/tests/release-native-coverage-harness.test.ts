@@ -57,6 +57,28 @@ function childHarness() {
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('Installed release coverage contracts (no native execution)', () => {
+  it('does not authorize destructive resets for SQLite or an external SQL database', () => {
+    expect(harness.certificationDatabaseResetOptions({ db: 'sqlite' })).toEqual({ refreshDatabase: true });
+    for (const db of ['postgres', 'mysql']) {
+      expect(() => harness.certificationDatabaseResetOptions({ db, env: { DB_DRIVER: db } })).toThrow('created by this smoke run');
+      expect(() => harness.certificationDatabaseResetOptions({ db, ownedDatabase: true, env: { DB_DRIVER: 'sqlite' } })).toThrow('created by this smoke run');
+    }
+    expect(harness.certificationTestSource(false, sha256)).not.toContain('"allowDestructiveDatabase":true');
+  });
+
+  it.each(['postgres', 'mysql'])('explicitly authorizes only the owned %s smoke database', (db) => {
+    const options = harness.certificationDatabaseResetOptions({ db, ownedDatabase: true, env: { DB_DRIVER: db } });
+    expect(options).toEqual({ refreshDatabase: true, allowDestructiveDatabase: true });
+    const file = ts.createSourceFile('certification.ts', harness.certificationTestSource(false, sha256, options), ts.ScriptTarget.Latest, true);
+    let found: ts.CallExpression | undefined;
+    const visit = (node: ts.Node) => {
+      if (ts.isCallExpression(node) && node.expression.getText(file) === 'useSvelarTest') found = node;
+      ts.forEachChild(node, visit);
+    };
+    visit(file);
+    expect(found?.arguments[0].getText(file)).toContain('"allowDestructiveDatabase":true');
+  });
+
   it.each([false, true])('emits real Kit and installed Controller assertions in flat=%s', (flat) => {
     const source = parsed(flat);
     const call = callbackCall(source, controllerTitle).getText(source);
