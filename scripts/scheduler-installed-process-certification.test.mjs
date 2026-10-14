@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import { promisify } from 'node:util';
 import { archiveFiles, assertLockPin, assertRestart, assertSelectedArtifact, bounded, comparePackageFiles, deriveArtifactIdentity, packageName, parseOptions,
   ProcessMailbox, redact, removeOwnedFixture, verifyInstallation } from './scheduler-installed-process-certification.mjs';
+import { assertFixtureApi, fixtureEntryTarget, fixturePublicApi, importFixtureApi } from './scheduler-installed-process-fixture.mjs';
 
 const currentCore10Sha256 = '4f72573381beef38f61b9fae9244f6c01a86767ca313455eba2a1d0bb90a28f7';
 const baseArgs = ['--app-dir', '/fixture/app', '--tarball', '/fixture/candidate10/core.tgz', '--report-dir', '/fixture/reports'];
@@ -253,4 +254,40 @@ test('process fixture and runner are guarded contributor scripts outside the pub
   assert(!fixture.includes('../packages/svelar/src'));
   const manifest = JSON.parse(await readFile(new URL('../packages/svelar/package.json', import.meta.url), 'utf8'));
   assert(!manifest.files.some((path) => path === 'scripts' || path.startsWith('../')));
+});
+
+test('fixture API paths have explicit public ESM and type declarations', async () => {
+  const manifest = JSON.parse(await readFile(new URL('../packages/svelar/package.json', import.meta.url), 'utf8'));
+  for (const subpath of Object.keys(fixturePublicApi)) assert.match(fixtureEntryTarget(manifest, subpath), /^\.\/dist\/.*\.js$/);
+  assert.equal(fixtureEntryTarget(manifest, 'scheduler/ScheduleMonitor'), './dist/scheduler/ScheduleMonitor.js');
+  for (const entry of [{ import: './src/scheduler.js', types: './dist/scheduler.d.ts' },
+    { import: './dist/../private.js', types: './dist/scheduler.d.ts' }, { import: './dist/scheduler.js' }]) {
+    assert.throws(() => fixtureEntryTarget({ exports: { './scheduler': entry } }, 'scheduler'), /public installed/);
+  }
+});
+
+test('actual public ESM loading checks the required runtime API rather than accepting a named export alone', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'scheduler-public-api-unit-'));
+  try {
+    await mkdir(join(root, 'dist'));
+    await writeFile(join(root, 'package.json'), '{"type":"module"}');
+    const manifest = { exports: { './scheduler/ScheduleMonitor': { import: './dist/monitor.js', types: './dist/monitor.d.ts' } } };
+    await writeFile(join(root, 'dist/monitor.js'), 'export const ScheduleMonitor = { configure() {} };');
+    const entries = {}; const namespace = await importFixtureApi(root, manifest, 'scheduler/ScheduleMonitor', entries);
+    assert.equal(typeof namespace.ScheduleMonitor.configure, 'function');
+    assert.match(entries['scheduler/ScheduleMonitor'], /^[a-f0-9]{64}$/);
+    assert.throws(() => assertFixtureApi('scheduler/ScheduleMonitor', { ScheduleMonitor: {} }), /ScheduleMonitor.configure/);
+    assert.throws(() => assertFixtureApi('scheduler/ScheduleMonitor', {}), /Missing installed public API/);
+    assert.throws(() => assertFixtureApi('scheduler', namespace), /scheduler:Scheduler/);
+    assert.throws(() => assertFixtureApi('unknown', {}), /Unknown fixture API/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('child startup failure preserves the actual fixture stack and redacts secrets', async () => {
+  const child = new FakeChild(); const mailbox = new ProcessMailbox(child, [], ['fixture-private-secret']);
+  child.emit('message', { type: 'fatal', error: 'Missing API', stack: 'Error: Missing API\n at fixture.mjs:42 fixture-private-secret' });
+  await assert.rejects(mailbox.ready, (error) => {
+    assert.match(error.stack, /fixture.mjs:42/); assert(!error.stack.includes('fixture-private-secret')); return true;
+  });
+  child.kill();
 });

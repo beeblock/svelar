@@ -177,7 +177,11 @@ export class ProcessMailbox {
     child.on('message', (message) => {
       this.messages.push(message);
       if (message.type === 'ready') this.acceptReady(message);
-      if (message.type === 'fatal') { this.failure = new Error(message.error); this.rejectReady(this.failure); }
+      if (message.type === 'fatal') {
+        this.failure = new Error(message.error);
+        if (typeof message.stack === 'string') this.failure.stack = redact(message.stack, secrets);
+        this.rejectReady(this.failure);
+      }
       const pending = this.pending.get(message.id);
       if (pending) { this.pending.delete(message.id); clearTimeout(pending.timer); message.error ? pending.reject(new Error(message.error)) : pending.accept(message.data); }
     });

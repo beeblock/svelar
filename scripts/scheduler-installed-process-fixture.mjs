@@ -8,6 +8,52 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const scriptPath = fileURLToPath(import.meta.url);
 
+export const fixturePublicApi = {
+  database: ['Connection.configure', 'Connection.rawClient', 'Connection.disconnect', 'Migration', 'CreateSessionsTable',
+    'CreateAuditLogsTable', 'CreateSchedulerLocksTable', 'CreateScheduledTaskRunsTable', 'CreateScheduledTaskSettingsTable',
+    'AddSchedulerSettingsPolicy', 'CreateSchedulerRuntimeTable', 'CreateSchedulerRequestsTable'],
+  orm: ['Model', 'Model.create', 'Model.query', 'Model.prototype.getAttribute', 'Model.prototype.toJSON', 'QueryBuilder',
+    'QueryBuilder.prototype.where', 'QueryBuilder.prototype.orderBy', 'QueryBuilder.prototype.get'],
+  scheduler: ['Scheduler', 'task', 'Scheduler.prototype.register', 'Scheduler.prototype.configureTask', 'Scheduler.prototype.start',
+    'Scheduler.prototype.stop', 'Scheduler.prototype.getRuntimeStatus', 'Scheduler.prototype.getRuntimeStore',
+    'Scheduler.prototype.listTaskStatuses', 'Scheduler.prototype.getRunRequest'],
+  'scheduler/ScheduleMonitor': ['ScheduleMonitor.configure'], support: ['ApplicationContext.get'],
+  hashing: ['Hash.configure', 'Hash.make'], auth: ['AuthManager', 'AuthManager.prototype.attempt', 'AuthenticateMiddleware'],
+  session: ['DatabaseSessionStore', 'SessionMiddleware'],
+  middleware: ['MiddlewareStack', 'MiddlewareStack.prototype.use', 'MiddlewareStack.prototype.execute', 'OriginMiddleware', 'CsrfMiddleware'],
+  routing: ['Controller', 'Controller.prototype.handle', 'Controller.prototype.json', 'FormRequest', 'FormRequest.validate'],
+  actions: ['Action', 'Action.prototype.run'], services: ['Service'], validation: ['z.object', 'z.string'],
+  dashboard: ['DashboardController', 'DashboardController.prototype.scheduler', 'DashboardController.prototype.toggleTask',
+    'DashboardController.prototype.runTask'],
+};
+
+export function fixtureEntryTarget(manifest, subpath) {
+  const entry = manifest.exports?.['./' + subpath];
+  for (const [condition, extension] of [['import', '.js'], ['types', '.d.ts']]) {
+    const target = entry?.[condition];
+    assert(typeof target === 'string' && target.startsWith('./dist/') && target.endsWith(extension)
+      && !target.includes('\\') && !target.slice(2).split('/').some((part) => !part || part === '..' || part === '.'),
+    `Missing public installed ${condition} export: ${subpath}`);
+  }
+  return entry.import;
+}
+
+export function assertFixtureApi(subpath, namespace) {
+  assert(Object.hasOwn(fixturePublicApi, subpath), `Unknown fixture API contract: ${subpath}`);
+  for (const member of fixturePublicApi[subpath]) {
+    const value = member.split('.').reduce((current, key) => current?.[key], namespace);
+    assert.equal(typeof value, 'function', `Missing installed public API: ${subpath}:${member}`);
+  }
+}
+
+export async function importFixtureApi(packageRoot, manifest, subpath, entries = {}) {
+  const path = resolve(packageRoot, fixtureEntryTarget(manifest, subpath));
+  entries[subpath] = createHash('sha256').update(await readFile(path)).digest('hex');
+  const namespace = await import(pathToFileURL(path).href);
+  assertFixtureApi(subpath, namespace);
+  return namespace;
+}
+
 export async function fixtureMain(role, input, send = (value) => new Promise((accept, reject) => {
   if (!process.connected) { reject(new Error('Fixture IPC disconnected.')); return; }
   process.send(value, (error) => error ? reject(error) : accept());
@@ -19,17 +65,12 @@ export async function fixtureMain(role, input, send = (value) => new Promise((ac
   assert.equal(dirname(resolve(input.database)), resolve(input.directory), 'Fixture database must be in its owned directory.');
   const manifest = JSON.parse(await readFile(resolve(input.packageRoot, 'package.json'), 'utf8'));
   const entries = {};
-  const installed = async (subpath) => {
-    const target = manifest.exports?.['./' + subpath]?.import;
-    assert(typeof target === 'string' && target.startsWith('./dist/') && target.endsWith('.js') && !target.split('/').includes('..'), `Missing public installed ESM export: ${subpath}`);
-    const path = resolve(input.packageRoot, target);
-    entries[subpath] = createHash('sha256').update(await readFile(path)).digest('hex');
-    return import(pathToFileURL(path).href);
-  };
+  const installed = (subpath) => importFixtureApi(input.packageRoot, manifest, subpath, entries);
   const database = await installed('database');
   const { Connection, Migration } = database;
   const { Model, QueryBuilder } = await installed('orm');
-  const { Scheduler, ScheduleMonitor, task } = await installed('scheduler');
+  const { Scheduler, task } = await installed('scheduler');
+  const { ScheduleMonitor } = await installed('scheduler/ScheduleMonitor');
   const { ApplicationContext } = await installed('support');
   Connection.configure({ default: 'sqlite', connections: { sqlite: { driver: 'sqlite', filename: input.database } } });
   const native = await Connection.rawClient();
@@ -204,7 +245,7 @@ if (process.argv[1] && resolve(process.argv[1]) === scriptPath) {
     await fixtureMain(process.argv[2], JSON.parse(bytes));
     if (process.argv[2] === 'initialize' && process.connected) process.disconnect();
   } catch (error) {
-    if (process.connected) await new Promise((done) => process.send({ type: 'fatal', error: error.message }, () => done()));
+    if (process.connected) await new Promise((done) => process.send({ type: 'fatal', error: error.message, stack: error.stack }, () => done()));
     process.exitCode = 1;
     if (process.connected) process.disconnect();
   }
