@@ -45,7 +45,7 @@ Uses `$bindable()` for two-way binding.
 ### Icon
 ```svelte
 <script>
-  import Users from 'lucide-svelte/icons/users';
+  import Users from '@lucide/svelte/icons/users';
 </script>
 
 <Icon icon={Users} size={24} strokeWidth={2} color="currentColor" />

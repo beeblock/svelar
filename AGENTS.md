@@ -77,7 +77,7 @@
 
 - Use Svelte 5 conventions in `.svelte` files: `$props`, `$state`, `$derived`, `$effect`, and `{@render children()}`.
 - Do not use Svelte runes in `.ts` files shipped from `packages/svelar`; use normal TypeScript state or subscriber patterns.
-- Import lucide icons individually, for example `lucide-svelte/icons/users`, instead of the package barrel.
+- Import lucide icons individually, for example `@lucide/svelte/icons/users`, instead of the package barrel.
 
 ## Plugin Rules
 

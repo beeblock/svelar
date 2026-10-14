@@ -274,6 +274,8 @@ A generic icon wrapper that supports [@lucide/svelte](https://lucide.dev) and [@
 
 **Important:** Always import lucide icons individually. The barrel export (`from '@lucide/svelte'`) causes SSR issues.
 
+Generated apps install `@lucide/svelte`, so use individual imports such as `@lucide/svelte/icons/users`. Check your app's `package.json` for the installed package name instead of assuming the legacy `lucide-svelte` name.
+
 ```svelte
 <script lang="ts">
   import { Icon } from '@beeblock/svelar/ui';
