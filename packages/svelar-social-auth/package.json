@@ -75,7 +75,7 @@
     "svelte": "^5.57.2",
     "tsup": "^8.5.0",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.5"
   },
   "overrides": {
     "@sveltejs/kit": { "cookie": "^0.7.2" },
