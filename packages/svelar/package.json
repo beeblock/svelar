@@ -304,7 +304,7 @@
 		"exceljs": "^4.4.0",
 		"marked": "^18.1.1",
 		"meilisearch": "^0.62.0",
-		"sveltekit-superforms": "^2.31.0",
+		"sveltekit-superforms": "^3.1.0",
 		"tsup": "^8.5.1",
 		"typescript": "^6.0.3",
 		"valibot": "^1.5.0",
@@ -325,7 +325,7 @@
 		"nodemailer": ">=6.0.0",
 		"pdfkit": ">=0.18.0",
 		"postgres": "*",
-		"sveltekit-superforms": "^2.31.0",
+		"sveltekit-superforms": "^3.1.0",
 		"valibot": ">=1.0.0",
 		"vitest": ">=1.0.0"
 	},
