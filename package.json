@@ -50,7 +50,7 @@
   },
   "devDependencies": {
     "@sveltejs/kit": "^2.70.3",
-    "better-sqlite3": "^12.11.1",
+    "better-sqlite3": "^13.1.1",
     "esbuild": "^0.28.2",
     "svelte": "^5.57.2",
     "typescript": "^6.0.3"
