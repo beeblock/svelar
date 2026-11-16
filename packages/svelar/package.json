@@ -300,7 +300,7 @@
 		"@types/pdfkit": "^0.17.6",
 		"@types/proper-lockfile": "^4.1.4",
 		"@vitest/coverage-v8": "^4.1.11",
-		"better-sqlite3": "^12.11.1",
+		"better-sqlite3": "^13.1.1",
 		"exceljs": "^4.4.0",
 		"marked": "^18.1.1",
 		"meilisearch": "^0.62.0",
