@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "description": "Stripe billing plugin for Svelar — subscriptions, one-time payments, checkout, invoices, webhooks, and polymorphic Billable mixin",
   "type": "module",
-  "engines": { "node": ">=22.12.0" },
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "keywords": [
     "svelar-plugin",
     "stripe",
@@ -64,14 +66,18 @@
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
-    "stripe": "^23.0.0",
+    "stripe": "^23.1.0",
     "stripe22": "npm:stripe@22.2.1",
     "tsup": "^8.5.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.11"
   },
   "overrides": {
-    "@sveltejs/kit": { "cookie": "^0.7.2" },
-    "tsup": { "esbuild": "^0.28.2" }
+    "@sveltejs/kit": {
+      "cookie": "^0.7.2"
+    },
+    "tsup": {
+      "esbuild": "^0.28.2"
+    }
   }
 }
