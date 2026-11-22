@@ -132,6 +132,7 @@ export const load: PageServerLoad = ${open} => {
   private dashboardPageSvelteTemplate(ddd = false): string {
     const patternAlias = ddd ? '$lib/shared/components/patterns' : '$lib/components/patterns';
     return `<script lang="ts">
+  import { tick } from 'svelte';
   import { page } from '$app/state';
   import { goto, replaceState } from '$app/navigation';
   import { apiFetch } from '@beeblock/svelar/http';
@@ -143,7 +144,7 @@ export const load: PageServerLoad = ${open} => {
   import type { DashboardRoleCreateInput, DashboardUserRoleInput, DashboardUserCapabilityInput } from '@beeblock/svelar/dashboard/schemas';
   import type { DashboardUserAccess } from '@beeblock/svelar/dashboard';
   import { zod4Client, type ClientValidationAdapter } from 'sveltekit-superforms/adapters';
-  import { superForm } from 'sveltekit-superforms/client';
+  import { superForm, type SuperForm } from 'sveltekit-superforms/client';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
   import Trash2 from '@lucide/svelte/icons/trash-2';
@@ -215,17 +216,17 @@ export const load: PageServerLoad = ${open} => {
   const userRoleValidator = zod4Client(dashboardUserRoleSchema);
   const userCapabilityValidator = zod4Client(dashboardUserCapabilitySchema);
   const roleCreateForm = superForm<DashboardRoleCreateInput>({scope:'team',name:'',label:'',confirmed:true}, {
-    id:'dashboard-role-create',SPA:true,dataType:'json',validators:roleCreateValidator,resetForm:false,
+    id:'dashboard-role-create',SPA:true,dataType:'json',validators:roleCreateValidator,resetForm:false,autoFocusOnError:false,
     onSubmit:({cancel})=>{cancel();void createRole();},
   });
   const {form:roleCreateValues,errors:roleCreateErrors,enhance:enhanceRoleCreate} = roleCreateForm;
   const userRoleForm = superForm<DashboardUserRoleInput>({id:'',scope:'team',roleId:0,confirmed:true}, {
-    id:'dashboard-user-role',SPA:true,dataType:'json',validators:userRoleValidator,resetForm:false,
+    id:'dashboard-user-role',SPA:true,dataType:'json',validators:userRoleValidator,resetForm:false,autoFocusOnError:false,
     onSubmit:({cancel})=>{cancel();void userRoleChange($userRoleValues.roleId,false);},
   });
   const {form:userRoleValues,errors:userRoleErrors,enhance:enhanceUserRole} = userRoleForm;
   const userCapabilityForm = superForm<DashboardUserCapabilityInput>({id:'',scope:'team',capability:'',confirmed:true}, {
-    id:'dashboard-user-capability',SPA:true,dataType:'json',validators:userCapabilityValidator,resetForm:false,
+    id:'dashboard-user-capability',SPA:true,dataType:'json',validators:userCapabilityValidator,resetForm:false,autoFocusOnError:false,
     onSubmit:({cancel})=>{cancel();void userCapabilityChange($userCapabilityValues.capability,false);},
   });
   const {form:userCapabilityValues,errors:userCapabilityErrors,enhance:enhanceUserCapability} = userCapabilityForm;
@@ -397,31 +398,43 @@ export const load: PageServerLoad = ${open} => {
     } catch (error) { formError = error instanceof Error ? error.message : 'Access unavailable.'; }
     finally { pending['access-read'] = false; }
   }
+  async function validateManagementForm<T extends Record<string, unknown>>(form: SuperForm<T>) {
+    pending['management-validate'] = true;
+    let invalid = false;
+    try {
+      // Superforms defers autofocus; manual SPA validation owns focus before returning.
+      const result = await form.validateForm({update:true,focusOnError:false});
+      invalid = !result.valid;
+      if (invalid) formErrors._root = result.errors._errors ?? [];
+      return result;
+    } finally {
+      pending['management-validate'] = false;
+      await tick();
+      if (invalid && managementDialog?.open) managementDialog.querySelector<HTMLElement>('[aria-invalid="true"]:not(:disabled)')?.focus();
+    }
+  }
   async function createRole() {
     if (managementBusy) return;
     formError = ''; formErrors = {};
     roleCreateValues.set({...assignmentScope(),name:$roleCreateValues.name,label:$roleCreateValues.label,confirmed:true});
-    pending['management-validate'] = true;
-    let result; try { result = await roleCreateForm.validateForm({update:true}); } finally { pending['management-validate'] = false; }
-    if (!result.valid) { formErrors._root = result.errors._errors ?? []; return; } const input = result.data;
+    const result = await validateManagementForm(roleCreateForm);
+    if (!result.valid) return; const input = result.data;
     confirmation = {title:'Create role',message:input.label+' · '+input.scope+(input.teamId?' / '+input.teamId:''),url:'/api/admin/permissions/roles',method:'POST',body:input,panel:'permissions',key:'role-create',form:'roleCreate'};
   }
   async function userRoleChange(roleId: string | number, detach: boolean) {
     if (!managedUser || !snapshotMatches || managementBusy) return;
     formError = ''; formErrors = {};
     userRoleValues.set({id:String(managedUser.id),...assignmentScope(),roleId:Number(roleId),confirmed:true});
-    pending['management-validate'] = true;
-    let result; try { result = await userRoleForm.validateForm({update:true}); } finally { pending['management-validate'] = false; }
-    if (!result.valid) { formErrors._root = result.errors._errors ?? []; return; } const input = result.data;
+    const result = await validateManagementForm(userRoleForm);
+    if (!result.valid) return; const input = result.data;
     confirmation = {title:detach?'Detach role':'Assign role',message:managedUser.email+' · '+input.scope+(input.teamId?' / '+input.teamId:''),url:'/api/admin/users/'+encodeURIComponent(input.id)+'/roles',method:detach?'DELETE':'POST',body:input,panel:'users',key:'access-write:role:'+input.roleId,form:'userAccess'};
   }
   async function userCapabilityChange(capability: string, revoke: boolean) {
     if (!managedUser || !snapshotMatches || managementBusy) return;
     formError = ''; formErrors = {};
     userCapabilityValues.set({id:String(managedUser.id),...assignmentScope(),capability,confirmed:true});
-    pending['management-validate'] = true;
-    let result; try { result = await userCapabilityForm.validateForm({update:true}); } finally { pending['management-validate'] = false; }
-    if (!result.valid) { formErrors._root = result.errors._errors ?? []; return; } const input = result.data;
+    const result = await validateManagementForm(userCapabilityForm);
+    if (!result.valid) return; const input = result.data;
     confirmation = {title:revoke?'Revoke direct capability':'Grant direct capability',message:managedUser.email+' · '+input.capability+' · '+input.scope+(input.teamId?' / '+input.teamId:''),url:'/api/admin/users/'+encodeURIComponent(input.id)+'/capabilities',method:revoke?'DELETE':'POST',body:input,panel:'users',key:'access-write:capability:'+input.capability,form:'userAccess'};
   }
   async function requestStatus(task: string, key: string) {
