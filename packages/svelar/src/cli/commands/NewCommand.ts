@@ -142,9 +142,8 @@ export class NewCommand extends Command {
     this.info('Writing config files...');
 
     // Read our own version so scaffolded projects depend on the correct release
-    const { dirname: dn } = await import('node:path');
-    const { fileURLToPath: ftu } = await import('node:url');
-    const ownPkgPath = join(dn(dn(dn(ftu(import.meta.url)))), 'package.json');
+    const { createRequire } = await import('node:module');
+    const ownPkgPath = createRequire(import.meta.url).resolve('@beeblock/svelar/package.json');
     const ownPkg = JSON.parse((await import('node:fs')).readFileSync(ownPkgPath, 'utf-8'));
     if (typeof ownPkg.version !== 'string' || !ownPkg.version.trim()) {
       throw new Error('Cannot scaffold an app without the installed Svelar package version.');
@@ -152,7 +151,6 @@ export class NewCommand extends Command {
     const svelarVersion = ownPkg.version;
 
     write('package.json', T.packageJson(projectLabel.toLowerCase(), svelarVersion, validationProvider));
-    write('svelte.config.js', T.svelteConfig());
     write('vite.config.ts', T.viteConfig());
     write('tsconfig.json', T.tsConfig());
     write('src/app.html', T.appHtml());
@@ -340,6 +338,7 @@ export class NewCommand extends Command {
     write('src/lib/shared/scheduler/CleanExpiredSessions.ts', T.cleanExpiredSessions());
     write('src/lib/shared/scheduler/DailyDigestEmail.ts', T.dailyDigestEmail());
     write('src/lib/shared/scheduler/PruneAuditLogs.ts', T.pruneAuditLogs());
+    write('src/lib/shared/scheduler/PruneLogs.ts', T.pruneLogs());
     write('src/lib/shared/scheduler/QueueHealthCheck.ts', T.queueHealthCheck());
     write('src/lib/shared/scheduler/index.ts', T.schedulerIndex());
 

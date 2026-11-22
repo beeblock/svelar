@@ -71,7 +71,7 @@ export default defineConfig({
   minify: true,
   keepNames: true,
   target: 'node22',
-  splitting: false,
+  splitting: true,
   noExternal: ['cron-parser', 'luxon'],
   external: [
     'zod',

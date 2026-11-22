@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFile } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { Event, EventDispatcher } from '../src/events/index.js';
 import { Http, HttpCircuitOpenError, HttpClient, apiFetch, apiFetchJson, signedFetch } from '../src/http/index.js';
@@ -656,6 +657,7 @@ describe('scoped testing fakes', () => {
   it('shares scoped interception across independently built package entries and releases every registration', async () => {
     const root = await mkdtemp(join(tmpdir(), 'svelar-fake-bundles-'));
     try {
+      await symlink(fileURLToPath(new URL('../../../node_modules', import.meta.url)), join(root, 'node_modules'), 'dir');
       await build({
         entryPoints: {
           testing: 'src/testing/index.ts',
