@@ -67,6 +67,8 @@ npm install @aws-sdk/client-s3
 npm install @aws-sdk/s3-request-presigner
 ```
 
+These optional SDKs load lazily through Node's module loader. Missing packages produce installation guidance; other loading failures retain their original `cause` instead of being reported as missing packages. Installing a peer does not hide incompatible or broken dependency installations.
+
 S3 disks support all the same methods as local disks, plus additional features:
 
 ```typescript

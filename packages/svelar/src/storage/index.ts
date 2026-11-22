@@ -27,6 +27,7 @@
 
 import { readFile, writeFile, unlink, mkdir, readdir, stat, copyFile, rename } from 'node:fs/promises';
 import { dirname, extname, basename, resolve as resolvePath, relative, isAbsolute, sep } from 'node:path';
+import { createRequire } from 'node:module';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -274,11 +275,15 @@ class S3Disk implements Disk {
   private async getS3(): Promise<any> {
     if (this._s3Module) return this._s3Module;
     try {
-      this._s3Module = await (Function('return import("@aws-sdk/client-s3")')() as Promise<any>);
+      this._s3Module = createRequire(import.meta.url)('@aws-sdk/client-s3');
       return this._s3Module;
-    } catch {
+    } catch (cause) {
+      const missing = cause !== null && typeof cause === 'object' && 'code' in cause && cause.code === 'MODULE_NOT_FOUND';
       throw new Error(
-        'S3 storage driver requires @aws-sdk/client-s3. Install it with: npm install @aws-sdk/client-s3'
+        missing
+          ? 'S3 storage driver requires @aws-sdk/client-s3. Install it with: npm install @aws-sdk/client-s3'
+          : 'S3 storage driver could not load @aws-sdk/client-s3. Check the original cause and dependency compatibility.',
+        { cause },
       );
     }
   }
@@ -539,10 +544,14 @@ class S3Disk implements Disk {
   async temporaryUrl(path: string, expiresInSeconds: number = 3600): Promise<string> {
     let presigner: any;
     try {
-      presigner = await (Function('return import("@aws-sdk/s3-request-presigner")')() as Promise<any>);
-    } catch {
+      presigner = createRequire(import.meta.url)('@aws-sdk/s3-request-presigner');
+    } catch (cause) {
+      const missing = cause !== null && typeof cause === 'object' && 'code' in cause && cause.code === 'MODULE_NOT_FOUND';
       throw new Error(
-        'Pre-signed URLs require @aws-sdk/s3-request-presigner. Install it with: npm install @aws-sdk/s3-request-presigner'
+        missing
+          ? 'Pre-signed URLs require @aws-sdk/s3-request-presigner. Install it with: npm install @aws-sdk/s3-request-presigner'
+          : 'Pre-signed URL signing could not load @aws-sdk/s3-request-presigner. Check the original cause and dependency compatibility.',
+        { cause },
       );
     }
 
