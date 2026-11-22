@@ -16,6 +16,7 @@ describe('Dependency Security Compatibility', () => {
   it.each(['zod', 'valibot'] as const)('keeps narrow security overrides in %s scaffolds', (provider) => {
     const manifest = JSON.parse(NewCommandTemplates.packageJson('security-test', '0.8.0', provider));
     expect(manifest.overrides).toEqual({
+      'runed@>=0.35.1 <0.38.0': '^0.38.0',
       exceljs: { uuid: '^11.1.1' },
       'esbuild@>=0.27.3 <0.28.1': '^0.28.2',
     });

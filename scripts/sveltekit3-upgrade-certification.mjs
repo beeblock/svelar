@@ -291,12 +291,14 @@ export function assertAppliedPlan(before, after, plan) {
   return backups;
 }
 
-function childEnvironment(appDir) {
+export function childEnvironment(appDir) {
   const allowed = ['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'TEMP', 'TMP', 'SystemRoot', 'COMSPEC', 'CI',
     'NODE_EXTRA_CA_CERTS', 'PLAYWRIGHT_BROWSERS_PATH', 'npm_config_cache'];
   const envPath = join(appDir, '.env');
   const appEnv = existsSync(envPath) ? parseEnv(readFileSync(envPath, 'utf8')) : {};
+  const resourceLimits = process.env.RAYON_NUM_THREADS === undefined ? {} : { RAYON_NUM_THREADS: process.env.RAYON_NUM_THREADS };
   return { ...Object.fromEntries(allowed.filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]])), ...appEnv,
+    ...resourceLimits,
     npm_config_registry: 'https://registry.npmjs.org', NO_COLOR: '1', FORCE_COLOR: '0',
     DB_DRIVER: 'sqlite', DB_PATH: join(appDir, 'database.db'), CACHE_DRIVER: 'memory', QUEUE_DRIVER: 'sync' };
 }

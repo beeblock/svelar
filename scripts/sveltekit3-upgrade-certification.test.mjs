@@ -3,7 +3,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
-import { addHistoricalUiDependencies, applyReviewedFixturePatches, assertAppliedPlan, assertCoreOnlyManifest, assertKitGraph, assertPreservedData, assertTreeEqual,
+import { addHistoricalUiDependencies, applyReviewedFixturePatches, assertAppliedPlan, assertCoreOnlyManifest, assertKitGraph, assertPreservedData, assertTreeEqual, childEnvironment,
   baselineIntegrity, baselineVersion, hashBytes, historicalUiDependencies, loadAppChromium, ownedPrefix, parseOptions, preserveKit2Dependencies, reviewedFixturePatches,
   restoreHistoricalUiManifest, snapshotTree, successfulBaselineChecks, validateArchiveEntries } from './sveltekit3-upgrade-certification.mjs';
 
@@ -32,6 +32,19 @@ test('requires an explicit immutable local archive and defaults to both real 0.8
   assert.deepEqual(explicit.providers, ['valibot']); assert.equal(explicit.expectedSha256, 'b'.repeat(64));
   assert.equal(explicit.approveReviewedFixturePatches, true);
 });
+
+test('passes the explicit Rayon worker cap to all commands and servers without editing app environment files', () => fixture((root) => {
+  const path = put(root, '.env', 'RAYON_NUM_THREADS=64\nAPP_NAME=Owned fixture\n');
+  const original = readFileSync(path); const previous = process.env.RAYON_NUM_THREADS;
+  try {
+    process.env.RAYON_NUM_THREADS = '2';
+    const env = childEnvironment(root);
+    assert.equal(env.RAYON_NUM_THREADS, '2'); assert.equal(env.APP_NAME, 'Owned fixture');
+    assert(readFileSync(path).equals(original));
+  } finally {
+    if (previous === undefined) delete process.env.RAYON_NUM_THREADS; else process.env.RAYON_NUM_THREADS = previous;
+  }
+}));
 
 test('historical UI bootstrap restores exact original manifest bytes only after explicit fixture approval', () => fixture((root) => {
   const original = Buffer.from('{\r\n "dependencies": {"sveltekit-superforms":"^2.31.0"}, "custom":true\r\n}\r\n');
