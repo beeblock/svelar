@@ -549,7 +549,7 @@ export async function certifyGeneratedDeployment(options) {
     }
     try { extraction?.cleanup(); } catch (error) { cleanupErrors.push(error); }
     for (const path of [fixtureRoot].filter(Boolean)) {
-      try { await rm(path, { recursive: true, force: true }); evidence.cleanup.push({ resource: path, outcome: 'removed' }); }
+      try { await rm(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); evidence.cleanup.push({ resource: path, outcome: 'removed' }); }
       catch (error) { cleanupErrors.push(error); }
     }
     evidence.cleanupErrors = cleanupErrors.map((error) => error.message);
