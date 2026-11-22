@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { access, copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { access, copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import { delimiter, dirname, join, resolve } from 'node:path';
@@ -143,7 +143,7 @@ async function port() {
   return value;
 }
 
-async function fingerprints(app) {
+export async function fingerprints(app) {
   const files = {};
   async function walk(directory) {
     for (const entry of await readdir(join(app, directory), { withFileTypes: true })) {
@@ -154,8 +154,16 @@ async function fingerprints(app) {
     }
   }
   await walk('src');
-  for (const path of ['Dockerfile', 'docker-compose.yml', 'docker-compose.prod.yml', 'svelte.config.js', 'package.json', 'package-lock.json']) {
+  for (const path of ['Dockerfile', 'docker-compose.yml', 'docker-compose.prod.yml', 'vite.config.ts', 'tsconfig.json', 'package.json', 'package-lock.json', '.env']) {
     files[path] = createHash('sha256').update(await readFile(join(app, path))).digest('hex');
+  }
+  // Kit 3 has no Svelte config file. Its absence is part of the snapshot too.
+  for (const path of ['svelte.config.js', 'svelte.config.ts']) {
+    let entry;
+    try { entry = await lstat(join(app, path)); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (entry && !entry.isFile()) throw new Error(`Unexpected generated config file type: ${path}`);
+    files[path] = entry ? createHash('sha256').update(await readFile(join(app, path))).digest('hex') : null;
   }
   return files;
 }
@@ -429,7 +437,6 @@ export async function certifyGeneratedDeployment(options) {
     await command('npm', ['run', 'ui:install'], { timeoutMs: 180000 });
     await command(process.execPath, [evidence.installed.cliPath, 'make:deploy', '--db=postgres', '--no-soketi', '--no-rustfs', '--no-meilisearch', '--no-gotenberg'], { timeoutMs: 60000 });
     evidence.installed = await installedIdentity(app, artifact);
-    sourceHashes = await fingerprints(app); evidence.sourceHashes = sourceHashes;
     const publicPort = await port(); evidence.baseUrl = `http://127.0.0.1:${publicPort}`;
     const password = randomBytes(24).toString('hex');
     const variables = { APP_KEY: randomBytes(32).toString('hex'), APP_NAME: project, APP_URL: evidence.baseUrl,
@@ -438,6 +445,7 @@ export async function certifyGeneratedDeployment(options) {
       CACHE_DRIVER: 'redis', QUEUE_DRIVER: 'redis', MAIL_DRIVER: 'null', AUTH_OTP_ENABLED: 'false', AUTH_EMAIL_VERIFICATION_REQUIRED: 'false' };
     secrets.push(password, variables.APP_KEY);
     await writeFile(join(app, '.env'), Object.entries(variables).map(([key, value]) => `${key}=${value}`).join('\n') + '\n', { mode: 0o600 });
+    sourceHashes = await fingerprints(app); evidence.sourceHashes = sourceHashes;
     const compose = ['compose', '--project-directory', app, '-f', join(app, 'docker-compose.yml'), '-f', join(app, 'docker-compose.prod.yml')];
     const configuration = JSON.parse(await docker([...compose, 'config', '--format', 'json']));
     if (configuration.name !== project) throw new Error('Generated Compose project identity is not the owned sibling app.');

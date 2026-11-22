@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { acceptancePlan, archiveIdentity, assertAvailability, assertDrain, assertOwned, assertProbe,
-  certifyGeneratedDeployment, deploymentCliArguments, generatedDockerProxySource, generatedRoleObservation, imageProofSource, installedIdentity, parseOptions, scope, shutdownProbeSource } from './generated-deployment-certification.mjs';
+  certifyGeneratedDeployment, deploymentCliArguments, fingerprints, generatedDockerProxySource, generatedRoleObservation, imageProofSource, installedIdentity, parseOptions, scope, shutdownProbeSource } from './generated-deployment-certification.mjs';
 import { ownerLabel } from './runtime-certification.mjs';
 
 const sha = 'a'.repeat(64);
@@ -67,6 +67,50 @@ test('archive provenance checks bytes, not the archive name or package version',
   const actual = await archiveIdentity(path, digest);
   assert.equal(actual.integrity, `sha512-${createHash('sha512').update(bytes).digest('base64')}`);
   await assert.rejects(archiveIdentity(path, sha), /SHA256 mismatch/);
+});
+
+async function fingerprintFixture(t) {
+  const app = await mkdtemp(join(tmpdir(), 'generated-deploy-fingerprint-unit-'));
+  t.after(() => rm(app, { recursive: true, force: true }));
+  await mkdir(join(app, 'src'));
+  for (const path of ['src/app.ts', 'Dockerfile', 'docker-compose.yml', 'docker-compose.prod.yml',
+    'vite.config.ts', 'tsconfig.json', 'package.json', 'package-lock.json', '.env']) {
+    await writeFile(join(app, path), `fixture bytes for ${path}\n`);
+  }
+  return app;
+}
+
+test('Kit 3 fingerprints preserve absent Svelte config and detect its later addition and removal', async (t) => {
+  const app = await fingerprintFixture(t);
+  const before = await fingerprints(app);
+  assert.equal(before['svelte.config.js'], null);
+  assert.equal(before['svelte.config.ts'], null);
+  await writeFile(join(app, 'svelte.config.js'), 'export default {};\n');
+  const added = await fingerprints(app);
+  assert.notDeepEqual(added, before);
+  assert.match(added['svelte.config.js'], /^[a-f0-9]{64}$/);
+  await writeFile(join(app, 'svelte.config.js'), 'export default { changed: true };\n');
+  assert.notDeepEqual(await fingerprints(app), added);
+  await rm(join(app, 'svelte.config.js'));
+  assert.deepEqual(await fingerprints(app), before);
+});
+
+test('fingerprints require and cover exact source, Vite, TypeScript, package and environment bytes', async (t) => {
+  const app = await fingerprintFixture(t);
+  const before = await fingerprints(app);
+  for (const path of ['src/app.ts', 'Dockerfile', 'docker-compose.yml', 'docker-compose.prod.yml',
+    'vite.config.ts', 'tsconfig.json', 'package.json', 'package-lock.json', '.env']) {
+    const bytes = `fixture bytes for ${path}\n`;
+    assert.equal(before[path], createHash('sha256').update(bytes).digest('hex'));
+    await writeFile(join(app, path), bytes + 'changed\n');
+    assert.notEqual((await fingerprints(app))[path], before[path]);
+    await rm(join(app, path));
+    if (path.startsWith('src/')) assert.notDeepEqual(await fingerprints(app), before);
+    else await assert.rejects(fingerprints(app), { code: 'ENOENT' });
+    await writeFile(join(app, path), bytes);
+  }
+  await symlink('missing-target.js', join(app, 'svelte.config.js'));
+  await assert.rejects(fingerprints(app), /Unexpected generated config file type/);
 });
 
 async function consumer(t) {
