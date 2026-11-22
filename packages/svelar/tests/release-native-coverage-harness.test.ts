@@ -112,6 +112,22 @@ describe('Installed release coverage contracts (no native execution)', () => {
     expect(source.text).toContain('await Cache.close()');
   });
 
+  it.each([false, true])('requires installed JSON/window methods and real PostgreSQL operator bindings in flat=%s', (flat) => {
+    const source = parsed(flat);
+    const call = callbackCall(source, 'executes installed structured JSON and window queries with tenant and driver boundaries').getText(source);
+    expect(call).toContain('class StructuredQueryRecord extends TenantModel');
+    expect(call).toContain("StructuredQueryRecord.addGlobalScope('visible'");
+    expect(call).toContain("whereJsonLength('tags', 0)");
+    expect(call).toContain("selectWindow('ordinal'");
+    expect(call).toContain("selectWindow('running'");
+    expect(call).toContain("whereJsonContains('metadata'");
+    expect(call).toContain("whereJsonContainsKey('metadata'");
+    expect(call).toContain('metadata::jsonb ? ? AND team_id = ?');
+    expect(call).toContain("['ready', 'structured-a', 1]");
+    expect(call).toContain("toThrow('requires PostgreSQL')");
+    expect(call).not.toMatch(/vi\.mock|mockResolvedValue|packages\/svelar\/src/);
+  });
+
   it('pins each child to archive SHA, installed lock integrity and physical public exports', () => {
     const source = harness.installedHttpBudgetChildSource();
     expect(source).toContain("createRequire(config.appManifest)");

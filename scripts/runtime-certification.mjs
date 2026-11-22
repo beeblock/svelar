@@ -15,12 +15,13 @@ export const defaultClients = resolve(repository, '../svelar-testing-area/apps/s
 export const defaultReportDirectory = resolve(repository, '../svelar-testing-area/artifacts/runtime-certification');
 export const nativeGates = Object.freeze([
   { name: 'redis-coordination', files: ['cache-atomic-redis.test.ts', 'cache-redis-lifecycle-native.test.ts', 'rate-limit-redis-processes.test.ts', 'broadcasting-redis-processes.test.ts'] },
-  { name: 'queue-lifecycle', files: ['queue-recovery-redis.test.ts'] },
+  { name: 'queue-lifecycle', files: ['queue-recovery-redis.test.ts', 'queue-operations-index-native.test.ts'] },
   { name: 'queue-monitoring', files: ['queue-monitoring-redis.test.ts'] },
-  { name: 'queue-sql', files: ['queue-monitoring-drivers.test.ts', 'team-invitation-drivers.test.ts', 'connection-mysql-url.test.ts'] },
+  { name: 'queue-sql', files: ['queue-monitoring-drivers.test.ts', 'team-invitation-drivers.test.ts', 'connection-mysql-url.test.ts', 'scheduler-heartbeat-native.test.ts'] },
   { name: 'postgres-schema', files: ['schema-advanced-postgres.test.ts'] },
+  { name: 'json-window-queries', files: ['orm-json-window-native.test.ts', 'query-builder-performance-native.test.ts'] },
   { name: 'inbox-operations', files: ['inbox-operation-drivers.test.ts'] },
-  { name: 'shared-log-search', files: ['shared-log-search-process.test.ts'] },
+  { name: 'shared-log-search', files: ['shared-log-search-process.test.ts', 'logging-bulk-prune-native.test.ts'] },
   { name: 'deployment-traffic', files: ['deployment-traffic.test.ts'] },
   { name: 'deployment-active-worker', files: ['deployment-active-worker.test.ts'] },
 ]);
@@ -111,6 +112,7 @@ export function nativeEnvironment(base, clients, services) {
     SVELAR_TEST_QUEUE_CLIENT: clients, SVELAR_TEST_QUEUE_REDIS_URL: redis,
     SVELAR_TEST_QUEUE_PG_PORT: String(services.postgres), SVELAR_TEST_QUEUE_MYSQL_PORT: String(services.mysql),
     SVELAR_TEST_TEAMS_NATIVE: '1', SVELAR_TEST_TEAMS_CLIENT: clients,
+    SVELAR_TEST_SCHEDULER_DATABASE_CREATE: '1',
     SVELAR_TEST_MYSQL_URL: '1', SVELAR_TEST_MYSQL_URL_MODULES: join(dirname(clients), 'node_modules'),
     SVELAR_TEST_REDIS_CLIENT: clients, SVELAR_TEST_REDIS_URL: redis,
     SVELAR_TEST_CACHE_REDIS_DOCKER: '1',

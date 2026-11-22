@@ -60,6 +60,7 @@ export function cliExecutionGates() {
 		update: 'packed scaffold update and published-baseline upgrade',
 		tinker: 'installed REPL with model loading',
 		'search:setup': 'cli-search-setup.test.ts + Meilisearch smoke',
+		'log:prune': 'cli-log-prune.test.ts + bounded database retention regression',
 		'plugin:install': 'cli-plugin-commands.test.ts (isolated installer)',
 		'plugin:publish': 'cli-plugin-commands.test.ts (isolated publisher)',
 		'infra:setup': 'cli-deployment.test.ts (isolated SSH process)',

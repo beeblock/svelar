@@ -46,6 +46,8 @@ export const featureGates = [
 	['Populated operations browser acceptance using the installed immutable package', 'browser-smoke.mjs --operational-deep --expected-core-sha256=<selected SHA> before service phases'],
 	['Operational browser fixture isolation, ownership and failure contracts', 'node --test scripts/operational-browser-fixtures.test.mjs: SOURCE gate, outside Vitest'],
 	['Persistent scheduler controls across independent HTTP and restarted scheduler processes', 'scheduler-installed-process-certification.mjs using the selected installed archive'],
+	['Installed BullMQ CLI concurrency, lock renewal, graceful drain and interrupted-job recovery', 'installed-queue-process-certification.mjs using the selected installed archive and owned Redis'],
+	['Structured JSON/window queries and PostgreSQL JSONB operator bindings', 'installed generated-app database matrix and orm-json-window-native.test.ts'],
 	['Capability-gated absent commands and direct HTTP 403 (both providers)', 'capability-absence-certification.mjs: test-owned frontend with CLI-generated backend'],
 	['Generated adapter-node readiness, HTTP drain, promotion and rollback', 'generated-deployment-certification.mjs: installed app; active domain-worker proof remains separately labeled SOURCE-native'],
 	['Million-record bounded search reindex (optional, zero skips when enabled)', '--million or SVELAR_TEST_SEARCH_MILLION=1'],
@@ -146,7 +148,8 @@ export function certificationPlan(options, artifact, reportDirectory, applicatio
 		{ id: 'operational-browser-fixtures', scope: 'source', command: process.execPath, args: ['--test',
 			join(scriptDir, 'operational-browser-fixtures.test.mjs'),
 			join(scriptDir, 'scheduler-installed-process-certification.test.mjs'),
-			join(scriptDir, 'generated-deployment-certification.test.mjs')] },
+			join(scriptDir, 'generated-deployment-certification.test.mjs'),
+			join(scriptDir, 'installed-queue-process-certification.test.mjs')] },
 	];
 	if (!options.fast) gates.push(
 		node('auth-ui-zod', 'auth-ui-certification.mjs', ['--app-dir', client, '--phase', 'full', '--port', '5897', '--report-dir', join(reportDirectory, 'auth-ui-zod')], 'artifact', { client }),
@@ -167,7 +170,12 @@ export function certificationPlan(options, artifact, reportDirectory, applicatio
 		node('generated-adapter-deployment', 'generated-deployment-certification.mjs', [`--tarball=${artifact.tarballPath}`,
 			`--sha256=${artifact.sha256}`, '--execute', `--report-dir=${join(reportDirectory, 'generated-adapter-deployment')}`]),
 	);
-	gates.push(node('native-source-runtime', 'runtime-certification.mjs', [`--clients=${join(client, 'package.json')}`, `--report-dir=${join(reportDirectory, 'native-source-runtime')}`], 'source', { client }));
+	gates.push(
+		node('installed-queue-processes', 'installed-queue-process-certification.mjs', ['--app-dir', client,
+			'--tarball', artifact.tarballPath, '--expected-sha256', artifact.sha256,
+			'--report-dir', join(reportDirectory, 'installed-queue-processes')], 'artifact', { client }),
+		node('native-source-runtime', 'runtime-certification.mjs', [`--clients=${join(client, 'package.json')}`, `--report-dir=${join(reportDirectory, 'native-source-runtime')}`], 'source', { client }),
+	);
 	if (options.million) gates.push({ id: 'million-search', scope: 'source', files: ['search-large-keyset.test.ts'], env: { SVELAR_TEST_SEARCH_MILLION: '1', SVELAR_TEST_SEARCH_LARGE_EVIDENCE_DIR: join(reportDirectory, 'million-search') } });
 	if (options.typeDeps) gates.push({ id: 'operator-types', scope: 'source', client,
 		files: ['dashboard-operational-types.test.ts', 'release-native-coverage-harness.test.ts'],

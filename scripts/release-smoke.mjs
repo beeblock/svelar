@@ -1614,6 +1614,68 @@ describe('Svelar release certification', () => {
     expect(await new QueryBuilder('webhook_inbox_entries').where('source', source).count()).toBe(3);
   });
 
+  it('executes installed structured JSON and window queries with tenant and driver boundaries', async () => {
+    class CreateStructuredQueryRecords extends Migration {
+      async up() {
+        await this.schema.createTable('certification_json_window_records', (table) => {
+          table.increments('id');
+          table.string('team_id');
+          table.integer('visible');
+          table.integer('amount');
+          table.json('metadata');
+          table.json('tags').nullable();
+          table.softDeletes();
+        });
+      }
+      async down() { await this.schema.dropTableIfExists('certification_json_window_records'); }
+    }
+    class StructuredQueryRecord extends TenantModel {
+      static table = 'certification_json_window_records';
+      static timestamps = false;
+      static softDeletes = true;
+    }
+    StructuredQueryRecord.addGlobalScope('visible', (query) => query.where('visible', 1));
+    await new CreateStructuredQueryRecords().up();
+    await new QueryBuilder(StructuredQueryRecord.table).insertMany([
+      { team_id: 'structured-a', visible: 1, amount: 10, metadata: '{"ready":true}', tags: '["one","two"]', deleted_at: null },
+      { team_id: 'structured-a', visible: 1, amount: 20, metadata: '{"ready":false}', tags: '[]', deleted_at: null },
+      { team_id: 'structured-b', visible: 1, amount: 999, metadata: '{"ready":true}', tags: '[]', deleted_at: null },
+      { team_id: 'structured-a', visible: 0, amount: 888, metadata: '{"ready":true}', tags: '[]', deleted_at: null },
+      { team_id: 'structured-a', visible: 1, amount: 777, metadata: '{"ready":true}', tags: '[]', deleted_at: '2026-01-01' },
+      { team_id: 'structured-a', visible: 1, amount: 15, metadata: '{}', tags: '{}', deleted_at: null },
+      { team_id: 'structured-a', visible: 1, amount: 30, metadata: '{}', tags: null, deleted_at: null },
+      { team_id: 'structured-a', visible: 1, amount: 40, metadata: '{}', tags: 'null', deleted_at: null },
+    ]);
+    const ids = (rows: StructuredQueryRecord[]) => rows.map((row) => Number(row.getAttribute('id')));
+    const scoped = () => StructuredQueryRecord.forTenant('structured-a');
+    expect(ids(await scoped().whereJsonLength('tags', 0).get())).toEqual([2]);
+    expect(ids(await scoped().whereJsonLength('tags', 2).orWhereJsonLength('tags', 0).orderBy('id').get())).toEqual([1, 2]);
+    const window = scoped().select('id').selectRaw('? as marker', ['installed-marker'])
+      .selectWindow('ordinal', { function: 'row_number', orderBy: [{ column: 'amount' }, { column: 'id' }] })
+      .selectWindow('running', { function: 'sum', column: 'amount', orderBy: [{ column: 'amount' }, { column: 'id' }], frame: 'running' })
+      .selectWindow('partition_count', { function: 'count', column: '*' })
+      .whereJsonLength('tags', '>=', 0).orderBy('id');
+    const before = window.toSQL();
+    const rows = await window.get();
+    expect(rows.map((row) => ['id', 'ordinal', 'running', 'partition_count'].map((key) => Number(row.getAttribute(key))))).toEqual([[1, 1, 10, 2], [2, 2, 30, 2]]);
+    expect(rows.every((row) => row.getAttribute('marker') === 'installed-marker')).toBe(true);
+    expect(window.clone().toSQL()).toEqual(before);
+    if (Connection.getDriver() === 'postgres') {
+      expect(ids(await scoped().whereJsonContains('metadata', { ready: true }).get())).toEqual([1]);
+      expect(ids(await scoped().whereJsonContainsKey('metadata', 'ready').orderBy('id').get())).toEqual([1, 2]);
+      expect(ids(await scoped().whereJsonDoesntContainKey('metadata', 'ready').orderBy('id').get())).toEqual([6, 7, 8]);
+      expect(ids(await scoped().whereJsonContainsKey('metadata', "ready' OR 1=1 -- ?").get())).toEqual([]);
+      const raw = await Connection.raw('SELECT id FROM certification_json_window_records WHERE metadata::jsonb ? ? AND team_id = ? AND visible = ? AND deleted_at IS NULL ORDER BY id', ['ready', 'structured-a', 1]);
+      expect(raw.map((row: any) => Number(row.id))).toEqual([1, 2]);
+    } else {
+      const query = scoped();
+      const original = query.toSQL();
+      expect(() => query.whereJsonContains('metadata', { ready: true })).toThrow('requires PostgreSQL');
+      expect(() => query.whereJsonContainsKey('metadata', 'ready')).toThrow('requires PostgreSQL');
+      expect(query.toSQL()).toEqual(original);
+    }
+  });
+
   it('persists find-or-create models with tenant scopes, casts, IDs and observer diffs', async () => {
     class CreateHelperRecords extends Migration {
       async up() {

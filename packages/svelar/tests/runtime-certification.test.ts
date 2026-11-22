@@ -46,19 +46,23 @@ describe('Native runtime certification runner', () => {
     expect(env.SVELAR_TEST_SCHEMA_POSTGRES_URL).toContain('/schema_proof'); expect(env.SVELAR_TEST_QUEUE_MYSQL_PORT).toBe('50103');
   });
   it('keeps owned Redis lifecycle and Docker recovery in the existing mandatory source gate', () => {
-    expect(runtime.nativeGates).toHaveLength(9);
+    expect(runtime.nativeGates).toHaveLength(10);
     expect(runtime.nativeGates.find((gate: { name: string }) => gate.name === 'redis-coordination').files).toEqual([
       'cache-atomic-redis.test.ts', 'cache-redis-lifecycle-native.test.ts', 'rate-limit-redis-processes.test.ts', 'broadcasting-redis-processes.test.ts',
     ]);
     expect(runtime.nativeGates.flatMap((gate: { files: string[] }) => gate.files).filter((file: string) => file === 'cache-redis-lifecycle-native.test.ts')).toHaveLength(1);
   });
   it('wires remaining invitation and MySQL URL native obligations exactly once into the existing SQL gate', () => {
-    expect(runtime.nativeGates).toHaveLength(9);
+    expect(runtime.nativeGates).toHaveLength(10);
     expect(runtime.nativeGates.find((gate: { name: string }) => gate.name === 'queue-sql').files).toEqual([
-      'queue-monitoring-drivers.test.ts', 'team-invitation-drivers.test.ts', 'connection-mysql-url.test.ts',
+      'queue-monitoring-drivers.test.ts', 'team-invitation-drivers.test.ts', 'connection-mysql-url.test.ts', 'scheduler-heartbeat-native.test.ts',
     ]);
     const files = runtime.nativeGates.flatMap((gate: { files: string[] }) => gate.files);
     for (const file of ['team-invitation-drivers.test.ts', 'connection-mysql-url.test.ts']) expect(files.filter((entry: string) => entry === file)).toHaveLength(1);
+  });
+  it('requires real PostgreSQL/MySQL JSON and window query contracts exactly once', () => {
+    expect(runtime.nativeGates.find((gate: { name: string }) => gate.name === 'json-window-queries').files).toEqual(['orm-json-window-native.test.ts', 'query-builder-performance-native.test.ts']);
+    expect(runtime.nativeGates.flatMap((gate: { files: string[] }) => gate.files).filter((file: string) => file === 'orm-json-window-native.test.ts')).toHaveLength(1);
   });
   it('accepts only complete positive-count native reports with every requested file passing', () => {
     expect(runtime.verifyReport(report(directory), ['native.test.ts'], directory)).toEqual({ files: 1, passed: 1, skipped: 0 });
