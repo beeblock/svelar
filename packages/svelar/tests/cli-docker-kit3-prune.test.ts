@@ -142,6 +142,22 @@ afterEach(() => {
 });
 
 describe('Docker production Kit 3 generated type preservation', () => {
+  it('uses a reviewed installer and keeps native compilation tools out of production', () => {
+    const dockerfile = DeployTemplates.dockerfile();
+    const base = dockerfile.split('FROM node:22-alpine AS base')[1].split('FROM base AS builder')[0];
+    const builder = dockerfile.split('FROM base AS builder')[1].split('FROM builder AS deps')[0];
+    const production = dockerfile.split('FROM base AS production')[1].split('FROM production AS deployer')[0];
+    const development = dockerfile.split('FROM base AS development')[1];
+    expect(base).toContain('RUN npm install --global npm@11.21.3');
+    expect(base).not.toContain('python3');
+    expect(builder).toContain('RUN apk add --no-cache python3 make g++');
+    expect(builder.indexOf('apk add')).toBeLessThan(builder.indexOf('RUN npm ci'));
+    expect(development).toContain('RUN apk add --no-cache python3 make g++');
+    expect(production).not.toContain('python3');
+    expect(production).not.toContain('FROM builder');
+    expect(builder).not.toMatch(/--force|--legacy-peer-deps|--ignore-scripts/);
+  });
+
   it('reproduces actual offline npm prune deleting genuine Kit 3 configs and breaking Jiti bootstrap', async () => {
     const root = await fixture(true);
     prune(root);

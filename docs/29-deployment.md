@@ -250,11 +250,14 @@ REDIS_PORT=6379
 
 The generated Dockerfile has six targets: `base`, `builder`, `deps`, `production`, `deployer`, and `development`.
 
+The image pins npm 11.21.3 so its installer reads the same reviewed lockfile graph as the build tooling. This installs npm inside the image, not on the developer's machine. The builder and development targets include Python 3, Make and a C++ compiler for native packages such as SQLite; production derives from the clean base and does not include those compilation tools. Keep the lockfile intact and use normal install scripts rather than bypassing peer or native-install failures.
+
 `builder` copies app source before `npm ci`, allowing the generated `prepare: svelte-kit sync` script to find the Svelte/Vite configuration. Native dependency install scripts run normally. `deps` derives from that build and prunes development dependencies with `--ignore-scripts`; it does not rerun SvelteKit prepare after removing its tooling.
 
 ```dockerfile
 FROM base AS builder
 WORKDIR /app
+RUN apk add --no-cache python3 make g++
 COPY .svelar-local ./.svelar-local
 COPY . .
 RUN npm ci

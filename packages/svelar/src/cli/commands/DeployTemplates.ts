@@ -16,11 +16,13 @@ export class DeployTemplates {
 # ── Base ──────────────────────────────────────────────────
 FROM node:22-alpine AS base
 RUN apk add --no-cache dumb-init
+RUN npm install --global npm@11.21.3
 RUN addgroup -g 1001 sveltekit && adduser -u 1001 -G sveltekit -s /bin/sh -D sveltekit
 
 # ── Builder (full install + build) ───────────────────────
 FROM base AS builder
 WORKDIR /app
+RUN apk add --no-cache python3 make g++
 COPY .svelar-local ./.svelar-local
 COPY . .
 RUN npm ci
@@ -70,6 +72,7 @@ CMD ["npx", "svelar", "prod:deploy"]
 # ── Development (hot-reload) ─────────────────────────────
 FROM base AS development
 WORKDIR /app
+RUN apk add --no-cache python3 make g++
 
 ENV NODE_ENV=development
 
