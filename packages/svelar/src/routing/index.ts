@@ -1,5 +1,6 @@
 export {
   Controller,
+  getJsonResponseBody,
   resource,
   ValidationError,
   NotFoundError,

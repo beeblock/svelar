@@ -48,6 +48,7 @@ describe('HTTP execution and drain boundaries', () => {
     const response = await app().handle({ event: event(), resolve: async () => new Response(JSON.stringify(ApplicationContext.snapshot())) });
     const context = await response.json(); expect(context.tenantId).toBeUndefined(); expect(context.actorId).toBeUndefined();
     expect(context.requestId).toBeTruthy(); expect(ApplicationContext.get('tenantId')).toBe('unrelated-cli');
+    expect(context.requestId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });
   it('isolates two simultaneous tenant executions', async () => {
     const runtime = app();

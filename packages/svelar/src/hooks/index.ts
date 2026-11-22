@@ -40,7 +40,7 @@ import {
   RateLimitMiddleware,
   ThrottleMiddleware,
 } from '../middleware/Middleware.js';
-import { randomUUID } from 'node:crypto';
+import { uuidv7 } from '../support/uuid.js';
 import { Application } from '../container/Application.js';
 import { SessionMiddleware, DatabaseSessionStore, type SessionStore } from '../session/Session.js';
 import { AuthenticateMiddleware, type AuthManager } from '../auth/Auth.js';
@@ -315,7 +315,7 @@ export function createSvelarApp(appConfig: SvelarAppConfig = {}) {
     handle: async ({ event, resolve }: any): Promise<Response> => {
       if (DeploymentRuntime.isDraining()) return new Response(null, { status: 503, headers: { 'Retry-After': '1', 'Cache-Control': 'no-store' } });
       const acceptedId = (value: unknown): string | undefined => typeof value === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(value) ? value : undefined;
-      const requestId = acceptedId(event.request?.headers?.get('x-request-id')) ?? randomUUID();
+      const requestId = acceptedId(event.request?.headers?.get('x-request-id')) ?? uuidv7();
       const correlationId = acceptedId(event.request?.headers?.get('x-correlation-id')) ?? requestId;
 
       return ApplicationContext.runIsolated({ requestId, correlationId }, async () => {

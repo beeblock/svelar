@@ -22,7 +22,9 @@ import { createSvelarApp } from '@beeblock/svelar/hooks';
 export const { handle, handleError } = createSvelarApp({ auth });
 ```
 
-`createSvelarApp()` also creates a request context for logs and errors. It reads `X-Request-ID` and `X-Correlation-ID` when present, generates a request ID when absent, adds `X-Request-ID` to the response, and makes the IDs available to `Log` and `ErrorHandler`.
+`createSvelarApp()` also creates an isolated request context for logs and errors. It accepts bounded `X-Request-ID` and `X-Correlation-ID` values, generates a time-ordered UUID v7 request ID when absent, adds `X-Request-ID` to the response, and makes the IDs available to `Log` and `ErrorHandler`. Existing acceptable incoming identifiers are not rewritten.
+
+The error hook accepts both Kit 2's legacy input and Kit 3's discriminated error input. Kit 3 `app` errors retain their explicit safe metadata; `framework` and `validation` errors return only status/message. Validation issues and submitted values are not exposed. These expected failures are not automatically promoted to unknown incidents. Unknown errors still use the configured reporter, production-safe message and a valid status fallback.
 
 Add the `<Toaster />` component to your layout for client-side toast notifications:
 

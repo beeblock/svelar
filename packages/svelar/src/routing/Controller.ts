@@ -42,6 +42,13 @@ type ZodRawShape = z.core.$ZodShape;
 import { MiddlewareStack, type MiddlewareHandler, Middleware } from '../middleware/Middleware.js';
 import { ErrorHandler } from '../errors/Handler.js';
 
+const serializedJsonResponses = new WeakMap<Response, string>();
+
+/** Read the final serialized JSON without consuming or cloning a controller response. */
+export function getJsonResponseBody(response: Response): string | undefined {
+  return serializedJsonResponses.get(response);
+}
+
 // ── Types ──────────────────────────────────────────────────
 
 export interface RequestEvent {
@@ -180,14 +187,21 @@ export abstract class Controller {
   // ── Response Helpers ─────────────────────────────────────
 
   protected json(data: any, status: number = 200, headers: Record<string, string> = {}): Response {
-    const body = JSON.stringify(data, null, 2);
-    return new Response(body, {
+    const body = this.serializeJson(data);
+    const response = new Response(body, {
       status,
       headers: {
         'Content-Type': 'application/json',
         ...headers,
       },
     });
+    serializedJsonResponses.set(response, body ?? '');
+    return response;
+  }
+
+  /** Override to redact or transform JSON before the response body is constructed. */
+  protected serializeJson(data: unknown): string | undefined {
+    return JSON.stringify(data, null, 2);
   }
 
   protected text(content: string, status: number = 200): Response {

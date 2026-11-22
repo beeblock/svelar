@@ -69,6 +69,25 @@ return this.json({ message: 'Internal Server Error' }, 500);
 
 ## Wiring Controllers to Routes
 
+### JSON Serialization Without Stream Copies
+
+Override `serializeJson(data)` to apply an application-owned serializer or redaction policy before `json()` constructs its response. The default remains `JSON.stringify(data, null, 2)`; response status and caller headers are unchanged.
+
+```typescript
+import { Controller, getJsonResponseBody } from '@beeblock/svelar/routing';
+
+export class ApiController extends Controller {
+  protected serializeJson(data: unknown): string | undefined {
+    return JSON.stringify(data, (key, value) => key === 'password' ? '[REDACTED]' : value);
+  }
+}
+
+// In server-side response inspection:
+const serialized = getJsonResponseBody(response);
+```
+
+`getJsonResponseBody(response)` returns the exact final serialized text for that controller-created JSON response, without reading, consuming or cloning its stream. It returns `undefined` for unrelated responses and clones; an undefined JSON payload has an empty body. This is not a replacement for explicit Resource field allowlists or authorization. The helper stores metadata in a weak map, not a response header or a client-visible extra field.
+
 Connect controllers to SvelteKit route handlers using the `handle()` method:
 
 ```typescript
