@@ -49,25 +49,30 @@ export type OperationSummary = Pick<OperationRecord, 'id' | 'label' | 'state' | 
   static helpers(alias: string): string {
     return `import type { ManifestCapability, CapabilityScope, TableQuery, UrlTab } from '${alias}/contracts.js';
 
-export function tabValue(url: URL, tabs: readonly UrlTab[], key = 'tab'): string {
+interface ReadableUrl {
+  readonly href: string;
+  readonly searchParams: Pick<URLSearchParams, 'get'>;
+}
+
+export function tabValue(url: ReadableUrl, tabs: readonly UrlTab[], key = 'tab'): string {
   const enabled = tabs.filter((tab) => !tab.disabled);
   if (!enabled.length || new Set(tabs.map((tab) => tab.value)).size !== tabs.length) throw new Error('Tabs require unique values and an enabled item.');
   return enabled.find((tab) => tab.value === url.searchParams.get(key))?.value ?? enabled[0].value;
 }
-export function tabUrl(url: URL, value: string, key = 'tab'): URL {
-  const next = new URL(url); next.searchParams.set(key, value); return next;
+export function tabUrl(url: ReadableUrl, value: string, key = 'tab'): URL {
+  const next = new URL(url.href); next.searchParams.set(key, value); return next;
 }
 function boundedInteger(value: string | null, fallback: number, maximum: number): number {
   const number = Number(value);
   return value !== null && /^[0-9]+$/.test(value) && Number.isSafeInteger(number) && number > 0 && number <= maximum ? number : fallback;
 }
-export function tableQuery(url: URL, sortKeys: readonly string[], defaultSize = 25): TableQuery {
+export function tableQuery(url: ReadableUrl, sortKeys: readonly string[], defaultSize = 25): TableQuery {
   return { page: boundedInteger(url.searchParams.get('page'), 1, 100000), perPage: boundedInteger(url.searchParams.get('perPage'), defaultSize, 100),
     search: (url.searchParams.get('search') ?? '').slice(0, 500), sort: sortKeys.includes(url.searchParams.get('sort') ?? '') ? url.searchParams.get('sort')! : '',
     direction: url.searchParams.get('direction') === 'desc' ? 'desc' : 'asc' };
 }
-export function tableUrl(url: URL, query: TableQuery): URL {
-  const next = new URL(url);
+export function tableUrl(url: ReadableUrl, query: TableQuery): URL {
+  const next = new URL(url.href);
   for (const [key, value] of Object.entries(query)) if (value === '') next.searchParams.delete(key); else next.searchParams.set(key, String(value));
   return next;
 }
@@ -220,7 +225,7 @@ export function profileOverrides(catalog: readonly ManifestCapability[], selecte
   async function select(value: string) {
     if (pending || value === selected || !tabs.some((tab) => tab.value === value && !tab.disabled)) return;
     pending = true; notice = '';
-    try { await goto(tabUrl(page.url, value, queryKey), { noScroll: true, keepFocus: true }); }
+    try { await goto(tabUrl(page.url, value, queryKey), { reset: false }); }
     catch { active = selected; notice = 'Unable to open this section. Please retry.'; }
     finally { pending = false; }
   }

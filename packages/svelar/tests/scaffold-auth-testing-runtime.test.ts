@@ -23,6 +23,24 @@ class PreserveConfiguredDatabase extends Migration {
 }
 
 describe('Executed generated authentication examples', () => {
+  it('loads the real Kit test environment and transforms the Superforms server boundary', () => {
+    const source = T.vitestConfig();
+    const ast = ts.createSourceFile('vitest.config.ts', source, ts.ScriptTarget.Latest, true);
+    const exported = ast.statements.find(ts.isExportAssignment)!;
+    const config = (exported.expression as ts.CallExpression).arguments[0] as ts.ObjectLiteralExpression;
+    const property = (object: ts.ObjectLiteralExpression, name: string) =>
+      object.properties.find((node): node is ts.PropertyAssignment =>
+        ts.isPropertyAssignment(node) && node.name.getText(ast) === name)!.initializer;
+    const plugins = property(config, 'plugins') as ts.ArrayLiteralExpression;
+    expect((plugins.elements[0] as ts.CallExpression).expression.getText(ast)).toBe('sveltekit');
+    const test = property(config, 'test') as ts.ObjectLiteralExpression;
+    const server = property(test, 'server') as ts.ObjectLiteralExpression;
+    const deps = property(server, 'deps') as ts.ObjectLiteralExpression;
+    const inline = property(deps, 'inline') as ts.ArrayLiteralExpression;
+    expect(inline.elements.map((node) => (node as ts.StringLiteral).text)).toContain('sveltekit-superforms');
+    expect(source).not.toContain('kit-server-boundary');
+  });
+
   it.each([
     { provider: 'zod', flat: false }, { provider: 'valibot', flat: false },
     { provider: 'zod', flat: true }, { provider: 'valibot', flat: true },
@@ -63,11 +81,12 @@ describe('Executed generated authentication examples', () => {
       write('tests/feature/auth.test.ts', T.exampleFeatureTest());
       const aliases = ['database', 'auth', 'hashing', 'hooks', 'middleware', 'session', 'testing', 'orm', 'permissions', 'audit', 'services', 'events', 'routing', 'actions', 'config', 'repositories'];
       const config = `export default { resolve: { alias: [
+  { find: '$app/server', replacement: ${JSON.stringify(join(packageRoot, 'tests/kit-server-boundary.ts'))} },
   { find: '$lib', replacement: ${JSON.stringify(join(appRoot, 'src/lib'))} },
   { find: '@beeblock/svelar/validation/valibot', replacement: ${JSON.stringify(join(sourceRoot, 'validation/valibot.ts'))} },
   { find: '@beeblock/svelar/validation', replacement: ${JSON.stringify(join(sourceRoot, 'validation/index.ts'))} },
   ${aliases.map((name) => `{ find: '@beeblock/svelar/${name}', replacement: ${JSON.stringify(join(sourceRoot, name, 'index.ts'))} }`).join(',\n')}
-] }, test: { globals: true, include: ['tests/**/*.test.ts'], fileParallelism: false, testTimeout: 15000 } };`;
+] }, test: { server: { deps: { inline: ['sveltekit-superforms'] } }, globals: true, include: ['tests/**/*.test.ts'], fileParallelism: false, testTimeout: 15000 } };`;
       write('vitest.config.mjs', config);
       const result = spawnSync(process.execPath, [join(repoRoot, 'node_modules/vitest/vitest.mjs'), 'run', '--root', appRoot], {
         cwd: appRoot, encoding: 'utf8', timeout: 60000, maxBuffer: 4 * 1024 * 1024,

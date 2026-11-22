@@ -54,12 +54,12 @@ export class NewCommandTemplates {
 			"@internationalized/date": "^3.12.4",
 			"bits-ui": "^2.19.5",
 			"embla-carousel-svelte": "^8.6.0",
-			formsnap: "^2.0.1",
+			formsnap: "^2.1.0",
 			layerchart: "^2.8.0",
 			"mode-watcher": "^1.1.0",
 			paneforge: "^1.0.2",
 			"svelte-sonner": "^1.2.1",
-			"sveltekit-superforms": "^2.31.0",
+			"sveltekit-superforms": "^3.1.0",
 			"tailwind-variants": "^3.3.1",
 			typebox: "^1.3.37",
 			// The Svelte 5 drawer integration still requires the upstream next line.
@@ -74,7 +74,8 @@ export class NewCommandTemplates {
 					version: "0.0.1",
 					private: true,
 					type: "module",
-					engines: { node: "^22.12.0 || >=24.0.0" },
+					engines: { node: "^22.17.0 || ^24.0.0 || >=26.0.0" },
+					imports: { "#lib/*": "./src/lib/*" },
 					scripts: {
 						prepare: "svelte-kit sync",
 						dev: "vite dev",
@@ -94,33 +95,34 @@ export class NewCommandTemplates {
 						"test:coverage": "svelte-kit sync && vitest run --coverage",
 						"ui:install":
 							"npm exec --package shadcn-svelte@latest -- shadcn-svelte add --all --yes && npm install --save-prod "
-							+ Object.entries(uiDependencies).map(([dependency, version]) => `${dependency}@${version}`).join(' '),
+							+ Object.entries(uiDependencies).map(([dependency, version]) => `${dependency}@${version}`).join(' ')
+							+ " && svelte-kit sync",
 					},
 					devDependencies: {
-						"@sveltejs/adapter-node": "^5.5.7",
-						"@sveltejs/kit": "^2.70.3",
+						"@sveltejs/adapter-node": "^6.0.5",
+						"@sveltejs/kit": "^3.4.0",
 						"@sveltejs/vite-plugin-svelte": "^7.3.1",
 						"@tailwindcss/vite": "^4.3.3",
 						"@lucide/svelte": "^1.56.0",
-						svelte: "^5.57.2",
+						svelte: "^5.59.1",
 						"svelte-check": "^4.7.6",
 						tailwindcss: "^4.3.3",
 						typescript: "^6.0.3",
 						"@types/node": "^22.20.5",
 						vite: "^8.3.4",
-						vitest: "^4.1.11",
-						"@vitest/coverage-v8": "^4.1.11",
+						vitest: "^5.1.1",
+						"@vitest/coverage-v8": "^5.1.1",
 						"@playwright/test": "^1.64.0",
 					},
 					dependencies: {
 						...uiDependencies,
 						"@aws-sdk/client-s3": "^3.1150.0",
 						"@aws-sdk/s3-request-presigner": "^3.1150.0",
-						"better-sqlite3": "^12.11.1",
+						"better-sqlite3": "^13.2.0",
 						bullmq: "^5.81.5",
 						"drizzle-orm": "^0.45.4",
 						ioredis: "^5.11.1",
-						meilisearch: "^0.62.0",
+						meilisearch: "^0.63.0",
 						mysql2: "^3.24.6",
 						postgres: "^3.4.9",
 						"@beeblock/svelar": `^${svelarVersion}`,
@@ -131,7 +133,6 @@ export class NewCommandTemplates {
 						...validationDependencies,
 					},
 					overrides: {
-						"@sveltejs/kit": { cookie: "^0.7.2" },
 						exceljs: { uuid: "^11.1.1" },
 						"esbuild@>=0.27.3 <0.28.1": "^0.28.2",
 					},
@@ -264,6 +265,8 @@ child.on('exit', (code, signal) => {
 
 	static viteConfig(): string {
 		return `import { sveltekit } from '@sveltejs/kit/vite';
+import adapter from '@sveltejs/adapter-node';
+import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import { defineConfig, loadEnv } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
 import { createRequire } from 'module';
@@ -277,7 +280,11 @@ export default defineConfig(({ mode }) => {
   Object.assign(process.env, loadEnv(mode, process.cwd(), ''));
 
   return {
-  plugins: [sveltekit(), tailwindcss()],
+  plugins: [sveltekit({
+    adapter: adapter(),
+    preprocess: vitePreprocess(),
+    alias: { '$lib': 'src/lib', '$lib/*': 'src/lib/*' },
+  }), tailwindcss()],
   resolve: {
     alias: {
       '@beeblock/svelar/actions': resolve(svelarRoot, 'dist/actions/index.js'),
@@ -353,8 +360,8 @@ export default defineConfig(({ mode }) => {
   ssr: {
     // Node-only optional drivers must stay external for adapter-node production builds.
 	    external: ['bcrypt', 'argon2', 'bullmq', 'ioredis', 'meilisearch', '@aws-sdk/client-s3', '@aws-sdk/s3-request-presigner'],
-    // Process Svelte icon components during SSR.
-    noExternal: ['@lucide/svelte', '@tabler/icons-svelte', 'bits-ui'],
+    // Process Svelte components and style-only package exports during SSR.
+    noExternal: ['@lucide/svelte', '@tabler/icons-svelte', 'bits-ui', 'tw-animate-css'],
   },
   optimizeDeps: {
     exclude: ['@lucide/svelte', '@tabler/icons-svelte', 'bits-ui'],
@@ -394,7 +401,9 @@ export default defineConfig(({ mode }) => {
 		return (
 			JSON.stringify(
 				{
-					extends: "./.svelte-kit/tsconfig.json",
+					extends: "$app/tsconfig",
+					include: ["src", "tests", "*.ts", "*.js"],
+					exclude: ["src/service-worker"],
 					compilerOptions: {
 						allowJs: true,
 						checkJs: true,
@@ -405,7 +414,7 @@ export default defineConfig(({ mode }) => {
 						sourceMap: true,
 						strict: true,
 						moduleResolution: "bundler",
-						types: ["node", "vite/client"],
+						types: ["$app/types", "node", "vite/client"],
 					},
 				},
 				null,
@@ -776,6 +785,8 @@ Log.configure({
   viewer: {
     driver: config.get('logging.viewer.driver', process.env.LOG_VIEWER_DRIVER === 'memory' ? 'memory' : 'database'),
     retentionSeconds: config.get('logging.viewer.retentionSeconds', Number(process.env.LOG_RETENTION_SECONDS ?? 2592000)),
+    pruneBatchSize: config.get('logging.viewer.pruneBatchSize', Number(process.env.LOG_PRUNE_BATCH_SIZE ?? 1000)),
+    pruneMaxBatches: config.get('logging.viewer.pruneMaxBatches', Number(process.env.LOG_PRUNE_MAX_BATCHES ?? 100)),
     tailIntervalMs: config.get('logging.viewer.tailIntervalMs', Number(process.env.LOG_TAIL_INTERVAL_MS ?? 1000)),
     onTailError: () => console.error('Shared log tail unavailable; check database connectivity.'),
   },
@@ -1127,6 +1138,9 @@ APP_URL=http://localhost:5173
 # Shared log viewer for web, workers and scheduler; requires migrations.
 LOG_VIEWER_DRIVER=database
 LOG_RETENTION_SECONDS=2592000
+LOG_PRUNE_ENABLED=true
+LOG_PRUNE_BATCH_SIZE=1000
+LOG_PRUNE_MAX_BATCHES=100
 LOG_TAIL_INTERVAL_MS=1000
 
 # ── Sessions ──────────────────────────────────────────────
@@ -1166,7 +1180,7 @@ DB_PATH=database.db
 # DB_NAME=svelar_db
 # DB_USER=postgres
 # DB_PASSWORD=secret
-# DB_PREPARE=false # Required when connecting through PgBouncer transaction pooling.
+# DB_PREPARE=false # Keep disabled unless the pool supports protocol-level prepared statements.
 
 # MySQL (uncomment to switch)
 # DB_DRIVER=mysql
@@ -1392,6 +1406,9 @@ coverage/
 
 ## Required Flow
 
+- This app targets SvelteKit 3: configure it in the Vite plugin, use Superforms 3 and keep explicit \`$lib\` aliases (native \`#lib/*\` imports may coexist). Do not regenerate legacy \`svelte.config.js\`, removed \`$app/stores\` or old navigation options. Keep TypeScript 6 and Node 22 ambient types unless compatibility is explicitly verified.
+- Existing-app major migrations require \`npx svelar update --migrate-sveltekit3 --dry-run\`, reviewed backups and the generated \`SVELTEKIT3-MIGRATION.md\`. Do not overwrite custom config, change the validation provider, install dependencies or run destructive migrations without owner approval. Manual items mean the upgrade is not complete.
+
 - Follow the Svelar architecture: route -> controller/page action -> FormRequest/shared schema validation -> DTO -> action/service -> repository -> model/resource -> response.
 - Use Svelar CLI generators before hand-writing artifacts when a generator exists.
 - For CRUD/API features, start with \`npx svelar make:entity ... --crud\` or the focused \`make:controller\`, \`make:request\`, \`make:schema\`, \`make:dto\`, \`make:action\`, \`make:resource\`, \`make:repository\`, and \`make:model\` commands. If you skip a generator, explain the reason before editing files.
@@ -1489,9 +1506,11 @@ description: Use when working in this Svelar app, including scaffolding, routes,
 
 # Svelar Specialist
 
-Use this skill for Svelar app work. Svelar is Laravel-inspired on SvelteKit 2. Follow Svelar conventions first; do not replace them with ad hoc SvelteKit-only code for real features.
+Use this skill for Svelar app work. This app targets SvelteKit 3 with Vite plugin configuration, explicit \`$lib\` aliases and Superforms 3. Follow Svelar conventions first; do not replace them with ad hoc SvelteKit-only code for real features.
 
 ## Non-Negotiable Rules
+
+- For existing-app Kit 3 upgrades, preview \`npx svelar update --migrate-sveltekit3 --dry-run\` and review the app-specific \`SVELTEKIT3-MIGRATION.md\`. Preserve secrets/data/schema history and the validation provider; ambiguous custom config is manual work, not permission for a force overwrite. Keep the tested TypeScript 6 compiler API and Node 22 types. Record actual type/test/build/browser outcomes.
 
 - Use Svelar CLI generators before hand-writing artifacts whenever a generator exists.
 - For CRUD/API features, start with \`npx svelar make:entity ... --crud\` or the focused \`make:controller\`, \`make:request\`, \`make:schema\`, \`make:dto\`, \`make:action\`, \`make:resource\`, \`make:repository\`, and \`make:model\` commands. If you skip a generator, explain the reason before editing files.
@@ -3659,6 +3678,7 @@ export type PostResponse = z.infer<typeof postResponseSchema>;
 			['00000000_000047_create_scheduler_runtime_table.ts', 'CreateSchedulerRuntimeTable', 'Shared scheduler leases and health'],
 			['00000000_000048_create_scheduler_requests_table.ts', 'CreateSchedulerRequestsTable', 'Durable scheduler run-now requests'],
 			['00000000_000049_create_deployment_locks_table.ts', 'CreateDeploymentLocksTable', 'Exclusive deployment migration ownership'],
+			['00000000_000050_add_log_idempotency.ts', 'AddLogIdempotency', 'Optional cross-process log idempotency'],
 		] as const;
 
 		return migrations.map(([file, className, label]) => ({
@@ -4982,7 +5002,7 @@ export const load = guardAuth();
 
 	static dashboardLayoutSvelte(): string {
 		return `<script lang="ts">
-  import { page } from '\$app/stores';
+  import { page } from '\$app/state';
   import type { Snippet } from 'svelte';
   import { Icon } from '@beeblock/svelar/ui';
   import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
@@ -5012,7 +5032,7 @@ export const load = guardAuth();
   <aside class="w-64 border-r border-border bg-muted/50 hidden md:block">
     <nav class="p-4 space-y-1">
       {#each navItems as item}
-        {@const active = isActive(item.href, item.exact, \$page.url.pathname)}
+        {@const active = isActive(item.href, item.exact, page.url.pathname)}
         <a
           href={item.href}
           class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors {active ? 'bg-brand/10 text-brand' : 'text-foreground hover:bg-muted hover:text-foreground'}"
@@ -6197,6 +6217,7 @@ import CleanupExpiredTokens from './CleanupExpiredTokens.js';
 import CleanExpiredSessions from './CleanExpiredSessions.js';
 import DailyDigestEmail from './DailyDigestEmail.js';
 import PruneAuditLogs from './PruneAuditLogs.js';
+import PruneLogs from './PruneLogs.js';
 import QueueHealthCheck from './QueueHealthCheck.js';
 
 export function createScheduler(): Scheduler {
@@ -6207,6 +6228,7 @@ export function createScheduler(): Scheduler {
     new CleanExpiredSessions(),
     new DailyDigestEmail(),
     new PruneAuditLogs(),
+    new PruneLogs(),
     new QueueHealthCheck(),
     new SearchOutboxSweep(),
     new WebhookInboxSweep(),
@@ -6273,6 +6295,26 @@ export default class PruneAuditLogs extends ScheduledTask {
 
     const pruned = await Audit.pruneBefore(ninetyDaysAgo);
     console.log(\`[PruneAuditLogs] Pruned \${pruned} audit logs older than 90 days\`);
+  }
+}
+`;
+	}
+
+	static pruneLogs(): string {
+		return `import { ScheduledTask } from '@beeblock/svelar/scheduler';
+import { LogViewer } from '@beeblock/svelar/logging/LogViewer';
+
+export default class PruneLogs extends ScheduledTask {
+  name = 'prune-logs';
+
+  schedule() {
+    return this.everyFiveMinutes();
+  }
+
+  async handle(): Promise<void> {
+    if (process.env.LOG_PRUNE_ENABLED === 'false') return;
+    if (!LogViewer.isConfigured() || !LogViewer.enabled || LogViewer.scope !== 'shared database') return;
+    await LogViewer.prune();
   }
 }
 `;
@@ -6634,6 +6676,8 @@ export class EventServiceProvider extends BaseProvider {
 
 	static vitestConfig(): string {
 		return `import { defineConfig } from 'vitest/config';
+import { sveltekit } from '@sveltejs/kit/vite';
+import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import { createRequire } from 'module';
 import { dirname, resolve } from 'path';
 
@@ -6641,7 +6685,9 @@ const require_ = createRequire(import.meta.url);
 const svelarRoot = dirname(require_.resolve('@beeblock/svelar/package.json'));
 
 export default defineConfig({
+  plugins: [sveltekit({ preprocess: vitePreprocess(), alias: { '$lib': 'src/lib', '$lib/*': 'src/lib/*' } })],
   test: {
+    server: { deps: { inline: ['sveltekit-superforms'] } },
     globals: true,
     include: ['tests/unit/**/*.test.ts', 'tests/feature/**/*.test.ts'],
     exclude: ['tests/e2e/**'],

@@ -273,10 +273,10 @@ export const load: PageServerLoad = ${open} => {
   function query(name: string, fallback = '') { return page.url.searchParams.get(name) ?? fallback; }
   function scope(source?: string) { const result = new URLSearchParams({queue: query('queue', 'default')}); if (query('connection')) result.set('connection', query('connection')); if (source) result.set('source', source); return result; }
   async function navigate(values: Record<string, string>, reset: string[] = []) {
-    const url = new URL(page.url);
+    const url = new URL(page.url.href);
     for (const key of reset) url.searchParams.delete(key);
     for (const [key, value] of Object.entries(values)) if (value) url.searchParams.set(key, value); else url.searchParams.delete(key);
-    sidebarOpen = false; await goto(url, {keepFocus: true, noScroll: true});
+    sidebarOpen = false; await goto(url, {reset: false});
   }
   function filters(event: SubmitEvent, reset: string[]) {
     event.preventDefault(); const form = event.currentTarget;
@@ -336,7 +336,7 @@ export const load: PageServerLoad = ${open} => {
   }
   async function inspect(job: Job) {
     const key = 'inspect:'+job.id; if (pending[key]) return; pending[key] = true;
-    const url = new URL(page.url); url.searchParams.set('job',job.id); url.searchParams.set('source',job.source); replaceState(url,page.state);
+    const url = new URL(page.url.href); url.searchParams.set('job',job.id); url.searchParams.set('source',job.source); replaceState(url,page.state);
     try { const response = await apiFetch('/api/admin/queue/'+encodeURIComponent(job.id)+'?'+scope(job.source)); const body = await response.json(); if (!response.ok) throw new Error(body.meta?.message ?? 'Inspection unavailable.');
       panels.job = {data:body.data,meta:body.meta ?? {},error:''}; }
     catch (error) { panels.job = {data:null,meta:{},error:error instanceof Error ? error.message : 'Inspection unavailable.'}; }
@@ -486,7 +486,7 @@ export const load: PageServerLoad = ${open} => {
             <button class="icon danger" title="Remove job" aria-label="Remove job" disabled={job.status==='active'||pending['job:'+job.source+':'+job.id]||!access.deleteJob} onclick={()=>jobCommand(job,true)}><Trash2 size={16}/></button>
           </td></tr>{:else}<tr><td colspan="6">{panels.queue?.error?'Jobs unavailable.':'No jobs on this page.'}</td></tr>{/each}</tbody></table></div>
         <div class="pagination"><button class="icon" title="Previous jobs" aria-label="Previous jobs" disabled={Number(query('offset','0'))===0} onclick={()=>void navigate({offset:String(Math.max(0,Number(query('offset','0'))-Number(query('limit','25'))))},['job','source'])}><ChevronLeft size={16}/></button><span>Offset {query('offset','0')}</span><button class="icon" title="Next jobs" aria-label="Next jobs" disabled={!panels.queue?.meta.hasMore} onclick={()=>void navigate({offset:String(Number(query('offset','0'))+Number(query('limit','25')))},['job','source'])}><ChevronRight size={16}/></button></div>
-        {#if panels.job}<section class="inspector" aria-label="Job inspection"><div class="section-title"><h2>Job inspection</h2><button class="icon" title="Close inspection" aria-label="Close inspection" onclick={()=>{delete panels.job;const url=new URL(page.url);url.searchParams.delete('job');url.searchParams.delete('source');replaceState(url,page.state);}}><X size={16}/></button></div>
+        {#if panels.job}<section class="inspector" aria-label="Job inspection"><div class="section-title"><h2>Job inspection</h2><button class="icon" title="Close inspection" aria-label="Close inspection" onclick={()=>{delete panels.job;const url=new URL(page.url.href);url.searchParams.delete('job');url.searchParams.delete('source');replaceState(url,page.state);}}><X size={16}/></button></div>
           {#if panels.job.error}<p class="error" role="alert">{panels.job.error}</p>{:else}<p>{String(inspected.jobClass??'')} · {String(inspected.id??'')} · {String(inspected.status??'')}</p><p>Attempts {count(inspected.attempts)} / {count(inspected.maxAttempts)} · Started {count(inspected.attemptsStarted)} · Stalls {count(inspected.stalledCount)} · Lock {String(record(inspected.lock).state??'Unknown')}</p>
             <dl class="metrics"><div><dt>Created</dt><dd>{time(inspected.createdAt)}</dd></div><div><dt>Processed</dt><dd>{time(inspected.processedAt)}</dd></div><div><dt>Finished</dt><dd>{time(inspected.finishedAt)}</dd></div><div><dt>Delayed until</dt><dd>{time(inspected.delayedUntil)}</dd></div><div><dt>Failed</dt><dd>{time(inspected.failedAt)}</dd></div><div><dt>Replayed</dt><dd>{time(inspected.replayedAt)}</dd></div></dl>
             <p>Original job {String(inspected.originalJobId??'Unknown')} · Replay job {String(inspected.replayJobId??'Unknown')} · Replay record {String(inspected.replayRecordId??'Unknown')}</p>

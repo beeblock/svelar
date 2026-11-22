@@ -53,6 +53,22 @@ describe('Optional operational UI templates', () => {
     expect(() => h.tabValue(url, [{ value: 'one', label: 'One', disabled: true }])).toThrow();
   });
 
+  it('accepts read-only Kit URL views and only mutates freshly cloned URLs', () => {
+    const h = helpers();
+    const original = new URL('https://app.test/records?team=one&tab=first#detail');
+    const url = Object.freeze({ href: original.href, searchParams: Object.freeze({ get: (key: string) => original.searchParams.get(key) }) });
+    const tabs = [{ value: 'first', label: 'First' }, { value: 'second', label: 'Second' }];
+    expect(h.tabValue(url, tabs)).toBe('first');
+    const next = h.tabUrl(url, 'second');
+    expect(next.searchParams.get('tab')).toBe('second');
+    expect(next.searchParams.get('team')).toBe('one');
+    expect(next.hash).toBe('#detail');
+    expect(h.tableQuery(url, ['name'])).toMatchObject({ page: 1, perPage: 25 });
+    expect(h.tableUrl(url, { page: 2, perPage: 25, search: '', sort: '', direction: 'asc' }).searchParams.get('page')).toBe('2');
+    expect(original.searchParams.get('tab')).toBe('first');
+    expect(original.searchParams.has('page')).toBe(false);
+  });
+
   it.each(['https://foreign.test', '//foreign.test', '/%2Fforeign.test', '/%5Cforeign.test', '/%0Aforeign.test', '/bad%'])('rejects unsafe operation return links (%s)', (value) => {
     expect(helpers().operationHref(value)).toBeNull();
   });
@@ -105,7 +121,7 @@ describe('Optional operational UI templates', () => {
   });
 });
 
-describe.sequential('make:ui generator boundaries', () => {
+describe('make:ui generator boundaries', () => {
   let cwd: string; let root: string;
   beforeEach(async () => {
     cwd = process.cwd(); root = await mkdtemp(join(tmpdir(), 'svelar-ui-patterns-')); process.chdir(root);

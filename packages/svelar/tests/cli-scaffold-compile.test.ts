@@ -170,7 +170,7 @@ interface ManifestFile {
   ownership: 'user' | 'framework';
 }
 
-describe.sequential('Locals declaration upgrades', () => {
+describe('Locals declaration upgrades', () => {
   it.each([false, true])('uses the same declarations and User imports for new and updated apps (flat=%s)', (flat) => {
     const command = new UpdateCommand() as unknown as { getFileManifest(ddd: boolean, projectName: string): ManifestFile[] };
     const file = command.getFileManifest(!flat, 'typecheck-app').find((entry) => entry.path === 'src/svelar.d.ts');

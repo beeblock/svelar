@@ -19,7 +19,8 @@ const semver = createRequire(import.meta.url)('semver') as {
 interface Manifest {
   name: string;
   private: boolean;
-  engines: { node: string };
+  engines: { node: string; npm?: string };
+  packageManager?: string;
   scripts: Record<string, string>;
   dependencies: Record<string, string>;
   devDependencies: Record<string, string>;
@@ -36,19 +37,20 @@ function minimum(range: string): string {
   return value.version;
 }
 
-// Registry release contracts checked on 2026-10-13; tests stay offline and reproducible.
+// Registry release contracts checked on 2026-11-22; tests stay offline and reproducible.
 // https://registry.npmjs.org/<name>/<version>
 const releaseContracts = [
-  { name: '@sveltejs/kit', peers: { vite: '^5.0.3 || ^6.0.0 || ^7.0.0-beta.0 || ^8.0.0', svelte: '^4.0.0 || ^5.0.0-next.0', typescript: '^5.3.3 || ^6.0.0', '@sveltejs/vite-plugin-svelte': '^3.0.0 || ^4.0.0-next.1 || ^5.0.0 || ^6.0.0-next.0 || ^7.0.0' }, node: '>=18.13' },
-  { name: '@sveltejs/adapter-node', peers: { '@sveltejs/kit': '^2.4.0' } },
-  { name: '@sveltejs/vite-plugin-svelte', peers: { vite: '^8.0.0-beta.7 || ^8.0.0', svelte: '^5.46.4' }, node: '^20.19 || ^22.12 || >=24' },
-  { name: 'vite', peers: { '@types/node': '^20.19.0 || >=22.12.0' }, node: '^20.19.0 || >=22.12.0' },
-  { name: '@tailwindcss/vite', peers: { vite: '^5.2.0 || ^6 || ^7 || ^8' } },
-  { name: 'vitest', peers: { vite: '^6.0.0 || ^7.0.0 || ^8.0.0', '@vitest/coverage-v8': '4.1.11' }, node: '^20.0.0 || ^22.0.0 || >=24.0.0' },
-  { name: 'svelte-check', peers: { svelte: '^4.0.0 || ^5.0.0-next.0', typescript: '^5.0.0 || ^6.0.0' }, node: '>=18.0.0' },
-  { name: 'formsnap', peers: { svelte: '^5.0.0', 'sveltekit-superforms': '^2.19.0' }, node: '>=18' },
-  { name: 'bits-ui', peers: { svelte: '^5.33.0', '@internationalized/date': '^3.8.1' }, node: '>=20' },
-  { name: 'sveltekit-superforms', peers: { '@sveltejs/kit': '1.x || 2.x', svelte: '3.x || 4.x || >=5.0.0-next.51', valibot: '^1.2.0', typebox: '^1.0.36' } },
+  { name: '@sveltejs/kit', version: '3.4.0', peers: { vite: '^8.0.12', svelte: '^5.57.1', typescript: '^6.0.0', '@sveltejs/vite-plugin-svelte': '^7.0.0' }, node: '>=22.17' },
+  { name: '@sveltejs/adapter-node', version: '6.0.5', peers: { '@sveltejs/kit': '^3.0.0-next.0' } },
+  { name: '@sveltejs/vite-plugin-svelte', version: '7.3.1', peers: { vite: '^8.0.0-beta.7 || ^8.0.0', svelte: '^5.46.4' }, node: '^20.19 || ^22.12 || >=24' },
+  { name: 'vite', version: '8.3.4', peers: { '@types/node': '^20.19.0 || >=22.12.0' }, node: '^20.19.0 || >=22.12.0' },
+  { name: '@tailwindcss/vite', version: '4.3.3', peers: { vite: '^5.2.0 || ^6 || ^7 || ^8' } },
+  { name: 'vitest', version: '5.1.1', peers: { vite: '^6.4.0 || ^7.0.0 || ^8.0.0', '@vitest/coverage-v8': '5.1.1', '@types/node': '^22.0.0 || >=24.0.0' }, node: '^22.12.0 || ^24.0.0 || >=26.0.0' },
+  { name: '@vitest/coverage-v8', version: '5.1.1', peers: { vitest: '5.1.1' } },
+  { name: 'svelte-check', version: '4.7.6', peers: { svelte: '^4.0.0 || ^5.0.0-next.0', typescript: '^5.0.0 || ^6.0.0' }, node: '>=18.0.0' },
+  { name: 'formsnap', version: '2.1.0', peers: { svelte: '^5.0.0', 'sveltekit-superforms': '^2.19.0 || ^3.0.0' }, node: '>=18' },
+  { name: 'bits-ui', version: '2.19.5', peers: { svelte: '^5.33.0', '@internationalized/date': '^3.8.1' }, node: '>=20' },
+  { name: 'sveltekit-superforms', version: '3.1.0', peers: { '@sveltejs/kit': '^2.12.0 || ^3.0.0', svelte: '^5.56.4', valibot: '^1.2.0', typebox: '^1.0.36' } },
 ] as const;
 
 describe('Generated app dependency compatibility', () => {
@@ -56,17 +58,33 @@ describe('Generated app dependency compatibility', () => {
     const app = manifest();
     const dependencies = { ...app.dependencies, ...app.devDependencies };
     expect(dependencies[release.name]).toBeDefined();
+    expect(minimum(dependencies[release.name])).toBe(release.version);
     for (const [name, range] of Object.entries(release.peers)) {
       expect(semver.satisfies(minimum(dependencies[name]), range), release.name + ' requires ' + name + '@' + range).toBe(true);
     }
     if ('node' in release) expect(semver.subset(app.engines.node, release.node)).toBe(true);
   });
 
-  it('requires supported Node 22.12+ or 24+, not old or odd pre-24 release lines', () => {
+  it('requires the Kit 3 Node 22.17+ floor and excludes unsupported Node 23 and 25 lines', () => {
     const engine = manifest().engines.node;
-    for (const version of ['22.12.0', '22.20.0', '24.0.0', '24.12.0', '26.0.0']) expect(semver.satisfies(version, engine)).toBe(true);
-    for (const version of ['18.20.0', '20.19.0', '22.11.0', '23.0.0']) expect(semver.satisfies(version, engine)).toBe(false);
+    expect(engine).toBe('^22.17.0 || ^24.0.0 || >=26.0.0');
+    for (const version of ['22.17.0', '22.20.0', '24.0.0', '24.12.0', '26.0.0']) expect(semver.satisfies(version, engine)).toBe(true);
+    for (const version of ['18.20.0', '20.19.0', '22.12.0', '22.16.0', '23.0.0', '25.0.0']) expect(semver.satisfies(version, engine)).toBe(false);
     expect(semver.minVersion(manifest().devDependencies.vite)?.major).toBe(8);
+  });
+
+  it('pins workspace-safe npm only for source contributors, not generated or installed apps', () => {
+    expect(root.packageManager).toBe('npm@11.21.3');
+    expect(root.engines.npm).toBe('^11.21.3');
+    for (const version of ['11.21.3', '11.22.0']) expect(semver.satisfies(version, root.engines.npm)).toBe(true);
+    for (const version of ['11.6.2', '11.21.2', '12.0.0']) expect(semver.satisfies(version, root.engines.npm)).toBe(false);
+    expect(core.engines.npm).toBeUndefined();
+    expect(core.packageManager).toBeUndefined();
+    for (const provider of ['zod', 'valibot'] as const) {
+      const app = manifest(provider);
+      expect(app.engines.npm).toBeUndefined();
+      expect(app.packageManager).toBeUndefined();
+    }
   });
 
   it('retains core-tested framework, ORM, schema and test-runner minimums', () => {
@@ -79,6 +97,8 @@ describe('Generated app dependency compatibility', () => {
     for (const name of ['valibot', 'vitest', 'sveltekit-superforms', '@vitest/coverage-v8']) {
       expect(semver.satisfies(minimum(dependencies[name]), core.devDependencies[name])).toBe(true);
     }
+    expect(app.devDependencies.svelte).toBe('^5.59.1');
+    expect(app.dependencies['better-sqlite3']).toBe('^13.2.0');
     expect(app.devDependencies.tailwindcss).toBe(app.devDependencies['@tailwindcss/vite']);
   });
 
@@ -95,7 +115,7 @@ describe('Generated app dependency compatibility', () => {
   it('does not float into incompatible latest-tag major lines', () => {
     const app = manifest();
     const dependencies = { ...app.dependencies, ...app.devDependencies };
-    for (const [name, incompatible] of [['@sveltejs/kit', '>=3'], ['@sveltejs/adapter-node', '>=6'], ['bullmq', '>=6'], ['ioredis', '>=6'], ['sveltekit-superforms', '>=3'], ['vitest', '>=5']]) {
+    for (const [name, incompatible] of [['@sveltejs/kit', '>=4'], ['@sveltejs/adapter-node', '>=7'], ['bullmq', '>=6'], ['ioredis', '>=6'], ['sveltekit-superforms', '>=4'], ['formsnap', '>=3'], ['vitest', '>=6'], ['@vitest/coverage-v8', '>=6'], ['svelte', '>=6'], ['better-sqlite3', '>=14'], ['typescript', '>=7']]) {
       expect(semver.intersects(dependencies[name], incompatible), name).toBe(false);
     }
     for (const [name, range] of Object.entries(dependencies)) {
@@ -107,9 +127,11 @@ describe('Generated app dependency compatibility', () => {
 
   it('keeps all shadcn components and post-install dependency versions aligned with the manifest', () => {
     const app = manifest();
-    const [generator, install] = app.scripts['ui:install'].split(' && ');
+    const [generator, install, sync, ...unexpected] = app.scripts['ui:install'].split(' && ');
     expect(generator).toBe('npm exec --package shadcn-svelte@latest -- shadcn-svelte add --all --yes');
     expect(install).toMatch(/^npm install --save-prod /);
+    expect(sync).toBe('svelte-kit sync');
+    expect(unexpected).toEqual([]);
     const specs = install.slice('npm install --save-prod '.length).split(' ');
     expect(specs.length).toBeGreaterThanOrEqual(13);
     const names = new Set<string>();
@@ -127,7 +149,9 @@ describe('Generated app dependency compatibility', () => {
     const app = manifest();
     expect(app.scripts['test:coverage']).toContain('--coverage');
     expect(app.devDependencies['@vitest/coverage-v8']).toBe(app.devDependencies.vitest);
-    expect(app.overrides['@sveltejs/kit']).toEqual({ cookie: '^0.7.2' });
+    expect(app.overrides['@sveltejs/kit']).toBeUndefined();
+    expect(root.overrides['@sveltejs/kit']).toEqual({ 'cookie@^0.6.0': '^0.7.2' });
+    expect(root.overrides['@sveltejs/kit@^2']).toBeUndefined();
     expect(app.overrides.exceljs).toEqual({ uuid: '^11.1.1' });
     expect(app.overrides['esbuild@>=0.27.3 <0.28.1']).toBe('^0.28.2');
   });
@@ -144,6 +168,25 @@ describe('Generated app dependency compatibility', () => {
       ? bundler.initializer.properties.find((property) => ts.isPropertyAssignment(property) && property.name.getText(file) === 'output') : undefined;
     expect(output && ts.isPropertyAssignment(output) && ts.isObjectLiteralExpression(output.initializer)
       && output.initializer.properties.some((property) => ts.isPropertyAssignment(property) && property.name.getText(file) === 'keepNames' && property.initializer.kind === ts.SyntaxKind.TrueKeyword)).toBe(true);
+  });
+
+  it('processes style-only animation exports while retaining optional Node driver externals', () => {
+    const file = ts.createSourceFile('vite.config.ts', NewCommandTemplates.viteConfig(), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const properties: ts.PropertyAssignment[] = [];
+    const visit = (node: ts.Node) => { if (ts.isPropertyAssignment(node)) properties.push(node); ts.forEachChild(node, visit); };
+    visit(file);
+    const ssr = properties.find((property) => property.name.getText(file) === 'ssr');
+    expect(ssr && ts.isObjectLiteralExpression(ssr.initializer)).toBe(true);
+    const options = ssr && ts.isObjectLiteralExpression(ssr.initializer) ? ssr.initializer.properties : [];
+    const strings = (name: string) => {
+      const property = options.find((node) => ts.isPropertyAssignment(node) && node.name.getText(file) === name);
+      expect(property && ts.isPropertyAssignment(property) && ts.isArrayLiteralExpression(property.initializer)).toBe(true);
+      return property && ts.isPropertyAssignment(property) && ts.isArrayLiteralExpression(property.initializer)
+        ? property.initializer.elements.filter(ts.isStringLiteral).map((node) => node.text) : [];
+    };
+    expect(strings('noExternal')).toContain('tw-animate-css');
+    expect(strings('external')).toEqual(expect.arrayContaining(['bcrypt', 'argon2', 'bullmq', 'ioredis']));
+    expect(strings('external')).not.toContain('tw-animate-css');
   });
 
   it('re-exports the complete generated-shadcn type utility contract from the public Bits UI entry', () => {
@@ -164,10 +207,14 @@ describe('Generated Vite and shadcn installed dependency contracts (opt-in fixtu
     const exec = promisify(execFile);
     const options = { cwd: directory, timeout: 30000, maxBuffer: 8 * 1024 * 1024 };
     try {
+      const installedKit = JSON.parse(await readFile(join(app, 'node_modules/@sveltejs/kit/package.json'), 'utf8'));
+      expect(semver.satisfies(installedKit.version, '^2.0.0 || ^3.0.0')).toBe(true);
       await symlink(join(app, 'node_modules'), join(directory, 'node_modules'), 'dir');
       await writeFile(join(directory, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
       await writeFile(join(directory, 'vite.config.ts'), NewCommandTemplates.viteConfig());
-      await writeFile(join(directory, 'svelte.config.js'), NewCommandTemplates.svelteConfig());
+      if (semver.satisfies(installedKit.version, '^2.0.0')) {
+        await writeFile(join(directory, 'svelte.config.js'), NewCommandTemplates.svelteConfig());
+      }
       await writeFile(join(directory, 'utils.ts'), NewCommandTemplates.utilsCn());
       await writeFile(join(directory, 'utils.mjs'), ts.transpileModule(NewCommandTemplates.utilsCn(), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText);
       await writeFile(join(directory, 'contract.ts'), `import config from './vite.config.js';
@@ -237,7 +284,7 @@ describe('Generated Vite and shadcn installed dependency contracts (opt-in fixtu
   });
 });
 
-describe.sequential('Generated app strict installation (opt-in registry integration)', () => {
+describe('Generated app strict installation (opt-in registry integration)', () => {
   it.skipIf(!process.env.SVELAR_PACKAGE_INSTALL_SMOKE)('resolves peers, installs from its lockfile and audits an isolated CLI-generated app', async () => {
     const tarball = process.env.SVELAR_PACKAGE_TARBALL;
     if (!tarball) throw new Error('Set SVELAR_PACKAGE_TARBALL to an existing packed artifact; this test never builds or packs core.');
