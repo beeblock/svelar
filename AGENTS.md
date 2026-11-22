@@ -7,7 +7,8 @@
 
 ## Project Context
 
-- This is a TypeScript monorepo for Svelar, a Laravel-inspired framework on top of SvelteKit 2.
+- This is a TypeScript monorepo for Svelar, a Laravel-inspired framework supporting SvelteKit 2/3, with new apps targeting Kit 3.
+- Toolchain boundaries: existing Kit 2 apps retain core's Node.js `>=22.12.0` runtime floor; new Kit 3 apps use `^22.17.0 || ^24.0.0 || >=26.0.0`. Svelar source builds require `^22.18.0 || ^24.11.0 || >=26.0.0` for tsup 9. Retain TypeScript 6.0.3 and Node 22 ambient types.
 - `packages/svelar` is the core framework package.
 - Focus `packages/svelar` core first. Do not touch plugin packages unless the user explicitly asks.
 - Project scaffolding is owned by `packages/svelar` through `npx @beeblock/svelar new`; generated apps then use the project-local `npx svelar ...` CLI.
@@ -65,6 +66,10 @@
 - Tests: add focused unit/feature/browser tests for the behavior touched, including permissions and failure cases.
 
 ## Runtime Verification
+
+- Existing-app major upgrades require `update --migrate-sveltekit3 --dry-run`, review and explicit confirmation. Never replace custom config with fresh templates or treat `--force` as permission for ambiguous source rewrites. Read `docs/50-upgrading-sveltekit3.md` and the app-specific `SVELTEKIT3-MIGRATION.md`; preserve `.env`, data, schema history, validation provider and lockfile until the owner approves dependency installation.
+- Kit 3 new apps use Vite plugin configuration, Superforms 3 and explicit `$lib` aliases; native `#lib/*` imports may coexist. Do not reintroduce automatic `svelte.config.js` generation, removed `$app/stores`, old `goto` options or a Kit-2-only cookie override. TypeScript 6 and Node 22 ambient types remain intentional; latest major is not automatically compatible.
+- Prefer public log processors/output options and `LogViewer.addEntries` over monkey-patching log methods. Review retention before scheduling bounded `log:prune`; opt-in idempotency requires its additive migration. Lean ORM rows bypass casts/hidden fields and require safe projections/resources. Queue index reduction deliberately loses successful-job visibility; never imply broker/dead-letter guarantees were disabled.
 
 - Before release, prefer `npm run build`, targeted tests, `npm run release:dry-run`, and `npm run certify`.
 - For real app dogfooding, create sibling apps under `/Users/rzeradev/projects/beeblock/svelar-testing-area/` and keep a step-by-step timeline in the app docs.

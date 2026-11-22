@@ -1,10 +1,10 @@
 # Getting Started
 
-Everything you need to go from zero to a running SaaS app in under 5 minutes.
+Create and configure a new Svelar application.
 
 ## Create Your App
 
-New apps require Node.js 22.12+ on the 22.x line, or Node.js 24+. The generated toolchain uses SvelteKit 2, Svelte 5, Vite 8 and TypeScript 6; incompatible next major versions are not silently selected from registry `latest` tags.
+New apps declare Node.js `^22.17.0 || ^24.0.0 || >=26.0.0`. The generated toolchain uses SvelteKit 3, Svelte 5, Vite 8, Superforms 3 and TypeScript 6.0.3 with Node 22 ambient types; incompatible next major versions are not silently selected from registry `latest` tags. Existing Kit 2 apps retain core's Node.js `>=22.12.0` runtime floor and use the explicit [upgrade guide](./50-upgrading-sveltekit3.md), not a fresh template overwrite. Svelar source builds require `^22.18.0 || ^24.11.0 || >=26.0.0` for tsup 9; that is separate from the installed-app runtime requirement.
 
 ```bash
 npx @beeblock/svelar new my-app
@@ -133,9 +133,9 @@ Svelar also ships its own minimal components (`@beeblock/svelar/ui`) used intern
 
 > You're not locked into shadcn-svelte — use any CSS framework or component library you prefer.
 
-### Internationalization (Pre-configured)
+### Internationalization (Opt-in)
 
-Three locales ready out of the box: **English**, **Portuguese**, **Spanish**. A `LanguageSwitcher` component is in the layout. All UI text, error messages, and validation messages are translatable.
+New apps ship in English. Add Paraglide 2, your locale/message files and the optional `LanguageSwitcher` when needed; see [Internationalization](./15-i18n.md). The integration is not enabled automatically.
 
 ### Real-time Broadcasting (Pre-configured)
 
@@ -223,7 +223,9 @@ After setup, here's what to try:
    ```bash
    curl -X POST http://localhost:5173/api/posts \
      -H "Content-Type: application/json" \
-     -H "Cookie: svelar_session=<your-cookie>" \
+     -H "Origin: http://localhost:5173" \
+     -H "Cookie: svelar_session=<your-cookie>; XSRF-TOKEN=<your-csrf-token>" \
+     -H "X-CSRF-TOKEN: <your-csrf-token>" \
      -d '{"title": "Hello World", "body": "My first post", "published": true}'
    ```
 
@@ -375,7 +377,7 @@ All of this is enabled by default when you use `createSvelarApp`:
 | **Session Security** | `httpOnly`, `secure` in production, `sameSite: lax` |
 | **Password Hashing** | scrypt with timing-safe comparison |
 | **Session Fixation** | Auto-regenerate session ID on login/logout |
-| **Bearer Token Bypass** | API calls with Bearer tokens skip CSRF (not vulnerable) |
+| **Verified Bearer Authentication** | Only verified bearer authentication can exempt machine requests from browser CSRF checks; a supplied header alone cannot |
 
 ---
 

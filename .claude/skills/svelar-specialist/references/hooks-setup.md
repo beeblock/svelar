@@ -5,7 +5,7 @@ Read the current [installation](../../../../docs/01-installation.md), [deploymen
 ## Bootstrap Contract
 
 - Use the installed Svelar CLI to create apps/artifacts. Preserve app-owned configuration on upgrade; review update --dry-run and explicit migration modes.
-- Connection.configure receives a named connections registry, not db.configure({ client }). PostgreSQL/PgBouncer transaction pooling requires prepare: false.
+- Connection.configure receives a named connections registry, not db.configure({ client }). Keep prepare: false for pools without protocol-level prepared support; PgBouncer 1.21+ with max_prepared_statements > 0 may explicitly opt in with prepare: true after verification. Do not proxy rawClient to work around framework query preparation.
 - Construct AuthManager with the application's User model and configured secrets. Auth.configure, singular ApiKey/Webhook/Team/Upload/EmailTemplate facades and fallback dev-secret examples are not current APIs.
 - Current facades include ApiKeys, Webhooks, WebhookInbox, Teams, Uploads, EmailTemplates, Queue, Cache, Audit, Log, Search, PDF and Broadcast. Register jobs, listeners, observers, scheduler tasks and durable inbox/search/operation sweeps in common web/worker/scheduler bootstrap.
 - Configuration never creates tables. Publish focused core/plugin migrations and run migrate. Reference/default records belong in seeders.

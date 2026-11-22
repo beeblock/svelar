@@ -5,9 +5,15 @@ description: Use when working on Svelar core or Svelar apps, including scaffoldi
 
 # Svelar Specialist
 
-Svelar is a Laravel-inspired TypeScript framework on SvelteKit 2. Treat the docs as the product contract, but verify implementation, generated templates, tests, and runtime behavior before assuming a feature is production-ready.
+Svelar is a Laravel-inspired TypeScript framework supporting SvelteKit 2/3, with new apps targeting Kit 3. Treat the docs as the product contract, but verify implementation, generated templates, tests, and runtime behavior before assuming a feature is production-ready.
+
+Existing Kit 2 apps retain core's Node.js `>=22.12.0` runtime floor. New Kit 3 apps use `^22.17.0 || ^24.0.0 || >=26.0.0`; Svelar source builds require `^22.18.0 || ^24.11.0 || >=26.0.0` for tsup 9. Retain the TypeScript 6.0.3 compiler API and Node 22 ambient types.
 
 ## Non-Negotiable Rules
+
+- Existing-app Kit 3 upgrades require `docs/50-upgrading-sveltekit3.md`, `update --migrate-sveltekit3 --dry-run`, explicit review and exact backups. The generated `SVELTEKIT3-MIGRATION.md` is the human/AI handoff; unsupported config and manual items remain unresolved even with `--force`. Preserve `.env`, data, migration history and validation provider. Do not install dependencies or overwrite custom files without the app owner's approval.
+- New Kit 3 apps use Vite plugin configuration, Superforms 3, explicit `$lib` aliases and optional `#lib/*` native imports. Existing Kit 2 apps may stay on Kit 2. Keep the tested TypeScript 6/Node 22 type baseline, not blindly latest majors.
+- Prefer public logging processors/viewer-only output, bulk inserts and bounded retention over private wrappers. Lean ORM rows bypass casts/hidden fields and require safe projections/resources. Queue indexing reduction changes successful-job visibility, not execution or dead-letter behavior. Review retention policies and run the additive migration before optional log idempotency.
 
 - Use Svelar CLI generators before hand-writing artifacts whenever a generator exists.
 - For CRUD/API features, start with `npx svelar make:entity ... --crud` or the focused `make:controller`, `make:request`, `make:schema`, `make:dto`, `make:action`, `make:resource`, `make:repository`, and `make:model` commands. If you skip a generator, explain the reason before editing files.

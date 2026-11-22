@@ -5,9 +5,15 @@ description: Use when working on Svelar core or Svelar apps, including scaffoldi
 
 # Svelar Specialist
 
-Svelar is a Laravel-inspired TypeScript framework on SvelteKit 2. Treat the docs as the product contract, but verify implementation, generated templates, tests, and runtime behavior before assuming a feature is production-ready.
+Svelar is a Laravel-inspired TypeScript framework supporting SvelteKit 2/3, with new apps targeting Kit 3. Treat the docs as the product contract, but verify implementation, generated templates, tests, and runtime behavior before assuming a feature is production-ready.
+
+Existing Kit 2 apps retain core's Node.js `>=22.12.0` runtime floor. New Kit 3 apps use `^22.17.0 || ^24.0.0 || >=26.0.0`; Svelar source builds require `^22.18.0 || ^24.11.0 || >=26.0.0` for tsup 9. Retain the TypeScript 6.0.3 compiler API and Node 22 ambient types.
 
 ## Non-Negotiable Rules
+
+- For a Kit major upgrade, read `docs/50-upgrading-sveltekit3.md` and preview `npx svelar update --migrate-sveltekit3 --dry-run`. Apply only reviewed edits with exact backups; custom configs and manual checklist items are not resolved by `--force`. Preserve secrets/data/schema history and Zod/Valibot choice. Use the app-specific `SVELTEKIT3-MIGRATION.md` as the AI handoff and record actual build/browser outcomes, not just codemod success.
+- New Kit 3 apps use Vite plugin configuration, Superforms 3, explicit `$lib` aliases and optional native `#lib/*` imports. Existing Kit 2 apps do not need an unrequested major upgrade. Keep the tested TypeScript 6 compiler API/Node 22 types; do not replace them with latest majors blindly.
+- Use public log processors/output/viewer options, bulk `LogViewer.addEntries`, bounded `log:prune` and queue operations-index policies rather than replacing internals. Retention needs owner review; idempotency needs its migration. `lean()` skips models/casts/hidden fields, so return only reviewed projections through Resources. Reduced queue indexing has explicit visibility tradeoffs.
 
 - Use Svelar CLI generators before hand-writing artifacts whenever a generator exists.
 - For CRUD/API features, start with `npx svelar make:entity ... --crud` or the focused `make:controller`, `make:request`, `make:schema`, `make:dto`, `make:action`, `make:resource`, `make:repository`, and `make:model` commands. If you skip a generator, explain the reason before editing files.

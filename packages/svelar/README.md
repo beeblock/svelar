@@ -1,178 +1,177 @@
-<p align="center">
-  <img src="https://raw.githubusercontent.com/beeblock/svelar/main/docs/assets/svelar-full-logo.svg" alt="Svelar" width="180" />
-</p>
+# Svelar
 
-<h1 align="center">Svelar</h1>
+Laravel-inspired framework and application scaffold for SvelteKit, with Kit 3 new apps and an explicit upgrade path for existing Kit 2 projects.
 
-Laravel-inspired framework on top of SvelteKit 2. Brings the developer experience of Laravel — routing, middleware, Eloquent-style ORM, service container, auth, sessions, caching, queues, mail, broadcasting, and more — into the SvelteKit ecosystem.
+Svelar brings Laravel-style conventions to TypeScript: Eloquent-like models, migrations, FormRequests, DTOs, actions, services, repositories, policies, queues, scheduler tasks, events, storage, mail, PDF generation, search and broadcasting.
 
-**Batteries included.** Authentication, dashboard, admin panel, email templates, API keys, team management, file uploads, and more — all out of the box so you can focus on building your core business features.
+[Documentation](https://svelar.dev/docs/getting-started) | [Installation](https://svelar.dev/docs/installation) | [SvelteKit 3 Upgrade Guide](https://svelar.dev/docs/upgrading-sveltekit3)
 
-## Documentation
+## Compatibility And Requirements
 
-Full documentation is available at **[svelar.dev](https://svelar.dev)**.
+| Use | Supported baseline |
+| --- | --- |
+| Installed core in an existing Kit 2 app | Node.js `>=22.12.0`; keep compatible Kit 2 adapters and app dependencies |
+| New Kit 3 app | Node.js `^22.17.0 || ^24.0.0 || >=26.0.0`, Svelte 5, Vite 8, adapter-node 6 and Superforms 3 |
+| Building Svelar from source | Node.js `^22.18.0 || ^24.11.0 || >=26.0.0` for tsup 9; contributor checkouts pin `npm@11.21.3` with npm engine `^11.21.3` |
+| TypeScript tooling | TypeScript 6.0.3 (`^6.0.3`) and Node 22 ambient types; TypeScript 7 is not the supported compiler-API baseline |
+
+Core declares SvelteKit `^2.0.0 || ^3.0.0` peers for staged upgrades. A peer range is not proof that every historical app, adapter or third-party integration has been tested. Select maintained patched dependencies, not just historical minimum versions.
+
+The root `packageManager` pin applies only to Svelar core contributors so workspace security overrides resolve reproducibly. It does not raise an installed app's runtime floor or impose a new npm minimum/package-manager choice on generated apps.
+
+Kit 3 configuration belongs in the SvelteKit Vite plugin. Generated apps keep an explicit `$lib` alias alongside native `#lib/*` imports, extend `$app/tsconfig`, and retain `$app/types`, `node` and `vite/client` ambient types.
 
 ## Quick Start
 
 ```bash
-# Scaffold a new project (installs deps, shadcn-svelte, runs migrations automatically)
 npx @beeblock/svelar new my-app
 cd my-app
 npm run dev
 ```
 
-The short `npx @beeblock/svelar` runs the CLI from the published core package. Generated apps install `@beeblock/svelar`, so project-local commands can use `npx svelar ...`.
-
-Or add to an existing SvelteKit project:
+New apps use a DDD modular structure and Zod by default. Choose Valibot or a flat layout explicitly:
 
 ```bash
-npm install @beeblock/svelar
+npx @beeblock/svelar new my-app --validation=valibot
+npx @beeblock/svelar new small-app --flat
 ```
 
-## Publishing
+The normal scaffold installs dependencies and shadcn-svelte components, creates secure `.env` secrets, runs migrations and seeds development users. Generated apps include `npm run ui:install` for a reviewed manual `--no-install` setup.
 
-Run the monorepo release script from the repository root:
+The development seed accounts are `admin@svelar.dev / admin123` and `demo@svelar.dev / password`. Replace these credentials and review seed data before exposing the app.
+
+Use the package name for first-run scaffolding. Generated apps install the same package and expose its project-local `svelar` binary:
 
 ```bash
-npm run smoke:ddd
-npm run smoke:flat
-npm run smoke:browser
-npm run smoke:browser:headed
-npm run smoke:prod
-npm run smoke:db
-npm run smoke:db:prod
-npm run smoke:redis
-npm run smoke:pdf
-npm run smoke:search
-npm run smoke:pgbouncer
-npm run certify:inventory
-npm run certify
-npm run release:dry-run
-npm run release
+npx svelar make:entity Invoice --module=billing --fields "title:string,total:number,status:enum(draft,paid)" --crud --capability=invoices --scope=team --screen-route=/invoices
+npx svelar migrate
+npm run dev:worker
+npm run dev:scheduler
 ```
 
-Run `npm run certify` before publishing. It prints the release certification inventory, runs the core test suite, then runs Redis, PDF, Meilisearch, S3, and PgBouncer/`pg_stat_statements` service smoke plus the full generated-app database and production-browser smoke gate. The smoke checks build and pack the local core package, scaffold real apps into the sibling `svelar-testing-area`, install UI components, run migrations and seeders, execute generated tests, verify production builds, and exercise the generated app in a real browser, including real `EventSource` checks for SSE public/private/presence channels. DDD smoke apps also receive an injected certification test that covers the intended `route -> controller -> DTO/schema -> action -> service -> repository -> model -> resource` flow, complex ORM queries, events/listeners, model observers, queues, middleware/rate limiting, sessions, SSE public/private/presence broadcasting, and Postmark/Resend/Mailtrap mail transport payloads across the configured database driver, Redis cache/session/BullMQ behavior when `REDIS_URL` is present, PDFKit/Gotenberg behavior when `GOTENBERG_URL` is present, Meilisearch `Searchable` indexing when `MEILISEARCH_HOST` is present, S3-compatible storage when `S3_CERTIFICATION` is present, and PostgreSQL through PgBouncer with `pg_stat_statements` when `PGBOUNCER_CERTIFICATION` is present. Use `npm run smoke:browser:headed` when you want to watch Chromium open and step through the browser smoke flow locally. The database, Redis, Gotenberg, Meilisearch, RustFS, and PgBouncer smoke scripts start Docker containers with random localhost ports, so they do not require 5432, 3306, 6379, 3000, 6432, 7700, or 9000 to be free. If Playwright has not downloaded Chromium locally yet, run `cd ../svelar-testing-area/apps/svelar-smoke-ddd && npx playwright install chromium`. The release script publishes `@beeblock/svelar`, which includes the `svelar` binary. npm blocks the unscoped `svelar` package name, so first-run scaffolding uses `npx @beeblock/svelar new`.
+Adding `@beeblock/svelar` to an existing app does not automatically configure its architecture or migrate its SvelteKit major. Follow the [installation guide](https://svelar.dev/docs/installation) and review the app's existing setup.
 
-See the [Getting Started guide](https://svelar.dev/docs/getting-started) for a complete walkthrough.
+## Existing Apps And Kit 3 Migration
 
-## Features
-
-| Module | Import | Description |
-|--------|--------|-------------|
-| **ORM** | `@beeblock/svelar/orm` | Eloquent-style models with relationships, soft deletes, scopes, eager loading |
-| **Database** | `@beeblock/svelar/database` | Schema builder, migrations, seeders (SQLite, PostgreSQL, MySQL) |
-| **Auth** | `@beeblock/svelar/auth` | Session, JWT (with refresh tokens), API tokens, password reset, email verification, OTP login |
-| **Middleware** | `@beeblock/svelar/middleware` | CORS, CSRF, rate limiting, origin validation, request signatures |
-| **Routing** | `@beeblock/svelar/routing` | Controllers, form requests, API resources, response helpers |
-| **Validation** | `@beeblock/svelar/validation` | Zod helpers plus FormRequest support for Zod or Valibot schemas |
-| **Session** | `@beeblock/svelar/session` | Cookie, memory, Redis, and database session stores |
-| **Hashing** | `@beeblock/svelar/hashing` | scrypt (zero-dep), bcrypt, argon2 |
-| **Queue** | `@beeblock/svelar/queue` | Job dispatching with sync, memory, and Redis (BullMQ) drivers |
-| **Scheduler** | `@beeblock/svelar/scheduler` | Cron-based task scheduling with distributed locking and DB history |
-| **Events** | `@beeblock/svelar/events` | Typed event dispatcher with listeners and subscribers |
-| **Broadcasting** | `@beeblock/svelar/broadcasting` | Server-Sent Events and Pusher/Soketi WebSocket support |
-| **Cache** | `@beeblock/svelar/cache` | Memory and Redis cache with TTL and remember pattern |
-| **Storage** | `@beeblock/svelar/storage` | Local and S3-compatible file storage |
-| **Mail** | `@beeblock/svelar/mail` | SMTP, Postmark, Resend, Mailtrap, log, and null transports with Mailable classes |
-| **Excel** | `@beeblock/svelar/excel` | Import/export Excel files with streaming support for large datasets |
-| **Notifications** | `@beeblock/svelar/notifications` | Multi-channel notifications (email, database, custom) |
-| **Logging** | `@beeblock/svelar/logging` | File-based logger with levels and rotation |
-| **HTTP Client** | `@beeblock/svelar/http` | Client-side CSRF fetch + server-side fluent HTTP client for third-party APIs |
-| **Permissions** | `@beeblock/svelar/permissions` | Role-based access control with permissions and gates |
-| **i18n** | `@beeblock/svelar/i18n` | Paraglide-js integration with language switcher |
-| **Forms** | `@beeblock/svelar/forms` | SvelteKit Superforms helpers for Zod or Valibot schemas |
-| **UI Components** | `@beeblock/svelar/ui` | Minimal built-in components + [shadcn-svelte](https://shadcn-svelte.com) pre-installed |
-| **SEO** | `@beeblock/svelar/ui` | `<Seo>` component for meta tags, Open Graph, Twitter Cards, JSON-LD structured data |
-| **Hooks** | `@beeblock/svelar/hooks` | One-line SvelteKit hooks setup with sensible defaults |
-| **Container** | `@beeblock/svelar/container` | IoC container with singleton/transient bindings |
-| **Plugins** | `@beeblock/svelar/plugins` | Plugin discovery, publishing, and CLI management |
-| **PDF** | `@beeblock/svelar/pdf` | PDF generation with PDFKit (default) and Gotenberg drivers |
-| **Feature Flags** | `@beeblock/svelar/feature-flags` | Per-user, per-team, and percentage rollout feature flags |
-| **Audit** | `@beeblock/svelar/audit` | Model change tracking |
-| **API Keys** | `@beeblock/svelar/api-keys` | API key generation, validation, and management |
-| **Webhooks** | `@beeblock/svelar/webhooks` | Webhook dispatch and signature verification |
-| **Teams** | `@beeblock/svelar/teams` | Multi-tenant team management with database-backed storage |
-| **Email Templates** | `@beeblock/svelar/email-templates` | Database-stored templates with variable interpolation |
-| **Uploads** | `@beeblock/svelar/uploads` | File upload handling with validation (local + S3) |
-| **Dashboard** | `@beeblock/svelar/dashboard` | Admin dashboard with job/scheduler monitoring and log viewer |
-| **Search** | `@beeblock/svelar/search` | Meilisearch integration with auto-syncing `Searchable` mixin |
-| **Testing** | `@beeblock/svelar/testing` | Factory, `useSvelarTest()`, `refreshDatabase()`, `actingAs()`, database assertions |
-
-Most first-party facades are also available from the root package, for example `import { PDF, ApiKeys, Teams } from '@beeblock/svelar'`. Subpath imports remain supported when you want a narrower import.
-
-## Official Plugins
-
-| Package | Description |
-|---------|-------------|
-| [`@beeblock/svelar-datatable`](https://www.npmjs.com/package/@beeblock/svelar-datatable) | DataTable with sorting, searching, pagination, inline editing, export, virtual scroll |
-| [`@beeblock/svelar-media`](https://www.npmjs.com/package/@beeblock/svelar-media) | File attachments with image conversions, collections, S3/local storage |
-| [`@beeblock/svelar-social-auth`](https://www.npmjs.com/package/@beeblock/svelar-social-auth) | OAuth providers (Google, GitHub, Facebook, Twitter, Discord) |
-| [`@beeblock/svelar-two-factor`](https://www.npmjs.com/package/@beeblock/svelar-two-factor) | TOTP two-factor authentication with QR setup and recovery codes |
-| [`@beeblock/svelar-settings`](https://www.npmjs.com/package/@beeblock/svelar-settings) | Typed settings with database persistence and per-user/per-team scoping |
-| [`@beeblock/svelar-comments`](https://www.npmjs.com/package/@beeblock/svelar-comments) | Threaded comments with moderation, voting, and HasComments mixin |
-| [`@beeblock/svelar-activity-log`](https://www.npmjs.com/package/@beeblock/svelar-activity-log) | Audit trail with LogsActivity mixin and causer tracking |
-| [`@beeblock/svelar-backup`](https://www.npmjs.com/package/@beeblock/svelar-backup) | Database backup with local/S3 destinations and cleanup policies |
-| [`@beeblock/svelar-charts`](https://www.npmjs.com/package/@beeblock/svelar-charts) | SVG chart components (line, bar, pie, doughnut, area) |
-| [`@beeblock/svelar-stripe`](https://www.npmjs.com/package/@beeblock/svelar-stripe) | Stripe billing with polymorphic Billable mixin, subscriptions, one-time payments, checkout, invoices, webhooks |
-| [`@beeblock/svelar-tags`](https://www.npmjs.com/package/@beeblock/svelar-tags) | Tagging with HasTags mixin, tag types, slugs, and tag input UI |
-| [`@beeblock/svelar-impersonate`](https://www.npmjs.com/package/@beeblock/svelar-impersonate) | User impersonation with session guards and banner UI |
-| [`@beeblock/svelar-sitemap`](https://www.npmjs.com/package/@beeblock/svelar-sitemap) | XML sitemap generation with scheduling and model discovery |
-
-## CLI
+Updating Svelar and upgrading SvelteKit are separate operations. Start in an approved working copy with backups, using a Svelar release that contains the migrator:
 
 ```bash
-npx @beeblock/svelar new my-app                  # scaffold with shadcn-svelte + all components
-npx svelar update                      # update scaffold files without overwriting
-npx svelar make:entity Invoice --module billing --fields "title:string,total:number" --crud --capability=invoices --scope=team --screen-route=/invoices
-npx svelar make:model Post -m -c       # model + migration + controller
-npx svelar make:schema Invoice --module billing
-npx svelar make:dto CreateInvoice --module billing --input CreateInvoiceInput --schema invoice
-npx svelar make:request CreateInvoice --module billing
-npx svelar make:service PaymentService # service class
-npx svelar make:job SendEmail          # queue job
-npx svelar make:task CleanupTokens     # scheduled task
-npx svelar make:test Auth --feature    # feature test
-npx svelar make:factory User --model User  # model factory
-npx svelar migrate                     # run migrations
-npx svelar schedule:run                # start the scheduler
-npx svelar queue:work                  # process queue jobs
-npx svelar tinker                      # interactive REPL
-npx svelar plugin:install @beeblock/svelar-tags  # install + publish
-
-# Deployment
-npx svelar make:deploy                 # scaffold Docker + CI/CD + infra
-npx svelar make:docker                 # Dockerfile, compose files, health endpoint
-npx svelar make:ci                     # GitHub Actions workflow
-npx svelar make:infra                  # droplet setup script + env template
-npx svelar infra:setup                 # provision droplet + copy files via SSH
-npx svelar dev:up                      # start dev containers (hot-reload)
-npx svelar dev:logs                    # follow dev container logs
-npx svelar prod:deploy                 # pull latest image + restart prod
+npx svelar update --migrate-sveltekit3 --dry-run
 ```
 
-Generated apps include `npm run ui:install` for manual `--no-install` setup. Use that instead of calling `shadcn-svelte` directly so Shadcn runtime packages stay in production dependencies for adapter-node builds.
+Review every proposed edit and manual item before applying the migration. It preserves custom configuration when it cannot safely recognize it, creates exact adjacent backups for supported edits and can generate `SVELTEKIT3-MIGRATION.md` for developers or AI agents. `--force` is not permission to replace unknown custom code.
 
-54 commands available. Run `npx svelar` to see all commands.
+Preserve `.env`, data, schema history, the Zod/Valibot provider and the old lockfile. Approve dependency installation separately. Until a release is published, use only an explicitly approved test artifact in an isolated copy, not an assumed registry version.
 
-## Database Support
+Review removed Kit APIs, forms, hooks, navigation, CSRF, cookies, adapters and third-party integrations. Kit 3's `page.url` is a `ReadonlyURL`: read-only helpers should accept an appropriate structural input, and mutations need a clone such as `new URL(page.url.href)`. Custom URL helpers and callers require manual review, not a blanket codemod.
+
+Complete the [upgrade guide](https://svelar.dev/docs/upgrading-sveltekit3), app checklist, relevant tests, production build and real browser flows before deployment. A successful codemod or install is not completed acceptance.
+
+## Architecture
+
+Keep write workflows explicit:
+
+```text
+route -> controller/page action -> shared schema/FormRequest -> DTO
+      -> action/service -> repository -> model/resource -> response
+```
+
+FormRequests validate and authorize; DTOs carry validated data. Controllers and page actions stay thin. Use policies, permissions, teams and CSRF rather than bypassing security in generated or custom routes. Entity/controller/dashboard generators require a capability or an explicitly reviewed public exemption.
+
+Default modules live under `src/lib/modules/<module>/`:
+
+```text
+contracts/schemas/
+domain/models/
+domain/events/
+domain/observers/
+domain/policies/
+application/actions/
+application/dto/
+application/listeners/
+application/notifications/
+application/services/
+infrastructure/repositories/
+interface/http/controllers/
+interface/http/requests/
+interface/http/resources/
+```
+
+App-wide jobs, tasks, commands and providers live under `src/lib/shared/`; migrations and seeders live under `src/lib/database/`. App-owned imports use `$lib/...`.
+
+Use events/listeners for side effects and queue jobs for slow or retryable work. Cross-module reads should use narrow public application services returning DTO/contract data, not another module's models, repositories or controllers.
+
+See [Architecture & Modules](https://svelar.dev/docs/architecture) and [Services, Actions & Repositories](https://svelar.dev/docs/services).
+
+## Framework Features
+
+- **ORM and migrations:** Drizzle-backed SQLite, PostgreSQL and MySQL support, relationships, casts, soft deletes, observers, public UUID v7/ULID identifiers, migrations, seeders and factories. Read-only `lean()` results bypass model casts, accessors and hidden-field filtering; use reviewed projections and Resources for responses.
+- **Validation and forms:** shared Zod or Valibot schemas for backend FormRequests, DTOs and frontend Superforms. Generators honor `svelar.validation.json`.
+- **Auth and authorization:** sessions, JWT/refresh tokens, API credentials, password recovery, email verification, OTP, policies, roles, scoped permissions and teams, plus CSRF, rate limits and request signatures.
+- **Queues and scheduler:** sync, memory, database and Redis/BullMQ drivers, retries and failed-job handling, named-queue adapters, persistent scheduler requests and distributed leases. Memory queues are process-local; reduced Redis operations indexing deliberately reduces successful-job visibility.
+- **Events and realtime:** typed events, listeners and model observers, SSE channels and Pusher-compatible Soketi broadcasting. Realtime signals do not replace durable application state.
+- **Storage and documents:** local/S3-compatible disks, validated uploads, PDFKit/Gotenberg PDF generation and Excel import/export. Optional backends require their configured peers and services.
+- **Mail and integrations:** Mailable classes, notifications, webhooks, HTTP helpers and Meilisearch with a durable transactional search outbox; inline search delivery is an explicit alternative.
+- **Logs and audit:** ordered log processors, output/viewer destination controls, redaction, shared database viewer, bulk `LogViewer.addEntries()` and bounded `log:prune`. Optional idempotency needs its additive migration. Review retention before enabling scheduled pruning; operational logs and audit/legal retention are separate policies.
+- **App helpers and UI:** feature flags, email templates, dates, testing helpers, dashboard surfaces, shadcn-svelte scaffolding and opt-in [Paraglide integration](https://svelar.dev/docs/i18n). New apps do not enable multilingual routing automatically.
+- **Deployment scaffolding:** separate app, worker and scheduler processes, health checks and optional PostgreSQL/PgBouncer, Redis, Soketi, Gotenberg, RustFS and Meilisearch services, with non-default local service ports.
+
+Use documented package subpaths such as `@beeblock/svelar/orm`, `@beeblock/svelar/routing`, `@beeblock/svelar/logging` and `@beeblock/svelar/queue` for focused imports. Backend credentials and server-only imports must stay out of client bundles.
+
+## Validation Providers
+
+```ts
+// Zod app
+import { z, rules } from '@beeblock/svelar/validation';
+
+// Valibot app
+import { v, rules } from '@beeblock/svelar/validation/valibot';
+```
+
+Choose one app provider and retain the shared-schema -> FormRequest -> DTO -> action/service flow. A framework or Kit upgrade is not a reason to switch providers implicitly.
+
+## Project-Local CLI
 
 ```bash
-# SQLite (recommended for development)
-npm install better-sqlite3
-
-# PostgreSQL
-npm install postgres
-
-# MySQL
-npm install mysql2
+npx svelar make:schema invoice --module=billing
+npx svelar make:dto CreateInvoice --module=billing --input=CreateInvoiceInput --schema=invoice
+npx svelar make:request CreateInvoiceRequest --module=billing
+npx svelar make:action CreateInvoiceAction --module=billing
+npx svelar make:resource InvoiceResource --module=billing
+npx svelar make:job SendWelcomeEmail
+npx svelar make:task PruneApplicationLogs
+npx svelar migrate
+npx svelar seed:run
+npx svelar routes:list
+npx svelar queue:work
+npx svelar schedule:run
+npx svelar tinker
 ```
 
-## Requirements
+`make:entity --crud` generates the coordinated model, focused migration, shared schema, DTOs, FormRequests, actions, resource, repository, service, controller and route pieces. Run `npx svelar` to inspect the commands available in the installed version.
 
-Core and generated apps use a tested TypeScript 6.0.3 toolchain baseline (`^6.0.3`) with Node.js 22 type definitions and explicit ambient types. TypeScript 7 is not the supported baseline: Svelte tooling and compiler-API consumers still require the TypeScript 6 JavaScript API.
+## Plugins
 
-- Node.js 22.12+ on the 22.x line, or Node.js 24+ for generated Vite 8 apps
-- SvelteKit >= 2.0 and < 3.0
+Plugins are optional, separately versioned packages. The publicly published [DataTable package](https://www.npmjs.com/package/@beeblock/svelar-datatable) has its own [integration guide](https://svelar.dev/docs/datatable); check the selected release's core/Svelte peer requirements and test it with your app.
+
+Other plugin documentation and local candidate checkouts do not imply that every plugin or compatible update has been published. Registry availability, declared compatibility and local test results are separate facts. Consult the [plugin guide](https://svelar.dev/docs/plugins) and each package's actual registry release before installing. Do not assume a repository-wide plugin table is a public release inventory.
+
+## Documentation And Verification
+
+- [Getting Started](https://svelar.dev/docs/getting-started)
+- [Installation](https://svelar.dev/docs/installation)
+- [Validation & DTOs](https://svelar.dev/docs/validation)
+- [Architecture & Modules](https://svelar.dev/docs/architecture)
+- [Security](https://svelar.dev/docs/security)
+- [Logging And Additional Features](https://svelar.dev/docs/additional-features)
+- [Deployment](https://svelar.dev/docs/deployment)
+- [SvelteKit 3 Upgrade Guide](https://svelar.dev/docs/upgrading-sveltekit3)
+- [Release Certification](https://svelar.dev/docs/release-certification)
+- [Changelog](https://svelar.dev/docs/changelog)
+
+Release verification tooling belongs to the source monorepo, not an installed application's scripts. Read the certification guide for required build, test, generated-app, browser and isolated-service evidence. These are acceptance gates, not a claim that all checks or plugins have passed for a particular artifact.
+
+The `@beeblock/svelar` package includes the `svelar` binary. There is no separate unscoped `svelar` package to publish.
 
 ## License
 

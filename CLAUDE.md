@@ -7,7 +7,8 @@
 
 ## Project Focus
 
-- Svelar is a Laravel-inspired TypeScript framework on SvelteKit 2.
+- Svelar is a Laravel-inspired TypeScript framework supporting SvelteKit 2/3, with new apps targeting Kit 3.
+- Toolchain boundaries: existing Kit 2 apps retain core's Node.js `>=22.12.0` runtime floor; new Kit 3 apps use `^22.17.0 || ^24.0.0 || >=26.0.0`. Svelar source builds require `^22.18.0 || ^24.11.0 || >=26.0.0` for tsup 9. Retain TypeScript 6.0.3 and Node 22 ambient types.
 - Focus on `packages/svelar` core first. Do not touch plugin packages unless the user explicitly asks.
 - Treat the docs as the product contract, but verify code, generated templates, tests, and runtime behavior before assuming a feature is production-ready.
 - Project scaffolding is owned by core through `npx @beeblock/svelar new`; generated apps then use the project-local `npx svelar ...` CLI. There is no separate create-svelar package to maintain.
@@ -71,6 +72,10 @@
 - Generated app UI should install and use local shadcn-svelte components for application screens. Use Svelar UI for framework/dashboard internals or documented Svelar UI surfaces.
 
 ## Runtime Verification
+
+- Existing-app Kit 3 upgrades are opt-in: preview `update --migrate-sveltekit3 --dry-run`, review exact backups and the app-specific `SVELTEKIT3-MIGRATION.md`, then confirm. Follow `docs/50-upgrading-sveltekit3.md`; never overwrite custom config or use `--force` to bypass ambiguous edits, auth, CSRF or validation. Preserve data, `.env`, migrations, the validation provider and lockfile; dependency installation requires the app owner's approval.
+- Kit 3 templates use Vite plugin configuration, Superforms 3 and explicit `$lib` aliases, optionally native `#lib/*` imports. Do not regenerate `svelte.config.js`, removed stores or old navigation options. TypeScript 6 and Node 22 ambient definitions are intentional compatibility constraints.
+- Use public logging processors/viewer-only output, bulk viewer inserts and bounded retention APIs instead of private wrappers. Lean ORM rows skip casts and hidden-field shaping; select safe fields before Resources. Reduced queue operations indexing loses visibility, not broker execution or dead-letter behavior.
 
 - Before release, prefer `npm run build`, targeted tests, `npm run release:dry-run`, and `npm run certify`.
 - For real app dogfooding, create sibling apps under `/Users/rzeradev/projects/beeblock/svelar-testing-area/`.

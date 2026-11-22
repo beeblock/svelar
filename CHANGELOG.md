@@ -6,9 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-Preparation for the next 0.8 release; this version has not been published. These notes describe implementation changes, not completed release acceptance. Final certification evidence is tracked separately in `docs/47-release-certification.md`.
+Development changes for the next release. These notes describe implementation changes, not completed release acceptance. Final certification evidence is tracked separately in `docs/47-release-certification.md`.
 
 ### Added
+
+- Reviewed, opt-in SvelteKit 3 migration planning with exact file backups and an app-specific Markdown checklist for developers and AI agents; updating a package does not authorize replacing an app's custom configuration.
+- Controller `serializeJson()` override and `getJsonResponseBody()` support response redaction/inspection without consuming or reconstructing response streams.
+- Bounded `log:prune` command and generated retention task, configurable log processors and viewer-only output, bulk viewer inserts and opt-in idempotency keys with an additive migration.
+- Read-only `Model.lean()` and `QueryBuilder.lean()` return selected driver rows without model hydration, casts, accessors or hidden-field filtering; writes and eager loading are rejected. Safe projections and response shaping remain the application's responsibility.
+- Structured `leftJoinLateral()` and `crossJoinLateral()` query-builder joins support PostgreSQL and MySQL 8.0.14+; SQLite rejects them explicitly.
+- Per-connection/per-queue Redis operations-index policies expose `full`, `failures-only` and `off` modes with bounded retention and documented observability tradeoffs; broker execution and dead-letter behavior remain separate.
 
 - **Operational UI patterns** - `make:ui` generates six optional app-owned patterns: searchable select, responsive dialog, URL tabs, server table, operation tray and capability editor. DDD/flat paths and shared contracts are explicit; existing customizations are preserved unless deliberately overwritten. Patterns consume authorized server data and do not replace validation, policies or backend capability guards.
 - **Durable background operations** - `BackgroundOperation` persists actor/tenant-scoped state, progress and results with leased execution, bounded attempts, cooperative cancellation and recovery sweeps. Queue dispatch and private realtime events signal durable work; the generated operations widget refetches authorized server state. Optional completion notifications remain retryable, without claiming exactly-once external effects.
@@ -17,7 +24,15 @@ Preparation for the next 0.8 release; this version has not been published. These
 
 ### Changed
 
-- **Node.js baseline** - Core requires Node.js `>=22.12.0`; generated app engines use `^22.12.0 || >=24.0.0`, and Docker scaffolds use `node:22-alpine`.
+- **Packaged README** - The README shipped in npm packs now documents Kit 2/3 runtime and toolchain boundaries, reviewed existing-app migration, current architecture/features and public documentation URLs. Remove the stale Kit-2-only requirement, fixed command count and blanket plugin-publication claims; release verification remains a separate acceptance gate.
+- New-app scaffolds target SvelteKit 3, adapter-node 6, Superforms 3 and Vitest 5, with explicit legacy `$lib` aliases and native `#lib/*` imports. Core retains Kit 2/3 peer ranges for staged upgrades; TypeScript 6 and Node 22 ambient definitions remain intentional compatibility constraints.
+- Server package subpaths share infrastructure chunks instead of embedding repeated Connection/ORM implementations. CLI package identity is resolved independently of chunk location.
+- Generated request/correlation identifiers use UUID v7 when no acceptable incoming identifier is supplied; caller-provided bounded identifiers remain unchanged.
+
+- **Node.js baseline** - Existing Kit 2 apps retain core's Node.js `>=22.12.0` runtime floor. New Kit 3 app engines use `^22.17.0 || ^24.0.0 || >=26.0.0`. Svelar source builds require `^22.18.0 || ^24.11.0 || >=26.0.0` for tsup 9; Docker scaffolds use `node:22-alpine`. TypeScript 6.0.3 and Node 22 ambient types remain the supported baseline.
+- Model snapshots skip `structuredClone` for immutable scalars while preserving mutable isolation and function/symbol clone errors. Protected attribute names use a shared Set; inherited global-scope resolution is cached with registration invalidation, without caching request/tenant values or exposing the mutable registry.
+- Query builders retain a bounded, builder-local compiled SQL plan and binding slots for cacheable shapes, not binding values. Raw fragments and captured subqueries remain uncached. PostgreSQL list predicates use array-bound `ANY`/`ALL`; other drivers retain `IN`/`NOT IN`.
+- Persistent schedulers separate heartbeat/request polling from minute evaluation and batch task/control reads while preserving durable requests and distributed leases.
 - **Dependency and plugin alignment** - SvelteKit/Svelte/TypeScript tooling and local framework plugin compatibility are updated in the same hardening cycle. Framework plugin manifests require core `^0.8.0` and follow native validation/server-entry conventions. Stripe SDK 22/23 compatibility uses current subscription/invoice-payment shapes, removes the historical API-version pin and rejects ambiguous automatic refunds. Datatable retains its own repository and Node 22 build target; no nested repository is absorbed into core.
 
 - **Production schema operations** - PostgreSQL supports trusted expression/partial/INCLUDE/concurrent indexes, named checks and explicit type/null/default alterations with preserved modifiers. Concurrent DDL rejects active transactions before changes. SQLite/unsupported features fail preflight; MySQL full-definition replacement requires explicit opt-in instead of silently dropping attributes.
@@ -55,6 +70,11 @@ Preparation for the next 0.8 release; this version has not been published. These
 - **Operational dashboard** — generated consoles use public monitor contracts for queue inspection/pagination, job timelines, task history and persisted controls, with per-operation authorization, CSRF, redaction, confirmation, loading and auditing. Distributed Redis worker heartbeats report observed concurrency/drain state without pretending partial observations are complete pool totals.
 
 ### Fixed
+
+- **Kit 3 CSS processing** - New-app Vite scaffolds and reviewed Kit 3 migration edits include style-only `tw-animate-css` in `ssr.noExternal` so Vite processes its CSS during SSR. Additive migration edits preserve existing array entries and other externalization settings; ambiguous custom configurations require review instead of ignored CSS imports.
+- Generated `ui:install` runs `svelte-kit sync` after installing UI dependencies to restore Kit 3's generated `$app` types before CLI boot.
+- API-fetch migration recognizes aliased `browser` guards from both Kit 2's `$app/environment` and Kit 3's `$app/env`, leaving SSR/else branches and unknown contexts unchanged.
+- PostgreSQL query preparation now honors the selected connection's explicit `prepare` policy, including transactions/savepoints. Modern PgBouncer protocol-prepared support is documented without enabling it silently.
 
 - **OTP two-step form state** - Sending a code no longer triggers background page invalidation that can erase verification input. Verify result handling clears secrets only for its own matching posted server failure, while transport-error clearing remains; shared Zod/Valibot validation and backend auth semantics are unchanged.
 - **Redis cache failure cleanup** - Framework-owned clients now share lazy readiness, bound startup/commands and release failed connections without background retry leaks; later calls can recover. Outages remain errors, and borrowed clients retain caller-owned lifecycle/options.

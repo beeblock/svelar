@@ -4,7 +4,10 @@ Get a new Svelar project up and running in minutes.
 
 ## System Requirements
 
-- **Node.js**: 22.12.0 or higher
+- **Existing Kit 2 runtime**: Core's installed-package engine remains Node.js `>=22.12.0`; keep compatible Kit 2 adapter and form dependencies until an explicit major upgrade.
+- **New Kit 3 apps**: Node.js `^22.17.0 || ^24.0.0 || >=26.0.0`.
+- **Svelar source builds**: Node.js `^22.18.0 || ^24.11.0 || >=26.0.0` for tsup 9. This excludes Node 23/25 and Node 24.0-24.10, and does not raise the installed Kit 2 runtime floor.
+- **TypeScript**: Retain the TypeScript 6.0.3 (`^6.0.3`) compiler API and Node 22 ambient types. Do not substitute TypeScript 7 or newer Node type majors without compatibility verification.
 - **npm**: 10.0.0 or higher (or pnpm, yarn)
 - **Docker**: Recommended for production (optional for development)
 
@@ -20,7 +23,7 @@ That's it. The CLI scaffolds a complete SvelteKit + Svelar project, installs dep
 
 ### What's Scaffolded
 
-- **SvelteKit 2** with Vite and TypeScript
+- **SvelteKit 3** with Vite 8, TypeScript 6 and Superforms 3
 - **Tailwind CSS 4** with theme variables (`--color-brand`, etc.)
 - **Svelar Framework** — ORM, Auth, Sessions, Middleware, Queue, Scheduler, and 35+ modules
 - **SQLite Database** — Pre-configured, zero setup
@@ -89,13 +92,14 @@ my-app/
 ├── .codex/skills/svelar-specialist/SKILL.md
 ├── .claude/skills/svelar-specialist/SKILL.md
 ├── vite.config.ts
-├── svelte.config.js
 ├── svelar.database.json
 ├── .env.example
 └── package.json
 ```
 
 Each **module** is a self-contained domain. Domain concerns (`models`, `events`, `observers`, `policies`), application concerns (`actions`, `dto`, `listeners`, `services`), infrastructure concerns (`repositories`), interface concerns (`controllers`, `requests`, `resources`), and contracts (`schemas`) stay grouped inside that module. The `shared/` folder holds cross-cutting infrastructure.
+
+Kit 3 configuration lives in the `sveltekit({...})` Vite plugin, not a generated `svelte.config.js`. Svelar explicitly configures `$lib` aliases for existing conventions and adds native `#lib/*` package imports. TypeScript extends `$app/tsconfig` and retains `$app/types` alongside Node/Vite ambient types. See the [existing-app upgrade guide](./50-upgrading-sveltekit3.md) before changing an installed project's Kit major.
 
 ## Step 1: Environment Variables
 
@@ -276,15 +280,17 @@ npm run dev:scheduler
 
 Updating the npm package replaces its installed files, not your application source. Commit or back up your app and database first, inspect the target package's peer dependencies, and update incompatible runtime SDKs in the same install. Do not use `--force` or `--legacy-peer-deps` to hide a conflict.
 
-For the 0.8.0 candidate, apps using Meilisearch need its supported `^0.62.0` SDK; the old `^0.44.0` range cannot satisfy the new core contract:
+For the current development candidate, core accepts Meilisearch `^0.62.0 || ^0.63.0`, and new apps select `^0.63.0`; the old `^0.44.0` range cannot satisfy that peer contract. Check the actual target release before installing:
 
 ```bash
 npm view @beeblock/svelar@<target-version> peerDependencies --json
-npm install @beeblock/svelar@<target-version> meilisearch@^0.62.0
+npm install @beeblock/svelar@<target-version> meilisearch@^0.63.0
 npx svelar update --dry-run
 ```
 
 Only include Meilisearch if your app uses it. `svelar update` manages reviewed scaffold files; it does not install npm dependencies. Existing customized source remains app-owned. For recognized historical scaffolds, separately inspect `update --migrate-core --dry-run` and, in Zod apps, `update --migrate-zod4 --dry-run` before approving the respective `--force` migration. These modes retain exact-original backups; customized patterns may require manual changes. Run migrations, type checks, application tests and a production build before deploying, and review worker/scheduler registrations as well as web routes.
+
+A core package update does not require an existing app to leave Kit 2. For an explicitly requested Kit 3 migration, first review `npx svelar update --migrate-sveltekit3 --dry-run` and the [upgrade guide](./50-upgrading-sveltekit3.md). Apply only reviewed changes, retain exact backups and use the generated `SVELTEKIT3-MIGRATION.md` checklist for the remaining manual decisions. This mode does not install dependencies or replace app-owned configuration wholesale.
 
 ## Manual Setup
 

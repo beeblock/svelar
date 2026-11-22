@@ -4,7 +4,7 @@
 
 Core and generated apps use a tested TypeScript 6.0.3 toolchain baseline (`^6.0.3`) with Node.js 22 type definitions and explicit ambient types. TypeScript 7 is not the supported baseline: Svelte tooling and compiler-API consumers still require the TypeScript 6 JavaScript API.
 
-Svelar is a Laravel-inspired framework built on top of SvelteKit 2. It brings enterprise-grade patterns like MVC, ORM, middleware pipelines, session management, and authentication to the SvelteKit ecosystem. Svelar provides a complete backend framework with a familiar developer experience for anyone coming from Laravel.
+Svelar is a Laravel-inspired framework built on SvelteKit. New apps target SvelteKit 3; existing SvelteKit 2 apps have an explicit, reviewed upgrade path rather than an automatic major-version replacement. It brings MVC, ORM, middleware pipelines, session management and authentication to the SvelteKit ecosystem.
 
 ### Key Features
 
@@ -64,6 +64,10 @@ Svelar is a Laravel-inspired framework built on top of SvelteKit 2. It brings en
 31. [Full-Text Search](./31-search.md) - Meilisearch integration with Searchable mixin, auto-sync, bulk indexing
 32. [Stripe Billing](./32-stripe.md) - Subscriptions, checkout, invoices, refunds, webhooks, customer portal
 33. [Contributors](./48-contributors.md) - Contributing to Svelar core, docs sync rules, and maintainer workflows
+
+### Upgrading Existing Apps
+
+- [SvelteKit 3 Upgrade Guide](./50-upgrading-sveltekit3.md) - Dry-run, exact backups, manual decisions and a handoff checklist for human developers and AI agents.
 
 ### Contributor Documentation
 

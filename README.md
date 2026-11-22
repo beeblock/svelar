@@ -1,8 +1,12 @@
 # Svelar
 
-Laravel-inspired framework and application scaffold for SvelteKit 2.
+Laravel-inspired framework and application scaffold for SvelteKit, with Kit 3 new apps and an explicit upgrade path for existing Kit 2 projects.
 
-Core and generated apps use a tested TypeScript 6.0.3 toolchain baseline (`^6.0.3`) with Node.js 22 type definitions and explicit ambient types. New apps require Node 22.12+ on the 22.x line, or Node 24+, and use Vite 8. TypeScript 7 is not the supported baseline: Svelte tooling and compiler-API consumers still require the TypeScript 6 JavaScript API.
+Core's installed-package runtime floor remains Node.js `>=22.12.0` for existing Kit 2 apps. New Kit 3 apps declare `^22.17.0 || ^24.0.0 || >=26.0.0` and use Vite 8 and Superforms 3. Svelar source builds require `^22.18.0 || ^24.11.0 || >=26.0.0` for tsup 9; that does not raise the installed Kit 2 runtime floor.
+
+Core and generated apps retain TypeScript 6.0.3 (`^6.0.3`), Node.js 22 type definitions and explicit ambient types. TypeScript 7 is not the supported baseline: Svelte tooling and compiler-API consumers still require the TypeScript 6 JavaScript API. Kit 3 app configs extend `$app/tsconfig` and retain `$app/types` alongside `node` and `vite/client`.
+
+Existing applications should follow the [SvelteKit 3 upgrade guide](docs/50-upgrading-sveltekit3.md). Preview `npx svelar update --migrate-sveltekit3 --dry-run`; custom configuration and manual checklist items require review, not a force overwrite. The migration can generate `SVELTEKIT3-MIGRATION.md` for the app's developers or AI agents.
 
 Svelar brings Laravel-style conventions to TypeScript and SvelteKit: a DDD-friendly module structure, Eloquent-like models, migrations, FormRequests, DTOs, actions, services, repositories, policies, queues, scheduler tasks, events, listeners, observers, storage, mail, PDF generation, search, broadcasting, and a project-local Artisan-like CLI.
 
