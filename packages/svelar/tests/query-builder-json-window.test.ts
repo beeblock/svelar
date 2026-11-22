@@ -160,7 +160,7 @@ class WindowRecord extends TenantModel {
 }
 WindowRecord.addGlobalScope('visible', (query) => query.where('visible', 1));
 
-describe.sequential('Native SQLite portable JSON/window behavior', () => {
+describe('Native SQLite portable JSON/window behavior', () => {
   beforeEach(async () => {
     await Connection.disconnect();
     Connection.configure({ default: 'proof', connections: { proof: { driver: 'sqlite', filename: ':memory:' } } });

@@ -40,6 +40,22 @@ Connection.configure({
 export { Connection };
 ```
 
+## PostgreSQL Prepared Statements
+
+Set `prepare: true` on the selected connection to prepare ORM and `Connection.raw()` queries. The option also applies inside transactions and nested savepoints; named connections retain independent policies. Omitted or false means unprepared framework queries, preserving existing pooling behavior.
+
+```typescript
+postgres: {
+  driver: 'postgres',
+  url: process.env.DATABASE_URL,
+  prepare: process.env.DB_PREPARE === 'true',
+},
+```
+
+PgBouncer transaction pooling can use protocol-level prepared statements with PgBouncer 1.21 or newer and `max_prepared_statements` greater than zero. Older deployments or pools with that setting disabled must keep `prepare: false`. Check the actual pool configuration before opting in; Svelar does not enable or reconfigure PgBouncer automatically. SQL-level `PREPARE` is not the same feature. See [PgBouncer configuration](https://www.pgbouncer.org/config.html#max_prepared_statements).
+
+PostgreSQL `whereIn` uses one array parameter for nonempty lists. The driver leaves array element type inference to PostgreSQL, including UUID, boolean, bigint and timestamp columns; other database drivers keep their native `IN` placeholders.
+
 ## Migrations
 
 Migrations are version-controlled database schema changes. Each migration is a file that defines `up()` and `down()` methods.

@@ -27,7 +27,7 @@ class CastRecord extends Model {
   } satisfies Record<string, ModelCast>;
 }
 
-describe.sequential('Model casts and semantic dirty tracking', () => {
+describe('Model casts and semantic dirty tracking', () => {
   beforeEach(async () => {
     await Connection.disconnect();
     Connection.configure({ default: 'sqlite', connections: { sqlite: { driver: 'sqlite', filename: ':memory:' } } });

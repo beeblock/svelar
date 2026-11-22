@@ -41,6 +41,11 @@ export interface GlobalScopeQuery {
 
 export type GlobalScope = (query: GlobalScopeQuery) => void | GlobalScopeQuery;
 
+/** Model attributes are driver values in lean mode, not cast model properties. */
+export type LeanResult<T> = T extends { getAttributes(): unknown }
+  ? Record<string, unknown>
+  : T extends object ? T : Record<string, unknown>;
+
 interface WhereClause {
   type: 'basic' | 'in' | 'notIn' | 'null' | 'notNull' | 'between' | 'raw' | 'nested' | 'or' | 'exists' | 'notExists' | 'sub';
   column?: string;
@@ -48,6 +53,7 @@ interface WhereClause {
   value?: any;
   values?: any[];
   builder?: QueryBuilder;
+  conditions?: WhereClause[];
   boolean: 'AND' | 'OR';
   raw?: string;
   subSQL?: string;
@@ -70,12 +76,137 @@ interface UnionClause {
   all: boolean;
 }
 
-interface JoinClause {
+interface TableJoinClause {
   type: JoinType;
   table: string;
   first: string;
   operator: string;
   second: string;
+}
+
+interface LateralJoinClause {
+  type: 'LEFT' | 'CROSS';
+  lateral: true;
+  alias: string;
+  sql: string;
+  bindings: any[];
+  connection: WeakRef<object>;
+  driver: DatabaseDriver;
+}
+
+type JoinClause = TableJoinClause | LateralJoinClause;
+
+interface BindingSlot {
+  root: 'where' | 'having';
+  path: number[];
+  source: 'value' | 'array' | 'element';
+  index?: number;
+  scope: boolean;
+}
+
+interface CompiledQuery {
+  shape: string;
+  sql: string;
+  slots: BindingSlot[];
+}
+
+const whereOperators = new Set(['=', '!=', '<>', '>', '>=', '<', '<=', 'LIKE', 'NOT LIKE', 'IN', 'NOT IN', 'IS', 'IS NOT', 'BETWEEN']);
+const scopeAdapters = new WeakMap<ScopeConditions, { clauses: WhereClause[]; active: boolean }>();
+
+function snapshotBinding(value: any): any {
+  if (value === null || typeof value !== 'object') return value;
+  if (Buffer.isBuffer(value)) return Buffer.from(value);
+  if (value instanceof Date) return new Date(value);
+  if (Array.isArray(value)) return value.map(snapshotBinding);
+  return structuredClone(value);
+}
+
+function snapshotArrayBinding(value: any): any {
+  return Array.isArray(value) ? value.map(snapshotBinding) : value;
+}
+
+function scopeColumn(name: string): string {
+  if (typeof name !== 'string' || !/^[A-Za-z_][A-Za-z0-9_$]*$/.test(name)) {
+    throw new TypeError('Global scopes require unqualified column names.');
+  }
+  return name;
+}
+
+function scopeValue(input: ScopeValue): ScopeValue {
+  if (input === null || typeof input === 'string' || typeof input === 'boolean' || typeof input === 'bigint') return input;
+  if (typeof input === 'number' && Number.isFinite(input)) return input;
+  if (input instanceof Date && Number.isFinite(input.getTime())) return new Date(input);
+  throw new TypeError('Global scopes require finite, scalar condition values.');
+}
+
+function scopeState(adapter: ScopeConditions): WhereClause[] {
+  const state = scopeAdapters.get(adapter);
+  if (!state?.active) throw new Error('Global scope callbacks must be synchronous.');
+  return state.clauses;
+}
+
+function scopeBasic(adapter: ScopeConditions, boolean: 'AND' | 'OR', name: string, args: [ScopeValue] | [WhereOperator, ScopeValue]): GlobalScopeQuery {
+  const clauses = scopeState(adapter);
+  const column = scopeColumn(name);
+  if ((args.length !== 1 && args.length !== 2) || args[args.length - 1] === undefined) {
+    throw new TypeError('Global scope conditions require a value.');
+  }
+  const operator = args.length === 1 ? '=' : String(args[0]).toUpperCase();
+  if (!whereOperators.has(operator)) throw new TypeError('Invalid global scope operator.');
+  if (['IN', 'NOT IN', 'BETWEEN'].includes(operator)) throw new TypeError('Use the dedicated global scope condition method.');
+  const value = scopeValue(args[args.length - 1] as ScopeValue);
+  clauses.push(value === null && ['=', '!=', '<>'].includes(operator)
+    ? { type: operator === '=' ? 'null' : 'notNull', column, boolean }
+    : { type: 'basic', column, operator, value, boolean });
+  return adapter;
+}
+
+function scopeList(adapter: ScopeConditions, type: 'in' | 'notIn' | 'between', name: string, inputs: readonly ScopeValue[]): GlobalScopeQuery {
+  const clauses = scopeState(adapter);
+  const column = scopeColumn(name);
+  if (!Array.isArray(inputs) || inputs.length === 0 || (type === 'between' && inputs.length !== 2)) {
+    throw new TypeError('Global scope lists must be nonempty; BETWEEN requires two values.');
+  }
+  clauses.push({ type, column, values: inputs.map(scopeValue), boolean: 'AND' });
+  return adapter;
+}
+
+function scopeNested(adapter: ScopeConditions, boolean: 'AND' | 'OR', callback: GlobalScope): GlobalScopeQuery {
+  scopeState(adapter).push({ type: 'nested', conditions: compileScopeConditions(callback), boolean });
+  return adapter;
+}
+
+// Shared prototype methods avoid allocating a builder and closures for every applied scope.
+class ScopeConditions implements GlobalScopeQuery {
+  where(name: string, ...args: [ScopeValue] | [WhereOperator, ScopeValue]): GlobalScopeQuery { return scopeBasic(this, 'AND', name, args); }
+  orWhere(name: string, ...args: [ScopeValue] | [WhereOperator, ScopeValue]): GlobalScopeQuery { return scopeBasic(this, 'OR', name, args); }
+  whereIn(name: string, inputs: readonly ScopeValue[]): GlobalScopeQuery { return scopeList(this, 'in', name, inputs); }
+  whereNotIn(name: string, inputs: readonly ScopeValue[]): GlobalScopeQuery { return scopeList(this, 'notIn', name, inputs); }
+  whereBetween(name: string, inputs: readonly [ScopeValue, ScopeValue]): GlobalScopeQuery { return scopeList(this, 'between', name, inputs); }
+  whereNull(name: string): GlobalScopeQuery {
+    scopeState(this).push({ type: 'null', column: scopeColumn(name), boolean: 'AND' }); return this;
+  }
+  whereNotNull(name: string): GlobalScopeQuery {
+    scopeState(this).push({ type: 'notNull', column: scopeColumn(name), boolean: 'AND' }); return this;
+  }
+  whereNested(callback: GlobalScope): GlobalScopeQuery { return scopeNested(this, 'AND', callback); }
+  orWhereNested(callback: GlobalScope): GlobalScopeQuery { return scopeNested(this, 'OR', callback); }
+}
+Object.freeze(ScopeConditions.prototype);
+
+function compileScopeConditions(callback: GlobalScope): WhereClause[] {
+  const adapter = Object.freeze(new ScopeConditions());
+  const state = { clauses: [] as WhereClause[], active: true };
+  scopeAdapters.set(adapter, state);
+  try {
+    const result = callback(adapter);
+    if (result && typeof (result as any).then === 'function') {
+      Promise.resolve(result).catch(() => {});
+      throw new TypeError('Global scope callbacks must be synchronous.');
+    }
+    if (state.clauses.length === 0) throw new Error('A global scope must add conditions; disable it explicitly instead.');
+    return state.clauses;
+  } finally { state.active = false; }
 }
 
 interface OrderClause {
@@ -121,6 +252,9 @@ export class QueryBuilder<TModel = any> {
   private lockMode: 'update' | null = null;
   private useSkipLocked = false;
   private returningColumns: string[] = [];
+  private leanResults = false;
+  private hasCompiledOnce = false;
+  private compiledQuery?: CompiledQuery;
 
   // Model class reference for hydrating results
   private modelClass?: any;
@@ -213,78 +347,12 @@ export class QueryBuilder<TModel = any> {
     const clauses: WhereClause[] = [];
     for (const [name, callback] of this.modelClass?.globalScopes?.() ?? []) {
       if (this.disabledGlobalScopes.has(name)) continue;
-      const builder = this.scopeConditions(callback);
-      clauses.push({ type: 'nested', builder, boolean: 'AND', globalScope: name });
+      const conditions = compileScopeConditions(callback);
+      clauses.push({ type: 'nested', conditions, boolean: 'AND', globalScope: name });
     }
     // Only publish a complete registry; a failing callback must never leave a partially scoped query.
     this.whereClauses.push(...clauses);
     this.globalScopesApplied = true;
-  }
-
-  private scopeConditions(callback: GlobalScope): QueryBuilder {
-    const builder = new QueryBuilder(this.tableName, undefined, this.connectionName);
-    let active = true;
-    const column = (name: string): string => {
-      if (!active) throw new Error('Global scope callbacks must be synchronous.');
-      if (!/^[A-Za-z_][A-Za-z0-9_$]*$/.test(name)) throw new TypeError('Global scopes require unqualified column names.');
-      return name;
-    };
-    const value = (input: ScopeValue): ScopeValue => {
-      if (input === null || ['string', 'boolean', 'bigint'].includes(typeof input)) return input;
-      if (typeof input === 'number' && Number.isFinite(input)) return input;
-      if (input instanceof Date && Number.isFinite(input.getTime())) return new Date(input);
-      throw new TypeError('Global scopes require finite, scalar condition values.');
-    };
-    const basic = (boolean: 'AND' | 'OR', name: string, operatorOrValue: ScopeValue | WhereOperator, input?: ScopeValue) => {
-      const key = column(name);
-      const operator = input === undefined ? '=' : String(operatorOrValue).toUpperCase();
-      builder.assertOperator(operator);
-      if (['IN', 'NOT IN', 'BETWEEN'].includes(operator)) throw new TypeError('Use the dedicated global scope condition method.');
-      const operand = value(input === undefined ? operatorOrValue as ScopeValue : input);
-      builder.whereClauses.push(operand === null && ['=', '!=', '<>'].includes(operator)
-        ? { type: operator === '=' ? 'null' : 'notNull', column: key, boolean }
-        : { type: 'basic', column: key, operator, value: operand, boolean });
-      return adapter;
-    };
-    const condition = (boolean: 'AND' | 'OR', name: string, args: [ScopeValue] | [WhereOperator, ScopeValue]) => {
-      if ((args.length !== 1 && args.length !== 2) || args[args.length - 1] === undefined) {
-        throw new TypeError('Global scope conditions require a value.');
-      }
-      return basic(boolean, name, args[0], args[1]);
-    };
-    const list = (type: 'in' | 'notIn' | 'between', name: string, inputs: readonly ScopeValue[]) => {
-      const key = column(name);
-      if (!Array.isArray(inputs) || inputs.length === 0 || (type === 'between' && inputs.length !== 2)) {
-        throw new TypeError('Global scope lists must be nonempty; BETWEEN requires two values.');
-      }
-      builder.whereClauses.push({ type, column: key, values: inputs.map(value), boolean: 'AND' });
-      return adapter;
-    };
-    const nested = (boolean: 'AND' | 'OR', scope: GlobalScope) => {
-      if (!active) throw new Error('Global scope callbacks must be synchronous.');
-      builder.whereClauses.push({ type: 'nested', builder: this.scopeConditions(scope), boolean });
-      return adapter;
-    };
-    const adapter: GlobalScopeQuery = Object.freeze({
-      where: (name: string, ...args: [ScopeValue] | [WhereOperator, ScopeValue]) => condition('AND', name, args),
-      orWhere: (name: string, ...args: [ScopeValue] | [WhereOperator, ScopeValue]) => condition('OR', name, args),
-      whereIn: (name: string, inputs: readonly ScopeValue[]) => list('in', name, inputs),
-      whereNotIn: (name: string, inputs: readonly ScopeValue[]) => list('notIn', name, inputs),
-      whereBetween: (name: string, inputs: readonly [ScopeValue, ScopeValue]) => list('between', name, inputs),
-      whereNull: (name: string) => { builder.whereClauses.push({ type: 'null', column: column(name), boolean: 'AND' }); return adapter; },
-      whereNotNull: (name: string) => { builder.whereClauses.push({ type: 'notNull', column: column(name), boolean: 'AND' }); return adapter; },
-      whereNested: (scope: GlobalScope) => nested('AND', scope),
-      orWhereNested: (scope: GlobalScope) => nested('OR', scope),
-    });
-    try {
-      const result = callback(adapter);
-      if (result && typeof (result as any).then === 'function') {
-        Promise.resolve(result).catch(() => {});
-        throw new TypeError('Global scope callbacks must be synchronous.');
-      }
-      if (builder.whereClauses.length === 0) throw new Error('A global scope must add conditions; disable it explicitly instead.');
-    } finally { active = false; }
-    return builder;
   }
 
   private applySoftDeleteScope(mode: 'without' | 'with' | 'only'): void {
@@ -435,13 +503,13 @@ export class QueryBuilder<TModel = any> {
     return this.jsonLength(column, operatorOrLength, length, 'OR');
   }
 
-  whereIn(column: string, values: any[]): this {
-    this.whereClauses.push({ type: 'in', column, values, boolean: 'AND' });
+  whereIn(column: string, values: readonly any[]): this {
+    this.whereClauses.push({ type: 'in', column, values: [...values], boolean: 'AND' });
     return this;
   }
 
-  whereNotIn(column: string, values: any[]): this {
-    this.whereClauses.push({ type: 'notIn', column, values, boolean: 'AND' });
+  whereNotIn(column: string, values: readonly any[]): this {
+    this.whereClauses.push({ type: 'notIn', column, values: [...values], boolean: 'AND' });
     return this;
   }
 
@@ -586,8 +654,13 @@ export class QueryBuilder<TModel = any> {
     return this;
   }
 
-  orWhereIn(column: string, values: any[]): this {
-    this.whereClauses.push({ type: 'in', column, values, boolean: 'OR' });
+  orWhereIn(column: string, values: readonly any[]): this {
+    this.whereClauses.push({ type: 'in', column, values: [...values], boolean: 'OR' });
+    return this;
+  }
+
+  orWhereNotIn(column: string, values: readonly any[]): this {
+    this.whereClauses.push({ type: 'notIn', column, values: [...values], boolean: 'OR' });
     return this;
   }
 
@@ -660,6 +733,30 @@ export class QueryBuilder<TModel = any> {
     return this;
   }
 
+  /** MySQL requires 8.0.14+ (not MariaDB); SQLite has no lateral derived tables. */
+  leftJoinLateral(subquery: QueryBuilder<any>, alias: string): this {
+    return this.joinLateral('LEFT', subquery, alias);
+  }
+
+  crossJoinLateral(subquery: QueryBuilder<any>, alias: string): this {
+    return this.joinLateral('CROSS', subquery, alias);
+  }
+
+  private joinLateral(type: 'LEFT' | 'CROSS', subquery: QueryBuilder<any>, alias: string): this {
+    if (this.currentDriver() === 'sqlite') throw new Error('Lateral joins require PostgreSQL or MySQL 8.0.14+.');
+    if (!(subquery instanceof QueryBuilder)) throw new TypeError('Lateral joins require a structured QueryBuilder subquery.');
+    if (typeof alias !== 'string') throw new TypeError('Lateral alias must be a simple identifier.');
+    assertSqlIdentifier(alias, 'Lateral alias');
+    const connection = Connection.getConfig(this.connectionName);
+    if (Connection.getConfig(subquery.connectionName) !== connection) {
+      throw new Error('Lateral subqueries must use the same connection as their parent.');
+    }
+    const { sql, bindings } = subquery.clone().toSQL();
+    this.joinClauses.push({ type, lateral: true, alias, sql, bindings: bindings.map(snapshotBinding),
+      connection: new WeakRef(connection), driver: this.currentDriver() });
+    return this;
+  }
+
   // ── ORDER / GROUP / LIMIT ────────────────────────────────
 
   orderBy(column: string, direction: OrderDirection = 'asc'): this {
@@ -713,8 +810,17 @@ export class QueryBuilder<TModel = any> {
   // ── EAGER LOADING ────────────────────────────────────────
 
   with(...relations: string[]): this {
+    if (this.leanResults) throw new Error('Lean queries cannot eager load model relations.');
     this.eagerLoads.push(...relations);
     return this;
+  }
+
+  /** Read-only driver rows: no models, proxies, casts, accessors, hidden filtering, or relations. */
+  lean<TPlain extends object = LeanResult<TModel>>(): QueryBuilder<TPlain> {
+    if (this.eagerLoads.length) throw new Error('Lean queries cannot eager load model relations.');
+    const query = this.clone();
+    query.leanResults = true;
+    return query as unknown as QueryBuilder<TPlain>;
   }
 
   // ── EXECUTION ────────────────────────────────────────────
@@ -725,7 +831,7 @@ export class QueryBuilder<TModel = any> {
     const models = this.hydrateMany(rows);
 
     // Eager load relations
-    if (this.eagerLoads.length > 0 && this.modelClass) {
+    if (this.eagerLoads.length > 0 && this.modelClass && !this.leanResults) {
       await this.loadRelations(models);
     }
 
@@ -800,22 +906,16 @@ export class QueryBuilder<TModel = any> {
 
   async pluck(column: string): Promise<any[]> {
     this.selectColumns = [column];
-    const rows = await Connection.raw(
-      this.toSQL().sql,
-      this.toSQL().bindings,
-      this.connectionName
-    );
+    const { sql, bindings } = this.toSQL();
+    const rows = await Connection.raw(sql, bindings, this.connectionName);
     return rows.map((r: any) => r[column]);
   }
 
   async value(column: string): Promise<any> {
     this.selectColumns = [column];
     this.limitValue = 1;
-    const rows = await Connection.raw(
-      this.toSQL().sql,
-      this.toSQL().bindings,
-      this.connectionName
-    );
+    const { sql, bindings } = this.toSQL();
+    const rows = await Connection.raw(sql, bindings, this.connectionName);
     return rows[0]?.[column] ?? null;
   }
 
@@ -932,6 +1032,7 @@ export class QueryBuilder<TModel = any> {
     conflictColumns: string | string[],
     updateColumns?: string[]
   ): Promise<any> {
+    this.assertWritable();
     const rows = (Array.isArray(data) ? data : [data]).map((row) => this.applyTenantInsertAttributes(row));
     if (rows.length === 0) return;
     this.assertSingleTableWrite();
@@ -983,6 +1084,7 @@ export class QueryBuilder<TModel = any> {
   }
 
   async insertMany(rows: Record<string, any>[]): Promise<any> {
+    this.assertWritable();
     rows = rows.map((row) => this.applyTenantInsertAttributes(row));
     if (rows.length === 0) return;
     for (const row of rows) this.assertGlobalScopeInsert(row);
@@ -1031,6 +1133,7 @@ export class QueryBuilder<TModel = any> {
     search: Record<string, any>,
     create: Record<string, any>,
   ): Promise<{ model: TModel; created: boolean }> {
+    this.assertWritable();
     this.ensureTenantScope();
     this.assertTenantAttributes(search);
     this.assertTenantAttributes(create);
@@ -1214,6 +1317,7 @@ export class QueryBuilder<TModel = any> {
   private _selectBindings?: any[];
 
   async truncate(): Promise<void> {
+    this.assertWritable();
     const driver = Connection.getDriver(this.connectionName);
     const table = this.quoteIdentifier(this.tableName, 'Table name');
     if (driver === 'sqlite') {
@@ -1245,6 +1349,7 @@ export class QueryBuilder<TModel = any> {
   // ── INSERT / UPDATE / DELETE ─────────────────────────────
 
   async insert(data: Record<string, any>): Promise<any> {
+    this.assertWritable();
     data = this.applyTenantInsertAttributes(data);
     this.assertGlobalScopeInsert(data);
     const columns = Object.keys(data);
@@ -1256,6 +1361,7 @@ export class QueryBuilder<TModel = any> {
   }
 
   async insertGetId<TId = number>(data: Record<string, any>, primaryKey: string = 'id'): Promise<TId> {
+    this.assertWritable();
     data = this.applyTenantInsertAttributes(data);
     this.assertGlobalScopeInsert(data);
     const driver = Connection.getDriver(this.connectionName);
@@ -1296,6 +1402,7 @@ export class QueryBuilder<TModel = any> {
   }
 
   async update(data: Record<string, any>): Promise<number> {
+    this.assertWritable();
     this.ensureTenantScope();
     this.assertTenantAttributes(data);
     const columns = Object.keys(data);
@@ -1312,6 +1419,7 @@ export class QueryBuilder<TModel = any> {
   }
 
   async delete(): Promise<number> {
+    this.assertWritable();
     if (this.softDeletes && !this.forceDeleting) {
       return this.update({ [this.deletedAtColumn]: new Date().toISOString() });
     }
@@ -1343,6 +1451,7 @@ export class QueryBuilder<TModel = any> {
   }
 
   async increment(column: string, amount: number = 1): Promise<void> {
+    this.assertWritable();
     this.ensureTenantScope();
     const { whereSQL, whereBindings } = this.buildWhere();
     const quotedColumn = this.quoteIdentifier(column, 'Column name');
@@ -1367,6 +1476,12 @@ export class QueryBuilder<TModel = any> {
 
   toSQL(): { sql: string; bindings: any[] } {
     this.ensureTenantScope();
+    // Single-use builders never fingerprint or allocate a compilation plan.
+    const shape = this.hasCompiledOnce ? this.queryShape() : undefined;
+    if (shape !== undefined && this.compiledQuery?.shape === shape) {
+      return { sql: this.compiledQuery.sql, bindings: this.bindCompiledQuery(this.compiledQuery.slots) };
+    }
+    this.compiledQuery = undefined;
     const parts: string[] = [];
     const bindings: any[] = [];
 
@@ -1375,7 +1490,7 @@ export class QueryBuilder<TModel = any> {
       const hasRecursive = this.cteClauses.some((c) => c.recursive);
       const cteKeyword = hasRecursive ? 'WITH RECURSIVE' : 'WITH';
       const cteParts = this.cteClauses.map((c) => {
-        bindings.push(...c.bindings);
+        bindings.push(...c.bindings.map(snapshotArrayBinding));
         return `${this.quoteIdentifier(c.name, 'CTE name')} AS (${c.sql})`;
       });
       parts.push(`${cteKeyword} ${cteParts.join(', ')}`);
@@ -1383,7 +1498,7 @@ export class QueryBuilder<TModel = any> {
 
     // SELECT (with subquery bindings)
     if (this._selectBindings?.length) {
-      bindings.push(...this._selectBindings);
+      bindings.push(...this._selectBindings.map(snapshotArrayBinding));
     }
     const distinctStr = this.isDistinct ? 'DISTINCT ' : '';
     parts.push(`SELECT ${distinctStr}${this.selectColumns.map((column) => this.formatSelectColumn(column)).join(', ')}`);
@@ -1393,7 +1508,14 @@ export class QueryBuilder<TModel = any> {
 
     // JOINs
     for (const join of this.joinClauses) {
-      if (join.type === 'CROSS') {
+      if ('lateral' in join) {
+        if (this.currentDriver() === 'sqlite') throw new Error('Lateral joins require PostgreSQL or MySQL 8.0.14+.');
+        if (join.connection.deref() !== Connection.getConfig(this.connectionName) || join.driver !== this.currentDriver()) {
+          throw new Error('Lateral subqueries must use the same connection as their parent.');
+        }
+        parts.push(`${join.type} JOIN LATERAL (${join.sql}) AS ${this.quoteIdentifier(join.alias, 'Lateral alias')}${join.type === 'LEFT' ? ' ON TRUE' : ''}`);
+        bindings.push(...join.bindings.map(snapshotBinding));
+      } else if (join.type === 'CROSS') {
         parts.push(`CROSS JOIN ${this.quoteIdentifier(join.table, 'Join table')}`);
       } else {
         this.assertOperator(join.operator);
@@ -1419,7 +1541,7 @@ export class QueryBuilder<TModel = any> {
       for (const clause of this.havingClauses) {
         if (clause.type === 'raw') {
           havingParts.push(clause.raw!);
-          if (clause.values) bindings.push(...clause.values);
+          if (clause.values) bindings.push(...clause.values.map(snapshotArrayBinding));
         } else {
           this.assertOperator(clause.operator!);
           havingParts.push(`${this.quoteIdentifier(clause.column!, 'Having column')} ${clause.operator} ?`);
@@ -1436,7 +1558,7 @@ export class QueryBuilder<TModel = any> {
       );
       parts.push(`ORDER BY ${orderParts.join(', ')}`);
       for (const order of this.orderClauses) {
-        if (order.raw && order.bindings?.length) bindings.push(...order.bindings);
+        if (order.raw && order.bindings?.length) bindings.push(...order.bindings.map(snapshotArrayBinding));
       }
     }
 
@@ -1458,11 +1580,17 @@ export class QueryBuilder<TModel = any> {
       for (const u of this.unionClauses) {
         parts.push(u.all ? 'UNION ALL' : 'UNION');
         parts.push(u.sql);
-        bindings.push(...u.bindings);
+        bindings.push(...u.bindings.map(snapshotArrayBinding));
       }
     }
 
-    return { sql: parts.join(' '), bindings };
+    const sql = parts.join(' ');
+    // One bounded, builder-local plan. No binding values or closures enter this cache.
+    if (shape !== undefined && shape.length + sql.length <= 32768) {
+      this.compiledQuery = { shape, sql, slots: this.bindingSlots() };
+    }
+    this.hasCompiledOnce = true;
+    return { sql, bindings };
   }
 
   // ── CLONE ────────────────────────────────────────────────
@@ -1471,11 +1599,12 @@ export class QueryBuilder<TModel = any> {
     this.ensureGlobalScopes();
     const cloned = new QueryBuilder<TModel>(this.tableName, this.modelClass, this.connectionName);
     cloned.selectColumns = [...this.selectColumns];
-    cloned.whereClauses = this.whereClauses.map((clause) => ({
-      ...clause, builder: clause.builder?.clone(),
-      values: clause.values ? [...clause.values] : undefined,
+    const cloneConditions = (clauses: WhereClause[]): WhereClause[] => clauses.map((clause) => ({
+      ...clause, builder: clause.builder?.clone(), conditions: clause.conditions ? cloneConditions(clause.conditions) : undefined,
+      values: clause.values?.map(snapshotArrayBinding),
     }));
-    cloned.joinClauses = [...this.joinClauses];
+    cloned.whereClauses = cloneConditions(this.whereClauses);
+    cloned.joinClauses = this.joinClauses.map((join) => 'lateral' in join ? { ...join, bindings: join.bindings.map(snapshotBinding) } : { ...join });
     cloned.orderClauses = [...this.orderClauses];
     cloned.groupByColumns = [...this.groupByColumns];
     cloned.havingClauses = [...this.havingClauses];
@@ -1496,10 +1625,81 @@ export class QueryBuilder<TModel = any> {
     cloned.lockMode = this.lockMode;
     cloned.useSkipLocked = this.useSkipLocked;
     cloned.returningColumns = [...this.returningColumns];
+    cloned.leanResults = this.leanResults;
     return cloned;
   }
 
   // ── PRIVATE ──────────────────────────────────────────────
+
+  private assertWritable(): void {
+    if (this.leanResults) throw new Error('Lean queries are read-only. Use a model or non-lean builder for writes.');
+  }
+
+  /** Raw fragments and captured subqueries may contain literals, so they are deliberately uncached. */
+  private queryShape(): string | undefined {
+    if (this.cteClauses.length || this.unionClauses.length || this._selectBindings?.length || this.rawSelectColumns.size ||
+        this.joinClauses.some((join) => 'lateral' in join) || this.orderClauses.some((order) => order.raw) ||
+        this.havingClauses.some((clause) => clause.type !== 'basic') ||
+        this.selectColumns.some((column) => !/^(?:\*|[A-Za-z_][A-Za-z0-9_$.]*(?:\.[*])?)(?:\s+(?:as\s+)?[A-Za-z_][A-Za-z0-9_]*)?$/i.test(column))) {
+      return undefined;
+    }
+    const driver = this.currentDriver();
+    const conditions = (clauses: WhereClause[]): unknown[] | undefined => {
+      const shape: unknown[] = [];
+      for (const clause of clauses) {
+        if (!['basic', 'in', 'notIn', 'null', 'notNull', 'between', 'nested'].includes(clause.type) || clause.builder) return;
+        const nested = clause.conditions ? conditions(clause.conditions) : null;
+        if (clause.conditions && nested === undefined) return;
+        shape.push([clause.type, clause.column, clause.operator, clause.boolean, !!clause.globalScope,
+          !!clause.tenantScope, !!clause.softDeleteScope,
+          (clause.operator === 'IS' || clause.operator === 'IS NOT') && clause.value === null,
+          driver !== 'postgres' && (clause.type === 'in' || clause.type === 'notIn') ? clause.values?.length : null, nested]);
+      }
+      return shape;
+    };
+    const where = conditions(this.whereClauses);
+    if (where === undefined) return;
+    return JSON.stringify([driver, this.tableName, this.selectColumns, this.isDistinct, this.joinClauses, where,
+      this.groupByColumns, this.havingClauses.map((clause) => [clause.column, clause.operator]),
+      this.orderClauses, this.limitValue, this.offsetValue, this.lockMode, this.useSkipLocked]);
+  }
+
+  private bindingSlots(): BindingSlot[] {
+    const slots: BindingSlot[] = [];
+    const driver = this.currentDriver();
+    const collect = (clause: WhereClause, path: number[], scope: boolean): void => {
+      scope ||= !!clause.globalScope;
+      if (clause.type === 'nested') {
+        clause.conditions!.forEach((child, index) => collect(child, [...path, index], scope));
+      } else if (clause.type === 'basic') {
+        if ((clause.operator !== 'IS' && clause.operator !== 'IS NOT') || clause.value !== null) {
+          slots.push({ root: 'where', path, source: 'value', scope });
+        }
+      } else if (clause.type === 'in' || clause.type === 'notIn' || clause.type === 'between') {
+        if (driver === 'postgres' && clause.type !== 'between') slots.push({ root: 'where', path, source: 'array', scope });
+        else for (let index = 0; index < (clause.type === 'between' ? 2 : clause.values!.length); index++) {
+          slots.push({ root: 'where', path, source: 'element', index, scope });
+        }
+      }
+    };
+    // Match buildWhere's protected-scope ordering rather than the caller's clause insertion order.
+    for (const scoped of [true, false]) this.whereClauses.forEach((clause, index) => {
+      if (!!(clause.globalScope || clause.tenantScope || clause.softDeleteScope) === scoped) collect(clause, [index], false);
+    });
+    this.havingClauses.forEach((_clause, index) => slots.push({ root: 'having', path: [index], source: 'value', scope: false }));
+    return slots;
+  }
+
+  private bindCompiledQuery(slots: BindingSlot[]): any[] {
+    return slots.map((slot) => {
+      const clauses = slot.root === 'where' ? this.whereClauses : this.havingClauses;
+      let clause = clauses[slot.path[0]];
+      for (let index = 1; index < slot.path.length; index++) clause = clause.conditions![slot.path[index]];
+      const copy = (value: any) => slot.scope && value instanceof Date ? new Date(value) : value;
+      if (slot.source === 'array') return clause.values!.map(copy);
+      return copy(slot.source === 'element' ? clause.values![slot.index!] : clause.value);
+    });
+  }
 
   private structuredColumn(column: string): string {
     if (typeof column !== 'string' || !column || column.split('.').some((part) => !part || part === '*')) {
@@ -1611,16 +1811,21 @@ export class QueryBuilder<TModel = any> {
           break;
 
         case 'in':
-          const inPlaceholders = clause.values!.map(() => '?').join(', ');
-          parts.push(`${prefix} ${this.quoteIdentifier(column!, 'Where column')} IN (${inPlaceholders})`);
-          bindings.push(...clause.values!.map(bind));
+        case 'notIn': {
+          const identifier = this.quoteIdentifier(column!, 'Where column');
+          const values = clause.values!.map(bind);
+          if (this.currentDriver() === 'postgres') {
+            // ALL is the three-valued-logic complement of ANY, including NULL and empty arrays.
+            parts.push(`${prefix} ${identifier} ${clause.type === 'in' ? '= ANY' : '<> ALL'}(?)`);
+            bindings.push(values);
+          } else if (values.length === 0) {
+            parts.push(`${prefix} 1 = ${clause.type === 'in' ? '0' : '1'}`);
+          } else {
+            parts.push(`${prefix} ${identifier} ${clause.type === 'in' ? 'IN' : 'NOT IN'} (${values.map(() => '?').join(', ')})`);
+            bindings.push(...values);
+          }
           break;
-
-        case 'notIn':
-          const notInPlaceholders = clause.values!.map(() => '?').join(', ');
-          parts.push(`${prefix} ${this.quoteIdentifier(column!, 'Where column')} NOT IN (${notInPlaceholders})`);
-          bindings.push(...clause.values!.map(bind));
-          break;
+        }
 
         case 'null':
           parts.push(`${prefix} ${this.quoteIdentifier(column!, 'Where column')} IS NULL`);
@@ -1636,7 +1841,7 @@ export class QueryBuilder<TModel = any> {
           break;
 
         case 'nested': {
-          const nested = this.compileWhereClauses(clause.builder!.whereClauses,
+          const nested = this.compileWhereClauses(clause.conditions ?? clause.builder!.whereClauses,
             scopeTable ?? (clause.globalScope ? this.tableReferenceForColumn() : undefined));
           parts.push(`${prefix} (${nested.whereSQL.slice('WHERE '.length)})`);
           bindings.push(...nested.whereBindings);
@@ -1645,23 +1850,23 @@ export class QueryBuilder<TModel = any> {
 
         case 'raw':
           parts.push(`${prefix} ${clause.raw}`);
-          if (clause.values) bindings.push(...clause.values);
+          if (clause.values) bindings.push(...clause.values.map(snapshotArrayBinding));
           break;
 
         case 'exists':
           parts.push(`${prefix} EXISTS (${clause.subSQL})`);
-          if (clause.subBindings) bindings.push(...clause.subBindings);
+          if (clause.subBindings) bindings.push(...clause.subBindings.map(snapshotArrayBinding));
           break;
 
         case 'notExists':
           parts.push(`${prefix} NOT EXISTS (${clause.subSQL})`);
-          if (clause.subBindings) bindings.push(...clause.subBindings);
+          if (clause.subBindings) bindings.push(...clause.subBindings.map(snapshotArrayBinding));
           break;
 
         case 'sub':
           this.assertOperator(clause.operator!);
           parts.push(`${prefix} ${this.quoteIdentifier(clause.column!, 'Where column')} ${clause.operator} (${clause.subSQL})`);
-          if (clause.subBindings) bindings.push(...clause.subBindings);
+          if (clause.subBindings) bindings.push(...clause.subBindings.map(snapshotArrayBinding));
           break;
       }
     }
@@ -1697,6 +1902,7 @@ export class QueryBuilder<TModel = any> {
       for (const clause of clauses) {
         if (clause.column) columns.add(clause.column);
         if (clause.builder) collect(clause.builder.whereClauses);
+        if (clause.conditions) collect(clause.conditions);
       }
     };
     collect(scopes);
@@ -1714,7 +1920,7 @@ export class QueryBuilder<TModel = any> {
       for (const [index, clause] of clauses.entries()) {
         let matches: boolean;
         const actual = clause.column ? data[clause.column] : undefined;
-        if (clause.type === 'nested') matches = evaluate(clause.builder!.whereClauses);
+        if (clause.type === 'nested') matches = evaluate(clause.conditions ?? clause.builder!.whereClauses);
         else if (clause.type === 'null') matches = actual === null;
         else if (clause.type === 'notNull') matches = actual != null;
         else if (clause.type === 'basic' && clause.operator === '=') {
@@ -1817,14 +2023,13 @@ export class QueryBuilder<TModel = any> {
   }
 
   private assertOperator(operator: string): void {
-    const allowed = ['=', '!=', '<>', '>', '>=', '<', '<=', 'LIKE', 'NOT LIKE', 'IN', 'NOT IN', 'IS', 'IS NOT', 'BETWEEN'];
-    if (!allowed.includes(operator.toUpperCase())) {
+    if (!whereOperators.has(operator.toUpperCase())) {
       throw new Error(`SQL operator contains invalid characters: "${operator}"`);
     }
   }
 
   private hydrateMany(rows: any[]): TModel[] {
-    if (!this.modelClass) return rows as TModel[];
+    if (!this.modelClass || this.leanResults) return rows as TModel[];
     return rows.map((row) => this.modelClass.hydrate(row));
   }
 

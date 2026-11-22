@@ -29,7 +29,7 @@ function postgresFixture() {
   return { pool, transactionClient, savepointClient, nestedClient, rolledBack, settled };
 }
 
-describe.sequential('Connection.withSavepointIfNeeded', () => {
+describe('Connection.withSavepointIfNeeded', () => {
   beforeEach(async () => {
     await Connection.disconnect();
     Connection.configure({
@@ -126,7 +126,7 @@ describe.sequential('Connection.withSavepointIfNeeded', () => {
     expect(result).toBe(value);
     expect(fixture.pool.begin).toHaveBeenCalledTimes(1);
     expect(fixture.transactionClient.savepoint).toHaveBeenCalledTimes(1);
-    expect(fixture.savepointClient.unsafe).toHaveBeenCalledExactlyOnceWith('INSERT INTO records (id) VALUES ($1)', ['uuid']);
+    expect(fixture.savepointClient.unsafe).toHaveBeenCalledExactlyOnceWith('INSERT INTO records (id) VALUES ($1)', ['uuid'], { prepare: false });
     expect(fixture.transactionClient.unsafe).not.toHaveBeenCalled();
     expect(fixture.rolledBack).not.toHaveBeenCalled();
     await expect(Connection.withSavepointIfNeeded(async () => 'outside')).resolves.toBe('outside');
@@ -148,7 +148,7 @@ describe.sequential('Connection.withSavepointIfNeeded', () => {
       await expect(Connection.raw('SELECT 1')).resolves.toEqual([{ scope: 'transaction' }]);
     });
     expect(fixture.pool.begin).toHaveBeenCalledTimes(1);
-    expect(fixture.transactionClient.unsafe).toHaveBeenCalledExactlyOnceWith('SELECT 1', []);
+    expect(fixture.transactionClient.unsafe).toHaveBeenCalledExactlyOnceWith('SELECT 1', [], { prepare: false });
     expect(fixture.savepointClient.unsafe).toHaveBeenCalledTimes(1);
   });
 

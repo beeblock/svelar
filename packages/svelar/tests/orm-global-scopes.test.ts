@@ -13,7 +13,7 @@ class ScopeRecord extends TenantModel {
 ScopeRecord.addGlobalScope('visible', (query) => query.where('visible', 1));
 ScopeRecord.addGlobalScope('status', (query) => query.where('status', 'active').orWhere('status', 'pending'));
 
-describe.sequential('Model global scopes', () => {
+describe('Model global scopes', () => {
   beforeEach(async () => {
     await Connection.disconnect();
     Connection.configure({ default: 'sqlite', connections: { sqlite: { driver: 'sqlite', filename: ':memory:' } } });

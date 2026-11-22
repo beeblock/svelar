@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { access, cp, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
@@ -14,13 +15,14 @@ const run = promisify(execFile);
 type Fixture = { Connection: typeof Connection; calls: Record<string, unknown>[] };
 type MockPool = { options: Record<string, unknown>; closed: boolean };
 
-describe.sequential('MySQL structured connection URL', () => {
+describe('MySQL structured connection URL', () => {
   let fixture: Fixture;
   beforeAll(async () => {
     const result = await build({
       stdin: { contents: `export { Connection } from ${JSON.stringify(source)}; export { calls } from 'mysql2/promise';`, resolveDir: dirname(source) },
       write: false, bundle: true, platform: 'node', format: 'esm', packages: 'external', target: 'node22', logLevel: 'silent',
       plugins: [{ name: 'public-driver-contract', setup(builder) {
+        builder.onResolve({ filter: /^drizzle-orm\/pg-core\/utils\/array$/ }, ({ path }) => ({ path: createRequire(import.meta.url).resolve(path), external: false }));
         builder.onResolve({ filter: /^(mysql2\/promise|drizzle-orm\/mysql2)$/ }, ({ path }) => ({ path, namespace: 'driver-proof' }));
         builder.onLoad({ filter: /.*/, namespace: 'driver-proof' }, ({ path }) => ({ contents: path === 'mysql2/promise'
           ? 'export const calls = []; export function createPool(options) { calls.push(options); return { options, closed: false, async end() { this.closed = true; } }; }'

@@ -48,6 +48,7 @@ export type ModelCast = 'string' | 'number' | 'boolean' | 'date' | 'json' |
   'decimal' | `decimal:${number}` | AttributeCast;
 
 function snapshot<T>(value: T): T {
+  if (value === null || (typeof value !== 'object' && typeof value !== 'function' && typeof value !== 'symbol')) return value;
   if (Buffer.isBuffer(value)) return Buffer.from(value) as T;
   return structuredClone(value);
 }
@@ -110,6 +111,10 @@ export interface ModelHooks {
 // ── Model Base Class ───────────────────────────────────────
 
 const modelClasses = singleton('svelar.orm.modelClasses', () => new WeakSet<Function>());
+const staticConfigProperties = new Set([
+  'table', 'primaryKey', 'incrementing', 'timestamps', 'createdAt', 'updatedAt',
+  'softDeletes', 'deletedAt', 'uniqueIds', 'uniqueIdType', 'casts', 'fillable', 'hidden', 'connection',
+]);
 
 export function isModelClass(value: unknown): value is typeof Model {
   let constructor = value;
@@ -179,6 +184,7 @@ export class Model {
   private static observers = new WeakMap<Function, ModelObserver[]>();
 
   private static scopeRegistry = new WeakMap<typeof Model, Map<string, GlobalScope>>();
+  private static resolvedScopeRegistry = new WeakMap<typeof Model, ReadonlyMap<string, GlobalScope>>();
 
   /** Custom model events (e.g. ['published', 'archived']) */
   static events: string[] = [];
@@ -207,7 +213,7 @@ export class Model {
           return Reflect.get(target, prop, receiver);
         }
         // Check if it's a static config property
-        if (['table', 'primaryKey', 'incrementing', 'timestamps', 'createdAt', 'updatedAt', 'softDeletes', 'deletedAt', 'uniqueIds', 'uniqueIdType', 'casts', 'fillable', 'hidden', 'connection'].includes(prop)) {
+        if (staticConfigProperties.has(prop)) {
           return Reflect.get(target, prop, receiver);
         }
         // Check if it's a relation method
@@ -234,12 +240,19 @@ export class Model {
     return new QueryBuilder<T>(ctor.table, this, ctor.connection);
   }
 
+  static lean<TPlain extends object = Record<string, unknown>>(this: typeof Model): QueryBuilder<TPlain> {
+    return this.query().lean<TPlain>();
+  }
+
   /** Inherited scopes are copied; registering a child scope cannot change its parent. */
   static globalScopes(): ReadonlyMap<string, GlobalScope> {
+    const cached = Model.resolvedScopeRegistry.get(this);
+    if (cached) return new Map(cached);
     const parent = Object.getPrototypeOf(this) as typeof Model | undefined;
     const scopes = new Map<string, GlobalScope>(parent?.globalScopes?.() ?? []);
     for (const [name, scope] of Model.scopeRegistry.get(this) ?? []) scopes.set(name, scope);
-    return scopes;
+    Model.resolvedScopeRegistry.set(this, scopes);
+    return new Map(scopes);
   }
 
   static addGlobalScope(name: string, scope: GlobalScope): void {
@@ -247,6 +260,8 @@ export class Model {
     let scopes = Model.scopeRegistry.get(this);
     if (!scopes) { scopes = new Map(); Model.scopeRegistry.set(this, scopes); }
     scopes.set(name, scope);
+    // Ancestors can register after descendants have resolved their inherited scopes.
+    Model.resolvedScopeRegistry = new WeakMap();
   }
 
   static withoutGlobalScope<T extends Model>(this: new () => T, name: string): QueryBuilder<T> {
@@ -719,7 +734,15 @@ export class Model {
   static hydrate<T extends Model>(this: new () => T, row: Record<string, any>): T {
     const instance = new this();
     instance.attributes = snapshotAttributes(row);
-    instance.syncOriginal();
+    if (instance.castCache.size > 0) {
+      instance.syncOriginal();
+    } else {
+      instance.originalAttributes = { ...instance.attributes };
+      // Immutable scalars can be shared; mutable values must not alias the live attributes.
+      for (const [key, value] of Object.entries(instance.originalAttributes)) {
+        if (value !== null && typeof value === 'object') instance.originalAttributes[key] = snapshot(value);
+      }
+    }
     instance.previousOriginalAttributes = {};
     instance.changedAttributes = {};
     instance.exists = true;

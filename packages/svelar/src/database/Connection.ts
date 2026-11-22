@@ -1,5 +1,21 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ApplicationContext } from '../support/Context.js';
+import { makePgArray } from 'drizzle-orm/pg-core/utils/array';
+
+function postgresArrayValue(value: unknown): unknown {
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map(postgresArrayValue);
+  if (value instanceof Uint8Array) return `\\x${Buffer.from(value).toString('hex')}`;
+  if (value === undefined || typeof value === 'function' || typeof value === 'symbol') {
+    throw new TypeError('PostgreSQL array bindings require serializable values.');
+  }
+  if (value !== null && typeof value === 'object') {
+    const encoded = JSON.stringify(value);
+    if (encoded === undefined) throw new TypeError('PostgreSQL array bindings require serializable values.');
+    return encoded;
+  }
+  return value;
+}
 
 /**
  * Svelar Database Connection
@@ -33,7 +49,7 @@ export interface DatabaseConfig {
   timezone?: string;
   /** Enable debug/query logging */
   debug?: boolean;
-  /** Enable prepared statements for PostgreSQL. Disable for PgBouncer transaction pooling. */
+  /** Opt in to PostgreSQL prepared queries. PgBouncer transaction pools require protocol-level prepared statement support. */
   prepare?: boolean;
 }
 
@@ -285,7 +301,12 @@ class ConnectionManager {
       }
       case 'postgres': {
         const client = await this.rawClient(connectionName);
-        return client.unsafe(postgresSql(sql, bindings.length), bindings);
+        // Drizzle installs passthrough date/array serializers on this shared client.
+        // Bind encoded text with unknown OIDs so PostgreSQL infers the actual column type.
+        const parameters = bindings.map((value) => Array.isArray(value)
+          ? client.typed(makePgArray(value.map(postgresArrayValue)), 0)
+          : value instanceof Date ? value.toISOString() : value);
+        return client.unsafe(postgresSql(sql, bindings.length), parameters, { prepare: config.prepare === true });
       }
       case 'mysql': {
         const client = await this.rawClient(connectionName);

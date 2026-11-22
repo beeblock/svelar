@@ -574,6 +574,7 @@ describe('Connection - PostgreSQL placeholders', () => {
       expect(unsafe).toHaveBeenCalledWith(
         'SELECT * FROM "events" WHERE "payload" ? $1 AND "tenant_id" = $2',
         ['kind', 'team-1'],
+        { prepare: false },
       );
     } finally {
       connectionSpy.mockRestore();

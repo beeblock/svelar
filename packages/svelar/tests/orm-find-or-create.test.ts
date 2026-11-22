@@ -61,7 +61,7 @@ function lifecycle(...names: string[]): string[] {
   return names.flatMap((name) => [`hook:${name}`, `observer:${name}`]);
 }
 
-describe.sequential('ORM find-or-create model lifecycle', () => {
+describe('ORM find-or-create model lifecycle', () => {
   let root: string;
   beforeEach(async () => {
     ApplicationContext.clear();

@@ -208,6 +208,8 @@ class Invoice extends Model {
 
 Custom casts are synchronous and define storage/application conversion through `get`/`set`; optional `equals` defines semantic dirty equality. JSON/Date/custom mutable values retain a cached application value, so in-place edits are detected and serialized on save. Originals, previous originals and persisted changes are deep snapshots: changing a returned snapshot cannot rewrite the audit diff. `wasChanged` reflects persisted changes, not the current dirty state.
 
+Model hydration and snapshots reuse immutable primitive values instead of cloning them. Mutable values, including Buffers, Dates, arrays and JSON objects, remain isolated between attributes, originals and returned snapshots. This does not change cast behavior or make mutable originals shared; unsupported function/symbol snapshots still fail.
+
 ### Global Scopes
 
 Use `TenantModel`/`forTenant` for tenant isolation and register named condition-only scopes for additional model boundaries:
@@ -224,6 +226,8 @@ Scopes are inherited without mutating the parent registry, are evaluated synchro
 Creation does not infer arbitrary scope defaults. Supply explicit equality/IN/null-safe attributes that satisfy every active scope. Range/pattern/negative scopes remain valid for reads/updates/deletes but reject insertion when database affinity/collation cannot be safely proven; authorize an explicit `withoutGlobalScope` for that use case. Global-scoped bulk upserts and changed/union write targets are rejected rather than silently ignoring the scope.
 
 Custom model primary keys are used by `find`, `findOrFail` and default `chunkById`; keyset predicates are grouped with existing OR conditions. Aggregate queries discard unrelated raw-select bindings. Bulk query writes remain eventless; use individual Model persistence when hooks, audit or search outbox effects are needed.
+
+The inherited callback registry is cached per model class and invalidated when `addGlobalScope` registers or replaces a scope, including cached descendants. `globalScopes()` still returns a defensive copy. Scope adapters use shared frozen methods, but each newly evaluated builder gets its own conditions and executes its callbacks in the current context. Tenant IDs, users, callback results and condition values are not cached globally; cloning an already scoped builder intentionally preserves its applied conditions.
 
 ### Multiple Database Connections
 
@@ -255,6 +259,24 @@ const user = await User.firstOrFail(); // throws if no results
 // Count records
 const total = await User.count();
 ```
+
+### Lean Reads
+
+Use `lean()` for read paths that need plain driver rows without constructing Model instances or Proxies:
+
+```typescript
+const base = User.query().select('id', 'name');
+const rows = await base.lean<{ id: number; name: string }>().get();
+const first = await User.lean<{ id: number; name: string }>()
+  .select('id', 'name')
+  .first();
+```
+
+`lean()` returns a cloned builder; `base` still returns models. Existing filters, connection, tenant context, soft-delete guards and global scopes are preserved. `get`, `first`, `find`, pagination and chunking return plain rows. Model-backed queries default to `Record<string, unknown>`; an explicit row type describes the selected driver's output, not a runtime conversion. The exported conditional `LeanResult<T>` preserves an existing plain-row type and uses unknown-valued records for models.
+
+Lean reads deliberately skip model casts, custom accessors, hidden-field filtering, relation hydration and model serialization. JSON, dates, booleans, decimals and big integers retain the configured driver's representation. **Never return raw lean rows directly from an API or treat `hidden` as protection here.** Select only authorized columns and shape an explicit resource/response allowlist, especially for passwords, tokens and internal identifiers.
+
+Combining `lean()` and `with(...)` throws in either order. Lean builders reject inserts, updates, deletes, increments, upserts, truncation and find-or-create helpers before issuing write SQL. Use a normal builder or individual model persistence for writes. This guard is not a database read-only transaction or a sanitizer for trusted raw SQL expressions.
 
 ### Where Clauses
 
@@ -293,8 +315,12 @@ Supported operators: `=`, `!=`, `<>`, `>`, `>=`, `<`, `<=`, `LIKE`, `NOT LIKE`, 
 const users = await User.whereIn('id', [1, 2, 3]).get();
 
 // Exclude specific statuses
-const active = await User.whereNotIn('status', ['banned', 'suspended']).get();
+const active = await User.query().whereNotIn('status', ['banned', 'suspended']).get();
 ```
+
+On PostgreSQL, the dedicated `whereIn`/`orWhereIn` methods compile to `column = ANY(?)`, and `whereNotIn`/`orWhereNotIn` compile to `column <> ALL(?)`. Each list is one array binding, so SQL text is independent of list length, including an empty list. `toSQL().bindings` contains the list as one nested array; do not flatten it. The Connection driver uses PostgreSQL server inference for the array parameter's type (OID 0), rather than choosing a text-array type from UUID strings or a scalar OID from booleans/big integers.
+
+SQL null semantics are preserved: `IN [null]` does not match a null column, and a null element makes `NOT IN` unknown for values with no equal element. A nonempty negative list also does not match a null column. Empty `whereIn` matches nothing; empty `whereNotIn` matches everything, including null columns, within all active scopes. SQLite and MySQL retain ordinary `IN (...)`/`NOT IN (...)` placeholders, with empty lists compiled to false/true constants. Membership inputs are copied so later array edits do not change the query; scalar bindings remain parameterized.
 
 ### WhereNull / WhereNotNull
 
@@ -461,6 +487,29 @@ const comments = await Comment.query()
   .orderBy('comments.created_at', 'desc')
   .get();
 ```
+
+### Lateral Joins
+
+Use a correlated derived query when several columns should come from the same related row:
+
+```typescript
+const latestPost = Post.query()
+  .select('title', 'created_at')
+  .whereColumn('posts.user_id', 'users.id')
+  .orderBy('created_at', 'desc')
+  .limit(1);
+
+const users = await User.query()
+  .select('users.id', 'latest.title as latest_title', 'latest.created_at as latest_created_at')
+  .leftJoinLateral(latestPost, 'latest')
+  .get();
+```
+
+`leftJoinLateral(subquery, alias)` emits `LEFT JOIN LATERAL (...) AS alias ON TRUE`, preserving parent rows without a match. `crossJoinLateral(subquery, alias)` omits parents with no derived rows. Both accept a QueryBuilder, not a raw SQL string or callback. Use `whereColumn` for correlation; ordinary values stay bound. Alias names must be simple identifiers.
+
+PostgreSQL and MySQL 8.0.14+ support these APIs; MariaDB is not covered. Unsupported MySQL servers reject the SQL themselves. SQLite fails explicitly before adding a lateral join; use scalar subqueries such as `selectSub` instead. Parent and subquery must resolve to the same configured connection, even when two different names point to the same server. Compilation rechecks connection identity and dialect, rejecting a changed ambient connection or reconfiguration.
+
+Adding a join snapshots a clone of the subquery without changing the supplied builder. Model-backed subqueries retain their own tenant/global/soft-delete scopes; a plain table builder does not acquire model scopes automatically. Select only needed columns and authorize any explicit scope bypasses on either side. Binding order follows CTE, SELECT, lateral joins, WHERE, HAVING, ORDER and UNION order. Raw escape hatches remain trusted SQL and must never interpolate untrusted input.
 
 ## Group By & Having
 
@@ -661,6 +710,14 @@ console.log(sql);
 console.log(bindings);
 // ['admin']
 ```
+
+### Compiled Query Cache
+
+A fresh builder's first successful `toSQL()` compiles directly, without fingerprinting, collecting binding slots or allocating a cache plan. Its second compilation creates an eligible plan; the third and later calls may reuse it when the structure is unchanged. Clones start cold and follow the same warm-up. This avoids compilation-cache setup on single-use builders.
+
+Structured SELECT compilation keeps at most one SQL plan per builder, bounded to 32,768 combined SQL/shape characters. The plan contains SQL and positional binding metadata only, never bound user values, tenant IDs or callback results. Every `toSQL()` call obtains current bindings from that builder's clauses, and a structural fingerprint detects changes to projection, table, joins, conditions, grouping, ordering, limits, offsets, locks or driver. Returned array bindings and scope Date bindings do not expose stored scope state.
+
+This is a builder-local compilation cache, not a shared query-shape cache, database result cache or prepared-statement cache. New builders and clones do not inherit another builder's plan. Raw fragments/projections/orderings, captured subqueries, CTEs, lateral joins and unions deliberately bypass it because captured SQL may contain literals. Aggregate projections also compile uncached. Repeated independent model queries are not promised a shared compilation benefit; no measured CPU reduction is implied by this contract.
 
 ## Relationships
 
