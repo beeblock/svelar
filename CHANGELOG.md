@@ -71,6 +71,9 @@ Development changes for the next release. These notes describe implementation ch
 
 ### Fixed
 
+- **Manual SPA validation focus** - Generated Superforms 3 SPA handlers use public per-call `focusOnError: false`, await error rendering/input unlock and focus the first invalid field before completing, preventing deferred automatic focus from interrupting corrections. Validation and inline errors remain enabled; custom existing handlers require manual review rather than a codemod.
+- **Generated Docker tooling** - Docker images use reviewed npm 11.21.3 inside the image only, keep native build prerequisites in builder/development stages rather than production, and retain genuine Kit 3 `$app` configuration artifacts after dependency pruning for CLI/Jiti bootstrap. This image-local tooling choice does not add an app npm minimum or assert completed deployment certification.
+- **Kit 3 UI utility peers** - New-app templates and reviewed opt-in Kit 3 migrations narrowly redirect `runed@>=0.35.1 <0.38.0` to `^0.38.0` for compatible UI utility peers. Older 0.25 consumers and ordinary Kit 2 updates are untouched; custom override conflicts require manual review rather than blanket or forced resolution.
 - **Kit 3 CSS processing** - New-app Vite scaffolds and reviewed Kit 3 migration edits include style-only `tw-animate-css` in `ssr.noExternal` so Vite processes its CSS during SSR. Additive migration edits preserve existing array entries and other externalization settings; ambiguous custom configurations require review instead of ignored CSS imports.
 - Generated `ui:install` runs `svelte-kit sync` after installing UI dependencies to restore Kit 3's generated `$app` types before CLI boot.
 - API-fetch migration recognizes aliased `browser` guards from both Kit 2's `$app/environment` and Kit 3's `$app/env`, leaving SSR/else branches and unknown contexts unchanged.
