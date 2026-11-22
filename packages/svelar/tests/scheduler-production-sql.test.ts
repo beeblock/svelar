@@ -5,6 +5,7 @@ import { CreateSchedulerRuntimeTable } from '../src/database/core/00000000_00004
 import { CreateSchedulerRequestsTable } from '../src/database/core/00000000_000048_create_scheduler_requests_table.js';
 import { SchedulerLock } from '../src/scheduler/SchedulerLock.js';
 import { SchedulerRuntimeStore } from '../src/scheduler/RuntimeStore.js';
+import { isSchedulerLeaseMutation } from './scheduler-native-support.js';
 
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -58,6 +59,34 @@ describe('Production scheduler driver SQL contracts', () => {
     expect(sql).toContain('idx_scheduler_requests_pending');
     expect(sql.toUpperCase()).toContain('PRIMARY KEY');
     expect(sql).not.toContain('CREATE TABLE scheduled_task_runs');
+  });
+
+  it.each(['sqlite', 'postgres', 'mysql'] as const)('batches task metadata, joined snapshots, request probes and fenced idle checkpoints (%s)', async (driver) => {
+    vi.spyOn(Connection, 'getDriver').mockReturnValue(driver);
+    const raw = vi.spyOn(Connection, 'raw').mockResolvedValue([]);
+    const store = new SchedulerRuntimeStore({ tenantId: 'tenant-one' }, 'scheduler-connection');
+    const names = Array.from({ length: 66 }, (_, index) => `task-${index}`);
+    await store.ensureTasks(names);
+    await store.taskSnapshots(names);
+    await store.pendingTasks(names);
+    await store.checkpointTasks(names, 1234, { next_run_at: null });
+    expect(raw.mock.calls).toHaveLength(4);
+    const statements = raw.mock.calls.map(([sql]) => sql.replaceAll('`', '"'));
+    const updates = statements[0].split(/DO UPDATE SET |ON DUPLICATE KEY UPDATE /)[1];
+    expect(updates).toContain('task_name');
+    expect(updates).not.toMatch(/last_checked_at|next_run_at|owner|state/);
+    expect(statements[1]).toContain('LEFT JOIN "scheduled_task_settings"');
+    expect(statements[2]).toContain('SELECT DISTINCT "task_key"');
+    expect(statements[2]).toContain('"lease_until" <= ?');
+    expect(statements[3]).toContain('NOT EXISTS');
+    expect(statements[3]).toContain('"scheduler_locks"."task_key" = "scheduler_runtime"."runtime_key"');
+    expect(statements[3]).toContain('"owner" IS NULL');
+    expect(statements[3]).toContain('"last_checked_at" <= ?');
+    expect(statements[3]).toMatch(/^UPDATE "scheduler_runtime" SET /);
+    expect(/^(INSERT|UPDATE|DELETE).*scheduler_locks/.test(statements[3])).toBe(true);
+    expect(isSchedulerLeaseMutation(statements[3])).toBe(false);
+    expect(isSchedulerLeaseMutation(statements[3].replace('UPDATE "scheduler_runtime"', 'UPDATE "scheduler_locks"'))).toBe(true);
+    for (const [, , connection] of raw.mock.calls) expect(connection).toBe('scheduler-connection');
   });
 
   it.each(['sqlite', 'postgres', 'mysql'] as const)('does not treat matched mutation metadata as lock ownership (%s)', async (driver) => {

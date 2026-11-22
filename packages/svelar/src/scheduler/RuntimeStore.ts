@@ -9,6 +9,15 @@ export interface SchedulerTaskSettings {
   timezone?: string | null;
   missedRun?: MissedRunPolicy;
 }
+interface StoredTaskSettings {
+  enabled: boolean;
+  timezone: string | null;
+  missedRun: MissedRunPolicy | null;
+}
+export interface SchedulerTaskSnapshot {
+  runtime: SchedulerRuntimeRecord;
+  settings: StoredTaskSettings | null;
+}
 export interface SchedulerRunRequest {
   id: string;
   task: string;
@@ -81,6 +90,10 @@ export class SchedulerRuntimeStore {
   async settings(name: string): Promise<{ enabled: boolean; timezone: string | null; missedRun: MissedRunPolicy | null } | null> {
     const row = await this.query('scheduled_task_settings').where('task', this.key(name)).first();
     if (!row) return null;
+    return this.settingsRecord(row);
+  }
+
+  private settingsRecord(row: Record<string, any>): StoredTaskSettings {
     const missedRun: MissedRunPolicy | null = row.missed_run_policy === null ? null : { policy: row.missed_run_policy, windowMinutes: Number(row.catch_up_minutes), maxRuns: Number(row.max_catch_up_runs) };
     if (missedRun) validateMissedRun(missedRun);
     if (row.timezone !== null) validateTimezone(row.timezone);
@@ -110,11 +123,45 @@ export class SchedulerRuntimeStore {
   }
 
   async ensureTask(name: string): Promise<SchedulerRuntimeRecord> {
-    await this.query('scheduler_runtime').upsert({
+    await this.ensureTasks([name]);
+    return (await this.task(name))!;
+  }
+
+  /** Register metadata in bulk without overwriting another invocation's cursor or lease. */
+  async ensureTasks(names: string[]): Promise<void> {
+    if (!names.length) return;
+    await this.query('scheduler_runtime').upsert(names.map((name) => ({
       runtime_key: this.key(name), kind: 'task', task_name: name, tenant_id: schedulerTenantId(this.scope),
       state: 'idle', heartbeat_at: Date.now(),
-    }, 'runtime_key', ['task_name', 'tenant_id']);
-    return (await this.task(name))!;
+    })), 'runtime_key', ['task_name', 'tenant_id']);
+  }
+
+  /** One joined read for the registered task keys; no ambient tenant scope. */
+  async taskSnapshots(names: string[]): Promise<Map<string, SchedulerTaskSnapshot>> {
+    if (!names.length) return new Map();
+    const rows = await this.query<SchedulerRuntimeRecord & Record<string, any>>('scheduler_runtime')
+      .leftJoin('scheduled_task_settings', 'scheduler_runtime.runtime_key', '=', 'scheduled_task_settings.task')
+      .select('scheduler_runtime.*', 'scheduled_task_settings.task as settings_key',
+        'scheduled_task_settings.enabled', 'scheduled_task_settings.timezone', 'scheduled_task_settings.missed_run_policy',
+        'scheduled_task_settings.catch_up_minutes', 'scheduled_task_settings.max_catch_up_runs')
+      .whereIn('scheduler_runtime.runtime_key', names.map((name) => this.key(name))).get();
+    return new Map(rows.map(({ settings_key, enabled, timezone, missed_run_policy, catch_up_minutes, max_catch_up_runs, ...runtime }) => [runtime.runtime_key, {
+      runtime,
+      settings: settings_key === null ? null : this.settingsRecord({ enabled, timezone, missed_run_policy, catch_up_minutes, max_catch_up_runs }),
+    }]));
+  }
+
+  /** Idle checkpoints cannot move a cursor backwards or overwrite an active lease. */
+  async checkpointTasks(names: string[], minute: number, data: Partial<SchedulerRuntimeRecord> = {}): Promise<void> {
+    if (!names.length) return;
+    await this.query('scheduler_runtime').whereIn('runtime_key', names.map((name) => this.key(name)))
+      .whereNested((query) => { query.whereNull('owner').orWhere('lease_until', '<=', Date.now()); })
+      .whereNotExists((query) => {
+        query.from('scheduler_locks').select('task_key').whereColumn('scheduler_locks.task_key', 'scheduler_runtime.runtime_key')
+          .where('expires_at', '>', new Date().toISOString());
+      })
+      .whereNested((query) => { query.whereNull('last_checked_at').orWhere('last_checked_at', '<=', minute); })
+      .update({ ...data, last_checked_at: minute });
   }
 
   async updateTask(name: string, data: Partial<SchedulerRuntimeRecord>, owner?: string): Promise<boolean> {
@@ -156,6 +203,16 @@ export class SchedulerRuntimeStore {
     return this.query<RequestRow>('scheduler_requests').where('task_key', this.key(name))
       .whereNested((query) => { query.where('state', 'pending').orWhereNested((expired) => { expired.where('state', 'running').where('lease_until', '<=', Date.now()); }); })
       .orderBy('requested_at').orderBy('id').limit(limit).get();
+  }
+
+  /** Cheap heartbeat probe: at most one row per registered task, including expired requests. */
+  async pendingTasks(names: string[]): Promise<Set<string>> {
+    if (!names.length) return new Set();
+    const keys = new Map(names.map((name) => [this.key(name), name]));
+    const rows = await this.query<{ task_key: string }>('scheduler_requests').select('task_key').distinct()
+      .whereIn('task_key', [...keys.keys()])
+      .whereNested((query) => { query.where('state', 'pending').orWhereNested((expired) => { expired.where('state', 'running').where('lease_until', '<=', Date.now()); }); }).get();
+    return new Set(rows.map((row) => keys.get(row.task_key)!));
   }
 
   async claim(request: RequestRow, owner: string, until: number): Promise<boolean> {

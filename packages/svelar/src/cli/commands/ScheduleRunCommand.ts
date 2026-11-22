@@ -5,14 +5,17 @@
 import { Command } from '../Command.js';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import type { SchedulerObserver } from '../../scheduler/index.js';
 
 export type SchedulerLike = {
   getTasks(): Array<{ name: string }>;
   run(): Promise<Array<{ task: string; success: boolean; duration: number; error?: string; skipped?: boolean }>>;
+  start?(observer?: SchedulerObserver): void;
   stop?(): Promise<void>;
   requestRun?(name: string): Promise<{ id: string; state: string }>;
   listTaskStatuses?(): Promise<unknown[]>;
   hasPersistentRuntime?(): boolean;
+  getRuntimeStatus?(): { lastError: string | null; failures: number };
 };
 
 export class ScheduleRunCommand extends Command {
@@ -21,7 +24,7 @@ export class ScheduleRunCommand extends Command {
   flags = [
     { name: 'once', description: 'Run due tasks once and exit', type: 'boolean' as const },
     { name: 'task', description: 'Enqueue a registered task for the scheduler worker and exit', type: 'string' as const },
-    { name: 'sleep', description: 'Worker polling interval in milliseconds (default: 1000)', type: 'string' as const },
+    { name: 'sleep', description: 'Daemon supervision or legacy polling interval in milliseconds (default: 1000)', type: 'string' as const },
     { name: 'max-time', description: 'Begin draining after N seconds', type: 'string' as const },
     { name: 'grace-period', description: 'Warn after N seconds of draining; leases remain held until tasks finish', type: 'string' as const },
   ];
@@ -59,21 +62,22 @@ export class ScheduleRunCommand extends Command {
 
     if (flags.once) {
       this.info('Running due tasks (once)...');
-      const results = await scheduler.run();
-      if (results.length === 0) {
-        this.info('No tasks were due.');
-      } else {
-        for (const result of results) {
-          if (result.skipped) this.info(`${result.task}: skipped (lease held)`);
-          else if (result.success) {
-            this.success(`${result.task}: completed in ${result.duration}ms`);
-          } else {
-            this.error(`${result.task}: failed — ${result.error}`);
-            this.exitCode = 1;
+      try {
+        const results = await scheduler.run();
+        if (results.length === 0) {
+          this.info('No tasks were due.');
+        } else {
+          for (const result of results) {
+            if (result.skipped) this.info(`${result.task}: skipped (lease held)`);
+            else if (result.success) {
+              this.success(`${result.task}: completed in ${result.duration}ms`);
+            } else {
+              this.error(`${result.task}: failed — ${result.error}`);
+              this.exitCode = 1;
+            }
           }
         }
-      }
-      await scheduler.stop?.();
+      } finally { await scheduler.stop?.(); }
       return;
     }
 
@@ -81,6 +85,8 @@ export class ScheduleRunCommand extends Command {
     const maxTime = flags['max-time'] === undefined ? undefined : this.integerFlag(flags['max-time'], 'max-time', 0, 1, 2147483);
     const grace = this.integerFlag(flags['grace-period'], 'grace-period', 30, 1, 2147483);
     if (!scheduler.stop) throw new Error('Continuous scheduling requires a registry with graceful stop().');
+    const nativeTicker = typeof scheduler.start === 'function';
+    if (scheduler.hasPersistentRuntime?.() && !nativeTicker) throw new Error('Continuous persistent scheduling requires a registry with native start().');
     let stopped = false;
     let shutdown: Promise<void> | null = null;
     let shutdownFailure: unknown;
@@ -88,6 +94,21 @@ export class ScheduleRunCommand extends Command {
     let maxTimer: ReturnType<typeof setTimeout> | undefined;
     let wake: (() => void) | undefined;
     let lastMinute = -1;
+    let lastReportedError: string | null = null;
+    const reportResult: NonNullable<SchedulerObserver['onResult']> = (result) => {
+      if (result.skipped) return;
+      if (result.success) this.success(`${result.task}: completed in ${result.duration}ms`);
+      else {
+        this.error(`${result.task}: failed — ${result.error}`);
+        this.exitCode = 1;
+        lastReportedError = result.error ?? `Task "${result.task}" failed`;
+      }
+    };
+    const reportError = (error: Error) => {
+      this.error(`Scheduler failed: ${error.message}`);
+      this.exitCode = 1;
+      lastReportedError = error.message;
+    };
     const stop = () => {
       if (stopped) return;
       stopped = true;
@@ -101,14 +122,23 @@ export class ScheduleRunCommand extends Command {
     if (maxTime !== undefined) maxTimer = setTimeout(stop, maxTime * 1000);
     this.info('Scheduler running. Press Ctrl+C to drain.');
     try {
+      if (nativeTicker) scheduler.start!({ onResult: reportResult, onError: reportError });
       while (!stopped) {
-        const minute = Math.floor(Date.now() / 60000);
-        const results = scheduler.hasPersistentRuntime?.() || minute !== lastMinute ? await scheduler.run() : [];
-        lastMinute = minute;
-        for (const result of results) {
-          if (result.skipped) continue;
-          if (result.success) this.success(`${result.task}: completed in ${result.duration}ms`);
-          else { this.error(`${result.task}: failed — ${result.error}`); this.exitCode = 1; }
+        if (nativeTicker) {
+          const status = scheduler.getRuntimeStatus?.();
+          if (status?.lastError) {
+            this.exitCode = 1;
+            if (status.lastError !== lastReportedError) reportError(new Error(status.lastError));
+          } else lastReportedError = null;
+        } else {
+          const minute = Math.floor(Date.now() / 60000);
+          const results = minute !== lastMinute ? await scheduler.run() : [];
+          lastMinute = minute;
+          for (const result of results) {
+            if (result.skipped) continue;
+            if (result.success) this.success(`${result.task}: completed in ${result.duration}ms`);
+            else { this.error(`${result.task}: failed — ${result.error}`); this.exitCode = 1; }
+          }
         }
         if (!stopped) await new Promise<void>((resolve) => {
           const timer = setTimeout(() => { wake = undefined; resolve(); }, sleep);

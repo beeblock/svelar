@@ -19,7 +19,7 @@ class MonitorTestTask extends ScheduledTask {
   }
 }
 
-describe.sequential('ScheduleMonitor', () => {
+describe('ScheduleMonitor', () => {
   let root: string;
 
   beforeEach(async () => {

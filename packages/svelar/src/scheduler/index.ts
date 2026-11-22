@@ -94,7 +94,19 @@ export interface TaskExecutionOptions {
 export interface SchedulerOptions extends SchedulerScope {
   connectionName?: string;
   persistent?: boolean;
+  /**
+   * Persistent start() liveness writes and manual-request polling cadence.
+   * Default 5000; integer 10..60000 ms. Does not drive cron evaluation.
+   * Liveness continues during execution/drain; request polling waits for the active pass.
+   */
   heartbeatMilliseconds?: number;
+  /**
+   * start() cron evaluation phase within each minute. Default 0; integer 0..59999 ms.
+   * Also evaluates immediately at startup; run(now) ignores this timer option.
+   * The scheduledFor minute and bounded missed-run policies are unchanged.
+   */
+  evaluationOffsetMilliseconds?: number;
+  /** Maximum manual requests consumed per task per pass. Default 20; integer 1..100. */
   requestBatchSize?: number;
 }
 
@@ -106,6 +118,12 @@ export interface SchedulerRuntimeStatus {
   lastError: string | null;
   failures: number;
   draining?: boolean;
+}
+
+/** Synchronous ticker telemetry; observer failures are recorded without changing task outcomes. */
+export interface SchedulerObserver {
+  onResult?: (result: TaskResult) => void;
+  onError?: (error: Error) => void;
 }
 
 // ── Scheduled Task Base Class ──────────────────────────────
@@ -387,6 +405,9 @@ export class Scheduler {
   private heartbeatWork: Promise<void> | null = null;
   private stopWork: Promise<void> | null = null;
   private ticking = false;
+  private evaluationPending = false;
+  private registeredRuntimeTasks = new Set<string>();
+  private observer: SchedulerObserver = {};
   private runtimeStatus: SchedulerRuntimeStatus = {
     running: false,
     lastTickAt: null,
@@ -397,8 +418,9 @@ export class Scheduler {
   };
 
   constructor(options: SchedulerOptions = {}) {
-    this.options = { heartbeatMilliseconds: 5000, requestBatchSize: 20, ...options };
+    this.options = { heartbeatMilliseconds: 5000, evaluationOffsetMilliseconds: 0, requestBatchSize: 20, ...options };
     if (!Number.isInteger(this.options.heartbeatMilliseconds) || this.options.heartbeatMilliseconds! < 10 || this.options.heartbeatMilliseconds! > 60000
+      || !Number.isInteger(this.options.evaluationOffsetMilliseconds) || this.options.evaluationOffsetMilliseconds! < 0 || this.options.evaluationOffsetMilliseconds! >= 60000
       || !Number.isInteger(this.options.requestBatchSize) || this.options.requestBatchSize! < 1 || this.options.requestBatchSize! > 100) throw new Error('Invalid scheduler runtime bounds.');
     this.store = new SchedulerRuntimeStore(options, options.connectionName);
     if (options.persistent || schedulerTenantId(options) !== null) this.persistRuntimeToDatabase();
@@ -486,29 +508,34 @@ export class Scheduler {
   }
 
   /**
-   * Run all due tasks (call this every minute)
+   * Evaluate all tasks and consume pending manual requests now, independent of timer options.
+   * Call every minute when not using start().
    */
   async run(now?: Date): Promise<TaskResult[]> {
     if (!this.accepting) return [];
     const date = now ?? new Date();
     if (!Number.isFinite(date.getTime())) throw new Error('Invalid scheduler date.');
-    const work = Promise.resolve().then(() => this.performRun(date));
+    return this.trackRun(date);
+  }
+
+  private async trackRun(date: Date, manualOnly = false): Promise<TaskResult[]> {
+    if (!this.accepting) return [];
+    const work = Promise.resolve().then(() => this.performRun(date, manualOnly));
     this.activeRuns.add(work);
     try { return await work; }
     finally { this.activeRuns.delete(work); }
   }
 
-  private async performRun(date: Date): Promise<TaskResult[]> {
+  private async performRun(date: Date, manualOnly: boolean): Promise<TaskResult[]> {
     const results: TaskResult[] = [];
-    this.runtimeStatus.lastTickAt = date;
-    if (this._persistRuntime) await this.writeHeartbeat();
+    if (!manualOnly) this.runtimeStatus.lastTickAt = date;
+    if (this._persistRuntime) {
+      if (!this.runtimeStatus.running) await this.writeHeartbeat();
+      return this.performPersistentRun(date, manualOnly);
+    }
 
     for (const task of this.tasks) {
       if (!this.accepting) break;
-      if (this._persistRuntime) {
-        results.push(...await this.runPersistentTask(task, date));
-        continue;
-      }
       const expression = task.getExpression();
       if (cronMatches(expression, date, task.getTimezone()) && await this.isTaskEnabled(task.name)) {
         const result = await ApplicationContext.runIsolated({ teamId: schedulerTenantId(this.store.scope) }, () => task.executeTask());
@@ -520,13 +547,61 @@ export class Scheduler {
     return results;
   }
 
-  private async runPersistentTask(task: ScheduledTask, date: Date): Promise<TaskResult[]> {
+  private async ensureRuntimeTasks(names: string[]): Promise<void> {
+    const missing = names.filter((name) => !this.registeredRuntimeTasks.has(name));
+    await this.store.ensureTasks(missing);
+    for (const name of missing) this.registeredRuntimeTasks.add(name);
+  }
+
+  private async performPersistentRun(date: Date, manualOnly: boolean): Promise<TaskResult[]> {
+    const pending = await this.store.pendingTasks(this.tasks.map((task) => task.name));
+    const tasks = this.tasks.filter((task) => !manualOnly || pending.has(task.name));
+    if (!tasks.length) return [];
+    await this.ensureRuntimeTasks(tasks.map((task) => task.name));
+    const snapshots = await this.store.taskSnapshots(tasks.map((task) => task.name));
+    const minute = Math.floor(date.getTime() / 60000) * 60000;
+    const checkpoints = new Map<string, { names: string[]; data: { next_run_at?: number | null; state?: string } }>();
+    const candidates: ScheduledTask[] = [];
+    for (const task of tasks) {
+      const snapshot = snapshots.get(this.store.key(task.name));
+      if (!snapshot) throw new Error(`Scheduler runtime missing for task "${task.name}".`);
+      const { settings, runtime } = snapshot;
+      const disabled = settings?.enabled === false;
+      const timezone = settings?.timezone ?? this.store.scope.timezone ?? task.getTimezone();
+      const slots = disabled || manualOnly ? [] : this.dueSlots(task, minute, runtime.last_checked_at === null ? null : Number(runtime.last_checked_at), timezone, settings?.missedRun ?? task.getMissedRunPolicy());
+      if (!disabled && (slots.length || pending.has(task.name))) {
+        candidates.push(task);
+      } else if (!manualOnly) {
+        const next = disabled ? null : nextCronDate(task.getExpression(), new Date(minute), timezone).getTime();
+        const data: { next_run_at?: number | null; state?: string } = {};
+        if (runtime.next_run_at === null || Number(runtime.next_run_at) !== next) data.next_run_at = next;
+        if (disabled) data.state = 'disabled';
+        else if (runtime.state === 'disabled') data.state = 'idle';
+        const key = JSON.stringify(data);
+        const group = checkpoints.get(key) ?? { names: [], data };
+        group.names.push(task.name);
+        checkpoints.set(key, group);
+      }
+    }
+    // Tasks sharing checkpoint changes use one fenced write, not one invocation lease each.
+    for (const { names, data } of checkpoints.values()) {
+      if (!this.accepting) break;
+      await this.store.checkpointTasks(names, minute, { ...data, heartbeat_at: Date.now() });
+    }
+    const results: TaskResult[] = [];
+    for (const task of candidates) {
+      if (!this.accepting) break;
+      results.push(...await this.runPersistentTask(task, date, manualOnly));
+    }
+    return results;
+  }
+
+  private async runPersistentTask(task: ScheduledTask, date: Date, manualOnly: boolean): Promise<TaskResult[]> {
     const lease = await SchedulerLock.acquireLease(this.store.key(task.name), task.getLockTtlMinutes(), this.options.connectionName);
     if (!lease) return [{ task: task.name, success: true, skipped: true, duration: 0, timestamp: new Date() }];
     let activeRequest: string | null = null;
     const results: TaskResult[] = [];
     try {
-      await this.store.ensureTask(task.name);
       await this.store.updateTask(task.name, { owner: lease.owner, lease_until: lease.expiresAt, heartbeat_at: Date.now() });
       return await lease.run(async (signal) => {
         const setting = await this.store.settings(task.name);
@@ -534,12 +609,12 @@ export class Scheduler {
         const minute = Math.floor(date.getTime() / 60000) * 60000;
         const next = nextCronDate(task.getExpression(), new Date(minute), timezone).getTime();
         if (setting?.enabled === false) {
-          await this.store.updateTask(task.name, { last_checked_at: minute, next_run_at: null, state: 'disabled' }, lease.owner);
+          await this.store.updateTask(task.name, { ...(!manualOnly ? { last_checked_at: minute } : {}), next_run_at: null, state: 'disabled' }, lease.owner);
           return results;
         }
         const runtime = (await this.store.task(task.name))!;
         const policy = setting?.missedRun ?? task.getMissedRunPolicy();
-        const slots = this.dueSlots(task, minute, runtime.last_checked_at === null ? null : Number(runtime.last_checked_at), timezone, policy);
+        const slots = manualOnly ? [] : this.dueSlots(task, minute, runtime.last_checked_at === null ? null : Number(runtime.last_checked_at), timezone, policy);
         const execute = async (scheduledFor?: Date, requestId?: string, actor?: string | null, correlationId?: string | null) => {
           signal.throwIfAborted();
           await lease.renew();
@@ -565,7 +640,7 @@ export class Scheduler {
           await execute(new Date(slot));
           await this.store.updateTask(task.name, { last_checked_at: slot }, lease.owner);
         }
-        if (this.accepting) await this.store.updateTask(task.name, { last_checked_at: Math.max(minute, Number(runtime.last_checked_at ?? minute)), next_run_at: next }, lease.owner);
+        if (this.accepting && !manualOnly) await this.store.updateTask(task.name, { last_checked_at: Math.max(minute, Number(runtime.last_checked_at ?? minute)), next_run_at: next }, lease.owner);
         for (const request of await this.store.pending(task.name, this.options.requestBatchSize!)) {
           if (!this.accepting) break;
           signal.throwIfAborted();
@@ -601,10 +676,14 @@ export class Scheduler {
   }
 
   /**
-   * Start the scheduler, aligned to the top of each minute like crontab.
+   * Evaluate immediately, then once per minute at evaluationOffsetMilliseconds.
+   * Persistent heartbeat/manual polling remains independent of cron and active task execution.
+   * Settings are refreshed each evaluation and before consuming pending requests.
+   * Manual-only polls never consume cron slots or advance their durable cursor.
    */
-  start(): void {
+  start(observer: SchedulerObserver = {}): void {
     if (this.timer) return;
+    this.observer = observer;
     this.accepting = true;
     this.stopWork = null;
     this.runtimeStatus.running = true;
@@ -612,12 +691,10 @@ export class Scheduler {
 
     if (this._persistRuntime) {
       this.heartbeatTimer = setInterval(() => {
-        if (this.heartbeatWork) return;
-        this.heartbeatWork = this.writeHeartbeat().catch((error) => this.recordFailure(error)).finally(() => { this.heartbeatWork = null; });
+        this.publishHeartbeat();
+        void this.runTick(true);
       }, this.options.heartbeatMilliseconds);
-      this.timer = setInterval(() => { void this.runTick(); }, this.options.heartbeatMilliseconds);
-      void this.runTick();
-      return;
+      this.publishHeartbeat();
     }
 
     // Run immediately for the current minute
@@ -625,7 +702,7 @@ export class Scheduler {
 
     // Wait until the next minute boundary, then tick every 60s
     const now = Date.now();
-    const msUntilNextMinute = 60_000 - (now % 60_000);
+    const msUntilNextMinute = 60_000 - ((now - this.options.evaluationOffsetMilliseconds! + 60_000) % 60_000);
 
     this.timer = setTimeout(() => {
       void this.runTick();
@@ -637,12 +714,18 @@ export class Scheduler {
     console.log(`[Scheduler] Started with ${this.tasks.length} task(s). Next tick in ${Math.round(msUntilNextMinute / 1000)}s.`);
   }
 
+  private publishHeartbeat(): void {
+    if (this.heartbeatWork) return;
+    this.heartbeatWork = this.writeHeartbeat().catch((error) => this.recordFailure(error)).finally(() => { this.heartbeatWork = null; });
+  }
+
   /**
    * Stop the scheduler and release all distributed locks held by this process.
    */
   async stop(): Promise<void> {
     if (this.stopWork) return this.stopWork;
     this.accepting = false;
+    this.evaluationPending = false;
     this.runtimeStatus.draining = true;
     this.stopWork = this.drain();
     return this.stopWork;
@@ -738,6 +821,7 @@ export class Scheduler {
     const index = this.tasks.findIndex((t) => t.name === name);
     if (index !== -1) {
       this.tasks.splice(index, 1);
+      this.registeredRuntimeTasks.delete(name);
       return true;
     }
     return false;
@@ -748,6 +832,7 @@ export class Scheduler {
    */
   clear(): void {
     this.tasks = [];
+    this.registeredRuntimeTasks.clear();
   }
 
   private async addToHistory(result: TaskResult): Promise<void> {
@@ -782,36 +867,48 @@ export class Scheduler {
     return row ? !!row.enabled : true;
   }
 
-  private async runTick(): Promise<void> {
-    if (this.ticking || !this.accepting) return;
+  private async runTick(manualOnly = false): Promise<void> {
+    if (!this.accepting) return;
+    if (this.ticking) {
+      if (!manualOnly) this.evaluationPending = true;
+      return;
+    }
     this.ticking = true;
     const tickAt = new Date();
-    this.runtimeStatus.lastTickAt = tickAt;
 
     try {
-      const results = await this.run(tickAt);
+      const results = await (manualOnly ? this.trackRun(tickAt, true) : this.run(tickAt));
       const failed = results.find((result) => !result.success);
-      if (failed) this.recordFailure(new Error(failed.error ?? `Task "${failed.task}" failed`));
-      else {
+      if (failed) this.recordFailure(new Error(failed.error ?? `Task "${failed.task}" failed`), false);
+      else if (!manualOnly || results.length) {
         this.runtimeStatus.lastSuccessAt = new Date();
         this.runtimeStatus.lastErrorAt = null;
         this.runtimeStatus.lastError = null;
         this.runtimeStatus.failures = 0;
       }
+      for (const result of results) this.notifyObserver(() => this.observer.onResult?.(result));
     } catch (error: unknown) {
       this.recordFailure(error);
     } finally {
       this.ticking = false;
-      if (this._persistRuntime) {
-        try { await this.writeHeartbeat(); } catch (error) { this.recordFailure(error); }
+      if (this.evaluationPending && this.accepting) {
+        this.evaluationPending = false;
+        void this.runTick();
       }
     }
   }
 
-  private recordFailure(error: unknown): void {
+  private notifyObserver(callback: () => void): void {
+    try { callback(); }
+    catch (error) { this.recordFailure(error, false); }
+  }
+
+  private recordFailure(error: unknown, notify = true): void {
+    const failure = error instanceof Error ? error : new Error(String(error));
     this.runtimeStatus.lastErrorAt = new Date();
-    this.runtimeStatus.lastError = error instanceof Error ? error.message : String(error);
+    this.runtimeStatus.lastError = failure.message;
     this.runtimeStatus.failures += 1;
+    if (notify) this.notifyObserver(() => this.observer.onError?.(failure));
   }
 
   private async writeHeartbeat(state?: string): Promise<void> {

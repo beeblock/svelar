@@ -21,7 +21,7 @@ import { ApplicationContext } from '../src/support/Context.js';
 const minute = new Date('2026-10-14T12:00:00Z');
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-describe.sequential('Production scheduler durable runtime', () => {
+describe('Production scheduler durable runtime', { concurrent: false }, () => {
   let root: string;
   const workers: Scheduler[] = [];
   beforeEach(async () => {

@@ -134,7 +134,7 @@ schedule() {
 }
 ```
 
-The `scheduler_locks` table is managed by Svelar core migrations. If the lock table or database connection is unavailable, a `preventOverlap()` task fails instead of running without a distributed lock. Persistent mode leases every task, even without `.preventOverlap()`. Losing ownership aborts the task's execution signal and prevents the old owner from recording a successful completion or releasing a successor's lease. Tasks must observe that signal before further side effects; a lease cannot stop uncooperative application code.
+The `scheduler_locks` table is managed by Svelar core migrations. If the lock table or database connection is unavailable, a `preventOverlap()` task fails instead of running without a distributed lock. Persistent mode leases every executing task, even without `.preventOverlap()`, but does not acquire or renew invocation leases for idle tasks. Losing ownership aborts the task's execution signal and prevents the old owner from recording a successful completion or releasing a successor's lease. Tasks must observe that signal before further side effects; a lease cannot stop uncooperative application code.
 
 ### onSuccess()
 
@@ -216,6 +216,37 @@ npx svelar migrate
 
 Core migrations manage `scheduler_locks`, `scheduled_task_runs`, `scheduled_task_settings`, `scheduler_runtime` and `scheduler_requests`. The focused settings upgrade preserves existing global enable/disable records, including disabled tasks. Missing tables and database errors fail closed; runtime code never creates tables.
 
+### Heartbeat And Minute Evaluation
+
+`schedule:work`, continuous `schedule:run`, and direct `Scheduler.start()` use the native ticker. It evaluates immediately at startup, then once per minute at the configured phase. A separate persistent heartbeat publishes process liveness and cheaply probes durable manual requests; it does not evaluate every task's cron expression on each pulse.
+
+Configure these options on the existing scheduler returned by your registry:
+
+```typescript
+const scheduler = new Scheduler({
+  persistent: true,
+  heartbeatMilliseconds: 5000,
+  evaluationOffsetMilliseconds: 15000,
+  requestBatchSize: 20,
+});
+```
+
+| Option | Default | Bounds | Effect |
+| --- | --- | --- | --- |
+| `heartbeatMilliseconds` | `5000` | Integer `10..60000` ms | Process liveness and manual-request polling cadence in persistent mode. |
+| `evaluationOffsetMilliseconds` | `0` | Integer `0..59999` ms | Phase within each minute; `15000` evaluates at `:15`, independently of heartbeat cadence. |
+| `requestBatchSize` | `20` | Integer `1..100` | Maximum manual requests consumed per eligible task per pass, not a global limit. |
+
+The evaluation interval is fixed at 60,000 ms. A phase does not delay the initial startup evaluation or change the cron expression, timezone, `scheduledFor` minute, or missed-run bounds. If a pass spans a minute boundary, the next evaluation waits for active work and uses the then-current time with the existing `skip`, `latest`, or `catch-up` policy. Choose phases in trusted application configuration to spread independent worker groups; the CLI starts the exact scoped, filtered registry instance and does not rebuild its task catalog.
+
+Task metadata is registered in bulk. Each evaluation reads registered task settings and runtime state together, then acquires leases only for enabled tasks with a due slot or eligible manual request. Under-lease settings/cursor checks and owner-token request claims remain authoritative across competing workers. Idle checkpoints are batched where values match and cannot move a newer cursor backwards or overwrite an active lease.
+
+An idle persistent pulse uses one process heartbeat write and one registered-task request probe, independent of catalog size. Only tasks with pending or expired-running requests need additional settings/state reads and invocation work. Requests are rechecked for enablement and claimed durably; manual-only polls never consume cron slots or advance their cursor. Polling waits for the active pass, so request latency can exceed one heartbeat during long work. Process heartbeats and task/request lease renewal continue during execution and graceful drain.
+
+`await scheduler.run(now)` remains an explicit full evaluation, including pending requests, regardless of timer options; `schedule:run --once` calls it once and drains without starting timers. Do not recreate a heartbeat loop around `run()`. Existing apps that increased heartbeat intervals or wrapped `run()` to spread cron evaluation can instead configure heartbeat and phase independently, then remove those app-owned wrappers after verifying their scope and missed-run policy.
+
+The CLI owns `start()` and `stop()`; do not start timers inside `createScheduler()`. Custom launchers can call `start({ onResult, onError })` once for synchronous result/error telemetry. Observer failures are recorded in runtime status without changing persisted task outcomes. The CLI retains a nonzero exit status after a native task or storage failure even if a later pass succeeds. A custom persistent registry wrapper must forward native `start(observer)` and graceful `stop()`; a run-only persistent daemon rejects instead of falling back to expensive full evaluations. Run-only non-persistent registries retain their legacy once-per-minute fallback.
+
 ### Tenant Scope And Configuration Profiles
 
 A scheduler captures its tenant and connection scope at construction. It never infers tenant scope from the current web request. Build separate instances with trusted configuration, register the same task catalog in the web process and worker, and use the same shared database:
@@ -255,7 +286,7 @@ await scheduler.configureTask('cleanup-expired-sessions', { enabled: false });
 await scheduler.configureTask('cleanup-expired-sessions', { timezone: null });
 ```
 
-The worker reads persisted controls on its next poll. Changes survive restart; disabling does not forcibly interrupt an already-running task. Pending requests remain pending while disabled, and new requests for a disabled task reject. Re-enabling does not replay the entire disabled interval.
+The worker refreshes persisted controls on each minute evaluation and before consuming pending requests on a heartbeat poll. Changes survive restart; disabling does not forcibly interrupt an already-running task. Pending requests remain pending while disabled, and new requests for a disabled task reject. Observed disabled minutes advance the shared checked cursor, so re-enabling does not replay those minutes. A disable/re-enable entirely between observations cannot retroactively mark an unobserved interval as disabled.
 
 ### Missed Runs
 
@@ -297,7 +328,7 @@ Run the scheduler in development:
 npx svelar schedule:work
 ```
 
-This boots `src/app.ts`, then loads the scheduler registry from `src/lib/shared/scheduler/index.ts` in DDD apps or `src/lib/scheduler/index.ts` in flat apps. `schedule:work` and continuous `schedule:run` use the same worker implementation. Persistent workers poll for durable requests (default 1,000 ms) and deduplicate scheduled minutes through shared state; legacy registries run due checks once per minute.
+This boots `src/app.ts`, then loads the scheduler registry from `src/lib/shared/scheduler/index.ts` in DDD apps or `src/lib/scheduler/index.ts` in flat apps. `schedule:work` and continuous `schedule:run` use the same native ticker implementation. Persistent workers publish liveness and poll durable requests at `heartbeatMilliseconds` (default 5,000 ms), evaluate cron once per minute at `evaluationOffsetMilliseconds`, and deduplicate scheduled slots through shared state. Custom run-only non-persistent registries retain once-per-minute due checks.
 
 Run `npx svelar migrate` before starting the scheduler in any app that calls `persistToDatabase()`. If the `scheduled_task_runs` table is unavailable, the scheduler run fails instead of silently dropping history.
 
@@ -327,7 +358,7 @@ npx svelar schedule:list --json
 npx svelar schedule:work --sleep=1000 --max-time=3600 --grace-period=30
 ```
 
-`--sleep` accepts 10-60,000 milliseconds. `--max-time` begins draining after a positive number of seconds; omitting it runs until a signal. `--grace-period` is a positive warning interval in seconds, not a force-kill deadline. `SIGINT`, `SIGTERM`, `--max-time` and `await scheduler.stop()` stop accepting work and wait for the active handler and hooks. Leases stay renewed until actual completion, even beyond the grace period. Configure the process manager's termination timeout accordingly.
+`--sleep` accepts 10-60,000 milliseconds (default 1,000) and controls CLI status supervision, not the native heartbeat or cron phase. Only run-only non-persistent registries use it as their legacy loop's sleep. `--max-time` begins draining after a positive number of seconds; omitting it runs until a signal. `--grace-period` is a positive warning interval in seconds, not a force-kill deadline. `SIGINT`, `SIGTERM`, `--max-time` and `await scheduler.stop()` stop accepting work and wait for the active handler and hooks. Leases stay renewed until actual completion, even beyond the grace period. Configure the process manager's termination timeout accordingly.
 
 Lease renewal failures surface as errors instead of false successful completion. Cooperative handlers should call `this.getExecutionContext()?.signal.throwIfAborted()` before further external writes and pass the signal to cancellation-aware clients. Draining itself does not abort healthy work.
 
@@ -354,7 +385,7 @@ Or trigger it from a system cron job:
 
 ### Multiple Instances & Distributed Locking
 
-Persistent mode acquires renewable database leases for every task and guards request claims with an invocation owner token. For a legacy registry, explicitly use `preventOverlap()` if several instances can run the same task:
+Persistent mode acquires renewable database leases only for tasks with due slots or eligible manual requests and guards request claims with an invocation owner token. Idle tasks do not acquire invocation leases. For a legacy registry, explicitly use `preventOverlap()` if several instances can run the same task:
 
 ```typescript
 schedule() {
