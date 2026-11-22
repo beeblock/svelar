@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyApiFetchMigration, planApiFetchMigration } from '../src/cli/ApiFetchMigration';
 import { UpdateCommand } from '../src/cli/commands/UpdateCommand';
-import { Cli } from '../src/cli/CLI';
+import { Cli } from '../src/cli/Cli.js';
 
 const approval = vi.hoisted(() => ({ answer: 'yes' }));
 vi.mock('node:readline', () => ({ createInterface: () => ({ question: (_prompt: string, callback: (answer: string) => void) => callback(approval.answer), close: () => {} }) }));
