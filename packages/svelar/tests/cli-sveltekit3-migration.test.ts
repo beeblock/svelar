@@ -374,6 +374,7 @@ describe('opt-in SvelteKit 3 plan/apply', () => {
       .replace('sveltekit-superforms@^2.31.0', 'sveltekit-superforms@^3.1.0') + ' && svelte-kit sync';
     expected.imports = { '#lib': './src/lib/index.js', '#lib/*': './src/lib/*' };
     delete expected.overrides['@sveltejs/kit'];
+    expected.overrides['runed@>=0.35.1 <0.38.0'] = '^0.38.0';
     expect(JSON.parse(read('package.json'))).toEqual(expected);
     expect(read('package.json')).toContain('"exceljs": {\n      "uuid": "^11.1.1"\n    }');
     expect(read('package.json')).toContain('"esbuild@>=0.27.3 <0.28.1": "^0.28.2"');
@@ -644,6 +645,82 @@ describe('opt-in SvelteKit 3 plan/apply', () => {
     expect(pkg.dependencies.formsnap).toBe('^2.0.1');
     expect(pkg.devDependencies['@sveltejs/adapter-node']).toBeUndefined();
     expect(pkg.devDependencies['sveltekit-superforms']).toBeUndefined();
+  });
+});
+
+describe('reviewed narrow Runed UI compatibility override', () => {
+  const key = 'runed@>=0.35.1 <0.38.0';
+
+  it.each(['bits-ui', '@shadcn-svelte/primitives', 'svelte-toolbelt', 'runed-35', 'runed-37'])('adds only the reviewed range for %s and is idempotent', async (dependency) => {
+    const pkg = JSON.parse(packageJson());
+    if (dependency === 'runed-35' || dependency === 'runed-37') pkg.dependencies.runed = dependency === 'runed-35' ? '^0.35.1' : '~0.37.1';
+    else pkg.dependencies[dependency] = dependency === '@shadcn-svelte/primitives' ? '^0.0.1' : '^2.22.0';
+    const before = structuredClone(pkg.dependencies);
+    write('package.json', JSON.stringify(pkg, null, 2) + '\n');
+    const plan = await planSvelteKit3Migration(root);
+    expect(plan.errors).toEqual([]);
+    applySvelteKit3Migration(plan, { confirmed: true });
+    const after = JSON.parse(read('package.json'));
+    expect(after.overrides).toEqual({ [key]: '^0.38.0' });
+    expect(after.overrides.runed).toBeUndefined();
+    if (before.runed) expect(after.dependencies.runed).toBe(before.runed);
+    expect(plan.guide).toContain('not 0.25 or a global Runed replacement');
+    expect((await planSvelteKit3Migration(root)).edits).toEqual([]);
+  });
+
+  it.each([false, true])('does not replace the 0.25 line (UI dependency=%s)', async (ui) => {
+    const pkg = JSON.parse(packageJson());
+    pkg.dependencies.runed = '^0.25.0';
+    if (ui) pkg.dependencies['bits-ui'] = '^2.22.0';
+    write('package.json', JSON.stringify(pkg, null, 2) + '\n');
+    const plan = await planSvelteKit3Migration(root);
+    expect(plan.errors).toEqual([]);
+    applySvelteKit3Migration(plan, { confirmed: true });
+    const after = JSON.parse(read('package.json'));
+    expect(after.dependencies.runed).toBe('^0.25.0');
+    expect(after.overrides).toEqual(ui ? { [key]: '^0.38.0' } : undefined);
+    expect(after.overrides?.runed).toBeUndefined();
+  });
+
+  it.each([
+    {},
+    { '@sveltejs/kit': { cookie: '^0.7.2' } },
+    { '@sveltejs/kit': { cookie: '^0.7.2' }, custom: '^1.2.3' },
+    { custom: '^1.2.3', '@sveltejs/kit': { cookie: '^0.7.2' } },
+    { '@sveltejs/kit': { cookie: '^0.7.2' }, '@sveltejs/kit@^2': { cookie: '^0.7.2' } },
+    { [key]: '^0.38.0', '@sveltejs/kit': { cookie: '^0.7.2' }, custom: '^1.2.3' },
+  ])('composes additions with exact cookie removal without overlapping object edits: %j', async (overrides) => {
+    const pkg = JSON.parse(packageJson({ overrides }));
+    pkg.dependencies['bits-ui'] = '^2.22.0';
+    const original = JSON.stringify(pkg);
+    write('package.json', original);
+    const plan = await planSvelteKit3Migration(root);
+    expect(plan.errors).toEqual([]);
+    applySvelteKit3Migration(plan, { confirmed: true });
+    const expected = Object.fromEntries(Object.entries(overrides).filter(([name]) => !name.startsWith('@sveltejs/kit')));
+    expect(JSON.parse(read('package.json')).overrides).toEqual({ ...expected, [key]: '^0.38.0' });
+    if ('custom' in overrides) expect(read('package.json')).toContain('"custom":"^1.2.3"');
+    expect(read('package.json.sveltekit3.bak')).toBe(original);
+    expect((await planSvelteKit3Migration(root)).edits).toEqual([]);
+  });
+
+  it.each([
+    { overrides: { runed: '^0.37.1' } },
+    { overrides: { 'runed@^0.37.1': '^0.38.0' } },
+    { overrides: { [key]: '^0.37.1' } },
+    { overrides: { custom: { runed: '^0.37.1' } } },
+    { resolutions: { runed: '^0.38.0' } },
+    { pnpm: { overrides: { runed: '^0.38.0' } } },
+  ])('blocks custom Runed override/resolution policies without changing them: %j', async (custom) => {
+    const pkg = JSON.parse(packageJson(custom));
+    pkg.dependencies['bits-ui'] = '^2.22.0';
+    const original = JSON.stringify(pkg, null, 2) + '\n';
+    write('package.json', original);
+    const plan = await planSvelteKit3Migration(root);
+    expect(plan.errors.join('\n')).toContain('constrains the migration toolchain');
+    expect(() => applySvelteKit3Migration(plan, { confirmed: true })).toThrow('preflight failed');
+    expect(read('package.json')).toBe(original);
+    expect(backupFiles()).toEqual([]);
   });
 });
 

@@ -153,6 +153,10 @@ describe('Generated app dependency compatibility', () => {
     expect(root.overrides['@sveltejs/kit']).toEqual({ 'cookie@^0.6.0': '^0.7.2' });
     expect(root.overrides['@sveltejs/kit@^2']).toBeUndefined();
     expect(app.overrides.exceljs).toEqual({ uuid: '^11.1.1' });
+    expect(app.overrides['runed@>=0.35.1 <0.38.0']).toBe('^0.38.0');
+    expect(app.overrides.runed).toBeUndefined();
+    for (const version of ['0.35.1', '0.36.0', '0.37.1']) expect(semver.satisfies(version, '>=0.35.1 <0.38.0')).toBe(true);
+    for (const version of ['0.25.0', '0.34.0', '0.38.0']) expect(semver.satisfies(version, '>=0.35.1 <0.38.0')).toBe(false);
     expect(app.overrides['esbuild@>=0.27.3 <0.28.1']).toBe('^0.28.2');
   });
 

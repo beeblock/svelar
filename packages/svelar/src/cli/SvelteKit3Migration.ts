@@ -21,6 +21,8 @@ const VERSIONS: Readonly<Record<string, string>> = {
 };
 const OPTIONAL_PACKAGES = new Set(['sveltekit-superforms', '@sveltejs/adapter-node', 'formsnap']);
 const NODE_RANGE = '^22.17.0 || ^24.0.0 || >=26.0.0';
+const RUNED_OVERRIDE = 'runed@>=0.35.1 <0.38.0';
+const RUNED_TARGET = '^0.38.0';
 const UI_INSTALL_PREFIX = 'npm exec --package shadcn-svelte@latest -- shadcn-svelte add --all --yes && npm install --save-prod ';
 const LEGACY_UI_PACKAGES = [
   ['@internationalized/date', '^3.12.4'], ['bits-ui', '^2.19.5'], ['embla-carousel-svelte', '^8.6.0'],
@@ -173,11 +175,11 @@ function jsonSource(ts: Ts, path: string, content: string, comments = false): {
   }
   return { source, node: statement.expression, value };
 }
-function addProperties(source: TypeScript.SourceFile, node: TypeScript.ObjectLiteralExpression, values: Record<string, unknown>, tokens: Token[]): void {
+function addProperties(source: TypeScript.SourceFile, node: TypeScript.ObjectLiteralExpression, values: Record<string, unknown>, tokens: Token[], remaining = node.properties.length): void {
   const entries = Object.entries(values);
   if (!entries.length) return;
   tokens.push({ start: node.getStart(source) + 1, end: node.getStart(source) + 1,
-    text: `\n${entries.map(([key, value]) => `  ${JSON.stringify(key)}: ${JSON.stringify(value)}`).join(',\n')}${node.properties.length ? ',' : ''}\n` });
+    text: `\n${entries.map(([key, value]) => `  ${JSON.stringify(key)}: ${JSON.stringify(value)}`).join(',\n')}${remaining ? ',' : ''}\n` });
 }
 function version(value: string): number[] | undefined {
   const match = /^[~^]?(\d+)\.(\d+)\.(\d+)$/.exec(value);
@@ -212,8 +214,19 @@ function removeProperties(
   }
 }
 
-function overrideTokens(ts: Ts, source: TypeScript.SourceFile, node: TypeScript.ObjectLiteralExpression, tokens: Token[]): void {
-  const constrained = [...Object.keys(VERSIONS), 'cookie'];
+function needsRunedCompatibility(metadata: Record<string, unknown>): boolean {
+  return ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'].some((section) => {
+    const dependencies = metadata[section];
+    if (!object(dependencies)) return false;
+    if (['bits-ui', '@shadcn-svelte/primitives', 'svelte-toolbelt'].some((name) => Object.hasOwn(dependencies, name))) return true;
+    const current = typeof dependencies.runed === 'string' ? version(dependencies.runed) : undefined;
+    return !!current && !older(current, [0, 35, 1]) && older(current, [0, 38, 0]);
+  });
+}
+
+function overrideTokens(ts: Ts, source: TypeScript.SourceFile, node: TypeScript.ObjectLiteralExpression, tokens: Token[], needsRuned: boolean): boolean {
+  const constrained = [...Object.keys(VERSIONS), 'cookie', 'runed'];
+  let hasOverrides = false;
   for (const [section, property] of properties(ts, node)) {
     if (!['overrides', 'resolutions', 'pnpm'].includes(section)) continue;
     if (section !== 'overrides') {
@@ -223,8 +236,14 @@ function overrideTokens(ts: Ts, source: TypeScript.SourceFile, node: TypeScript.
       continue;
     }
     if (!ts.isObjectLiteralExpression(property.initializer)) throw new Error('package.json: overrides must be an object');
+    hasOverrides = true;
+    let hasRuned = false;
     const removed = new Set<TypeScript.PropertyAssignment>();
     for (const [name, override] of properties(ts, property.initializer)) {
+      if (name === RUNED_OVERRIDE && ts.isStringLiteral(override.initializer) && override.initializer.text === RUNED_TARGET) {
+        hasRuned = true;
+        continue;
+      }
       if (['@sveltejs/kit', '@sveltejs/kit@^2'].includes(name) && ts.isObjectLiteralExpression(override.initializer)) {
         const values = properties(ts, override.initializer);
         const cookie = values.get('cookie')?.initializer;
@@ -238,7 +257,13 @@ function overrideTokens(ts: Ts, source: TypeScript.SourceFile, node: TypeScript.
       }
     }
     removeProperties(ts, source, property.initializer, removed, tokens);
+    if (needsRuned && !hasRuned) {
+      // Cookie-only objects become empty: the inserted property must not leave a trailing comma.
+      addProperties(source, property.initializer, { [RUNED_OVERRIDE]: RUNED_TARGET }, tokens,
+        property.initializer.properties.length - removed.size);
+    }
   }
+  return needsRuned && !hasOverrides;
 }
 
 function packageTokens(ts: Ts, content: string): Token[] {
@@ -246,7 +271,9 @@ function packageTokens(ts: Ts, content: string): Token[] {
   const tokens: Token[] = [];
   const root = properties(ts, node);
   const additions: Record<string, unknown> = {};
-  overrideTokens(ts, source, node, tokens);
+  if (overrideTokens(ts, source, node, tokens, needsRunedCompatibility(value))) {
+    additions.overrides = { [RUNED_OVERRIDE]: RUNED_TARGET };
+  }
   const scripts = root.get('scripts')?.initializer;
   if (scripts && ts.isObjectLiteralExpression(scripts)) {
     const ui = properties(ts, scripts).get('ui:install')?.initializer;
@@ -522,6 +549,7 @@ export async function planSvelteKit3Migration(directory: string): Promise<Svelte
   const manual = new Set<string>([
     'Review source/API semantics and Superforms 3 compatibility using the checklist above; no test/build success is implied.',
     'Review custom configs, scripts, deployment Node versions, service workers and historical migrations manually.',
+    'Review custom Superforms 3 SPA handlers using validateForm({ update: true }): deferred first-error focus may run after validation resolves and steal focus during fast corrections. Existing handlers are not codemodded. Use the public per-call focusOnError: false option where needed, await rendered inline errors and input unlock, then focus the first invalid field predictably. Test fast corrections and keyboard navigation; keep shared schemas, validation and inline errors enabled rather than disabling validation to avoid focus changes.',
     'npm only: after approving the package.json major-version edits, an old adapter-node 5 / Superforms 2 lockfile and installed dependency tree may cause ERESOLVE. With explicit owner approval, stop app processes and preserve the exact old package-lock.json plus the whole app-owned node_modules tree by renaming both into a private backup directory outside the app; then run normal npm install to resolve a fresh graph. Retain those backups for reviewed rollback. NEVER use --force or --legacy-peer-deps, delete user data, or move/delete shared package stores or borrowed dependency trees. Other package managers require their own reviewed procedure. The CLI never installs packages or performs this recovery automatically.',
     'Review existing URL/query helpers after migration: Kit 3 page.url is read-only. Helpers that only read may use a structural ReadableUrl type with readonly href: string and readonly searchParams exposing get(name: string): string | null. Clone mutable URLs with new URL(page.url.href), not new URL(page.url), before changing query parameters. Preserve custom helper behavior and review callers manually; custom URL source is not codemodded.',
     "Vitest: preserve and manually update the old Kit 2 vitest.config. Import sveltekit from @sveltejs/kit/vite and vitePreprocess from @sveltejs/vite-plugin-svelte; configure plugins with sveltekit({ preprocess: vitePreprocess(), alias: { '$lib': 'src/lib', '$lib/*': 'src/lib/*' } }). Include 'sveltekit-superforms' in test.server.deps.inline while retaining existing inline dependencies and test settings, so Superforms 3 resolves the real $app/server side-effect marker through the Kit plugin. Do not alias or mock $app/server with an empty shim. Run the real app tests only after owner approval; this configuration change is not automated or certified.",
@@ -546,6 +574,9 @@ export async function planSvelteKit3Migration(directory: string): Promise<Svelte
     const pkg = read('package.json');
     if (!pkg.original) throw new Error('package.json is required');
     const metadata = jsonSource(ts, 'package.json', pkg.original.toString('utf8')).value;
+    if (needsRunedCompatibility(metadata)) {
+      manual.add(`Reviewed UI compatibility constraint: npm overrides[${JSON.stringify(RUNED_OVERRIDE)}] = ${JSON.stringify(RUNED_TARGET)} targets only the reviewed Runed range, not 0.25 or a global Runed replacement. Verify the resolved UI peer graph and review any runed/kit imports before release; customized override/resolution policies block this migration.`);
+    }
     if (object(metadata.scripts)) {
       const ui = metadata.scripts['ui:install'];
       if (ui !== undefined && ui !== LEGACY_UI_SCRIPT && ui !== UPDATED_UI_SCRIPT) {

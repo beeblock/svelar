@@ -133,6 +133,7 @@ export class NewCommandTemplates {
 						...validationDependencies,
 					},
 					overrides: {
+						"runed@>=0.35.1 <0.38.0": "^0.38.0",
 						exceljs: { uuid: "^11.1.1" },
 						"esbuild@>=0.27.3 <0.28.1": "^0.28.2",
 					},
