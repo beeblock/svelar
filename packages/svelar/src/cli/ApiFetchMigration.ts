@@ -161,7 +161,8 @@ export function isBrowserCall(ts: Ts, unit: ArchitectureSourceUnit, call: TypeSc
   while (node.parent) {
     const parent = node.parent;
     if (ts.isIfStatement(parent) && parent.thenStatement === node && ts.isIdentifier(parent.expression)
-      && importedName(ts, unit, parent.expression, '$app/environment', 'browser')) return true;
+      && (importedName(ts, unit, parent.expression, '$app/environment', 'browser')
+        || importedName(ts, unit, parent.expression, '$app/env', 'browser'))) return true;
     if ((ts.isArrowFunction(node) || ts.isFunctionExpression(node)) && ts.isCallExpression(parent)
       && ts.isIdentifier(parent.expression) && importedName(ts, unit, parent.expression, 'svelte', 'onMount')) return true;
     if (unit.context === 'instance') {

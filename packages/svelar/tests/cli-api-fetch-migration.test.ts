@@ -105,8 +105,8 @@ describe('apiFetch AST migration', () => {
     expect(plan.edits[0].updated.toString()).toContain("apiFetch /* keep callee */ ('/api/save', { showToast: false, headers: { Accept: '*/*' }, /* keep options */ method: 'DELETE'");
   });
 
-  it('migrates browser-guarded and aliased onMount calls but leaves SSR and else branches alone', async () => {
-    write('src/lib/browser.ts', `import { browser as isBrowser } from '$app/environment';
+  it.each(['$app/environment', '$app/env'])('migrates %s browser guards and aliased onMount calls but leaves SSR and else branches alone', async (module) => {
+    write('src/lib/browser.ts', `import { browser as isBrowser } from '${module}';
 import { onMount as mounted } from 'svelte';
 if (isBrowser) { fetch('/api/browser', {method:'POST'}); } else { fetch('/api/server', {method:'POST'}); }
 mounted(() => { window.fetch('/api/mounted', {method:'PATCH'}); });
