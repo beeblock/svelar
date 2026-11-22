@@ -266,6 +266,8 @@ RUN npm prune --omit=dev --ignore-scripts
 
 The production target runs adapter-node through dumb-init as user 1001. It includes the built server, production dependencies, source bootstrap, database configuration, `tsconfig.json` and `.svelte-kit` for CLI/Jiti execution. Do not assume a built HTTP server alone can bootstrap migrations or workers.
 
+For Kit 3, preserve the genuine generated `$app` configuration/type artifacts from the builder through dependency pruning and into production so `tsconfig.json` can still resolve `$app/tsconfig` for CLI/Jiti bootstrap. Do not fabricate replacement configs or retain the build-only SvelteKit/Vite SDK merely to regenerate them at runtime. Verify the pruned image's app, migration CLI, worker and scheduler bootstrap against those retained artifacts.
+
 The administrative `deployer` target derives from production, runs as root and installs Docker CLI/Compose. Only its one-shot deployment command mounts the host Docker socket. Docker/socket access is host-administrative authority, not a sandbox; never mount it in app, worker or scheduler containers.
 
 ```bash
@@ -624,7 +626,7 @@ pgbouncer:
     retries: 5
 ```
 
-The app connects to `pgbouncer:6432` (not `postgres:5432`). This is set automatically in `docker-compose.yml` via `DB_HOST=pgbouncer` and `DB_PORT=6432`. Generated database config disables PostgreSQL prepared statements automatically when `DB_HOST=pgbouncer`; set `DB_PREPARE=false` explicitly when connecting to PgBouncer through a different hostname.
+The app connects to `pgbouncer:6432` (not `postgres:5432`). This is set automatically in `docker-compose.yml` via `DB_HOST=pgbouncer` and `DB_PORT=6432`. Generated database config keeps PostgreSQL prepared statements disabled behind this hostname unless explicitly configured. Keep `DB_PREPARE=false` for older pools or when protocol-level prepared statements are disabled. PgBouncer 1.21+ supports them in transaction mode with `max_prepared_statements > 0`; after reviewing that setting, `DB_PREPARE=true` opts framework queries and transactions into preparation. Svelar does not change the pool setting automatically.
 
 The mounted `docker/pgbouncer/pgbouncer.ini` needs an active database mapping:
 
@@ -819,7 +821,7 @@ npm run dev:scheduler
 | `DB_NAME` | `svelar` | Database name |
 | `DB_USER` | `svelar` | Database user |
 | `DB_PASSWORD` | `secret` | Database password |
-| `DB_PREPARE` | `false` behind PgBouncer | Set to `false` for PgBouncer transaction pooling |
+| `DB_PREPARE` | `false` behind PgBouncer | Opt in only after verifying PgBouncer 1.21+ and `max_prepared_statements > 0` |
 | `DB_ROOT_PASSWORD` | `rootsecret` | MySQL root password (MySQL only) |
 
 ### Redis & Queue

@@ -28,7 +28,11 @@ RUN npm run build
 
 # Native install scripts run before pruning; do not rerun SvelteKit prepare after removing dev tooling.
 FROM builder AS deps
+# Kit 3 generates $app type configs inside node_modules; npm treats them as extraneous.
+# Exec-form Node keeps the literal $app path out of shell expansion. Kit 2 has no such tree.
+RUN ["node", "-e", "const fs = require('node:fs'); if (fs.existsSync('node_modules/$app')) fs.cpSync('node_modules/$app', '.svelte-kit/svelar-runtime-app', { recursive: true });"]
 RUN npm prune --omit=dev --ignore-scripts
+RUN ["node", "-e", "const fs = require('node:fs'); if (fs.existsSync('.svelte-kit/svelar-runtime-app')) fs.cpSync('.svelte-kit/svelar-runtime-app', 'node_modules/$app', { recursive: true });"]
 
 # ── Production ───────────────────────────────────────────
 FROM base AS production
