@@ -705,7 +705,7 @@ describe('Queue and Job Processing', () => {
   });
 });
 
-describe.sequential('Queue failed jobs', () => {
+describe('Queue failed jobs', () => {
   let root: string;
 
   beforeEach(async () => {

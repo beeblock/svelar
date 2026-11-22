@@ -48,7 +48,7 @@ class TelemetryRedis {
   });
 }
 
-describe.sequential('Distributed BullMQ worker telemetry', () => {
+describe('Distributed BullMQ worker telemetry', () => {
   let redis: TelemetryRedis;
   let workers: TestWorker[];
   let stops: Array<() => Promise<void>>;
@@ -335,7 +335,62 @@ describe.sequential('Distributed BullMQ worker telemetry', () => {
     expect((await readWorkerTelemetry(new TestQueue('emails'), 'emails', 100)).records[0].status).toBe('stale');
   });
 
-  it.each(['drain', 'cleanup', 'native'] as const)(
+  it('publishes draining while pause still holds active work and waits for failed hooks and persistence before native close', async () => {
+    const hold = () => {
+      let release!: () => void;
+      const promise = new Promise<void>(resolve => { release = resolve; });
+      return { promise, release: () => release() };
+    };
+    const active = hold(); const hook = hold(); const ledger = hold();
+    const instance = driver({ operationsIndex: 'off' });
+    const failed = vi.fn(async () => { await hook.promise; });
+    const store = vi.fn(async () => { await ledger.promise; });
+    const worker = await instance.createWorker('emails', { resolve: () => ({ retryDelay: 0, failed }) }, { store }, {});
+    worker.pause = vi.fn(() => { worker.paused = true; return active.promise; });
+    const drainEvents = vi.spyOn(worker, 'svelarDrainEvents');
+    let finished = false;
+    const closing = worker.close().then(() => { finished = true; });
+    outcomes.push(closing.catch(() => {}));
+    try {
+      expect(worker.pause).toHaveBeenCalledOnce();
+      await vi.waitFor(async () => {
+        expect((await readWorkerTelemetry(new TestQueue('emails'), 'emails', 100)).observed?.draining).toBe(1);
+      });
+      expect(worker.nativeClose).not.toHaveBeenCalled();
+      expect(drainEvents).not.toHaveBeenCalled();
+      expect(finished).toBe(false);
+
+      redis.now += 5000;
+      await vi.advanceTimersByTimeAsync(5000);
+      const held = await readWorkerTelemetry(new TestQueue('emails'), 'emails', 100);
+      expect(held.records[0]).toMatchObject({ draining: true, paused: true, lastSeenAt: redis.now });
+      expect(held.observed).toMatchObject({ draining: 1, concurrency: 0 });
+      expect(worker.nativeClose).not.toHaveBeenCalled();
+
+      worker.emit('failed', { id: 'held-failure', timestamp: redis.now, attemptsMade: 1, opts: { attempts: 1 },
+        data: { jobClass: 'HeldFailure', payload: '{}', context: {} } }, new Error('terminal failure'));
+      await vi.waitFor(() => expect(failed).toHaveBeenCalledOnce());
+      active.release();
+      await vi.waitFor(() => expect(drainEvents).toHaveBeenCalledOnce());
+      expect(store).not.toHaveBeenCalled();
+      expect(worker.nativeClose).not.toHaveBeenCalled();
+
+      hook.release();
+      await vi.waitFor(() => expect(store).toHaveBeenCalledOnce());
+      expect(worker.nativeClose).not.toHaveBeenCalled();
+      expect(finished).toBe(false);
+      ledger.release();
+      await closing;
+      expect(worker.nativeClose).toHaveBeenCalledOnce();
+      expect(finished).toBe(true);
+      expect((await readWorkerTelemetry(new TestQueue('emails'), 'emails', 100)).records).toEqual([]);
+    } finally {
+      active.release(); hook.release(); ledger.release();
+      await closing;
+    }
+  });
+
+  it.each(['pause', 'drain', 'events', 'cleanup', 'native'] as const)(
     'attempts every worker and queue close before aggregating %s failures', async failure => {
       const instance = driver();
       const first = await instance.createWorker('emails', {}, {}, {});
@@ -344,14 +399,16 @@ describe.sequential('Distributed BullMQ worker telemetry', () => {
       const secondQueue = await instance.getQueue('pdf');
       const queueError = new Error('queue close failed');
       firstQueue.close.mockImplementation(() => { throw queueError; });
-      if (failure === 'drain') redis.failPublication = true;
+      if (failure === 'pause') first.pause = vi.fn().mockRejectedValue(new Error('native worker pause failed'));
+      else if (failure === 'drain') redis.failPublication = true;
+      else if (failure === 'events') vi.spyOn(first, 'svelarDrainEvents').mockRejectedValue(new Error('event drain failed'));
       else if (failure === 'cleanup') redis.failRemoval = true;
       else first.nativeClose.mockRejectedValue(new Error('native worker close failed'));
 
       const error = await instance.close().then(() => null, (error: unknown) => error);
       expect(error).toBeInstanceOf(AggregateError);
       expect((error as AggregateError).errors).toContain(queueError);
-      expect((error as AggregateError).errors).toHaveLength(failure === 'native' ? 2 : 3);
+      expect((error as AggregateError).errors).toHaveLength(failure === 'drain' || failure === 'cleanup' ? 3 : 2);
       expect(first.nativeClose).toHaveBeenCalledOnce();
       expect(second.nativeClose).toHaveBeenCalledOnce();
       expect(firstQueue.close).toHaveBeenCalledOnce();

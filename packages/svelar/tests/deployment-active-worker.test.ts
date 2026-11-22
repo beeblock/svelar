@@ -15,7 +15,8 @@ const run = promisify(execFile);
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const label = 'io.svelar.deployment-active-worker';
 async function docker(args: string[], timeout = 60000) {
-  return (await run('docker', args, { timeout, maxBuffer: 4 * 1024 * 1024 })).stdout.trim();
+  const { stdout, stderr } = await run('docker', args, { timeout, maxBuffer: 4 * 1024 * 1024 });
+  return (args[0] === 'logs' ? stdout + stderr : stdout).trim();
 }
 async function until<T>(callback: () => Promise<T>, timeout = 20000): Promise<T> {
   const deadline = Date.now() + timeout;
@@ -243,7 +244,7 @@ describe.skipIf(process.env.SVELAR_TEST_DEPLOY_DOCKER !== '1')('Native start-fir
       plugins: [{ name: 'private-calendar-engine', setup(builder) {
         builder.onResolve({ filter: /^(cron-parser|luxon)$/ }, args => ({ path: require.resolve(args.path) }));
       } }] });
-    for (const peer of ['bullmq', 'ioredis']) await copyPeer(peer, resolve(manifest), join(directory, 'node_modules', peer));
+    for (const peer of ['bullmq', 'ioredis', 'drizzle-orm']) await copyPeer(peer, resolve(manifest), join(directory, 'node_modules', peer));
     source = await import(pathToFileURL(join(directory, 'runtime.mjs')).href);
     await writeFile(join(directory, 'Dockerfile'), 'FROM node:24-alpine\nWORKDIR /app\nCOPY runtime.mjs ./\nCOPY node_modules ./node_modules\nARG VERSION\nENV RELEASE_VERSION=$VERSION\nCMD ["node","runtime.mjs"]\n');
     images = {};

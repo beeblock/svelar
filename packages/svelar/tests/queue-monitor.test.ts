@@ -72,7 +72,7 @@ function redisQueue(jobs: ReturnType<typeof redisJob>[] = []) {
   };
 }
 
-describe.sequential('JobMonitor contracts', () => {
+describe('JobMonitor contracts', () => {
   let redisQueues: Map<string, ReturnType<typeof redisQueue>>;
   let opened: string[];
 

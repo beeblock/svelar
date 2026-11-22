@@ -34,6 +34,7 @@ abstract class AdapterBase implements QueueMonitoringAdapter {
   protected abstract retryLive(id: string): Promise<QueueMutationResult['outcome']>;
   protected abstract removeLive(id: string): Promise<QueueMutationResult['outcome']>;
   protected abstract liveTimeline(id: string, limit?: number): ReturnType<QueueMonitoringAdapter['timeline']>;
+  protected async liveStatus(id: string): Promise<string | null> { return (await this.get(id))?.status ?? null; }
   protected reference(reference: QueueJobReference) {
     if (!reference || !['live', 'dead-letter'].includes(reference.source) || typeof reference.id !== 'string' || !reference.id ||
       reference.id.length > 256 || reference.id.includes('\0')) throw new TypeError('Invalid queue job reference.');
@@ -80,9 +81,9 @@ abstract class AdapterBase implements QueueMonitoringAdapter {
     if (reference.source === 'live') return { ...reference, outcome: await this.removeLive(reference.id) };
     const record = await this.services.ledger.find(reference.id, true);
     if (!record || record.connection !== this.connection || record.queue !== this.queue) return { ...reference, outcome: 'missing' };
-    const delivery = await this.get(replayJobId(reference.id));
-    if (delivery?.status === 'active') return { ...reference, outcome: 'busy' };
-    if (delivery && record.replayedAt === undefined) return { ...reference, outcome: 'protected' };
+    const delivery = await this.liveStatus(replayJobId(reference.id));
+    if (delivery === 'active') return { ...reference, outcome: 'busy' };
+    if (delivery !== null && record.replayedAt === undefined) return { ...reference, outcome: 'protected' };
     return { ...reference, outcome: await this.services.ledger.forget(reference.id) ? 'accepted' : 'busy' };
   }
   private async batch(references: readonly QueueJobReference[], operation: 'retry' | 'remove'): Promise<QueueBatchResult> {
@@ -113,6 +114,10 @@ class RedisAdapter extends AdapterBase {
       deadLetter: await this.services.ledger.count(this.connection, this.queue) };
   }
   list(filter?: QueueJobFilter) { return this.operations.list(filter); }
+  protected async liveStatus(id: string): Promise<string | null> {
+    const job = await (await this.provider()).getJob(id);
+    return job ? job.getState() : null;
+  }
   async get(id: string) { const queue = await this.provider(); const job = await queue.getJob(id); return job ? this.operations.snapshot(job) : null; }
   async pause() { await (await this.provider()).pause(); }
   async resume() { await (await this.provider()).resume(); }
@@ -122,11 +127,13 @@ class RedisAdapter extends AdapterBase {
     const paused = await queue.isPaused();
     const globalConcurrency = await queue.getGlobalConcurrency() ?? null;
     const ages = await this.operations.readyAges();
+    const waiting = ages.oldest === null ? await queue.getJobCounts('waiting', 'paused', 'prioritized') : null;
     const observedConcurrency = workers.observed?.concurrency ?? null;
     return { paused, workers, globalConcurrency, observedConcurrency,
       effectiveConcurrency: paused ? 0 : workers.complete && this.coverage === 'exclusive' && observedConcurrency !== null
         ? Math.min(globalConcurrency ?? observedConcurrency, observedConcurrency) : null,
-      oldestWaitingAt: ages.oldest, lag: ages.oldest === null ? (await queue.getWaitingCount() === 0 ? 0 : null) : Math.max(0, Date.now() - ages.oldest),
+      oldestWaitingAt: ages.oldest, lag: ages.oldest === null
+        ? ((waiting?.waiting ?? 0) + (waiting?.paused ?? 0) + (waiting?.prioritized ?? 0) === 0 ? 0 : null) : Math.max(0, Date.now() - ages.oldest),
       stalled: ages.stalled, expiredLocks: ages.expiredLocks, locksComplete: ages.complete, coverage: 'instrumented' };
   }
   async metrics(minutes = 60): Promise<QueueSharedMetrics> {

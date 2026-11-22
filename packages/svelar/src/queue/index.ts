@@ -55,6 +55,7 @@ import { FailedJobStore, type FailedJobRecord } from './FailedJobStore.js';
 import { metadataRow } from './Metadata.js';
 import { QueueEventStore } from './EventStore.js';
 import { RedisQueueOperations } from './RedisOperations.js';
+import { operationsIndexPolicy, type QueueOperationsIndexPolicy } from './OperationsIndexPolicy.js';
 import { redisConnection } from './RedisConnection.js';
 import { databaseAdapter, redisAdapter, volatileAdapter, type AdapterServices } from './Adapters.js';
 import { boundedLimit, pageOptions, QueueCapabilityError, type QueueMonitoringAdapter } from './Monitoring.js';
@@ -62,6 +63,7 @@ export type { FailedJobRecord } from './FailedJobStore.js';
 export * from './Monitoring.js';
 
 export type { WorkerHeartbeatConfig } from './BullMQTelemetry.js';
+export type { QueueOperationsIndexMode, QueueOperationsIndexPolicy } from './OperationsIndexPolicy.js';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -106,6 +108,8 @@ export interface QueueConnectionConfig {
   /** Renewed database reservation lease, milliseconds (default 30000). */
   leaseDurationMs?: number;
   monitoringCoverage?: 'instrumented' | 'exclusive';
+  /** Redis operations snapshots/timelines; native state, retries and the failure ledger are unaffected. */
+  operationsIndex?: QueueOperationsIndexPolicy;
   /** Default job options for BullMQ */
   defaultJobOptions?: {
     removeOnComplete?: boolean | number;
@@ -211,6 +215,8 @@ export interface QueueDefinition {
   concurrency?: number;
   metadata?: Record<string, any>;
   workerProfile?: string;
+  /** Overrides the connection's Redis operations-index policy for this queue. */
+  operationsIndex?: QueueOperationsIndexPolicy;
 }
 
 export interface QueueConnectionCatalogEntry {
@@ -782,7 +788,8 @@ class RedisDriver implements QueueDriverInterface {
   private peerChecked = false;
   private operationStores = new Map<string, RedisQueueOperations>();
 
-  constructor(config: QueueConnectionConfig, registry: JobRegistry, private connectionName: string) {
+  constructor(config: QueueConnectionConfig, registry: JobRegistry, private connectionName: string,
+    private queuePolicy: (queue: string) => QueueOperationsIndexPolicy | undefined) {
     if (config.workerHeartbeat !== false) heartbeatConfig(config.workerHeartbeat);
     positiveInteger(config.producerTimeoutMs ?? 2000, 'producerTimeoutMs');
     if ((config.producerTimeoutMs ?? 2000) > 60000) throw new RangeError('producerTimeoutMs must not exceed 60000.');
@@ -790,9 +797,11 @@ class RedisDriver implements QueueDriverInterface {
     this.registry = registry;
   }
   private operations(queue: string): RedisQueueOperations {
-    if (!this.operationStores.has(queue)) this.operationStores.set(queue, new RedisQueueOperations(() => this.getQueue(queue), this.connectionName, queue));
+    if (!this.operationStores.has(queue)) this.operationStores.set(queue, new RedisQueueOperations(() => this.getQueue(queue), this.connectionName, queue,
+      () => this.queuePolicy(queue) ?? this.config.operationsIndex));
     return this.operationStores.get(queue)!;
   }
+  pruneOperations(queue: string, limit: number) { return this.operations(queue).prune(limit); }
   async observeLock(queue: string, id: string, duration: number, owner: string): Promise<void> {
     await this.operations(queue).observeLocks([id], duration, owner);
   }
@@ -1001,8 +1010,9 @@ class RedisDriver implements QueueDriverInterface {
         if (data.releaseDeduplicationOnStart) await bullJob.removeDeduplicationKey();
         if (data.retryDelay !== undefined) jobInstance.retryDelay = data.retryDelay;
         jobInstance.maxAttempts = bullJob.opts?.attempts ?? jobInstance.maxAttempts;
-        await this.operations(queueName).capture(bullJob, 'active', 'active');
-        await this.operations(queueName).observeLocks([String(bullJob.id)], options?.lockDuration ?? 30000, worker.svelarWorkerId ?? 'starting');
+        await this.operations(queueName).capture(bullJob, 'active', 'active', {
+          duration: options?.lockDuration ?? 30000, owner: worker.svelarWorkerId ?? 'starting',
+        });
         await ApplicationContext.runIsolated({
           ...(data.context ?? {}),
           jobId: String(bullJob.id),
@@ -1042,7 +1052,7 @@ class RedisDriver implements QueueDriverInterface {
         const attemptsMade = bullJob?.attemptsMade ?? 0;
         const maxAttempts = bullJob?.opts?.attempts ?? 3;
         if (bullJob) {
-          try { await this.operations(queueName).capture(bullJob, 'failed'); }
+          try { await this.operations(queueName).capture(bullJob, 'failed', attemptsMade >= maxAttempts ? 'failed' : undefined); }
           catch (error) {
             const failure = error instanceof Error ? error : new Error(String(error));
             failureErrors.push(failure); worker.emit('svelar:error', failure);
@@ -1117,12 +1127,15 @@ class RedisDriver implements QueueDriverInterface {
       failureTasks.add(task);
       void task.finally(() => failureTasks.delete(task));
     };
-    worker.on('completed', (job: any) => observe(() => this.operations(queueName).capture(job, 'completed', 'completed')));
+    worker.on('completed', (job: any) => observe(async () => { await this.operations(queueName).capture(job, 'completed', 'completed'); }));
     worker.on('stalled', (id: string) => observe(() => this.operations(queueName).refresh(id, 'stalled')));
     worker.on('locksRenewed', (data: { jobIds: string[] }) => observe(() => this.operations(queueName)
       .observeLocks(data.jobIds, worker.opts.lockDuration, worker.svelarWorkerId)));
     worker.on('lockRenewalFailed', (ids: string[]) => observe(() => this.operations(queueName)
       .observeLocks(ids, 0, worker.svelarWorkerId)));
+    worker.svelarDrainEvents = async () => {
+      while (failureTasks.size) await Promise.all([...failureTasks]);
+    };
 
     const nativeClose = worker.close.bind(worker);
     let stopHeartbeat: Awaited<ReturnType<typeof startWorkerHeartbeat>>;
@@ -1140,24 +1153,24 @@ class RedisDriver implements QueueDriverInterface {
     worker.svelarWorkerId = stopHeartbeat.id ?? crypto.randomUUID();
     worker.svelarRefreshHeartbeat = () => stopHeartbeat.refresh();
     worker.close = (...args: any[]) => closing ??= (async () => {
-      // Mark BullMQ closing immediately; Redis telemetry publication must not delay acquisition stop.
-      const nativeClosing = nativeClose(...args);
-      void nativeClosing.catch(() => {});
+      const errors: unknown[] = [];
+      // Stop acquisition immediately, but publish draining before active processors finish.
+      let pauseCompletion: Promise<void> = Promise.resolve();
       try {
-        await stopHeartbeat.drain();
-      } finally {
-        try {
-          await nativeClosing;
-          await Promise.all([...failureTasks]);
-          if (failureErrors.length) throw new AggregateError(failureErrors, 'Failed to persist queue failures.');
-        } finally {
-          try {
-            await stopHeartbeat();
-          } finally {
-            this.workers.delete(worker);
-          }
-        }
-      }
+        pauseCompletion = Promise.resolve(worker.pause?.());
+        // Preserve rejection for the aggregate without an unhandled gap during publication.
+        void pauseCompletion.catch(() => {});
+      } catch (error) { errors.push(error); }
+      try { await stopHeartbeat.drain(); } catch (error) { errors.push(error); }
+      try { await pauseCompletion; } catch (error) { errors.push(error); }
+      // Native close does not await async event listeners (notably failed/getState).
+      try { await worker.svelarDrainEvents(); } catch (error) { errors.push(error); }
+      if (failureErrors.length) errors.push(new AggregateError(failureErrors, 'Failed to persist queue failures.'));
+      try { await nativeClose(...args); } catch (error) { errors.push(error); }
+      try { await stopHeartbeat(); } catch (error) { errors.push(error); }
+      this.workers.delete(worker);
+      if (errors.length === 1) throw errors[0];
+      if (errors.length) throw new AggregateError(errors, 'Failed to close Redis queue worker.');
     })();
     this.workers.add(worker);
     return worker;
@@ -1327,6 +1340,8 @@ class QueueManager {
 
   configure(config: QueueConfig): void {
     if (this.processing || this._activeWorker) throw new Error('Stop queue workers before reconfiguring the queue.');
+    for (const connection of Object.values(config.connections)) operationsIndexPolicy(connection.operationsIndex);
+    for (const queue of config.queues ?? []) operationsIndexPolicy(queue.operationsIndex);
     this.jobRegistry.forgetAutomatic();
     for (const name of this.automaticQueues) this.queueRegistry.delete(name);
     this.automaticQueues.clear();
@@ -1342,6 +1357,7 @@ class QueueManager {
   registerQueue(definition: QueueDefinition): void {
     if (typeof definition.name !== 'string' || !definition.name || definition.name.includes(':')) throw new TypeError('Invalid queue name.');
     if (definition.concurrency !== undefined) positiveInteger(definition.concurrency, 'Queue concurrency');
+    if (definition.operationsIndex !== undefined) operationsIndexPolicy(definition.operationsIndex);
     const connection = definition.connection ?? this.config.default;
     const key = this.queueKey(definition.name, connection);
     this.automaticQueues.delete(key);
@@ -1430,6 +1446,19 @@ class QueueManager {
     const driver = this.resolveDriver(name);
     if (driver instanceof RedisDriver || driver instanceof DatabaseDriver) return driver.adapter(services);
     return volatileAdapter(services, config.driver as 'sync' | 'memory');
+  }
+
+  /** Prune only terminal Redis operations snapshots/indexes/timelines, never broker jobs or dead letters.
+   * Each pass examines at most limit entries per terminal status; repeat until complete.
+   */
+  async pruneOperations(queue?: string, connection?: string, limit = 100): Promise<{ removed: number; complete: boolean }> {
+    boundedLimit(limit, 1000);
+    const name = connection ?? (queue ? this.queueDefinition(queue)?.connection : undefined) ?? this.config.default;
+    const driver = this.resolveDriver(name);
+    if (!(driver instanceof RedisDriver)) throw new QueueCapabilityError('Operations index retention', this.getDriver(name));
+    const queueName = queue ?? this.config.connections[name].queue ?? 'default';
+    if (!queueName || queueName.includes(':')) throw new TypeError('Invalid operations queue name.');
+    return driver.pruneOperations(queueName, limit);
   }
 
   async discoverQueuesPage(connection = this.config.default, options: QueueDiscoveryOptions = {}): Promise<QueueDiscoveryPage> {
@@ -1716,8 +1745,8 @@ class QueueManager {
         // Manual work is not tracked by BullMQ's autorun loop. Drain it before
         // native close disconnects the client needed to acknowledge completion.
         worker.close = (...args: any[]) => closing ??= (async () => {
-          await operation?.catch(() => {});
-          await nativeClose(...args);
+          try { await operation; }
+          finally { await nativeClose(...args); }
         })();
         this._activeWorker = worker;
         let processed = 0;
@@ -1762,6 +1791,8 @@ class QueueManager {
               renew();
               try { await worker.processJob(bullJob, token, () => false); }
               finally { stopped = true; if (renewal) clearTimeout(renewal); await renewing; }
+              // Finish this attempt's observations before acquiring a retry of the same job.
+              await worker.svelarDrainEvents();
               if (workerError) throw workerError;
               return true;
             })();
@@ -2070,7 +2101,7 @@ class QueueManager {
         driver = new DatabaseDriver(config.table ?? 'svelar_jobs', this.jobRegistry, config, name, this.ledgerFor(name), name === this.config.default);
         break;
       case 'redis':
-        driver = new RedisDriver(config, this.jobRegistry, name);
+        driver = new RedisDriver(config, this.jobRegistry, name, queue => this.queueDefinition(queue, name)?.operationsIndex);
         break;
       default:
         throw new Error(`Unknown queue driver: ${config.driver}`);

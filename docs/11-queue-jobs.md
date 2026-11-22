@@ -392,7 +392,7 @@ Retry and cleanup are **alternative**, authorized operator commands, not a routi
 
 | API | Contract |
 |-----|----------|
-| `get(id)` / `deadLetter(id)` | Exact live / ledger lookup, qualified by connection and queue; wrong scope returns `null` |
+| `get(id)` / `deadLetter(id)` | Scoped live operations snapshot / ledger lookup; `get` can return `null` when indexing is disabled, the job is excluded by policy, or its snapshot is not retained |
 | `list(filter)` | `{ items, offset, limit, indexedCount, coverage: 'instrumented' }`; limit `0..1000`, default 50 |
 | `deadLetters(filter)` | Ledger page; excludes replay receipts unless `includeReplayed: true` |
 | `counts()` | Live states and `deadLetter` separately; Redis live failed count is not a second ledger count |
@@ -415,7 +415,85 @@ Redis metadata/class/status filters intersect Svelar-owned indexes before paging
 
 Redis ready age is the oldest **observed instrumented** waiting job, not proof that every foreign/legacy job was indexed. Redis active lock fields are renewed worker observations, not reads of private BullMQ lock tokens or exact lock PTTL. Foreign workers, missing observations or more than 1000 active jobs leave `locksComplete: false`; expired/stalled counts can be unknown. Database lock fields describe renewable reservation leases. A heartbeat or lease is an observation, not proof of a healthy domain operation.
 
-Shared Redis metrics come from native worker outcome buckets; database metrics come from persisted `svelar_queue_events`. They are distinct from the legacy monitor's local counters. Redis live timelines retain at most 100 events per job; SQL timeline/replay receipts and Redis operational indexes have no automatic age-based pruning. Plan explicit retention without deleting live or unresolved replay identity. Completed database replay receipts can be retained to prevent duplicate delivery, while ordinary completed jobs are removed.
+Shared Redis metrics come from native worker outcome buckets; database metrics come from persisted `svelar_queue_events`. They are distinct from the legacy monitor's local counters. Redis live timelines retain at most 100 events per job, and terminal operations snapshots have bounded age/count retention described below. SQL events and replay receipts still require explicit retention. Completed database replay receipts can be retained to prevent duplicate delivery, while ordinary completed jobs are removed.
+
+### Redis Operations-Index Policy
+
+`operationsIndex` is a public Redis-only setting on `QueueConnectionConfig` and `QueueDefinition`. Configure it in the common bootstrap used by producers, workers and monitoring processes; different policies in different processes do not form a queue-wide opt-out.
+
+```typescript
+import { Queue } from '@beeblock/svelar/queue';
+
+Queue.configure({
+  default: 'redis',
+  connections: {
+    redis: {
+      driver: 'redis',
+      url: process.env.REDIS_URL,
+      operationsIndex: {
+        mode: 'full',
+        maxAgeSeconds: 7 * 86400,
+        maxJobs: 1000,
+      },
+    },
+  },
+  queues: [
+    { name: 'authority-audit', connection: 'redis', operationsIndex: 'failures-only' },
+    { name: 'signals', connection: 'redis', operationsIndex: 'off' },
+  ],
+});
+```
+
+The exported types are `QueueOperationsIndexMode` and `QueueOperationsIndexPolicy` from `@beeblock/svelar/queue`. A policy is a mode string or `{ mode?, maxAgeSeconds?, maxJobs? }`. The default mode is `full`; the object form defaults omitted fields independently. A queue definition overrides the **entire connection policy**, not individual fields: a queue selecting `'failures-only'` uses default retention even if the connection has custom retention. Repeat custom retention in the queue's object policy when needed. `Queue.registerQueue()` / `Queue.registerQueues()` accept the same setting, qualified by connection.
+
+| Mode | Operations-index behavior |
+|------|---------------------------|
+| `full` | Capture instrumented dispatch, activity, retries and terminal snapshots/timelines, plus observed worker locks. This is the default, not proof that foreign jobs were instrumented. |
+| `failures-only` | Skip clean successful-job dispatch/activity/completion captures and healthy lock-renewal writes. Track failures, retries, stalls, lock-renewal failures, explicit retries and durable replays through their terminal state. |
+| `off` | Disable live-job operations snapshots/timelines and lock observations, including failed jobs. The independent failed-job ledger is not disabled. |
+
+Under `failures-only`, a job that never encounters an exceptional path incurs no operations-index Redis I/O during dispatch or execution. A durable marker on exceptional jobs allows later workers to retain their history through terminal success or failure, even if native diagnostics are empty or attempt counters are reset by an explicit retry. This does not change BullMQ state, attempt limits, backoff, progress, native counts/metrics, execution context or `svelar_failed_jobs`/replay behavior. Snapshot, timeline, initial lock observation and retention mutations are batched atomically per capture; healthy full-mode lock-renewal observations are batched per event.
+
+The observability tradeoff is intentional. With `failures-only`, new clean jobs have no operations list/timeline history and `adapter.get(id)` returns `null` for them even while BullMQ retains the job. With `off`, `adapter.list()` is empty, `adapter.get()` returns `null`, and live `adapter.timeline({ source: 'live', id })` is empty. These results do not prove that the broker is empty. Dead-letter listings and `source: 'dead-letter'` timelines remain ledger-backed. The policy does not disable legacy `JobMonitor.listJobs()` broker reads.
+
+For either reduced-index mode, `adapter.runtime().oldestWaitingAt` is `null`. When waiting, paused, prioritized or active work exists, `stalled`/`expiredLocks` are `null` and `locksComplete` is `false`; a nonempty ready backlog has unknown (`null`) `lag`, not healthy zero. An empty ready backlog can report lag zero, and no waiting/active work can report zero stalled/expired observations. Heartbeat telemetry, native counts and metrics remain independent of indexing.
+
+Changing modes does not erase previously written index keys. Existing history remains subject to retention; `off` hides it from live operations reads. Reconciliation respects the selected policy rather than repopulating clean-job history in a reduced-index queue.
+
+### Bounded Operations-Index Retention
+
+`maxAgeSeconds` defaults to **604800 seconds (seven days)** and `maxJobs` defaults to **1000 snapshots per terminal status**, independently for `completed` and `failed`. Both accept non-negative safe integers; age must also fit the supported millisecond range. Zero requests no terminal retention for the corresponding bound. These limits concern Svelar operations snapshots, not BullMQ `defaultJobOptions.removeOnComplete` / `removeOnFail`, native metrics, SQL events or dead-letter receipts.
+
+Each indexed capture prunes at most 100 candidates from each terminal status atomically. Removal reaches the jobs hash, metadata/class/status memberships and the job's timeline, including completed replay snapshots. Waiting, active and delayed history is not discarded as terminal work. Pruning an operations snapshot never deletes its BullMQ job, durable replay ID or failure-ledger receipt. Legacy terminal status indexes are corrected to finish timestamps when available, so an old creation timestamp alone does not expire a recently finished job.
+
+Idle queues and queues using `off` may not produce captures. Schedule explicit bounded passes through the public API:
+
+```typescript
+const { removed, complete } = await Queue.pruneOperations('authority-audit', 'redis', 100);
+```
+
+The signature is `Queue.pruneOperations(queue?, connection?, limit = 100)`, returning `{ removed, complete }`. `limit` is `1..1000` **per terminal status**, not a global deletion count. Omitted queue/connection use configured defaults and normal named-queue connection resolution. Non-Redis drivers reject this operation. It works even when indexing is `off`.
+
+Continue future bounded passes while `complete` is `false`, including when `removed` is zero: a pass may only repair legacy index scores. Do not put an unbounded drain loop in an HTTP handler or scheduler tick. For example, scaffold a task with `npx svelar make:task PruneQueueOperations`, then use one pass per scheduled invocation:
+
+```typescript
+import { Queue } from '@beeblock/svelar/queue';
+import { ScheduledTask } from '@beeblock/svelar/scheduler';
+
+export class PruneQueueOperations extends ScheduledTask {
+  schedule() {
+    return this.everyFiveMinutes().preventOverlap();
+  }
+
+  async handle(): Promise<void> {
+    await Queue.pruneOperations('authority-audit', 'redis', 100);
+  }
+}
+```
+
+Register the task in the application's existing scheduler bootstrap (`scheduler.register(new PruneQueueOperations())`) and keep the persistent scheduler runtime running; see [Scheduler](./10-scheduler.md). Set queue/connection names and retention centrally for the application's topology, monitor pruning progress, and increase cadence or the bounded limit when a historical backlog needs to catch up. Pruning is trusted maintenance, not an unguarded operator HTTP endpoint.
+
+### Default-Connection Monitor
 
 Import the monitor from its dedicated server entry and configure it with the same default connection and connections object used by `Queue.configure()`:
 
@@ -478,7 +556,7 @@ Set `connections.<redis>.workerHeartbeat` to configure `intervalMs` (default 5,0
 
 The default `workerTelemetryCoverage: 'instrumented'` reports only instrumented records and leaves queue-wide `workers`/`effectiveConcurrency` unknown, even if the recent registry is empty. Custom/external BullMQ workers, telemetry-disabled workers, older consumers, or inaccessible metadata may still be processing jobs. Set `workerTelemetryCoverage: 'exclusive'` only as an explicit operational assertion that every consumer in this dedicated queue/prefix uses Svelar heartbeats. Do not select exclusive coverage in a mixed pool. With that assertion, complete fresh/stale metadata can establish totals; a recent marker and a complete empty registry can establish zero registered consumers. An absent or expired marker still remains unknown. A monitor connection configured with `workerHeartbeat: false` cannot upgrade observations to exclusive totals.
 
-Closing a worker publishes `draining: true` and continues refreshing it while BullMQ finishes native close. Draining workers stay visible but have no new-job intake capacity; paused workers likewise remain registered without contributing intake capacity. After native close, Svelar clears timers, drains pending heartbeat writes, and removes only that worker's record and registration. Driver shutdown attempts every tracked worker and queue close, waits for all attempts to settle, and throws an `AggregateError` if any fail; one failure does not skip other cleanup. A crash or failed cleanup is bounded by stale/retention expiry. Startup or refresh publication failures reject/stop the Svelar worker rather than advertising a healthy fallback; supervisors must handle the failure. Scoped queue fakes do not create workers or heartbeat keys, and real dispatch interception/cleanup remains unchanged.
+Closing a BullMQ worker immediately starts its local pause to stop acquisition and publishes `draining: true` while active processors are still finishing; publication does not wait for pause completion. The draining heartbeat continues refreshing throughout the active-work drain. Only after pause completes does Svelar finish its asynchronous failure and observation handlers, then call BullMQ native close. The worker client remains connected through both drains so native state reads, failed hooks and failure-ledger persistence can finish. Draining workers stay visible but have no new-job intake capacity; paused workers likewise remain registered without contributing intake capacity. After native close, Svelar clears timers, drains pending heartbeat writes, and removes only that worker's record and registration. Driver shutdown attempts every tracked worker and queue close, waits for all attempts to settle, and throws an `AggregateError` if any fail; pause, publication or handler-drain failures do not skip the remaining cleanup. A crash or failed cleanup is bounded by stale/retention expiry. Startup or refresh publication failures reject/stop the Svelar worker rather than advertising a healthy fallback; supervisors must handle the failure. Scoped queue fakes do not create workers or heartbeat keys, and real dispatch interception/cleanup remains unchanged.
 
 Heartbeat JSON uses a strict allowlist: no job payloads, user/team identifiers, connection URLs or credentials, hostnames, PIDs, worker names, arbitrary metadata, or stack traces. The reader validates version, queue/ID scope, numbers, booleans, and timestamp ordering, strips extra JSON fields, and rejects oversized records. Treat the Redis namespace as trusted infrastructure, not an authentication boundary: application endpoints must authorize access, and Redis ACLs must restrict metadata writers/readers to the application's queue prefix. Writers need the heartbeat Lua script's `TIME`, `SET`, `ZADD`, `PTTL`, `PEXPIRE`, bounded `ZRANGEBYSCORE`, `ZREM`, and `DEL` commands; readers need `TIME`, bounded `GETRANGE` and `ZRANGEBYSCORE`. Publication requires `EVAL` permission. Reusing a prefix across untrusted tenants can spoof observations and is unsupported.
 
@@ -756,6 +834,8 @@ stay inside BullMQ. `--max-jobs` and `--once` are intended for tests, one-off
 maintenance commands, and finite certification checks.
 
 Finite Redis workers require concurrency 1. Do not combine a five-way profile with `--once`/`--max-jobs` unless explicitly overriding `--concurrency=1`; unsupported finite concurrency is rejected.
+
+For Redis, `Queue.work({ maxJobs })` bounds acquired attempts, while its return value counts successful completions. A failed attempt at that limit can return zero and leave its native retry waiting or delayed for a later worker; this is not an exhausted dead letter. Finite workers await asynchronous `failed`, completion and observation handlers before acquiring the next attempt and before closing the connection. A retry handler can therefore finish its native state reads without a shutdown-induced connection error, and terminal failure-ledger writes finish before disconnect. Persistence/indexing errors still reject `Queue.work()` or shutdown; they are not caught and ignored to make a finite run appear successful.
 
 Both continuous and finite Redis execution use native lock renewal. SIGTERM/SIGINT stops acquisition, retains the active job's lock/acknowledgement client while draining, then closes resources. A job exceeding `--grace-period` causes nonzero process exit; a subsequent worker can recover it as stalled. This is at-least-once execution. CPU-blocked event loops and external side effects still require idempotency and appropriate lock windows. Non-Redis drivers reject nondefault parallel/native lock settings rather than claiming equivalent concurrency.
 
@@ -1060,9 +1140,9 @@ The queue hardening gate passed **372 tests in 19 files with zero skips**: 159 q
 
 Native child-process proofs covered lock renewal beyond `lockDuration`, SIGKILL stalled recovery, bounded SIGTERM drain, five simultaneous CLI jobs, named-connection isolation, cross-process metrics, single-winner replay, broker outage retention, killed-admin publish recovery and killed database reservation recovery. The SQL cases applied real core migrations and exercised replay under both PostgreSQL and MySQL. Source-only tests with optional native cases skipped are not equivalent evidence.
 
-Native suites are `queue-recovery-redis.test.ts`, `queue-monitoring-redis.test.ts` and `queue-monitoring-drivers.test.ts`. They require isolated services, `SVELAR_TEST_QUEUE_CLIENT` pointing to a package manifest with native peers, `SVELAR_TEST_QUEUE_REDIS_URL`, and SQL host ports in `SVELAR_TEST_QUEUE_PG_PORT` / `SVELAR_TEST_QUEUE_MYSQL_PORT`. Never target a production database/prefix; fixture teardown is destructive to its isolated test data.
+Native suites are `queue-recovery-redis.test.ts`, `queue-monitoring-redis.test.ts`, `queue-monitoring-drivers.test.ts` and `queue-operations-index-native.test.ts`. The operations-index suite covers reduced-index successful paths, finite retry drain, context/dead-letter replay, bounded/legacy retention and retained broker replay identity; its authored cases are not additional native certification until executed against real Redis/BullMQ. These suites require isolated services and `SVELAR_TEST_QUEUE_CLIENT` pointing to a package manifest with native peers. Redis cases use `SVELAR_TEST_QUEUE_REDIS_URL`; SQL cases use `SVELAR_TEST_QUEUE_PG_PORT` / `SVELAR_TEST_QUEUE_MYSQL_PORT`. Never target a production database/prefix; fixture teardown is destructive to its isolated test data.
 
-Remaining limits include unsupported database pause/worker topology/live class filtering, instrumented rather than universal Redis inventory, bounded lease scans/reconciliation, and operator-managed operational index/event/receipt retention. Profile registration is configuration, not proof that a worker is running. See [Deployment](./29-deployment.md) for readiness, traffic eligibility and container drain limits.
+Remaining limits include unsupported database pause/worker topology/live class filtering, instrumented rather than universal Redis inventory, bounded lease scans/reconciliation, scheduled index pruning for idle/off queues, and explicit SQL event/receipt retention. Reduced-index queues intentionally lose clean-job operations history and lock/age diagnostics. Profile registration is configuration, not proof that a worker is running. See [Deployment](./29-deployment.md) for readiness, traffic eligibility and container drain limits.
 
 ## Next Steps
 

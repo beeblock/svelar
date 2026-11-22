@@ -2,42 +2,108 @@ import { createHash } from 'node:crypto';
 import { redactLogText } from '../logging/Redaction.js';
 import { indexedMetadata, metadataFields, metadataKeys, metadataValue } from './Metadata.js';
 import { boundedLimit, pageOptions, type QueueJobFilter, type QueueJobPage, type QueueJobSnapshot, type QueueJobStatus, type QueueTimelineEvent } from './Monitoring.js';
+import { operationsIndexPolicy, type QueueOperationsIndexPolicy } from './OperationsIndexPolicy.js';
 
-const indexScript = `
+const retentionScript = `
+local function remove(prefix, id)
+ local raw = redis.call('HGET', prefix .. ':jobs', id)
+ if raw then
+  local data = cjson.decode(raw)
+  for _, key in ipairs(data.indexKeys) do redis.call('ZREM', key, id) end
+  redis.call('HDEL', prefix .. ':jobs', id)
+ end
+ redis.call('ZREM', prefix .. ':all', id)
+ redis.call('DEL', prefix .. ':timeline:' .. id)
+end
+local function prune(prefix, now, age, maximum, limit)
+ local removed = 0
+ local complete = true
+ for _, state in ipairs({'completed', 'failed'}) do
+  local key = prefix .. ':status:' .. state
+  local count = redis.call('ZCARD', key)
+  local entries = redis.call('ZRANGE', key, 0, limit - 1, 'WITHSCORES')
+  for i = 1, #entries, 2 do
+   local id = entries[i]
+   local raw = redis.call('HGET', prefix .. ':jobs', id)
+   if not raw then
+    remove(prefix, id)
+    redis.call('ZREM', key, id)
+    count = count - 1
+    removed = removed + 1
+   else
+    local data = cjson.decode(raw)
+    if data.status ~= state then
+     redis.call('ZREM', key, id)
+     count = count - 1
+    else
+     local at = tonumber(data.finishedAt) or tonumber(entries[i + 1])
+     if at ~= tonumber(entries[i + 1]) then
+      -- Backfill v1 terminal indexes which used creation time, not finish time.
+      redis.call('ZADD', key, at, id)
+     elseif at <= now - age or count > maximum then
+      remove(prefix, id)
+      count = count - 1
+      removed = removed + 1
+     else break end
+    end
+   end
+  end
+  local first = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+  if count > maximum or (#first > 0 and tonumber(first[2]) <= now - age) then complete = false end
+ end
+ return {removed, complete and 1 or 0}
+end
+`;
+const indexScript = retentionScript + `
 local old = redis.call('HGET', KEYS[1], ARGV[1])
 local data = cjson.decode(ARGV[2])
+local time = redis.call('TIME')
+local at = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
 if old then
  local previous = cjson.decode(old)
+ if (previous.attemptsStarted or 0) > (data.attemptsStarted or 0) and ARGV[3] ~= 'retried' then return 0 end
+ if previous.finishedAt and not data.finishedAt and previous.attemptsStarted == data.attemptsStarted and ARGV[3] ~= 'retried' then return 0 end
  for _, key in ipairs(previous.indexKeys) do redis.call('ZREM', key, ARGV[1]) end
  if data.status == 'active' then data.lock = previous.lock end
 end
-for _, key in ipairs(data.indexKeys) do redis.call('ZADD', key, data.createdAt, ARGV[1]) end
+if ARGV[8] ~= '' and data.status == 'active' then
+ data.lock = {source='worker-observation', state='observed', expiresAt=at+tonumber(ARGV[8]), owner=ARGV[9]}
+end
+local terminal = data.status == 'completed' or data.status == 'failed'
+for _, key in ipairs(data.indexKeys) do
+ local score = terminal and key == ARGV[5] .. ':status:' .. data.status and (data.finishedAt or at) or data.createdAt
+ redis.call('ZADD', key, score, ARGV[1])
+end
 redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(data))
 if ARGV[3] ~= '' then
- local time = redis.call('TIME')
- local at = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
  redis.call('XADD', KEYS[2], 'MAXLEN', '=', 100, '*', 'event', ARGV[3], 'at', at, 'attempt', ARGV[4])
 end
+prune(ARGV[5], at, tonumber(ARGV[6]), tonumber(ARGV[7]), 100)
 return 1
 `;
-const removeScript = `
-local raw = redis.call('HGET', KEYS[1], ARGV[1])
-if raw then
- local data = cjson.decode(raw)
- for _, key in ipairs(data.indexKeys) do redis.call('ZREM', key, ARGV[1]) end
- redis.call('HDEL', KEYS[1], ARGV[1])
-end
+const removeScript = retentionScript + `
+remove(ARGV[2], ARGV[1])
 return 1
 `;
 const lockScript = `
-local raw = redis.call('HGET', KEYS[1], ARGV[1])
-if not raw then return 0 end
-local data = cjson.decode(raw)
 local time = redis.call('TIME')
 local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
-data.lock = {source='worker-observation', state='observed', expiresAt=now+tonumber(ARGV[2]), owner=ARGV[3]}
-redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(data))
+for i = 3, #ARGV do
+ local raw = redis.call('HGET', KEYS[1], ARGV[i])
+ if raw then
+  local data = cjson.decode(raw)
+  if data.status == 'active' then
+   data.lock = {source='worker-observation', state='observed', expiresAt=now+tonumber(ARGV[1]), owner=ARGV[2]}
+   redis.call('HSET', KEYS[1], ARGV[i], cjson.encode(data))
+  end
+ end
+end
 return 1
+`;
+const pruneScript = retentionScript + `
+local time = redis.call('TIME')
+local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
+return prune(ARGV[1], now, tonumber(ARGV[2]), tonumber(ARGV[3]), tonumber(ARGV[4]))
 `;
 const pageScript = `
 if #KEYS > 1 then redis.call('ZINTERSTORE', ARGV[1], #KEYS, unpack(KEYS)); redis.call('PEXPIRE', ARGV[1], 5000) end
@@ -85,17 +151,33 @@ function stackDiagnostics(value: unknown): Pick<QueueJobSnapshot, 'stacktrace' |
 
 /** Svelar-owned Redis indexes only; no BullMQ private keys or lock tokens. */
 export class RedisQueueOperations {
-  constructor(private provider: () => Promise<any>, readonly connection: string, readonly queueName: string) {}
+  constructor(private provider: () => Promise<any>, readonly connection: string, readonly queueName: string,
+    private policy: QueueOperationsIndexPolicy | (() => QueueOperationsIndexPolicy | undefined) = 'full') {}
+  private options() { return operationsIndexPolicy(typeof this.policy === 'function' ? this.policy() : this.policy); }
+  private tracked(job: any, event: string, current?: QueueJobStatus): boolean {
+    const mode = this.options().mode;
+    if (mode === 'off') return false;
+    return mode === 'full' || ['retrying', 'failed', 'stalled', 'retried', 'lock-renewal-failed'].includes(event)
+      || current === 'failed' || job.data?.svelarOperationsTracked === true || !!job.data?.replayRecordId
+      || !!job.failedReason || job.stacktrace?.length > 0 || job.stalledCounter > 0 || job.attemptsStarted > 1
+      || job.attemptsMade > (event === 'completed' || current === 'completed' ? 1 : 0);
+  }
   private async resources() {
     const queue = await this.provider();
     return { queue, client: await queue.client, prefix: queue.toKey('svelar:operations:v1') as string };
   }
-  async capture(job: any, event = '', forcedStatus?: QueueJobStatus): Promise<void> {
-    const { queue, client, prefix } = await this.resources();
-    const latest = await queue.getJob(String(job.id));
-    const current = latest ? status(await latest.getState()) : forcedStatus ?? null;
-    if (!current) return;
-    job = latest ?? job;
+  async capture(job: any, event = '', forcedStatus?: QueueJobStatus,
+    lock?: { duration: number; owner: string }): Promise<boolean> {
+    if (!this.tracked(job, event, forcedStatus)) return false;
+    const current = forcedStatus ?? status(await job.getState());
+    if (!current || !this.tracked(job, event, current)) return false;
+    if (this.options().mode === 'failures-only' && !job.data?.svelarOperationsTracked && current !== 'completed' && current !== 'failed') {
+      // Persist once on an exceptional path so a different worker can finish its history.
+      const data = { ...job.data, svelarOperationsTracked: true };
+      await job.updateData(data);
+      job.data = data;
+    }
+    const { client, prefix } = await this.resources();
     const info: QueueJobSnapshot = {
       id: String(job.id), connection: this.connection, queue: this.queueName, jobClass: job.data?.jobClass ?? job.name,
       status: current, attempts: job.attemptsMade ?? 0, maxAttempts: job.opts?.attempts ?? 3,
@@ -112,19 +194,29 @@ export class RedisQueueOperations {
     const indexKeys = [`${prefix}:all`, `${prefix}:status:${current}`,
       ...metadataKeys(prefix, indexedMetadata(job.data?.metadata, job.data?.context)),
       `${prefix}:class:${createHash('sha256').update(info.jobClass).digest('hex')}`];
-    await client.eval(indexScript, 2, `${prefix}:jobs`, `${prefix}:timeline:${info.id}`, info.id,
-      JSON.stringify({ ...info, indexKeys, indexed: indexedMetadata(job.data?.metadata, job.data?.context) }), event, info.attempts);
+    const options = this.options();
+    return Number(await client.eval(indexScript, 2, `${prefix}:jobs`, `${prefix}:timeline:${info.id}`, info.id,
+      JSON.stringify({ ...info, indexKeys, indexed: indexedMetadata(job.data?.metadata, job.data?.context) }), event, info.attempts,
+      prefix, options.maxAgeSeconds * 1000, options.maxJobs, lock?.duration ?? '', lock?.owner ?? '')) === 1;
   }
   async refresh(id: string, event = ''): Promise<void> {
+    if (this.options().mode === 'off') return;
     const queue = await this.provider(); const job = await queue.getJob(id);
     if (job) await this.capture(job, event);
   }
   async observeLocks(ids: readonly string[], duration: number, owner: string): Promise<void> {
+    if (this.options().mode === 'off' || !ids.length) return;
+    if (this.options().mode === 'failures-only') {
+      if (duration > 0) return;
+      for (const id of ids) await this.refresh(id, 'lock-renewal-failed');
+    }
     const { client, prefix } = await this.resources();
-    for (const id of ids) await client.eval(lockScript, 1, `${prefix}:jobs`, id, duration, owner);
+    await client.eval(lockScript, 1, `${prefix}:jobs`, duration, owner, ...ids);
   }
   async snapshot(job: any, filter?: QueueJobFilter): Promise<QueueJobSnapshot | null> {
+    if (this.options().mode === 'off') return null;
     const current = status(await job.getState()); if (!current) return null;
+    if (!this.tracked(job, '', current)) return null;
     await this.capture(job, '', current);
     const { client, prefix } = await this.resources();
     const raw = await client.hget(`${prefix}:jobs`, String(job.id));
@@ -138,10 +230,18 @@ export class RedisQueueOperations {
     return info;
   }
   async removeIndex(id: string): Promise<void> {
-    const { client, prefix } = await this.resources(); await client.eval(removeScript, 1, `${prefix}:jobs`, id);
+    const { client, prefix } = await this.resources(); await client.eval(removeScript, 1, `${prefix}:jobs`, id, prefix);
+  }
+  async prune(limit = 100): Promise<{ removed: number; complete: boolean }> {
+    boundedLimit(limit, 1000);
+    const { client, prefix } = await this.resources();
+    const options = this.options();
+    const [removed, complete] = await client.eval(pruneScript, 1, `${prefix}:jobs`, prefix, options.maxAgeSeconds * 1000, options.maxJobs, limit);
+    return { removed: Number(removed), complete: Number(complete) === 1 };
   }
   async list(filter: QueueJobFilter = {}): Promise<QueueJobPage> {
     const { offset, limit } = pageOptions(filter);
+    if (this.options().mode === 'off') return { items: [], offset, limit, indexedCount: 0, coverage: 'instrumented' };
     const { queue, client, prefix } = await this.resources();
     const keys = [`${prefix}:all`, ...metadataKeys(prefix, filter)];
     if (filter.status) keys.push(`${prefix}:status:${filter.status}`);
@@ -158,6 +258,7 @@ export class RedisQueueOperations {
   }
   async timeline(id: string, limit = 100): Promise<QueueTimelineEvent[]> {
     boundedLimit(limit);
+    if (this.options().mode === 'off') return [];
     const { client, prefix } = await this.resources();
     const rows = await client.xrevrange(`${prefix}:timeline:${id}`, '+', '-', 'COUNT', limit);
     return rows.map(([entryId, fields]: [string, string[]]) => {
@@ -167,12 +268,20 @@ export class RedisQueueOperations {
   }
   async reconcile(limit = 1000): Promise<{ indexed: number; complete: boolean }> {
     boundedLimit(limit, 10000);
+    if (this.options().mode === 'off') return { indexed: 0, complete: true };
     const queue = await this.provider();
     const jobs = await queue.getJobs(['wait', 'paused', 'prioritized', 'active', 'completed', 'failed', 'delayed'], 0, limit);
-    for (const job of jobs.slice(0, limit)) if (job) await this.capture(job);
-    return { indexed: Math.min(limit, jobs.length), complete: jobs.length <= limit };
+    let indexed = 0;
+    for (const job of jobs.slice(0, limit)) if (job && await this.capture(job)) indexed++;
+    return { indexed, complete: jobs.length <= limit };
   }
   async readyAges(): Promise<{ oldest: number | null; stalled: number | null; expiredLocks: number | null; complete: boolean }> {
+    if (this.options().mode !== 'full') {
+      const queue = await this.provider();
+      const counts = await queue.getJobCounts('waiting', 'paused', 'prioritized', 'active');
+      const complete = (counts.waiting ?? 0) + (counts.paused ?? 0) + (counts.prioritized ?? 0) + (counts.active ?? 0) === 0;
+      return { oldest: null, stalled: complete ? 0 : null, expiredLocks: complete ? 0 : null, complete };
+    }
     const { queue, client, prefix } = await this.resources();
     let oldest: number | null = null;
     const waiting: string[] = await client.zrange(`${prefix}:status:waiting`, 0, 99);
