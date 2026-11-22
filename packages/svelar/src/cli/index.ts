@@ -36,6 +36,7 @@ export { MakeListenerCommand } from './commands/MakeListenerCommand.js';
 export { MakeRouteCommand } from './commands/MakeRouteCommand.js';
 export { RoutesListCommand } from './commands/RoutesListCommand.js';
 export { LintArchitectureCommand } from './commands/LintArchitectureCommand.js';
+export { LogPruneCommand } from './commands/LogPruneCommand.js';
 export { MigrateCommand } from './commands/MigrateCommand.js';
 export { SeedCommand } from './commands/SeedCommand.js';
 export { ScheduleRunCommand } from './commands/ScheduleRunCommand.js';
@@ -50,6 +51,10 @@ export { SearchSetupCommand } from './commands/SearchSetupCommand.js';
 export { TinkerCommand } from './commands/TinkerCommand.js';
 export { NewCommand } from './commands/NewCommand.js';
 export { UpdateCommand } from './commands/UpdateCommand.js';
+export {
+  planSvelteKit3Migration, applySvelteKit3Migration, SVELTEKIT3_GUIDE_PATH,
+  type SvelteKit3MigrationPlan, type SvelteKit3MigrationEdit,
+} from './SvelteKit3Migration.js';
 export { KeyGenerateCommand } from './commands/KeyGenerateCommand.js';
 export { PluginListCommand } from './commands/PluginListCommand.js';
 export { PluginPublishCommand } from './commands/PluginPublishCommand.js';

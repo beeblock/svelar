@@ -10,6 +10,7 @@ import { UiPatternTemplates } from './UiPatternTemplates.js';
 import { applyZod4Migration, planZod4Migration } from '../Zod4Migration.js';
 import { applyCoreScaffoldMigration, planCoreScaffoldMigration } from '../CoreScaffoldMigration.js';
 import { applyApiFetchMigration, planApiFetchMigration } from '../ApiFetchMigration.js';
+import { applySvelteKit3Migration, planSvelteKit3Migration } from '../SvelteKit3Migration.js';
 
 interface ScaffoldFile {
   path: string;
@@ -167,6 +168,7 @@ export class UpdateCommand extends Command {
     { name: 'migrate-zod4', description: 'Opt in to backed-up Zod 4 adapter/dependency migration (requires confirmation or --force)', type: 'boolean' as const, default: false },
     { name: 'migrate-core', description: 'Opt in to narrowly backed-up 0.7.9 scaffold API migration (requires confirmation or --force)', type: 'boolean' as const, default: false },
     { name: 'migrate-api-fetch', description: 'Opt in to AST-reviewed same-origin browser mutation migration, with exact backups', type: 'boolean' as const, default: false },
+    { name: 'migrate-sveltekit3', description: 'Opt in to backed-up SvelteKit 3 config/toolchain migration and an explicit manual-review guide', type: 'boolean' as const, default: false },
   ];
 
   async handle(_args: string[], flags: Record<string, any>): Promise<void> {
@@ -177,6 +179,16 @@ export class UpdateCommand extends Command {
     const listOnly = flags.list ?? false;
     const includeUserFiles = flags['include-user-files'] ?? false;
     const addMissingUserFiles = flags['add-missing-user-files'] ?? false;
+    let legacyMigrationOnly = false;
+
+    if (flags['migrate-sveltekit3']) {
+      if (addMissingUserFiles || includeUserFiles || flags['migrate-core'] || flags['migrate-zod4'] || flags['migrate-api-fetch'] || categoryFilter) {
+        this.error('--migrate-sveltekit3 is a separate migration. Do not combine it with other update modes or --category.');
+        return;
+      }
+      await this.migrateSvelteKit3(cwd, Boolean(force), Boolean(dryRun || listOnly));
+      return;
+    }
 
     if (flags['migrate-api-fetch']) {
       if (addMissingUserFiles || includeUserFiles || flags['migrate-core'] || flags['migrate-zod4'] || categoryFilter) {
@@ -203,6 +215,30 @@ export class UpdateCommand extends Command {
 
     if (flags['migrate-zod4']) {
       await this.migrateZod4(cwd, Boolean(force), Boolean(dryRun || listOnly));
+      return;
+    }
+
+    // Kit 3 scaffold imports/config must never silently replace an existing Kit 2 app.
+    // Focused historical migrations above remain available independently of this guard.
+    try {
+      const pkg = JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf8').replace(/^\uFEFF/, ''));
+      const kit = [pkg.dependencies, pkg.devDependencies, pkg.optionalDependencies, pkg.peerDependencies]
+        .flatMap((section) => section && typeof section['@sveltejs/kit'] === 'string' ? [section['@sveltejs/kit'] as string] : []);
+      const legacyConfig = ['js', 'ts', 'mjs', 'mts', 'cjs', 'cts']
+        .some((extension) => lstatSync(join(cwd, `svelte.config.${extension}`), { throwIfNoEntry: false }));
+      if (legacyConfig || kit.some((range) => !/^[~^]?3\.\d+\.\d+$/.test(range))) {
+        if (categoryFilter === 'migration' && !includeUserFiles && !addMissingUserFiles) {
+          legacyMigrationOnly = true;
+          this.info('Kit 2 core migration update: add missing framework migrations only; existing schema history, app source and configuration are preserved. No SvelteKit major upgrade.');
+        } else if (dryRun || listOnly) {
+          this.warn('Read-only scaffold diagnostics against Kit 3 templates. This existing Kit 2/legacy app will not be changed; review --migrate-sveltekit3 --dry-run for an explicit upgrade plan.');
+        } else {
+          this.error('Scaffold update blocked: this app has legacy/custom SvelteKit configuration or a dependency range not proven to target Kit 3. Kit 2 apps can stay on Kit 2. Review update --migrate-sveltekit3 --dry-run before explicitly migrating; bare --force cannot authorize a major upgrade. No files written.');
+          return;
+        }
+      }
+    } catch (error) {
+      this.error(`Cannot safely determine the app SvelteKit version: ${error instanceof Error ? error.message : String(error)}. No files written.`);
       return;
     }
 
@@ -236,6 +272,11 @@ export class UpdateCommand extends Command {
     // Split into framework vs user files
     const frameworkFiles = filtered.filter(f => f.ownership === 'framework');
     const userFiles = filtered.filter(f => f.ownership === 'user');
+
+    if (legacyMigrationOnly) {
+      this.addMissingUserFiles(frameworkFiles, cwd, Boolean(force), Boolean(dryRun || listOnly), true);
+      return;
+    }
 
     if (addMissingUserFiles) {
       this.addMissingUserFiles(userFiles, cwd, Boolean(force), Boolean(dryRun || listOnly));
@@ -356,13 +397,17 @@ export class UpdateCommand extends Command {
     this.success('Update complete.');
   }
 
-  private addMissingUserFiles(files: ScaffoldFile[], cwd: string, force: boolean, dryRun: boolean): void {
+  private addMissingUserFiles(files: ScaffoldFile[], cwd: string, force: boolean, dryRun: boolean, coreMigrations = false): void {
     const missing = files.filter((file) => !lstatSync(join(cwd, file.path), { throwIfNoEntry: false }));
-    this.info(`Missing-only user-file update: ${missing.length} file(s); existing files and framework files are excluded.`);
+    this.info(coreMigrations
+      ? `Missing-only core migration update: ${missing.length} file(s); all existing migration history, user files and configuration are excluded.`
+      : `Missing-only user-file update: ${missing.length} file(s); existing files and framework files are excluded.`);
     for (const file of missing) this.log(`  ${file.path}: ${file.description}`);
     if (dryRun || !missing.length) return;
     if (!force) {
-      this.error('Review --add-missing-user-files --dry-run, then use --add-missing-user-files --force to approve additions. No files written.');
+      this.error(coreMigrations
+        ? 'Review update --category=migration --dry-run, then use --category=migration --force to approve missing core migration files. No files written.'
+        : 'Review --add-missing-user-files --dry-run, then use --add-missing-user-files --force to approve additions. No files written.');
       return;
     }
 
@@ -429,6 +474,42 @@ export class UpdateCommand extends Command {
     try {
       for (const backup of applyCoreScaffoldMigration(plan, { confirmed: true })) this.log(`  Backup: ${backup}`);
       this.success('Core token migration applied. Run app type-checks, tests, browser login and reviewed admin-operation checks; compatibility is not implied.');
+    } catch (error) { this.error(error instanceof Error ? error.message : String(error)); }
+  }
+
+  private async migrateSvelteKit3(cwd: string, force: boolean, dryRun: boolean): Promise<void> {
+    try {
+      const plan = await planSvelteKit3Migration(cwd);
+      this.info('SvelteKit 3 opt-in preflight; custom config, $lib imports, validation provider, data and migrations are preserved.');
+      for (const edit of plan.edits) {
+        this.log(`  ${edit.updated === null ? 'REMOVE (after backup)' : edit.original === null ? 'ADD' : 'EDIT'} ${edit.path}: ${edit.reasons.join('; ')}`);
+      }
+      for (const warning of plan.warnings) this.warn(warning);
+      // The complete guide is available even during a blocked/read-only preflight.
+      this.log(plan.guide);
+      if (plan.errors.length) {
+        for (const error of plan.errors) this.error(error);
+        this.error('SvelteKit 3 migration blocked before writes. Resolve the conflicts and rerun --migrate-sveltekit3 --dry-run.');
+        return;
+      }
+      if (dryRun) {
+        this.info(`Dry run: ${plan.edits.length} file(s); no source, guide or backups written. Manual review remains required.`);
+        return;
+      }
+      if (!plan.edits.length) {
+        this.info(`Recognized file edits are already aligned. Complete ${plan.guidePath}; upgrade compatibility is not certified.`);
+        return;
+      }
+      if (!force) {
+        if (!process.stdin.isTTY) {
+          this.error('Review --migrate-sveltekit3 --dry-run, then use --migrate-sveltekit3 --force or confirm interactively. No files written.');
+          return;
+        }
+        const answer = await ask(`Apply ${plan.edits.length} reviewed Kit 3 file edits with exact-original backups? Manual guide steps will remain. [y/N] `);
+        if (answer !== 'y' && answer !== 'yes') { this.info('SvelteKit 3 migration cancelled; no files written.'); return; }
+      }
+      for (const backup of applySvelteKit3Migration(plan, { confirmed: true })) this.log(`  Backup: ${backup}`);
+      this.warn(`Recognized file migration applied. Upgrade NOT complete: follow ${plan.guidePath}, resolve manual blockers, install only with approval, and verify app checks/tests/build/browser flows. No official migrator was run.`);
     } catch (error) { this.error(error instanceof Error ? error.message : String(error)); }
   }
 
