@@ -506,7 +506,7 @@ describe('MemorySessionStore', () => {
   });
 });
 
-describe.sequential('DatabaseSessionStore', () => {
+describe('DatabaseSessionStore', () => {
   let root: string;
 
   beforeEach(async () => {

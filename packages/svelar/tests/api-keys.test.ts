@@ -19,7 +19,7 @@ class User extends Model {
   static timestamps = false;
 }
 
-describe.sequential('ApiKeys', () => {
+describe('ApiKeys', () => {
   let root: string;
   let user: User;
 

@@ -17,7 +17,9 @@
  * ```
  */
 
-import type { Handle } from '@sveltejs/kit';
+import type { sequence } from '@sveltejs/kit/hooks';
+
+type Handle = Parameters<typeof sequence>[number];
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -81,8 +83,7 @@ export function createI18nHandle(config: I18nHandleConfig): Handle {
 
   return ({ event, resolve }) =>
     paraglideMiddleware(event.request, ({ request: localizedRequest, locale }) => {
-      event.request = localizedRequest;
-      return resolve(event, {
+      return resolve({ ...event, request: localizedRequest }, {
         transformPageChunk: ({ html }) =>
           html.replace(langPlaceholder, locale).replace(dirPlaceholder, getTextDirection(locale)),
       });

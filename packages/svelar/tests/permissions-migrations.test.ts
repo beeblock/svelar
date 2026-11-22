@@ -12,7 +12,7 @@ const permissionHistory = () => svelarCoreMigrations().filter((file) => file.nam
 const teamMigrations = () => permissionHistory().filter((file) => file.name >= '00000000_000031');
 const legacyMigrations = () => svelarCoreMigrations().filter((file) => file.name < '00000000_000031');
 
-describe.sequential('Permission migration upgrades', () => {
+describe('Permission migration upgrades', () => {
   beforeEach(async () => {
     await Connection.disconnect();
     Connection.configure({ default: 'sqlite', connections: { sqlite: { driver: 'sqlite', filename: ':memory:' } } });

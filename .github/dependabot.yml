@@ -12,6 +12,12 @@ updates:
     labels:
       - dependencies
       - security
+    # These compiler contracts follow our supported Node floor and reviewed TS API.
+    ignore:
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
     groups:
       sveltekit-tooling:
         patterns:
@@ -19,6 +25,9 @@ updates:
           - "svelte"
           - "vite"
           - "vitest"
+          - "@vitest/coverage-v8"
+          - "sveltekit-superforms"
+          - "formsnap"
       build-tooling:
         patterns:
           - "tsup"

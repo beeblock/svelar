@@ -165,7 +165,7 @@ describe('i18n integration', () => {
       },
     } as any);
 
-    expect(event.request).toBe(localizedRequest);
+    expect(event.request.url).toBe('http://localhost/en/dashboard');
     await expect(response.text()).resolves.toBe('<html lang="ar" dir="rtl"></html>');
   });
 

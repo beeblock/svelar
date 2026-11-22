@@ -13,7 +13,7 @@ class TestUser implements Notifiable {
   }
 }
 
-describe.sequential('Notifier', () => {
+describe('Notifier', () => {
   afterEach(async () => {
     Notifier.configure();
     await Connection.disconnect();

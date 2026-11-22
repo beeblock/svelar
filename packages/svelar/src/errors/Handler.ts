@@ -246,8 +246,23 @@ export class ErrorHandler {
   /**
    * Create a SvelteKit-compatible handleError hook
    */
-  handleSvelteKitError(): (input: { error: unknown; event: any; status: number; message: string }) => any {
-    return ({ error, event, status, message }) => {
+  handleSvelteKitError(): (input: {
+    error: unknown; event: any; status?: number; message?: string;
+    kind?: 'app' | 'framework' | 'validation' | 'unknown'; issues?: unknown[];
+  }) => any {
+    return ({ error, event, status = 500, message, kind }) => {
+      // Kit 3 routes expected and validation errors through this hook too.
+      // Their public bodies are already safe; validation issues are logging-only.
+      if (kind === 'app' || kind === 'framework' || kind === 'validation') {
+        const body = error && typeof error === 'object' ? error as Record<string, unknown> : {};
+        const code = typeof body.status === 'number' && Number.isInteger(body.status) && body.status >= 400 && body.status <= 599
+          ? body.status : status;
+        return {
+          ...(kind === 'app' ? body : {}),
+          status: code,
+          message: typeof body.message === 'string' ? body.message : message ?? 'An unexpected error occurred',
+        };
+      }
       const err = normalizeError(error);
 
       // Report

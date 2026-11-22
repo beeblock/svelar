@@ -16,7 +16,7 @@ class User extends HasRoles(Model) {
   static timestamps = false;
 }
 
-describe.sequential('Team-scoped permissions', () => {
+describe('Team-scoped permissions', () => {
   let teamA: string | number;
   let teamB: string | number;
   let a: PermissionAssignments;

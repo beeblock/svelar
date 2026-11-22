@@ -25,7 +25,7 @@ function hashToken(token: string): string {
   return createHmac('sha256', secret).update(token).digest('hex');
 }
 
-describe.sequential('Auth recovery tokens', () => {
+describe('Auth recovery tokens', () => {
   let root: string;
   let auth: AuthManager;
 

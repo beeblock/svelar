@@ -88,7 +88,7 @@ describe('Stripe API object migration', () => {
 
 describe.each([
   ['stripe22', '2026-05-27.dahlia'],
-  ['stripe', '2026-09-30.endive'],
+  ['stripe', '2026-11-18.endive'],
 ])('native SDK compatibility (%s)', (sdk, apiVersion) => {
   let service: StripeService;
 

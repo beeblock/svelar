@@ -12,7 +12,7 @@ describe('Core guidance test dependency ownership', () => {
     const imports = source.statements.filter(ts.isImportDeclaration)
       .filter(node => ts.isStringLiteral(node.moduleSpecifier) && node.moduleSpecifier.text === 'marked');
     expect(imports).toHaveLength(1);
-    expect(core.devDependencies.marked).toBe('^18.1.1');
+    expect(core.devDependencies.marked).toBe('^18.2.1');
     expect(core.dependencies.marked).toBeUndefined();
     expect(core.peerDependencies.marked).toBeUndefined();
   });

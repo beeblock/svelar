@@ -7,7 +7,7 @@ import { svelarCoreMigrations } from '../src/database/CoreMigrations.js';
 import { Migrator } from '../src/database/Migration.js';
 import { Teams } from '../src/teams/index.js';
 
-describe.sequential('Teams', () => {
+describe('Teams', () => {
   let root: string;
 
   beforeEach(async () => {

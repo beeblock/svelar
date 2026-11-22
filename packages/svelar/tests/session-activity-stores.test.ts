@@ -6,7 +6,7 @@ import { Connection } from '../src/database/Connection.js';
 import { CreateSessionsTable } from '../src/database/core/00000000_000001_create_sessions_table.js';
 import { DatabaseSessionStore, FileSessionStore, MemorySessionStore, RedisSessionStore, type SessionStore } from '../src/session/Session.js';
 
-describe.sequential('Activity policy store conditional persistence', () => {
+describe('Activity policy store conditional persistence', () => {
   let root: string;
   beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'svelar-session-activity-')); });
   afterEach(async () => { await Connection.disconnect(); await rm(root, { recursive: true, force: true }); });

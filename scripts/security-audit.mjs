@@ -60,7 +60,7 @@ function isAllowed(vulnerability, allowlist, today) {
 const minSeverity = argValue('min-severity', 'high');
 const minRank = severityRank[minSeverity];
 
-if (minRank === undefined) {
+if (!Object.hasOwn(severityRank, minSeverity)) {
   console.error(`Unknown --min-severity value: ${minSeverity}`);
   process.exit(2);
 }
@@ -70,15 +70,44 @@ const audit = spawnSync('npm', ['audit', '--workspaces', '--json'], {
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 
-if (!audit.stdout.trim()) {
-  process.stderr.write(audit.stderr);
-  process.exit(audit.status ?? 1);
+function invalidAudit(message) {
+  console.error(`Security audit could not be verified: ${message}`);
+  process.exit(2);
 }
 
-const report = JSON.parse(audit.stdout);
+function record(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+if (audit.error) invalidAudit('npm could not be started.');
+if (audit.signal) invalidAudit(`npm terminated by ${audit.signal}.`);
+if (audit.status !== 0 && audit.status !== 1) invalidAudit(`npm exited with unexpected status ${audit.status}.`);
+if (typeof audit.stdout !== 'string' || !audit.stdout.trim()) invalidAudit('npm returned no JSON report.');
+
+let report;
+try { report = JSON.parse(audit.stdout); }
+catch { invalidAudit('npm returned invalid JSON.'); }
+if (!record(report) || Object.hasOwn(report, 'error')) invalidAudit('npm returned an error report.');
+if (report.auditReportVersion !== 2 || !record(report.vulnerabilities)) invalidAudit('unsupported or missing vulnerability report schema.');
+
+const vulnerabilities = Object.values(report.vulnerabilities);
+for (const [name, vulnerability] of Object.entries(report.vulnerabilities)) {
+  if (!record(vulnerability) || vulnerability.name !== name || typeof vulnerability.severity !== 'string' || !Object.hasOwn(severityRank, vulnerability.severity)
+    || !Array.isArray(vulnerability.via) || vulnerability.via.some((via) => typeof via !== 'string'
+      && (!record(via) || typeof via.title !== 'string' || typeof via.url !== 'string'))) {
+    invalidAudit('invalid vulnerability record.');
+  }
+}
+const counts = report.metadata?.vulnerabilities;
+if (!record(counts) || [...Object.keys(severityRank), 'total'].some((key) => !Number.isSafeInteger(counts[key]) || counts[key] < 0)
+  || counts.total !== vulnerabilities.length
+  || Object.keys(severityRank).some((severity) => counts[severity] !== vulnerabilities.filter((item) => item.severity === severity).length)) {
+  invalidAudit('missing or inconsistent vulnerability totals.');
+}
+if (audit.status === 1 && vulnerabilities.length === 0) invalidAudit('npm failed without reporting vulnerabilities.');
+
 const allowlist = loadAllowlist();
 const today = new Date().toISOString().slice(0, 10);
-const vulnerabilities = Object.values(report.vulnerabilities ?? {});
 
 const blocking = [];
 const allowed = [];
@@ -116,6 +145,5 @@ if (blocking.length > 0) {
   process.exit(1);
 }
 
-const counts = report.metadata?.vulnerabilities ?? {};
 console.log(`Security audit passed for ${minSeverity}+ findings.`);
 console.log(`Current audit totals: ${JSON.stringify(counts)}`);

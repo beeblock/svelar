@@ -144,7 +144,7 @@ class RefreshUser extends Model {
   static timestamps = false;
 }
 
-describe.sequential('JWT refresh tokens', () => {
+describe('JWT refresh tokens', () => {
   let root: string;
   let auth: AuthManager;
 

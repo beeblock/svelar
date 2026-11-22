@@ -13,7 +13,7 @@ class User extends HasRoles(Model) {
   static timestamps = false;
 }
 
-describe.sequential('Permissions', () => {
+describe('Permissions', () => {
   let root: string;
 
   beforeEach(async () => {

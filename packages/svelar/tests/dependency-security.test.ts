@@ -1,10 +1,10 @@
 import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { NewCommandTemplates } from '../src/cli/commands/NewCommandTemplates.js';
 
 const require = createRequire(import.meta.url);
@@ -16,40 +16,90 @@ describe('Dependency Security Compatibility', () => {
   it.each(['zod', 'valibot'] as const)('keeps narrow security overrides in %s scaffolds', (provider) => {
     const manifest = JSON.parse(NewCommandTemplates.packageJson('security-test', '0.8.0', provider));
     expect(manifest.overrides).toEqual({
-      '@sveltejs/kit': { cookie: '^0.7.2' },
       exceljs: { uuid: '^11.1.1' },
       'esbuild@>=0.27.3 <0.28.1': '^0.28.2',
     });
-    expect(manifest.devDependencies['@sveltejs/kit']).toMatch(/^\^2\./);
+    expect(manifest.devDependencies['@sveltejs/kit']).toBe('^3.4.0');
+    const root = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8'));
+    expect(root.overrides['@sveltejs/kit']).toEqual({ 'cookie@^0.6.0': '^0.7.2' });
+    expect(root.overrides['@sveltejs/kit@^2']).toBeUndefined();
+  });
+
+  it('qualifies legacy cookies in every available workspace without overriding Kit 3 cookies', () => {
+    const rootUrl = new URL('../../../', import.meta.url);
+    const root = JSON.parse(readFileSync(new URL('package.json', rootUrl), 'utf8'));
+    for (const workspace of root.workspaces) {
+      const path = new URL(`${workspace}/package.json`, rootUrl);
+      // Local plugin checkouts are optional in the tracked core-only CI snapshot.
+      if (!existsSync(path)) continue;
+      const manifest = JSON.parse(readFileSync(path, 'utf8'));
+      if (workspace === 'packages/svelar') {
+        expect(manifest.overrides).toBeUndefined();
+        continue;
+      }
+      expect(manifest.overrides['@sveltejs/kit'], workspace).toEqual({ 'cookie@^0.6.0': '^0.7.2' });
+      expect(manifest.overrides['@sveltejs/kit@^2'], workspace).toBeUndefined();
+      expect(manifest.overrides.cookie, workspace).toBeUndefined();
+    }
+    expect(root.overrides.cookie).toBeUndefined();
   });
 
   it('serializes, parses, and deletes session cookies through the real Kit cookie API', async () => {
-    const kitRoot = dirname(consumerRequire.resolve('@sveltejs/kit/package.json'));
-    const moduleUrl = pathToFileURL(join(kitRoot, 'src/runtime/server/cookie.js')).href;
-    const { get_cookies } = await import(/* @vite-ignore */ moduleUrl);
-    const url = new URL('https://app.example.test/account');
-    const runtime = get_cookies(new Request(url), url);
-    runtime.set_trailing_slash('ignore');
-    const value = 'session-id.signature+/=';
-    const options = { path: '/', maxAge: 7200, secure: true, httpOnly: true, sameSite: 'lax' };
-    runtime.cookies.set('svelar_session', value, options);
-    const header = runtime.cookies.serialize('svelar_session', value, options);
-    expect(header).toContain('Max-Age=7200');
-    expect(header).toContain('Path=/');
-    expect(header).toContain('HttpOnly; Secure; SameSite=Lax');
-    const next = get_cookies(new Request(url, { headers: { cookie: header.split(';')[0] } }), url);
-    next.set_trailing_slash('ignore');
-    expect(next.cookies.get('svelar_session')).toBe(value);
-    next.cookies.delete('svelar_session', { path: '/' });
-    expect(next.cookies.get('svelar_session')).toBeUndefined();
+    let hooks: { deregister(): void } | undefined;
+    try {
+      vi.stubGlobal('__SVELTEKIT_DEV__', false);
+      vi.stubGlobal('__SVELTEKIT_PATHS_BASE__', '');
+      vi.stubGlobal('__SVELTEKIT_PATHS_ASSETS__', '');
+      vi.stubGlobal('__SVELTEKIT_APP_DIR__', '_app');
+      vi.stubGlobal('__SVELTEKIT_PATHS_RELATIVE__', false);
+      const kitRoot = dirname(consumerRequire.resolve('@sveltejs/kit/package.json'));
+      const moduleUrl = pathToFileURL(join(kitRoot, 'src/runtime/server/cookie.js')).href;
+      const kit = JSON.parse(readFileSync(join(kitRoot, 'package.json'), 'utf8'));
+      // Kit 3 compile bindings only; cookie parsing and serialization remain real implementations.
+      hooks = kit.version.startsWith('3.') ? (await import('node:module')).registerHooks({
+        resolve(specifier, context, nextResolve) {
+          return specifier === '<sveltekit:generated>/server.js'
+            ? { url: 'data:text/javascript,export async function get_hooks() { return {}; }', shortCircuit: true }
+            : nextResolve(specifier, context);
+        },
+      }) : undefined;
+      const { get_cookies } = await import(/* @vite-ignore */ moduleUrl);
+      const url = new URL('https://app.example.test/account');
+      const runtime = get_cookies(new Request(url), url);
+      runtime.set_trailing_slash('ignore');
+      const value = 'session-id.signature+/=';
+      const options = { path: '/', maxAge: 7200, secure: true, httpOnly: true, sameSite: 'lax' };
+      runtime.cookies.set('svelar_session', value, options);
+      const header = runtime.cookies.serialize('svelar_session', value, options);
+      expect(header).toContain('Max-Age=7200');
+      expect(header).toContain('Path=/');
+      expect(header).toContain('HttpOnly; Secure; SameSite=Lax');
+      const next = get_cookies(new Request(url, { headers: { cookie: header.split(';')[0] } }), url);
+      next.set_trailing_slash('ignore');
+      expect(next.cookies.get('svelar_session')).toBe(value);
+      next.cookies.delete('svelar_session', { path: '/' });
+      expect(next.cookies.get('svelar_session')).toBeUndefined();
+    } finally {
+      try { hooks?.deregister(); }
+      finally { vi.unstubAllGlobals(); }
+    }
   });
 
-  it('rejects cookie attribute injection with the installed override', () => {
+  it('rejects cookie attribute injection through the installed Kit cookie serializer', async () => {
     const kitRequire = createRequire(consumerRequire.resolve('@sveltejs/kit/package.json'));
-    const { serialize } = kitRequire('cookie');
-    expect(() => serialize('name; injected=value', 'value')).toThrow(TypeError);
-    expect(() => serialize('name', 'value', { path: '/; injected=value' })).toThrow(TypeError);
-    expect(() => serialize('name', 'value', { domain: 'example.test; injected=value' })).toThrow(TypeError);
+    const cookie = await import(/* @vite-ignore */ pathToFileURL(kitRequire.resolve('cookie')).href);
+    const kit = JSON.parse(readFileSync(consumerRequire.resolve('@sveltejs/kit/package.json'), 'utf8'));
+    const kitMajor = Number(kit.version.split('.')[0]);
+    expect([2, 3]).toContain(kitMajor);
+    const serializer = kitMajor === 3 ? cookie.stringifySetCookie : cookie.serialize;
+    expect(typeof serializer).toBe('function');
+    const serialize = (name: string, value: string, options: Record<string, unknown> = {}) => kitMajor === 3
+      ? serializer({ name, value, ...options }) : serializer(name, value, options);
+    for (const separator of [';', '\r', '\n']) {
+      expect(() => serialize(`name${separator} injected=value`, 'value')).toThrow(TypeError);
+      expect(() => serialize('name', 'value', { path: `/${separator} injected=value` })).toThrow(TypeError);
+      expect(() => serialize('name', 'value', { domain: `example.test${separator} injected=value` })).toThrow(TypeError);
+    }
   });
 
   it('loads ExcelJS UUID through CommonJS and writes extended conditional formatting', async () => {
