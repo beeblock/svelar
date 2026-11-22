@@ -176,6 +176,7 @@ Log.configure({
       path: './storage/logs/app.log',
       level: 'info',
     },
+    stack: { driver: 'stack', channels: ['console', 'file'] },
   },
 });
 ```
@@ -201,6 +202,32 @@ await Log.channel('console').warn('Logged to console only');
 
 Log writes return promises. Await file and stack channels when you need to guarantee persistence or surface write failures. Missing channels, unknown drivers, and file write errors throw instead of falling back to console.
 
+### Processors And Destinations
+
+`Log.configure({ processors: [...] })` accepts ordered synchronous or asynchronous `(entry) => entry | null` processors. They receive the selected channel and explicit call context before ambient request/job/process context is merged. Returning `null` discards the entry for every destination; throwing rejects the log call without emitting the unprocessed entry. Level and destination checks run first, so rejected messages do not reach processors, context enrichment or serialization. If a processor changes the level, destination thresholds are checked again.
+
+```typescript
+Log.configure({
+  default: 'audit',
+  channels: { audit: { driver: 'console', format: 'json', output: false } },
+  viewer: { driver: 'database' },
+  processors: [
+    (entry) => entry.context.skipLog === true ? null : entry,
+    (entry) => ({ ...entry, message: entry.message.trim() }),
+  ],
+});
+
+// Viewer only, retaining channel: 'audit'.
+await Log.info('Import completed', { correlationId: importId });
+// Per-call flags also work on Log.channel(name) and every severity method.
+await Log.channel('audit').warn('Import delayed', {}, { output: false });
+await Log.info('Console only', {}, { output: true, viewer: false });
+```
+
+The optional third argument is `LogWriteOptions`: `output` controls channel output, and `viewer` controls capture. Each defaults to the selected channel's corresponding setting, or `true`; explicit call flags override that channel's settings. A stack's children still honor their own output flags and thresholds. The original selected channel remains the stored label; processors cannot reroute it. The `null` driver still permits viewer capture. Disable both destinations to skip the entry entirely. `viewer.enabled: false` disables all viewer ingestion, including direct calls, and cannot be overridden per call.
+
+Processors affect framework console-channel output, not arbitrary `console.*` calls. Svelar does not install a global console wrapper. Processors run before built-in redaction; do not write their raw inputs to another sink. Ambient context is attached afterward and still redacted. Existing applications can replace private `LogViewer.addEntry` patches with processors and destination options; direct viewer ingestion does not run `Log` processors and remains independently validated/redacted.
+
 ### Correlation Context And Redaction
 
 `createSvelarApp()` wraps each request with async-local logging context. Logs written during the request automatically include `requestId` and `correlationId`; authenticated requests also add `userId`/`actorId` when auth middleware resolves a user. Jobs, listeners, and custom integrations can use the same mechanism:
@@ -212,6 +239,8 @@ await Log.withContext({ tenantId: team.id, jobId: job.id }, async () => {
 ```
 
 `Log.configure()` accepts process-wide `context` and extra `redactKeys`. Sensitive fields such as passwords, tokens, secrets, authorization headers, cookies, signatures, and API keys are redacted recursively before entries reach channels or `LogViewer`.
+
+Configured redaction keys are normalized and compiled once into a cached Set/pattern; normalized substring matching is preserved. The logger prepares one immutable redacted snapshot for the viewer and output channels, avoiding a second recursive pass. Direct `addEntry`/`addEntries` calls still validate/redact their inputs, and caller-provided flags cannot bypass this boundary. Prepared snapshots are deeply frozen, but query results and tail notifications are independent mutable copies. JSON hooks in context are not invoked; function values become `[Function]`, symbols become strings, and cycles/deep nesting are bounded. Key-based redaction is not a guarantee that arbitrary free-form text contains no personal data or secrets.
 
 ```typescript
 Log.configure({
@@ -244,13 +273,49 @@ const stats = await LogViewer.getStats();
 await LogViewer.prune(); // Schedule retention through a normal scheduled task.
 ```
 
-All viewer reads/writes (`query`, `page`, `getStats`, `getRecentErrors`, `addEntry`, `clear`, `prune`) are asynchronous for both drivers. Await them, including in existing apps when upgrading. `page` returns `{ data, meta }` with stable entry-ID cursors; stats are aggregated in the database rather than loading every log. Search, channel, minimum severity, tenant and correlation filters are supported. The configured viewer and output channel must both succeed for an awaited log write to complete.
+All viewer reads/writes (`query`, `page`, `getStats`, `getRecentErrors`, `addEntry`, `addEntries`, `clear`, `prune`) are asynchronous for both drivers. Await them, including in existing apps when upgrading. `page` returns `{ data, meta }` with stable entry-ID cursors; stats are aggregated in the database rather than loading every log. Search, channel, minimum severity, tenant and correlation filters are supported. Every selected destination must succeed for an awaited log write to complete. Viewer persistence precedes channel output; if output fails afterward, the viewer entry can already be committed, so blindly retrying may duplicate it without configured idempotency.
 
 For a recognized published 0.7.9 scaffold, use the official `npx svelar update --migrate-core --dry-run`, then approve `--force` or the interactive confirmation. Its eleven-file allowlist now includes `src/routes/api/admin/logs/+server.ts` and `src/routes/api/admin/stats/+server.ts`: missing awaits previously broke stats property access or serialized a Promise as `{}` instead of resolved data. The AST migration keeps exact `.core.bak` originals, is idempotent, and preserves existing Promise-aware code. Customized wrappers/shadowed bindings require review; it neither scans arbitrary source nor adds a synchronous compatibility wrapper. See [the migration steps](./05-validation-dtos.md#migrating-to-zod-4), then verify types, logs/stats responses, authorization and the production build.
 
 `LogViewer.tail(callback, { cursor })` follows durable entries across processes using bounded database polling; the callback receives redacted entries and the returned function closes the subscription. Omitting the cursor tails only new entries. Retention defines the available replay window. The dashboard exposes the tail as authorized SSE, including entry IDs and `Last-Event-ID` resume, heartbeat, slow-client bounds and periodic reauthorization. Configure `onTailError` to report connectivity failures through a different sink, avoiding recursive logging.
 
 Secrets are redacted at ingestion, including direct viewer writes, before storage or tailing. Free-form logging still must not contain secrets that cannot be recognized by key or known credential syntax. A tenant filter is a query filter, not authorization; scope it on the server after checking the caller's permissions.
+
+### Batch Ingestion And Idempotency
+
+`LogViewer.addEntries(entries)` returns `Promise<void>`, as does the existing `addEntry(entry)` method; awaiting either resolves to `undefined`. The database driver validates/redacts the complete batch before issuing one multirow INSERT, without per-entry SELECTs or INSERTs; empty batches do nothing. Bound batches to your database's parameter/packet limits. Memory capture remains process-local, bounded by `maxEntries`, and sends isolated redacted tail notifications.
+
+Optional `viewer.idempotency: { contextKey: 'eventId' }` enables duplicate suppression. First run core migration `00000000_000050_add_log_idempotency`, which adds nullable `idempotency_key VARCHAR(64)` and its unique index. Enabling the option without the migration rejects writes rather than silently accepting duplicates. On a large existing table, plan the index build and its database-specific locking/storage impact before deployment. When the option is absent, writes omit the new column and remain compatible with the previous schema.
+
+```typescript
+Log.configure({
+  default: 'audit',
+  channels: { audit: { driver: 'null' } },
+  viewer: { driver: 'database', idempotency: { contextKey: 'eventId' } },
+});
+
+await LogViewer.addEntries([
+  { timestamp: new Date().toISOString(), level: 'info', channel: 'audit',
+    message: 'Import completed', context: { tenantId: trustedTenantId, eventId } },
+]);
+```
+
+The key must be a nonempty string of at most 4096 characters; `null`/absent keys do not deduplicate. A SHA-256 digest scopes it by `[channel, tenantId, key]`, using the original value before redaction. Tenant IDs are trusted server-derived strings or finite numbers (numeric/string forms share an identity); missing tenant IDs use a separate null scope. Never derive this scope from an unverified request parameter. A duplicate keeps the first row unchanged, including duplicates inside one batch or across database processes. The unique constraint supplies the database guarantee; unrelated storage errors propagate. Idempotency lasts only while the row is retained. Memory deduplication is local and expires on eviction, prune, clear or reconfiguration. This is ingestion deduplication, not authorization or an exactly-once domain transaction.
+
+### Bounded Log Retention
+
+`await LogViewer.prune(now = new Date(), { batchSize?, maxBatches? } = {})` returns a number: rows actually deleted in that invocation. It deletes strictly before `now - retentionSeconds`, preserving the exact boundary. Retention defaults to 30 days. Each database DELETE selects at most `batchSize` IDs through an ordered `recorded_at` subquery using the timestamp index; no whole-table DELETE or per-row loop is used. The memory driver returns the same bounded deletion count. Failures reject; a partially completed multi-batch run can already have deleted earlier batches.
+
+`viewer.pruneBatchSize` defaults to 1000 and `viewer.pruneMaxBatches` to 100; per-call options override them. Both accept integers from 1 to 10000. A run deletes at most their product, so reaching the cap can leave expired rows for the next invocation. Each statement is bounded, not a wall-clock deadline. Do not wrap a large maintenance run in a long outer transaction; pruning participates in caller transactions.
+
+```bash
+npx svelar log:prune
+npx svelar log:prune --batch-size=500 --max-batches=20
+```
+
+The command boots the application, requires an explicitly configured enabled database viewer, and reports the actual deleted count. It accepts only these two sizing flags, with the same 1..10000 bounds, and no positional arguments or retention override. Unsupported flags, including `--dry-run`, are rejected before bootstrap rather than silently running maintenance. Memory viewing is rejected rather than claiming durable cleanup. It affects `svelar_logs`, not domain audit tables.
+
+New apps register a normal `PruneLogs` scheduled task every five minutes. The task honors `LOG_PRUNE_ENABLED=false` and runs only for `LogViewer.isConfigured()`, `LogViewer.enabled` and shared-database scope. Generated bootstrap reads `LOG_RETENTION_SECONDS`, `LOG_PRUNE_BATCH_SIZE` and `LOG_PRUNE_MAX_BATCHES`; review those policies before running the scheduler. Existing apps must explicitly register the task in their common scheduler registry or schedule `log:prune` themselves after reviewing retention, migration and backup requirements. A package update does not overwrite their scheduler. There is no automatic retention timer in `Log.configure()` or `LogViewer.configure()`.
 
 ## Notifications
 

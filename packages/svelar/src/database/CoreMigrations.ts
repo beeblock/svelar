@@ -53,6 +53,7 @@ import { AddSchedulerSettingsPolicy } from './core/00000000_000044_add_scheduler
 import { CreateSchedulerRuntimeTable } from './core/00000000_000047_create_scheduler_runtime_table.js';
 import { CreateSchedulerRequestsTable } from './core/00000000_000048_create_scheduler_requests_table.js';
 import { CreateDeploymentLocksTable } from './core/00000000_000049_create_deployment_locks_table.js';
+import { AddLogIdempotency } from './core/00000000_000050_add_log_idempotency.js';
 
 export {
   CreateSessionsTable,
@@ -102,6 +103,7 @@ export {
   CreateSchedulerRuntimeTable,
   CreateSchedulerRequestsTable,
   CreateDeploymentLocksTable,
+  AddLogIdempotency,
 };
 
 const coreMigrationDefinitions = [
@@ -152,6 +154,7 @@ const coreMigrationDefinitions = [
   ['00000000_000047_create_scheduler_runtime_table', CreateSchedulerRuntimeTable],
   ['00000000_000048_create_scheduler_requests_table', CreateSchedulerRequestsTable],
   ['00000000_000049_create_deployment_locks_table', CreateDeploymentLocksTable],
+  ['00000000_000050_add_log_idempotency', AddLogIdempotency],
 ] as const;
 
 export function svelarCoreMigrations(): MigrationFile[] {

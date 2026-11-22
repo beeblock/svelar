@@ -1,7 +1,8 @@
 import type { LogLevel } from './index.js';
+import { createHash } from 'node:crypto';
 import { QueryBuilder } from '../orm/QueryBuilder.js';
 import { singleton } from '../support/singleton.js';
-import { redactLogContext, redactLogText } from './Redaction.js';
+import { logRedactKeys, redactLogContext, redactLogText } from './Redaction.js';
 
 export interface LogEntry {
   id?: number;
@@ -35,13 +36,25 @@ export interface LogPage {
 }
 export interface LogViewerConfig {
   driver: 'memory' | 'database';
+  enabled?: boolean;
   connection?: string;
   maxEntries?: number;
   retentionSeconds?: number;
   tailIntervalMs?: number;
+  pruneBatchSize?: number;
+  pruneMaxBatches?: number;
+  /** Requires the nullable unique idempotency_key column in the log migration. */
+  idempotency?: { contextKey: string };
   /** Reports tail failures without recursively logging to the failed backend. */
   onTailError?: (error: unknown) => void;
 }
+export interface LogPruneOptions {
+  /** Rows per delete, 1..10000 (default 1000). */
+  batchSize?: number;
+  /** Maximum deletes per invocation, 1..10000 (default 100). */
+  maxBatches?: number;
+}
+export type LogEntryInput = Omit<LogEntry, 'channel'> & { channel?: string };
 const levels: LogLevel[] = ['debug', 'info', 'warn', 'error', 'fatal'];
 type TailCallback = (entry: LogEntry) => void;
 
@@ -50,6 +63,10 @@ export class LogViewerService {
   private entries: LogEntry[] = [];
   private nextId = 1;
   private subscribers = new Set<TailCallback>();
+  private prepared = new WeakMap<LogEntry, { key: string | null; policy: ReadonlySet<string> }>();
+  private memoryKeys = new Map<number, string>();
+  private idempotencyKeys = new Set<string>();
+  private configured = false;
 
   configure(config: LogViewerConfig): void {
     if (!['memory', 'database'].includes(config.driver)) throw new Error('Unknown log viewer driver.');
@@ -58,29 +75,72 @@ export class LogViewerService {
     ] as const) {
       if (value !== undefined && (!Number.isSafeInteger(value) || value < minimum)) throw new Error(`Invalid log viewer ${name}.`);
     }
+    this.pruneOptions({ batchSize: config.pruneBatchSize, maxBatches: config.pruneMaxBatches });
+    if (config.enabled !== undefined && typeof config.enabled !== 'boolean') throw new Error('Invalid log viewer enabled.');
+    if (config.idempotency && (typeof config.idempotency.contextKey !== 'string' || !config.idempotency.contextKey.trim())) {
+      throw new Error('Invalid log viewer idempotency contextKey.');
+    }
     if (this.subscribers.size) throw new Error('Close log tails before reconfiguring the viewer.');
-    this.config = { ...config };
+    this.config = { ...config, idempotency: config.idempotency ? { ...config.idempotency } : undefined };
+    this.configured = true;
     this.entries = [];
     this.nextId = 1;
+    this.prepared = new WeakMap();
+    this.memoryKeys.clear();
+    this.idempotencyKeys.clear();
   }
   get scope(): 'process' | 'shared database' { return this.config.driver === 'database' ? 'shared database' : 'process'; }
+  get enabled(): boolean { return this.config.enabled !== false; }
+  isConfigured(): boolean { return this.configured; }
 
-  async addEntry(entry: Omit<LogEntry, 'channel'> & { channel?: string }): Promise<void> {
+  /** Validates and freezes a redacted snapshot; only snapshots made here skip repeat redaction. */
+  prepareEntry(entry: LogEntryInput, keys?: readonly string[] | ReadonlySet<string>): LogEntry {
+    const prepared = this.prepared.get(entry as LogEntry);
+    const policy = logRedactKeys(keys);
+    if (prepared && (keys === undefined || prepared.policy === policy)) return entry as LogEntry;
     if (!levels.includes(entry.level) || !Number.isFinite(new Date(entry.timestamp).getTime())) throw new Error('Invalid log entry.');
     const safe: LogEntry = { timestamp: new Date(entry.timestamp).toISOString(), level: entry.level,
-      channel: entry.channel ?? 'default', message: redactLogText(entry.message), context: redactLogContext(entry.context) };
+      channel: entry.channel ?? 'default', message: redactLogText(entry.message),
+      context: redactLogContext(entry.context, policy, undefined, 0, true) };
+    const key = prepared ? prepared.key : this.entryKey(entry);
+    Object.freeze(safe);
+    this.prepared.set(safe, { key, policy });
+    return safe;
+  }
+
+  async addEntry(entry: LogEntryInput): Promise<void> {
+    await this.addEntries([entry]);
+  }
+
+  /** One multirow insert per batch, or an insert-on-conflict no-op when idempotency is configured. */
+  async addEntries(entries: readonly LogEntryInput[]): Promise<void> {
+    if (!this.enabled || entries.length === 0) return;
+    // Validate the whole batch before any write or subscriber notification.
+    const safeEntries = entries.map((entry) => this.prepareEntry(entry));
     if (this.config.driver === 'database') {
-      await this.table().insert({ recorded_at: safe.timestamp, level: safe.level, channel: safe.channel,
+      const rows = safeEntries.map((safe) => ({ recorded_at: safe.timestamp, level: safe.level, channel: safe.channel,
         message: safe.message, context: JSON.stringify(safe.context),
         correlation_id: safe.context.correlationId == null ? null : String(safe.context.correlationId),
-        tenant_id: safe.context.tenantId == null ? null : String(safe.context.tenantId) });
+        tenant_id: safe.context.tenantId == null ? null : String(safe.context.tenantId),
+        ...(this.config.idempotency ? { idempotency_key: this.prepared.get(safe)!.key } : {}) }));
+      if (this.config.idempotency) await this.table().upsert(rows, 'idempotency_key', []);
+      else await this.table().insertMany(rows);
       return;
     }
-    safe.id = this.nextId++;
-    this.entries.push(safe);
-    if (this.entries.length > (this.config.maxEntries ?? 10_000)) this.entries.shift();
-    for (const callback of this.subscribers) {
-      try { callback(structuredClone(safe)); } catch (error) { this.config.onTailError?.(error); }
+    const appended: LogEntry[] = [];
+    for (const safe of safeEntries) {
+      const key = this.prepared.get(safe)!.key;
+      if (key !== null && this.idempotencyKeys.has(key)) continue;
+      const stored = { ...safe, id: this.nextId++ };
+      if (key !== null) { this.idempotencyKeys.add(key); this.memoryKeys.set(stored.id, key); }
+      this.entries.push(stored);
+      appended.push(stored);
+      if (this.entries.length > (this.config.maxEntries ?? 10_000)) this.forgetKey(this.entries.shift()!);
+    }
+    for (const entry of appended) {
+      for (const callback of this.subscribers) {
+        try { callback(structuredClone(entry)); } catch (error) { this.config.onTailError?.(error); }
+      }
     }
   }
 
@@ -128,15 +188,34 @@ export class LogViewerService {
   }
   async clear(): Promise<void> {
     if (this.config.driver === 'database') await this.table().delete();
-    else this.entries = [];
+    else { this.entries = []; this.memoryKeys.clear(); this.idempotencyKeys.clear(); }
   }
-  async prune(now = new Date()): Promise<number> {
+  /** Returns rows actually deleted, not candidates; another invocation may be needed at the batch bound. */
+  async prune(now = new Date(), options: LogPruneOptions = {}): Promise<number> {
     if (!Number.isFinite(now.getTime())) throw new Error('Invalid retention clock.');
+    const { batchSize, maxBatches } = this.pruneOptions(options);
     const cutoff = new Date(now.getTime() - (this.config.retentionSeconds ?? 30 * 86400) * 1000);
-    if (this.config.driver === 'database') return this.table().where('recorded_at', '<', cutoff.toISOString()).delete();
-    const before = this.entries.length;
-    this.entries = this.entries.filter((entry) => new Date(entry.timestamp) >= cutoff);
-    return before - this.entries.length;
+    if (!Number.isFinite(cutoff.getTime())) throw new Error('Invalid retention cutoff.');
+    let deleted = 0;
+    if (this.config.driver === 'database') {
+      for (let batch = 0; batch < maxBatches; batch++) {
+        const candidates = this.table().select('id').where('recorded_at', '<', cutoff.toISOString())
+          .orderBy('recorded_at').limit(batchSize).toSQL();
+        // The derived-table boundary supports MySQL's target-table/limited-subquery rules too.
+        const count = await this.table().whereRaw(`id IN (SELECT id FROM (${candidates.sql}) AS svelar_log_prune_batch)`, candidates.bindings).delete();
+        deleted += count;
+        if (count < batchSize) break;
+      }
+      return deleted;
+    }
+    const limit = batchSize * maxBatches;
+    this.entries = this.entries.filter((entry) => {
+      if (deleted >= limit || new Date(entry.timestamp) >= cutoff) return true;
+      deleted++;
+      this.forgetKey(entry);
+      return false;
+    });
+    return deleted;
   }
 
   /** Durable polling fans in entries from web, workers and scheduler; resume uses an entry ID. */
@@ -173,6 +252,29 @@ export class LogViewerService {
   }
 
   private table(): QueryBuilder { return new QueryBuilder('svelar_logs', undefined, this.config.connection); }
+  private entryKey(entry: LogEntryInput): string | null {
+    if (!this.config.idempotency) return null;
+    const value = entry.context[this.config.idempotency.contextKey];
+    if (value === undefined || value === null) return null;
+    if (typeof value !== 'string' || !value.length || value.length > 4096) throw new Error('Invalid log idempotency key: expected a nonempty string of at most 4096 characters.');
+    const tenant = entry.context.tenantId;
+    if (tenant != null && typeof tenant !== 'string' && (typeof tenant !== 'number' || !Number.isFinite(tenant))) {
+      throw new Error('Invalid log idempotency tenantId.');
+    }
+    return createHash('sha256').update(JSON.stringify([entry.channel ?? 'default', tenant == null ? null : String(tenant), value])).digest('hex');
+  }
+  private forgetKey(entry: LogEntry): void {
+    const key = this.memoryKeys.get(entry.id!);
+    if (key !== undefined) { this.idempotencyKeys.delete(key); this.memoryKeys.delete(entry.id!); }
+  }
+  private pruneOptions(options: LogPruneOptions): Required<LogPruneOptions> {
+    const batchSize = options.batchSize ?? this.config.pruneBatchSize ?? 1000;
+    const maxBatches = options.maxBatches ?? this.config.pruneMaxBatches ?? 100;
+    for (const [name, value] of [['batchSize', batchSize], ['maxBatches', maxBatches]] as const) {
+      if (!Number.isSafeInteger(value) || value < 1 || value > 10_000) throw new Error(`Invalid log prune ${name}: expected 1..10000.`);
+    }
+    return { batchSize, maxBatches };
+  }
   private filteredQuery(filter: LogFilter): QueryBuilder {
     const query = this.table();
     if (filter.level) query.whereIn('level', levels.slice(levels.indexOf(filter.level)));

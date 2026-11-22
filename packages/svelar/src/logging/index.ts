@@ -25,7 +25,7 @@
 import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { LogViewer, type LogViewerConfig } from './LogViewer.js';
-import { DEFAULT_REDACT_KEYS, redactLogContext, redactLogText } from './Redaction.js';
+import { logRedactKeys } from './Redaction.js';
 import { ApplicationContext, type ApplicationContextSnapshot } from '../support/Context.js';
 
 // ── Types ──────────────────────────────────────────────────
@@ -50,7 +50,19 @@ export interface LogChannelConfig {
   channels?: string[];
   /** Custom formatter */
   format?: 'text' | 'json';
+  /** Disable channel output while retaining its original name in the viewer. */
+  output?: boolean;
+  /** Disable viewer capture for this channel. */
+  viewer?: boolean;
 }
+
+export interface LogWriteOptions {
+  output?: boolean;
+  viewer?: boolean;
+}
+
+/** Runs in order on raw explicit context, before ambient enrichment and redaction. Null discards. */
+export type LogProcessor = (entry: LogEntry) => LogEntry | null | Promise<LogEntry | null>;
 
 export interface LogConfig {
   default: string;
@@ -60,6 +72,7 @@ export interface LogConfig {
   /** Sensitive context keys to redact before writing to channels/viewers. */
   redactKeys?: string[];
   viewer?: LogViewerConfig;
+  processors?: LogProcessor[];
 }
 
 interface LogEntry {
@@ -154,31 +167,11 @@ class FileChannel implements Channel {
   }
 }
 
-// ── Stack Channel ──────────────────────────────────────────
-
-class StackChannel implements Channel {
-  minLevel: LogLevel = 'debug';
-  private channelNames: string[];
-  private resolver: (name: string) => Channel;
-
-  constructor(config: LogChannelConfig, resolver: (name: string) => Channel) {
-    this.channelNames = config.channels ?? [];
-    this.resolver = resolver;
-    this.minLevel = config.level ?? 'debug';
-  }
-
-  async write(entry: LogEntry): Promise<void> {
-    for (const name of this.channelNames) {
-      const channel = this.resolver(name);
-      await channel.write(entry);
-    }
-  }
-}
-
 // ── Null Channel ───────────────────────────────────────────
 
 class NullChannel implements Channel {
   minLevel: LogLevel = 'debug';
+  constructor(config: LogChannelConfig) { this.minLevel = config.level ?? 'debug'; }
   write(): void { /* no-op */ }
 }
 
@@ -193,7 +186,8 @@ class LoggerManager {
   };
   private channels = new Map<string, Channel>();
   private context: Record<string, any> = {};
-  private redactKeys = DEFAULT_REDACT_KEYS;
+  private redactKeys = logRedactKeys();
+  private processors: LogProcessor[] = [];
 
   /**
    * Configure the logger
@@ -201,7 +195,8 @@ class LoggerManager {
   configure(config: LogConfig): void {
     this.config = config;
     this.context = config.context ?? {};
-    this.redactKeys = [...DEFAULT_REDACT_KEYS, ...(config.redactKeys ?? [])];
+    this.redactKeys = logRedactKeys([...(config.redactKeys ?? [])]);
+    this.processors = [...(config.processors ?? [])];
     this.channels.clear();
     if (config.viewer) LogViewer.configure(config.viewer);
   }
@@ -210,7 +205,8 @@ class LoggerManager {
    * Get a specific channel
    */
   channel(name: string): LoggerFacade {
-    return new LoggerFacade(this.resolveChannel(name), name, (context) => this.enrichContext(context));
+    this.resolveChannel(name);
+    return new LoggerFacade((entry, options) => this.writeToChannel(name, entry, options));
   }
 
   /**
@@ -236,39 +232,65 @@ class LoggerManager {
 
   // ── Log Methods ──
 
-  debug(message: string, context: Record<string, any> = {}): Promise<void> {
-    return this.writeToDefault({ level: 'debug', message, context, timestamp: now() });
+  debug(message: string, context: Record<string, any> = {}, options: LogWriteOptions = {}): Promise<void> {
+    return this.writeToDefault({ level: 'debug', message, context, timestamp: now() }, options);
   }
 
-  info(message: string, context: Record<string, any> = {}): Promise<void> {
-    return this.writeToDefault({ level: 'info', message, context, timestamp: now() });
+  info(message: string, context: Record<string, any> = {}, options: LogWriteOptions = {}): Promise<void> {
+    return this.writeToDefault({ level: 'info', message, context, timestamp: now() }, options);
   }
 
-  warn(message: string, context: Record<string, any> = {}): Promise<void> {
-    return this.writeToDefault({ level: 'warn', message, context, timestamp: now() });
+  warn(message: string, context: Record<string, any> = {}, options: LogWriteOptions = {}): Promise<void> {
+    return this.writeToDefault({ level: 'warn', message, context, timestamp: now() }, options);
   }
 
-  error(message: string, context: Record<string, any> = {}): Promise<void> {
-    return this.writeToDefault({ level: 'error', message, context, timestamp: now() });
+  error(message: string, context: Record<string, any> = {}, options: LogWriteOptions = {}): Promise<void> {
+    return this.writeToDefault({ level: 'error', message, context, timestamp: now() }, options);
   }
 
-  fatal(message: string, context: Record<string, any> = {}): Promise<void> {
-    return this.writeToDefault({ level: 'fatal', message, context, timestamp: now() });
+  fatal(message: string, context: Record<string, any> = {}, options: LogWriteOptions = {}): Promise<void> {
+    return this.writeToDefault({ level: 'fatal', message, context, timestamp: now() }, options);
   }
 
   // ── Private ──
 
-  private writeToDefault(entry: LogEntry): Promise<void> {
-    return this.writeToChannel(this.config.default, entry);
+  private writeToDefault(entry: LogEntry, options: LogWriteOptions): Promise<void> {
+    return this.writeToChannel(this.config.default, entry, options);
   }
 
-  private async writeToChannel(name: string, entry: LogEntry): Promise<void> {
+  private async writeToChannel(name: string, entry: LogEntry, options: LogWriteOptions): Promise<void> {
     const channel = this.resolveChannel(name);
     if (LOG_LEVELS[entry.level] < LOG_LEVELS[channel.minLevel]) return;
 
-    const entryWithChannel = { ...entry, message: redactLogText(entry.message), context: this.enrichContext(entry.context), channel: name };
-    await LogViewer.addEntry(entryWithChannel);
-    await channel.write(entryWithChannel);
+    const config = this.config.channels[name];
+    const viewer = (options.viewer ?? config.viewer ?? true) && LogViewer.enabled;
+    let outputs = this.outputChannels(name, entry.level, options.output);
+    if (!viewer && outputs.length === 0) return;
+
+    let processed: LogEntry | null = { ...entry, channel: name };
+    for (const processor of this.processors) {
+      processed = await processor(processed);
+      if (processed === null) return;
+      if (!processed || !Object.hasOwn(LOG_LEVELS, processed.level)) throw new Error('Invalid log processor result.');
+    }
+    if (LOG_LEVELS[processed.level] < LOG_LEVELS[channel.minLevel]) return;
+    if (processed.level !== entry.level) outputs = this.outputChannels(name, processed.level, options.output);
+    if (!viewer && outputs.length === 0) return;
+
+    const safe = LogViewer.prepareEntry({ ...processed, channel: name, context: this.enrichContext(processed.context) }, this.redactKeys);
+    if (viewer) await LogViewer.addEntry(safe);
+    for (const output of outputs) await output.write(safe);
+  }
+
+  private outputChannels(name: string, level: LogLevel, override?: boolean, ancestors = new Set<string>()): Channel[] {
+    if (ancestors.has(name)) throw new Error(`Circular log stack at "${name}".`);
+    const channel = this.resolveChannel(name);
+    const config = this.config.channels[name];
+    if ((override ?? config.output) === false || LOG_LEVELS[level] < LOG_LEVELS[channel.minLevel] || config.driver === 'null') return [];
+    if (config.driver !== 'stack') return [channel];
+    ancestors.add(name);
+    try { return (config.channels ?? []).flatMap((child) => this.outputChannels(child, level, undefined, ancestors)); }
+    finally { ancestors.delete(name); }
   }
 
   private enrichContext(context: Record<string, any>): Record<string, any> {
@@ -291,7 +313,7 @@ class LoggerManager {
       standardContext.actorId = snapshot.userId;
     }
 
-    return redactLogContext({ ...standardContext, ...this.context, ...context }, this.redactKeys);
+    return { ...standardContext, ...this.context, ...context };
   }
 
   private resolveChannel(name: string): Channel {
@@ -316,9 +338,8 @@ class LoggerManager {
       case 'file':
         return new FileChannel(config);
       case 'stack':
-        return new StackChannel(config, (name) => this.resolveChannel(name));
       case 'null':
-        return new NullChannel();
+        return new NullChannel(config);
       default:
         throw new Error(`Unknown log driver: ${(config as any).driver}`);
     }
@@ -329,33 +350,23 @@ class LoggerManager {
 
 class LoggerFacade {
   constructor(
-    private channel: Channel,
-    private name: string,
-    private enrichContext: (context: Record<string, any>) => Record<string, any>,
+    private write: (entry: LogEntry, options: LogWriteOptions) => Promise<void>,
   ) {}
 
-  debug(message: string, context: Record<string, any> = {}): Promise<void> {
-    return this.write({ level: 'debug', message, context, timestamp: now() });
+  debug(message: string, context: Record<string, any> = {}, options: LogWriteOptions = {}): Promise<void> {
+    return this.write({ level: 'debug', message, context, timestamp: now() }, options);
   }
-  info(message: string, context: Record<string, any> = {}): Promise<void> {
-    return this.write({ level: 'info', message, context, timestamp: now() });
+  info(message: string, context: Record<string, any> = {}, options: LogWriteOptions = {}): Promise<void> {
+    return this.write({ level: 'info', message, context, timestamp: now() }, options);
   }
-  warn(message: string, context: Record<string, any> = {}): Promise<void> {
-    return this.write({ level: 'warn', message, context, timestamp: now() });
+  warn(message: string, context: Record<string, any> = {}, options: LogWriteOptions = {}): Promise<void> {
+    return this.write({ level: 'warn', message, context, timestamp: now() }, options);
   }
-  error(message: string, context: Record<string, any> = {}): Promise<void> {
-    return this.write({ level: 'error', message, context, timestamp: now() });
+  error(message: string, context: Record<string, any> = {}, options: LogWriteOptions = {}): Promise<void> {
+    return this.write({ level: 'error', message, context, timestamp: now() }, options);
   }
-  fatal(message: string, context: Record<string, any> = {}): Promise<void> {
-    return this.write({ level: 'fatal', message, context, timestamp: now() });
-  }
-
-  private async write(entry: LogEntry): Promise<void> {
-    if (LOG_LEVELS[entry.level] < LOG_LEVELS[this.channel.minLevel]) return;
-
-    const entryWithChannel = { ...entry, message: redactLogText(entry.message), context: this.enrichContext(entry.context), channel: this.name };
-    await LogViewer.addEntry(entryWithChannel);
-    await this.channel.write(entryWithChannel);
+  fatal(message: string, context: Record<string, any> = {}, options: LogWriteOptions = {}): Promise<void> {
+    return this.write({ level: 'fatal', message, context, timestamp: now() }, options);
   }
 }
 
@@ -372,4 +383,4 @@ export const Log = singleton('svelar.log', () => new LoggerManager());
 
 export type { Channel, LogEntry };
 export { LogViewer, LogViewerService } from './LogViewer.js';
-export type { LogFilter, LogStats, LogPage, LogViewerConfig } from './LogViewer.js';
+export type { LogFilter, LogStats, LogPage, LogViewerConfig, LogEntryInput, LogPruneOptions } from './LogViewer.js';
